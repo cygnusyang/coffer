@@ -9,7 +9,7 @@ use thiserror::Error;
 /// `cf-crypto` 的错误类型。
 ///
 /// 错误码的对外映射见 `docs/03-详细设计.md` §12。
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum CfCryptoError {
     /// KDF 参数非法（越界、为零、组合不合法等）。
     ///
@@ -36,4 +36,19 @@ pub enum CfCryptoError {
     /// 因此**绝不能**在随机源失败时降级到一个弱随机源。
     #[error("系统随机源不可用：{0}")]
     RandomUnavailable(String),
+
+    /// AEAD 加密失败。
+    ///
+    /// 正常使用中几乎不可能发生（仅在库内部状态异常时出现）。
+    #[error("加密失败")]
+    AeadSealFailed,
+
+    /// AEAD 解密失败（认证校验未通过）。
+    ///
+    /// 信息泄露纪律：**统一返回此错误，不区分失败原因**——
+    /// tag 校验失败、AAD 不匹配、密钥错误一律不可区分。
+    /// 这与解锁失败不区分「密码错误」/「数据损坏」是同一条纪律
+    /// （见 `docs/04-系统设计.md` §4.2）。
+    #[error("解密失败")]
+    AeadOpenFailed,
 }

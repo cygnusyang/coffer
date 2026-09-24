@@ -48,9 +48,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
 
+pub mod aead;
 pub mod error;
 pub mod kdf;
 
+pub use aead::{build_field_aad, open, seal, SessionKey, KEY_LEN as AEAD_KEY_LEN, NONCE_LEN as AEAD_NONCE_LEN};
 pub use error::CfCryptoError;
 pub use kdf::{derive_key, normalize_password, KdfParams, KEY_LEN, SALT_LEN};
 

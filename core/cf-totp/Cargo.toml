@@ -1,6 +1,6 @@
 [package]
 name = "cf-totp"
-description = "按 RFC 6238 生成 TOTP，解析 otpauth:// URI。"
+description = "Coffer TOTP (RFC 6238 compliant)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,8 @@ license.workspace = true
 [dependencies]
 hmac = { workspace = true }
 sha1 = { workspace = true }
-sha2 = { workspace = true }
-zeroize = { workspace = true }
-thiserror = { workspace = true }
+sha2 = "0.10"
+urlencoding = "2.1"
 
-# 状态：未实现（计划 M1 阶段）
+[dev-dependencies]
+criterion = "0.5"

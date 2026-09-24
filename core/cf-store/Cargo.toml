@@ -15,5 +15,6 @@ serde = { workspace = true }
 ciborium = { workspace = true }
 zeroize = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }
 
 # 状态：未实现（计划 M1 阶段）

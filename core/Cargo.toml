@@ -45,6 +45,7 @@ authors = ["Coffer contributors"]
 argon2 = "0.6.0"
 
 # [已确认] chacha20poly1305 0.11.0 —— XChaCha20-Poly1305 AEAD
+#          0.11 起已并入主 crate：XChaCha20Poly1305 无需额外 feature
 chacha20poly1305 = "0.11.0"
 
 # [待校准] HKDF 子密钥派生

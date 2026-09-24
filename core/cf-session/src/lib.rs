@@ -147,16 +147,13 @@ impl TotpSession {
     }
 }
 
-/// 常量时间比较，防止验证码比对的时序侧信道
+/// 常量时间比较，防止验证码比对的时序侧信道。
+///
+/// 委托 `subtle` 实现：`ConstantTimeEq` 对切片逐元素异或折叠，
+/// 不按首个差异字节提前返回（`subtle` 的文档示例即为此用途）。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 /// 主会话结构（DEK 持有者，M1 后续阶段完成解锁编排）

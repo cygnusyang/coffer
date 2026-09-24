@@ -13,4 +13,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
-# 状态：未实现（计划 M2 阶段）
+[dev-dependencies]
+# KeePass KDBX 冒烟验证：读取方向为主（cf-exporter 的写入另行选择方案）。
+# save_kdbx4 仅测试需要：用最小内存数据库 保存→重开 证明解析链路可用。
+keepass = { workspace = true, features = ["save_kdbx4"] }
+
+# 状态：未实现（计划 M2 阶段）；KDBX 解析冒烟测试已就位

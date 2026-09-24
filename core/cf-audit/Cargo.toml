@@ -10,5 +10,10 @@ license.workspace = true
 cf-domain = { workspace = true }
 cf-crypto = { workspace = true }
 thiserror = { workspace = true }
+# FR-6.1 密码强度评估（zxcvbn）
+zxcvbn = { workspace = true }
+# FR-3 随机密码生成（passwords，CSPRNG 后端）
+passwords = { workspace = true }
 
-# 状态：未实现（计划 M1 阶段）
+# 状态：强度评估 / 密码生成冒烟已实现（M1 阶段），
+#       重复密码 / 弱 URL / 陈旧密码检测待实现

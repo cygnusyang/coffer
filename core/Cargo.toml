@@ -50,7 +50,8 @@ chacha20poly1305 = "0.11.0"
 
 # [待校准] HKDF 子密钥派生
 hkdf = "0.12"
-# [待校准] SHA-2 家族（TOTP 需要 SHA-1，见下方 sha1）
+# [待校准] SHA-2 家族 / HMAC —— 预留，cf-crypto 的 HKDF 子密钥派生
+#          与 verifier 计算需要；TOTP 已委托 totp-rs，不再直接使用
 sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"
@@ -65,8 +66,31 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 # [待校准] Unicode NFC 归一化 —— 主密码处理必需，见 docs/03-详细设计.md §2.2
 unicode-normalization = "0.1"
 
-# [待校准] 常量时间比较
+# [已确认] 常量时间比较。已启用：cf-session 的 constant_time_eq 与
+#           cf-totp 的 verify 码值比对均改用此库（时序侧信道防护）
 subtle = "2"
+
+# [已确认] totp-rs 5.7.2 —— TOTP (RFC 6238) 委托实现
+#           锁 5.7.2 不升 6.0：保持 MSRV 1.85（6.0 抬高 MSRV 且 API 有 breaking 变更）。
+#           HMAC-SHA1 计算交由 totp-rs，cf-totp 只保留门面。
+#           MSRV 实测：5.7.2 声明 rust-version 1.66，兼容 workspace 的 1.85。
+#           不开默认 features 之外的特性：默认 features 为空，SHA1/HMAC 为
+#           必选依赖；不启用 otpauth（cf-totp 保留自有 URI 解析，不需要 url 依赖）。
+totp-rs = "5.7.2"
+
+# [已确认] zxcvbn 3.1.1 —— 密码强度评估（Dropbox zxcvbn 的 Rust 移植）
+#           FR-6.1 弱密码检测。纯 CPU 计算，不引入网络依赖（cf-audit 硬约束）。
+zxcvbn = "3.1.1"
+
+# [已确认] passwords 3.1.18 —— 密码生成器
+#           FR-3 随机密码生成。基于 getrandom/CSPRNG，供 cf-audit 与后续 UI 使用。
+passwords = "3.1.18"
+
+# [已确认] keepass 0.13.25 —— KeePass KDBX 数据库解析
+#           锁 0.13.25 不升 0.15：实测 rust-version 1.85.1，
+#           高于 workspace 声明的 1.85（本地 stable 1.98 可编译，CI 需 ≥1.85.1）。
+#           仅用于读取（导入方向），不承担 KDBX 写入（导出见 cf-exporter）。
+keepass = "0.13.25"
 
 # ---------- 序列化 ----------
 # [待校准] 1PUX 解析需要 JSON；内部快照用 CBOR

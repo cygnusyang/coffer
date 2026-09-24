@@ -1,0 +1,16 @@
+[package]
+name = "lv-ffi"
+description = "通过 UniFFI 暴露接口给 Kotlin / Swift，负责类型与错误映射。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+lv-session = { workspace = true }
+lv-domain = { workspace = true }
+lv-crypto = { workspace = true }
+uniffi = { workspace = true }
+thiserror = { workspace = true }
+
+# 状态：未实现（计划 M0/M1 阶段）

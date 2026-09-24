@@ -1,0 +1,17 @@
+# Rust 工具链固定
+#
+# 说明：
+# - channel 固定为 stable，不跟随 nightly —— 密码学项目不应依赖不稳定的编译器行为
+# - rust-version 在 Cargo.toml 的 [workspace.package] 中声明为 1.85
+#   （由 getrandom 0.4.3 的 MSRV 决定）
+#
+# Android 交叉编译所需的 target 在 M3 阶段加入：
+#   rustup target add aarch64-linux-android armv7-linux-androideabi
+#
+# macOS 目标（当前开发机即为 arm64，通常是默认 host target）：
+#   rustup target add aarch64-apple-darwin
+
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

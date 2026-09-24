@@ -1,0 +1,117 @@
+# LocalVault —— Rust 核心工作区
+#
+# 目录划分见 docs/02-概要设计.md §2.2「工程结构」。
+#
+# ⚠️ 依赖版本说明
+#    标记 [已确认] 的版本号来自 crates.io API 实测（2026-09-24），可放心使用。
+#    标记 [待校准] 的版本号尚未核对，需要在 M0/M1 阶段用 `cargo add` 或
+#    `cargo update` 校准 —— 不要凭印象相信这些约束。
+
+[workspace]
+resolver = "2"
+members = [
+    # 基础设施层
+    "lv-crypto",
+    "lv-format",
+    "lv-store",
+    # 领域层
+    "lv-domain",
+    # 基础设施层（续）
+    "lv-importer",
+    "lv-exporter",
+    "lv-totp",
+    "lv-audit",
+    # 应用服务层
+    "lv-session",
+    # 绑定层
+    "lv-ffi",
+    # 测试支持
+    "lv-testkit",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/REPLACE_ME/mypassword"
+authors = ["LocalVault contributors"]
+
+[workspace.dependencies]
+
+# ---------- 密码学 ----------
+# [已确认] argon2 0.6.0 —— KDF。官方示例确认 hash_password_into 仍是推荐的
+#          「派生密钥」用法（区别于 hash_password 的 PHC 字符串用法）。
+argon2 = "0.6.0"
+
+# [已确认] chacha20poly1305 0.11.0 —— XChaCha20-Poly1305 AEAD
+chacha20poly1305 = "0.11.0"
+
+# [待校准] HKDF 子密钥派生
+hkdf = "0.12"
+# [待校准] SHA-2 家族（TOTP 需要 SHA-1，见下方 sha1）
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+
+# [已确认] getrandom 0.4.3 —— 注意：0.4 与 0.2/0.3 的 API 差异较大，
+#          使用前请核对 docs.rs/getrandom/0.4.3
+getrandom = "0.4.3"
+
+# [待校准] 内存清零。必须在 drop 时真的清零，不能依赖编译器不优化掉。
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+# [待校准] Unicode NFC 归一化 —— 主密码处理必需，见 docs/03-详细设计.md §2.2
+unicode-normalization = "0.1"
+
+# [待校准] 常量时间比较
+subtle = "2"
+
+# ---------- 序列化 ----------
+# [待校准] 1PUX 解析需要 JSON；内部快照用 CBOR
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ciborium = "0.2"
+
+# ---------- 存储 ----------
+# [待校准] SQLite（bundled 编译，保证版本一致，见 docs/02-概要设计.md §3）
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# ---------- ID 与时间 ----------
+# [待校准] UUIDv7（时间有序，利于索引）
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# ---------- 错误与日志 ----------
+# [待校准] thiserror 2.x
+thiserror = "2"
+tracing = "0.1"
+
+# ---------- FFI ----------
+# [已确认] uniffi 0.32.2 —— Rust ↔ Kotlin/Swift 绑定
+uniffi = "0.32.2"
+
+# ---------- 内部 crate 互引 ----------
+lv-crypto   = { path = "lv-crypto" }
+lv-format   = { path = "lv-format" }
+lv-store    = { path = "lv-store" }
+lv-domain   = { path = "lv-domain" }
+lv-importer = { path = "lv-importer" }
+lv-exporter = { path = "lv-exporter" }
+lv-totp     = { path = "lv-totp" }
+lv-audit    = { path = "lv-audit" }
+lv-session  = { path = "lv-session" }
+lv-ffi      = { path = "lv-ffi" }
+
+# ---------- Release 配置 ----------
+# 密码学场景下宁可慢一点也要保证行为正确，但 LTO 对最终二进制体积
+# 与性能都有明显收益，故 release 启用。
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# 标定与基准测试用：比 release 更激进，但保留调试符号便于排查
+[profile.bench]
+lto = true
+codegen-units = 1
+debug = true

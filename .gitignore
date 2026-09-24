@@ -1,0 +1,75 @@
+# ============================================================
+# LocalVault .gitignore
+# ============================================================
+# 注意：本文件承担一项安全职责 —— 确保任何真实的密码库文件
+#       都不会被意外提交。参见 docs/04-系统设计.md §8.4。
+
+# ---------- 构建产物 ----------
+target/
+**/target/
+*.rs.bk
+
+# ---------- 开发工具 ----------
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+
+# ---------- macOS ----------
+.DS_Store
+._*
+
+# ---------- Android ----------
+android/.gradle/
+android/local.properties
+android/build/
+android/app/build/
+android/.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+# 签名材料：绝不入库
+*.keystore
+*.jks
+keystore.properties
+
+# ---------- macOS / Xcode ----------
+macos/build/
+macos/DerivedData/
+macos/*.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
+*.moved-aside
+
+# ---------- Python（工具脚本） ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---------- 日志与诊断 ----------
+*.log
+logs/
+
+# ============================================================
+# 安全关键：真实密码库与导出文件一律不入库
+# ============================================================
+*.1pux
+*.1pif
+*.opvault/
+*.kdbx
+*.lvvault
+*.csv
+*.tsv
+
+# 例外：仓库内的合成测试样本必须保留（它是用 tools/make_test_sample.py
+# 生成的，不含任何真实数据，且带 "NOT real 1Password data" 标记）
+!tests/fixtures/*.1pux
+!tests/fixtures/*.csv
+
+# ---------- 本地环境变量 ----------
+.env
+.env.local

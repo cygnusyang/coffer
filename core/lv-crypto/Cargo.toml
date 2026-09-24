@@ -10,6 +10,7 @@ license.workspace = true
 argon2 = { workspace = true }
 zeroize = { workspace = true }
 unicode-normalization = { workspace = true }
+getrandom = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

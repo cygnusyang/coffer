@@ -35,6 +35,15 @@ pub enum SessionError {
     TotpSessionNotFound(String),
     /// TOTP 计算失败（透传自 cf-totp）
     Totp(cf_totp::TotpError),
+    /// 存储层失败（cf-store 错误的 Display 摘要）。
+    ///
+    /// 存字符串而非 `CfStoreError` 本身：后者含 `rusqlite::Error`，
+    /// 未实现 `Clone` / `PartialEq`，而会话层错误需要可比较（测试与
+    /// 门禁判断）。会话层不需要对存储错误做结构化分支，摘要足够；
+    /// 完整错误链在 cf-store 侧记录。
+    Store(String),
+    /// 存储中的 TOTP 算法本实现尚不支持（当前仅 SHA-1）
+    UnsupportedAlgo(String),
     /// 系统时钟早于 Unix epoch（时钟回拨到 1970 前）
     ClockBeforeEpoch,
 }
@@ -47,6 +56,8 @@ impl std::fmt::Display for SessionError {
                 write!(f, "TOTP session not found for item: {}", uuid)
             }
             Self::Totp(e) => write!(f, "TOTP error: {}", e),
+            Self::Store(s) => write!(f, "store error: {}", s),
+            Self::UnsupportedAlgo(a) => write!(f, "unsupported TOTP algorithm: {}", a),
             Self::ClockBeforeEpoch => write!(f, "system clock before Unix epoch"),
         }
     }
@@ -57,6 +68,12 @@ impl std::error::Error for SessionError {}
 impl From<cf_totp::TotpError> for SessionError {
     fn from(e: cf_totp::TotpError) -> Self {
         SessionError::Totp(e)
+    }
+}
+
+impl From<cf_store::CfStoreError> for SessionError {
+    fn from(e: cf_store::CfStoreError) -> Self {
+        SessionError::Store(e.to_string())
     }
 }
 
@@ -188,6 +205,49 @@ impl Session {
     /// 注册条目的 TOTP 会话（解锁后，密钥由 cf-store 解密取得）
     pub fn register_totp_session(&mut self, item_uuid: &str, session: TotpSession) {
         self.totp_sessions.insert(item_uuid.to_string(), session);
+    }
+
+    /// 从存储加载一条 TOTP 记录并注册为该条目的会话。
+    ///
+    /// 完整链路：`cf-store` 解密密钥（AAD 钉死在 item_uuid 上）
+    /// → 构造 [`TotpConfig`] → 注册到本条目名下。
+    ///
+    /// # 参数
+    ///
+    /// - `store`：已打开的 [`cf_store::TotpStore`]（持有字段密钥）
+    /// - `totp_uuid`：TOTP 记录的 UUID（`totp` 表主键）
+    ///
+    /// # 前置条件
+    ///
+    /// 必须已解锁（门禁检查）。记录不存在或解密失败返回相应错误。
+    ///
+    /// # 算法支持
+    ///
+    /// 当前仅支持 `sha1`（`cf-totp` 已实现部分）；`sha256` / `sha512`
+    /// 记录返回 [`SessionError::UnsupportedAlgo`]——显式拒绝而非静默
+    /// 按 SHA-1 计算（错误算法算出的码必然不匹配服务端）。
+    pub fn load_totp_from_store(
+        &mut self,
+        store: &cf_store::TotpStore,
+        totp_uuid: &str,
+    ) -> SessionResult<()> {
+        self.require_unlocked()?;
+
+        let meta = store
+            .totp_meta(totp_uuid)?
+            .ok_or_else(|| SessionError::TotpSessionNotFound(totp_uuid.to_string()))?;
+
+        if meta.algo != "sha1" {
+            return Err(SessionError::UnsupportedAlgo(meta.algo));
+        }
+
+        let secret = store
+            .totp_secret(totp_uuid)?
+            .ok_or_else(|| SessionError::TotpSessionNotFound(totp_uuid.to_string()))?;
+
+        let config = TotpConfig::new(secret.to_vec(), meta.period, meta.digits)?;
+        self.register_totp_session(&meta.item_uuid, TotpSession::new(config));
+        Ok(())
     }
 
     /// 生成指定条目当前的 TOTP 验证码（FR-5.4 / FR-5.6）
@@ -338,5 +398,99 @@ mod tests {
         // Zeroizing 包装：drop 时自动清零
         let wrapped = Zeroizing::new(vec![1u8; 32]);
         assert_eq!(wrapped.len(), 32);
+    }
+
+    // ---------- cf-session ↔ cf-store 全链路集成 ----------
+
+    use cf_crypto::aead::SessionKey;
+    use cf_store::TotpStore;
+    use rusqlite::Connection;
+
+    /// 搭建含一条 TOTP 记录的内存存储
+    fn store_with_totp(secret: &[u8]) -> (TotpStore, String, String) {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);")
+            .unwrap();
+
+        let item_uuid = uuid::Uuid::from_bytes([2; 16]).to_string();
+        let totp_uuid = uuid::Uuid::from_bytes([1; 16]).to_string();
+        conn.execute("INSERT INTO items (uuid) VALUES (?1)", rusqlite::params![item_uuid])
+            .unwrap();
+
+        let key = SessionKey::new([0x55u8; 32]);
+        let store = TotpStore::new(conn, key).unwrap();
+        store
+            .insert_totp(&totp_uuid, &item_uuid, secret, "sha1", 6, 30, Some("GitHub"), None)
+            .unwrap();
+
+        (store, totp_uuid, item_uuid)
+    }
+
+    /// 全链路：解锁 → 从存储解密密钥 → 生成验证码 → 自验通过
+    #[test]
+    fn full_chain_unlock_load_generate_verify() {
+        let secret = b"0123456789abcdef0123"; // 20 字节
+        let (store, totp_uuid, item_uuid) = store_with_totp(secret);
+
+        let mut session = Session::new();
+        session.unlock().unwrap();
+        session.load_totp_from_store(&store, &totp_uuid).unwrap();
+
+        // 生成 → 自验（FR-5.1 / FR-5.6 链路）
+        let code = session.generate_item_totp(&item_uuid).unwrap();
+        assert_eq!(code.len(), 6);
+        assert!(session.verify_item_totp(&item_uuid, &code).unwrap());
+
+        // 存储里取出的密钥与会话内一致（解密往返正确性）
+        let from_store = store.totp_secret(&totp_uuid).unwrap().unwrap();
+        assert_eq!(&from_store[..], secret);
+    }
+
+    /// 门禁前置：未解锁时从存储加载被拒绝
+    #[test]
+    fn load_from_store_requires_unlock() {
+        let (store, totp_uuid, _item) = store_with_totp(b"0123456789abcdef0123");
+
+        let mut session = Session::new();
+        assert_eq!(
+            session.load_totp_from_store(&store, &totp_uuid),
+            Err(SessionError::Locked)
+        );
+    }
+
+    /// 存储中不存在的记录 → 明确错误
+    #[test]
+    fn load_from_store_missing_record() {
+        let (store, _totp_uuid, _item) = store_with_totp(b"0123456789abcdef0123");
+
+        let mut session = Session::new();
+        session.unlock().unwrap();
+        assert!(matches!(
+            session.load_totp_from_store(&store, "missing-uuid"),
+            Err(SessionError::TotpSessionNotFound(_))
+        ));
+    }
+
+    /// 非 SHA-1 算法记录 → 显式拒绝（不静默按 SHA-1 计算）
+    #[test]
+    fn load_rejects_unsupported_algo() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);").unwrap();
+        let item_uuid = uuid::Uuid::from_bytes([2; 16]).to_string();
+        let totp_uuid = uuid::Uuid::from_bytes([1; 16]).to_string();
+        conn.execute("INSERT INTO items (uuid) VALUES (?1)", rusqlite::params![item_uuid]).unwrap();
+
+        let key = SessionKey::new([0x55u8; 32]);
+        let store = TotpStore::new(conn, key).unwrap();
+        store
+            .insert_totp(&totp_uuid, &item_uuid, b"0123456789abcdef0123", "sha256", 6, 30, None, None)
+            .unwrap();
+
+        let mut session = Session::new();
+        session.unlock().unwrap();
+        assert_eq!(
+            session.load_totp_from_store(&store, &totp_uuid),
+            Err(SessionError::UnsupportedAlgo("sha256".to_string()))
+        );
     }
 }

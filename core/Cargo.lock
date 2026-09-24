@@ -315,7 +315,9 @@ dependencies = [
  "cf-format",
  "cf-store",
  "cf-totp",
+ "rusqlite",
  "thiserror",
+ "uuid",
  "zeroize",
 ]
 

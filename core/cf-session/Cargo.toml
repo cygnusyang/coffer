@@ -14,3 +14,7 @@ cf-crypto = { workspace = true }
 cf-totp = { workspace = true }
 zeroize = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+rusqlite = { workspace = true }
+uuid = { workspace = true }

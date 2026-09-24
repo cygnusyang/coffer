@@ -1,0 +1,19 @@
+[package]
+name = "cf-store"
+description = "SQLite schema、加密字段读写、事务、附件分块加密、历史版本。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cf-crypto = { workspace = true }
+cf-format = { workspace = true }
+cf-domain = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+ciborium = { workspace = true }
+zeroize = { workspace = true }
+thiserror = { workspace = true }
+
+# 状态：未实现（计划 M1 阶段）

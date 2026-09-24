@@ -1,4 +1,4 @@
-# LocalVault —— Rust 核心工作区
+# Coffer —— Rust 核心工作区
 #
 # 目录划分见 docs/02-概要设计.md §2.2「工程结构」。
 #
@@ -11,22 +11,22 @@
 resolver = "2"
 members = [
     # 基础设施层
-    "lv-crypto",
-    "lv-format",
-    "lv-store",
+    "cf-crypto",
+    "cf-format",
+    "cf-store",
     # 领域层
-    "lv-domain",
+    "cf-domain",
     # 基础设施层（续）
-    "lv-importer",
-    "lv-exporter",
-    "lv-totp",
-    "lv-audit",
+    "cf-importer",
+    "cf-exporter",
+    "cf-totp",
+    "cf-audit",
     # 应用服务层
-    "lv-session",
+    "cf-session",
     # 绑定层
-    "lv-ffi",
+    "cf-ffi",
     # 测试支持
-    "lv-testkit",
+    "cf-testkit",
 ]
 
 [workspace.package]
@@ -34,8 +34,8 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/REPLACE_ME/mypassword"
-authors = ["LocalVault contributors"]
+repository = "https://github.com/REPLACE_ME/coffer"
+authors = ["Coffer contributors"]
 
 [workspace.dependencies]
 
@@ -91,16 +91,16 @@ tracing = "0.1"
 uniffi = "0.32.2"
 
 # ---------- 内部 crate 互引 ----------
-lv-crypto   = { path = "lv-crypto" }
-lv-format   = { path = "lv-format" }
-lv-store    = { path = "lv-store" }
-lv-domain   = { path = "lv-domain" }
-lv-importer = { path = "lv-importer" }
-lv-exporter = { path = "lv-exporter" }
-lv-totp     = { path = "lv-totp" }
-lv-audit    = { path = "lv-audit" }
-lv-session  = { path = "lv-session" }
-lv-ffi      = { path = "lv-ffi" }
+cf-crypto   = { path = "cf-crypto" }
+cf-format   = { path = "cf-format" }
+cf-store    = { path = "cf-store" }
+cf-domain   = { path = "cf-domain" }
+cf-importer = { path = "cf-importer" }
+cf-exporter = { path = "cf-exporter" }
+cf-totp     = { path = "cf-totp" }
+cf-audit    = { path = "cf-audit" }
+cf-session  = { path = "cf-session" }
+cf-ffi      = { path = "cf-ffi" }
 
 # ---------- Release 配置 ----------
 # 密码学场景下宁可慢一点也要保证行为正确，但 LTO 对最终二进制体积

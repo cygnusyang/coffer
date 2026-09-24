@@ -1,0 +1,17 @@
+[package]
+name = "cf-exporter"
+description = "加密备份包、1PUX 兼容格式、明文 CSV 的导出。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cf-domain = { workspace = true }
+cf-format = { workspace = true }
+cf-crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# 状态：未实现（计划 M2 阶段）

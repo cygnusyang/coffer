@@ -4,7 +4,7 @@
 inspect_1pux.py —— 安全地探查 1PUX 的结构骨架
 
 用途
-    为 LocalVault 的 1PUX 导入器校准 `categoryUuid` → 条目类型 的映射表，
+    为 Coffer 的 1PUX 导入器校准 `categoryUuid` → 条目类型 的映射表，
     并核对 details / sections / fields 的实际结构。
 
 设计原则（重要）

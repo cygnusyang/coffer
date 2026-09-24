@@ -1,6 +1,6 @@
 # 安全策略
 
-LocalVault 是一款本地密码管理器。**安全缺陷在这个品类里不是普通 bug** —— 它可能导致用户的全部凭据泄露，且后果不可逆。因此我们的处理流程比一般项目更严肃。
+Coffer 是一款本地密码管理器。**安全缺陷在这个品类里不是普通 bug** —— 它可能导致用户的全部凭据泄露，且后果不可逆。因此我们的处理流程比一般项目更严肃。
 
 ---
 
@@ -109,10 +109,10 @@ LocalVault 是一款本地密码管理器。**安全缺陷在这个品类里不�
 
 ```bash
 # Android：反编译检查权限
-aapt dump permissions LocalVault.apk
+aapt dump permissions Coffer.apk
 
 # macOS：检查 entitlements
-codesign -d --entitlements - /Applications/LocalVault.app
+codesign -d --entitlements - /Applications/Coffer.app
 
 # 核心库：检查依赖树
 cd core && cargo tree --prefix none \

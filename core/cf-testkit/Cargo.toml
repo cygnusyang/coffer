@@ -1,0 +1,15 @@
+[package]
+name = "cf-testkit"
+description = "测试夹具、合成样本生成、跨端一致性比对辅助。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cf-domain = { workspace = true }
+cf-crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 状态：未实现（计划 M1 阶段）

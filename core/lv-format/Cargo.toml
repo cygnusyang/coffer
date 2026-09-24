@@ -1,0 +1,15 @@
+[package]
+name = "lv-format"
+description = "负责库容器的结构层：头部读写、格式版本识别、格式迁移。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+lv-crypto = { workspace = true }
+serde = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+
+# 状态：未实现（计划 M1 阶段）

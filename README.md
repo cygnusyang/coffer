@@ -46,7 +46,7 @@ Coffer 要解决的问题不是"再做一个密码管理器"，而是填补一�
 | **TOTP** | 内置验证码生成（RFC 6238），当前支持 SHA-1 | ✅ 已实现，全链路测试绿 |
 | **从 1Password 迁移** | 1PUX / CSV 导入，字段映射逐项可核对、未知字段不静默丢弃；opvault 为计划项 | 导入器未实现（M2） |
 | **Passkey** | 完整能力进 v1.0（条件性，以 M0 平台验证为前提） | 平台验证未完成 |
-| **离线安全检查** | 弱密码 / 重复密码 / 弱 URL / 陈旧密码检测 | 未实现 |
+| **离线安全检查** | 弱密码 / 重复密码 / 弱 URL / 陈旧密码检测 | 🟡 仅 zxcvbn 强度评估可用，检测项未实现 |
 | **原生而非 Electron** | Android = Kotlin + Compose；macOS = Swift + SwiftUI。1Password 8 转 Electron 正是本项目要避开的 | 两端 UI 未开始 |
 | **开源 MIT** | 承诺不如可验证——这是本项目开源的理由 | ✅ |
 
@@ -106,6 +106,8 @@ Rust 工作区（`core/`）11 个 crate：
 
 **设计文档**（贡献前必读）：[01-需求分析](docs/01-需求分析.md)（做什么、不做什么）→ [02-概要设计](docs/02-概要设计.md)（架构分层）→ [03-详细设计](docs/03-详细设计.md)（格式规范、DDL、接口签名）→ [04-系统设计](docs/04-系统设计.md)（威胁模型、路线图）→ [05-Argon2id 参数标定](docs/05-Argon2id参数标定.md)。
 
+**进度追踪**：[06-开发计划](docs/06-开发计划.md)——每条需求（FR-1 ~ FR-14）做到哪一步的唯一事实源，需求状态变化须同步更新该文档。
+
 ---
 
 ## 当前状态与路线图
@@ -115,20 +117,23 @@ Rust 工作区（`core/`）11 个 crate：
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
 | **M0 技术预研** | 打通关键不确定性：UniFFI 双向打通、Argon2id 最低端设备标定、真实 1PUX 样本校准、opvault 交叉验证、Passkey 平台验证 | 🟡 **部分完成**（编译链路与 KDF 摸底已推进；三项待真实样本 / 真机） |
-| **M1 核心库** | Rust 核心完整可用：cf-crypto / cf-format / cf-domain / cf-store / cf-totp / cf-audit | 🔵 **进行中**（TOTP 全链路 55 测试绿，其余模块待实现） |
+| **M1 核心库** | Rust 核心完整可用：cf-crypto / cf-format / cf-domain / cf-store / cf-totp / cf-audit | 🔵 **进行中**（TOTP 全链路 + 加密原语 62 测试绿，其余模块待实现，逐条状态见 [06-开发计划](docs/06-开发计划.md)） |
 | **M2 导入器** | 1PUX 完整导入 + CSV 导入、预检报告、映射表校准 | ⬜ 未开始 |
 | **M3 macOS MVP** | 可日常使用的 macOS 端（**首版交付目标**） | ⬜ 未开始 |
 | **M4 macOS 完整** | 附件、opvault 导入、1PUX 导出、Passkey | ⬜ 未开始 |
 | **M5 Android 端** | 第二交付目标（v1.2 需求变更后 macOS 优先） | ⬜ 未开始 |
 
-**当前进展（2026-09-24）**：
+**当前进展（2026-09-25）**：
 
-- ✅ `cargo build` 通过，`cargo test` **55 个用例全部通过**，`cargo clippy --all-targets` 零警告
+- ✅ `cargo build` 通过，`cargo test` **62 个用例全部通过**，`cargo clippy --all-targets` 零警告
 - ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零，实现并测试通过
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通
+- 🟡 `cf-audit`：密码强度评估（zxcvbn）与基础密码生成两个函数可用；Watchtower 检测未实现
 - 🟡 Argon2id 参数：开发机摸底完成（见 `05-Argon2id参数标定.md`），**最低端设备待做**
-- ⬜ 7 个 crate 为纯占位（cf-format / cf-domain / cf-importer / cf-exporter / cf-audit / cf-ffi / cf-testkit，无任何可调用接口）；cf-store / cf-session 仅 TOTP 相关路径可用
+- ⬜ 6 个 crate 为纯占位（cf-format / cf-domain / cf-importer / cf-exporter / cf-ffi / cf-testkit，无任何可调用接口）；cf-store / cf-session 仅 TOTP 相关路径可用
 - ⬜ **导入器、完整存储引擎、两端 UI 均未实现**
+
+> 每条需求的实现状态见 [docs/06-开发计划.md](docs/06-开发计划.md)。
 
 > **现在拿不到能用的软件，没有任何可安装产物。请不要用它存真实密码。**
 > 诚实说明：TOTP 已实现，但导入器还没有；"功能对齐 1Password"是目标而非现状。
@@ -143,7 +148,7 @@ Rust 工作区（`core/`）11 个 crate：
 cd core
 
 cargo build            # 编译整个 workspace
-cargo test             # 55 个测试
+cargo test             # 62 个测试
 cargo clippy --all-targets   # 零警告
 ```
 
@@ -206,7 +211,7 @@ cargo clippy --all-targets   # 零警告
 
 | 检查项 | 结果 |
 | --- | --- |
-| `cargo test` | ✅ **55 个用例全部通过**（含 RFC 6238 标准测试向量） |
+| `cargo test` | ✅ **62 个用例全部通过**（含 RFC 6238 标准测试向量） |
 | `cargo clippy --all-targets` | ✅ **零警告** |
 | `cargo build` | ✅ 通过，无警告 |
 | 生产代码 `unsafe` / `unwrap()` / `expect()` | 🚫 编译期禁止（deny） |

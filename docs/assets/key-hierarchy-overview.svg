@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="700" viewBox="0 0 1120 700" role="img" aria-labelledby="title desc">
+<title id="title">密钥层次（信封加密）</title>
+<desc id="desc">主密码经 Argon2id 派生 KEK，KEK 解封装 wrapped_DEK 得到 DEK，再由 HKDF 派生出条目字段、附件、历史版本、元数据四把子密钥。KEK 与 DEK 仅存内存，不落盘。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>
+<rect width="1120" height="700" rx="20" fill="#f8fafc"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+<text x="40" y="49" font-size="30" fill="#0f172a" font-weight="700">密钥层次（信封加密）</text>
+<text x="40" y="82" font-size="18" fill="#64748b" font-weight="400">主密码 → Argon2id → KEK → DEK → HKDF 子密钥</text>
+<rect x="120" y="140" width="360" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="300" y="177" font-size="22" fill="#0f172a" font-weight="600" text-anchor="middle">用户主密码（人类可记忆）</text>
+<path d="M 300 204 V 244" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="316" y="228" font-size="16" fill="#475569">① 与库盐值一起送入 Argon2id</text>
+<rect x="120" y="248" width="360" height="76" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="300" y="278" font-size="22" fill="#0f172a" font-weight="600" text-anchor="middle">KEK（密钥加密密钥）</text>
+<text x="300" y="308" font-size="16" fill="#b45309" text-anchor="middle">256 bit · 仅存在于内存</text>
+<rect x="492" y="272" width="64" height="26" rx="13" fill="#fff7ed" stroke="#f59e0b"/>
+<text x="524" y="290" font-size="13" fill="#b45309" text-anchor="middle">不落盘</text>
+<path d="M 300 324 V 364" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="284" y="348" font-size="16" fill="#475569" text-anchor="end">② 用 KEK 解封装 wrapped_DEK</text>
+<rect x="120" y="368" width="360" height="76" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="300" y="398" font-size="22" fill="#0f172a" font-weight="600" text-anchor="middle">DEK（数据加密密钥）</text>
+<text x="300" y="428" font-size="16" fill="#b45309" text-anchor="middle">256 bit · 随机生成 · 仅存在于内存</text>
+<rect x="492" y="392" width="64" height="26" rx="13" fill="#fff7ed" stroke="#f59e0b"/>
+<text x="524" y="410" font-size="13" fill="#b45309" text-anchor="middle">不落盘</text>
+<path d="M 300 444 V 484" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="316" y="468" font-size="16" fill="#475569">③ HKDF 派生子密钥</text>
+<path d="M 300 484 L 161 516" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 300 484 L 427 516" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 300 484 L 693 516" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 300 484 L 959 516" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="40" y="516" width="242" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="161" y="550" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">条目字段密钥</text>
+<text x="161" y="578" font-size="15" fill="#64748b" text-anchor="middle">(item_kek)</text>
+<rect x="306" y="516" width="242" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="427" y="550" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">附件密钥</text>
+<text x="427" y="578" font-size="15" fill="#64748b" text-anchor="middle">(file_kek)</text>
+<rect x="572" y="516" width="242" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="693" y="550" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">历史版本密钥</text>
+<text x="693" y="578" font-size="15" fill="#64748b" text-anchor="middle">(hist_kek)</text>
+<rect x="838" y="516" width="242" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="959" y="550" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">元数据密钥</text>
+<text x="959" y="578" font-size="15" fill="#64748b" text-anchor="middle">(meta_kek)</text>
+<text x="40" y="648" font-size="17" fill="#475569" font-weight="400">KEK / DEK 仅存内存，不落盘；库文件只保存 salt、kdf_params、wrapped_dek、verifier。</text>
+</g></svg>

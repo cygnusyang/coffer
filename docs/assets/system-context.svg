@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1040" viewBox="0 0 1120 1040" role="img" aria-labelledby="title desc">
+<title id="title">系统上下文</title>
+<desc id="desc">用户是唯一外部实体：经操作进入 Coffer App（含互不通信的 Android 与 macOS 客户端），App 本地文件写入库目录、导入一次性读入导入源文件；用户另可搬运加密文件至外部介质，再人工搬运回导入。底部为平台系统能力与明确不存在的组件。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>
+<rect width="1120" height="1040" rx="20" fill="#f8fafc"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+<text x="40" y="49" font-size="30" fill="#0f172a" font-weight="700">系统上下文</text>
+<text x="40" y="82" font-size="18" fill="#64748b" font-weight="400">唯一外部实体：用户 · 零网络承诺</text>
+<rect x="440" y="140" width="240" height="60" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="560" y="175" font-size="22" fill="#0f172a" font-weight="600" text-anchor="middle">用户（唯一）</text>
+<path d="M 480 200 L 300 300" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="406" y="226" font-size="16" fill="#475569" text-anchor="end">操作</text>
+<path d="M 620 200 L 820 300" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="800" y="236" font-size="16" fill="#475569">搬运加密文件</text>
+<rect x="100" y="300" width="360" height="260" rx="12" fill="#eff6ff" stroke="#2563eb"/>
+<text x="132" y="338" font-size="22" fill="#0f172a" font-weight="600">Coffer App</text>
+<rect x="124" y="360" width="148" height="88" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="198" y="409" font-size="17" fill="#0f172a" font-weight="600" text-anchor="middle">Android 客户端</text>
+<rect x="288" y="360" width="148" height="88" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="362" y="409" font-size="17" fill="#0f172a" font-weight="600" text-anchor="middle">macOS 客户端</text>
+<text x="280" y="492" font-size="15" fill="#64748b" text-anchor="middle">（互不通信）</text>
+<rect x="720" y="300" width="340" height="140" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="890" y="340" font-size="20" fill="#0f172a" font-weight="600" text-anchor="middle">用户自选的外部介质</text>
+<text x="890" y="380" font-size="16" fill="#334155" text-anchor="middle">AirDrop / U盘 / 网盘 / NAS / 移动硬盘</text>
+<path d="M 220 560 V 620" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="204" y="596" font-size="16" fill="#475569" text-anchor="end">本地文件</text>
+<path d="M 430 560 L 460 620" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="476" y="596" font-size="16" fill="#475569">导入（只读，一次性）</text>
+<rect x="140" y="620" width="160" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="220" y="656" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">库目录</text>
+<text x="220" y="682" font-size="15" fill="#64748b" text-anchor="middle">(密文)</text>
+<rect x="360" y="620" width="200" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="460" y="656" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">导入源文件</text>
+<text x="460" y="682" font-size="15" fill="#64748b" text-anchor="middle">.1pux / .csv / .opvault</text>
+<path d="M 760 440 V 650 H 560" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="8 5" marker-end="url(#arrow)"/>
+<text x="660" y="640" font-size="16" fill="#475569" text-anchor="middle">人工搬运</text>
+<rect x="40" y="728" width="1040" height="76" rx="12" fill="#f0fdfa" stroke="#0d9488"/>
+<text x="560" y="760" font-size="18" fill="#0f172a" font-weight="600" text-anchor="middle">平台系统能力（只出不进）</text>
+<text x="560" y="790" font-size="16" fill="#334155" text-anchor="middle">生物识别 · 剪贴板 · 密钥库 · Autofill</text>
+<rect x="40" y="840" width="1040" height="96" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<rect x="48" y="848" width="1024" height="80" rx="8" fill="none" stroke="#dc2626" stroke-width="1"/>
+<text x="560" y="876" font-size="18" fill="#b91c1c" font-weight="600" text-anchor="middle">不存在：云服务 / 账号系统 / 服务器</text>
+<text x="560" y="912" font-size="18" fill="#b91c1c" font-weight="600" text-anchor="middle">遥测 / 更新服务 / 任何网络端点</text>
+<text x="40" y="984" font-size="17" fill="#475569" font-weight="400">系统边界内唯一外部实体是用户；不存在云服务 / 账号系统 / 服务器 / 遥测 / 更新服务 / 任何网络端点。</text>
+</g></svg>

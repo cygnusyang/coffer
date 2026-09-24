@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="820" viewBox="0 0 1120 820" role="img" aria-labelledby="title desc">
+<title id="title">完整密钥层次</title>
+<desc id="desc">主密码经 Argon2id 派生 KEK，KEK 解封装 wrapped_DEK 得到 DEK，再由 HKDF-SHA256 派生出七把 32B 子密钥。AAD 与 HKDF salt 均绑定 vault_uuid；KEK 与 DEK 仅存内存。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>
+<rect width="1120" height="820" rx="20" fill="#f8fafc"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+<text x="40" y="49" font-size="30" fill="#0f172a" font-weight="700">完整密钥层次</text>
+<text x="40" y="82" font-size="18" fill="#64748b" font-weight="400">信封加密 · 派生链：主密码 → Argon2id → KEK → DEK → HKDF-SHA256</text>
+<rect x="410" y="140" width="300" height="60" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="560" y="175" font-size="20" fill="#0f172a" font-weight="600" text-anchor="middle">主密码（UTF-8 · NFC 归一化）</text>
+<path d="M 560 200 V 248" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="380" y="248" width="360" height="76" rx="12" fill="#eff6ff" stroke="#2563eb"/>
+<text x="560" y="282" font-size="20" fill="#0f172a" font-weight="600" text-anchor="middle">Argon2id（m, t, p, salt, 32B）</text>
+<text x="560" y="312" font-size="15" fill="#2563eb" text-anchor="middle">耗时主体：目标 0.5–1.0 s</text>
+<path d="M 560 324 V 372" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="440" y="372" width="240" height="56" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="560" y="404" font-size="20" fill="#0f172a" font-weight="600" text-anchor="middle">KEK（32B）</text>
+<rect x="692" y="386" width="64" height="26" rx="13" fill="#fff7ed" stroke="#f59e0b"/>
+<text x="724" y="404" font-size="13" fill="#b45309" text-anchor="middle">不落盘</text>
+<path d="M 560 428 V 488" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="576" y="452" font-size="15" fill="#475569">XChaCha20-Poly1305 解封装</text>
+<text x="576" y="476" font-size="14" fill="#475569">AAD = b"lv/dek/v1" ‖ vault_uuid</text>
+<rect x="440" y="496" width="240" height="56" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="560" y="528" font-size="20" fill="#0f172a" font-weight="600" text-anchor="middle">DEK（32B）</text>
+<rect x="688" y="510" width="134" height="26" rx="13" fill="#fff7ed" stroke="#f59e0b"/>
+<text x="755" y="528" font-size="13" fill="#b45309" text-anchor="middle">不落盘 · 会话持有</text>
+<path d="M 560 552 V 624" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="576" y="580" font-size="15" fill="#475569">HKDF-SHA256</text>
+<text x="576" y="604" font-size="14" fill="#475569">salt = vault_uuid ‖ info</text>
+<path d="M 560 624 L 110 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 560 624 L 260 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 560 624 L 410 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 560 624 L 560 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 560 624 L 710 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 560 624 L 860 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 560 624 L 1010 664" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="42" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="110" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">meta_key</text>
+<text x="110" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<rect x="192" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="260" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">item_key</text>
+<text x="260" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<rect x="342" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="410" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">field_key</text>
+<text x="410" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<rect x="492" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="560" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">file_key</text>
+<text x="560" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<rect x="642" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="710" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">hist_key</text>
+<text x="710" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<rect x="792" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="860" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">manifest_key</text>
+<text x="860" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<rect x="942" y="664" width="136" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="1010" y="692" font-size="15" fill="#0f172a" font-weight="600" text-anchor="middle">attach_mac_key</text>
+<text x="1010" y="716" font-size="13" fill="#64748b" text-anchor="middle">(32B)</text>
+<text x="40" y="776" font-size="17" fill="#475569" font-weight="400">AAD 与 HKDF salt 均绑定 vault_uuid；子密钥全部 32B、一钥一用；KEK / DEK 仅存内存。</text>
+</g></svg>

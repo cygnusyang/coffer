@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1160" viewBox="0 0 1120 1160" role="img" aria-labelledby="title desc">
+<title id="title">Coffer 分层架构</title>
+<desc id="desc">表示层通过 UniFFI Kotlin 与 Swift 绑定进入 cf-ffi，依次连接应用服务层 cf-session、领域层 cf-domain 和基础设施层。依赖方向严格单向。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>
+<rect width="1120" height="1160" rx="20" fill="#f8fafc"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+<text x="40" y="49" font-size="30" fill="#0f172a" font-weight="700">Coffer 分层架构</text>
+<text x="40" y="80" font-size="18" fill="#64748b" font-weight="400">平台原生 UI · 单一 Rust 内核 · 单向依赖</text>
+<rect x="40" y="104" width="1040" height="264" rx="12" fill="#eff6ff" stroke="#2563eb"/>
+<text x="64" y="138" font-size="16" fill="#2563eb" font-weight="700">01</text>
+<text x="104" y="139" font-size="23" fill="#0f172a" font-weight="600">表示层</text>
+<text x="104" y="170" font-size="18" fill="#334155" font-weight="400">平台原生，不含密码学逻辑</text>
+<rect x="64" y="188" width="482" height="160" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="84" y="220" font-size="22" fill="#0f172a" font-weight="600">Android</text>
+<text x="234" y="220" font-size="18" fill="#2563eb" font-weight="400">Kotlin + Compose</text>
+<text x="84" y="254" font-size="18" fill="#334155" font-weight="400">AutofillService</text>
+<text x="84" y="286" font-size="18" fill="#334155" font-weight="400">BiometricPrompt</text>
+<text x="84" y="318" font-size="18" fill="#334155" font-weight="400">CredentialMgr · Passkey，API 34+ 起</text>
+<rect x="574" y="188" width="482" height="160" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="594" y="220" font-size="22" fill="#0f172a" font-weight="600">macOS</text>
+<text x="744" y="220" font-size="18" fill="#2563eb" font-weight="400">Swift + SwiftUI</text>
+<text x="594" y="254" font-size="18" fill="#334155" font-weight="400">菜单栏常驻</text>
+<text x="594" y="286" font-size="18" fill="#334155" font-weight="400">Touch ID</text>
+<text x="594" y="318" font-size="18" fill="#334155" font-weight="400">剪贴板注入</text>
+<path d="M 305 368 V 424" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 815 368 V 424" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="325" y="402" font-size="16" fill="#475569" font-weight="400">UniFFI 生成的 Kotlin 绑定</text>
+<text x="835" y="402" font-size="16" fill="#475569" font-weight="400">UniFFI 生成的 Swift 绑定</text>
+<rect x="40" y="428" width="1040" height="90" rx="12" fill="#eef2ff" stroke="#6366f1"/>
+<text x="64" y="462" font-size="16" fill="#6366f1" font-weight="700">02</text>
+<text x="104" y="463" font-size="23" fill="#0f172a" font-weight="600">绑定层  /  cf-ffi</text>
+<text x="104" y="494" font-size="18" fill="#334155" font-weight="400">唯一对外边界，接口冻结后需版本化</text>
+<path d="M 560 518 V 550" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="40" y="554" width="1040" height="118" rx="12" fill="#f0fdfa" stroke="#0d9488"/>
+<text x="64" y="588" font-size="16" fill="#0d9488" font-weight="700">03</text>
+<text x="104" y="589" font-size="23" fill="#0f172a" font-weight="600">应用服务层  /  cf-session</text>
+<text x="104" y="620" font-size="18" fill="#334155" font-weight="400">用例编排 · 会话生命周期 · 解锁 / 锁定 · 自动锁定计时器</text>
+<text x="104" y="651" font-size="18" fill="#334155" font-weight="400">操作权限门禁：未解锁时拒绝一切数据访问</text>
+<path d="M 560 672 V 704" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="40" y="708" width="1040" height="118" rx="12" fill="#f0fdfa" stroke="#0d9488"/>
+<text x="64" y="742" font-size="16" fill="#0d9488" font-weight="700">04</text>
+<text x="104" y="743" font-size="23" fill="#0f172a" font-weight="600">领域层  /  cf-domain</text>
+<text x="104" y="774" font-size="18" fill="#334155" font-weight="400">条目模型 · 22 类模板 · 字段类型 · 保险库模型 · 校验规则</text>
+<text x="104" y="805" font-size="18" fill="#334155" font-weight="400">纯逻辑，无 IO，无平台依赖</text>
+<path d="M 560 826 V 858" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="40" y="862" width="1040" height="238" rx="12" fill="#fff7ed" stroke="#c2410c"/>
+<text x="64" y="896" font-size="16" fill="#c2410c" font-weight="700">05</text>
+<text x="104" y="897" font-size="23" fill="#0f172a" font-weight="600">基础设施层</text>
+<text x="104" y="928" font-size="18" fill="#334155" font-weight="400">可替换，通过 trait 抽象</text>
+<rect x="64" y="944" width="224" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="78" y="969" font-size="17" fill="#0f172a" font-weight="600">cf-crypto</text>
+<text x="78" y="994" font-size="16" fill="#334155" font-weight="400">KDF · AEAD · CSPRNG</text>
+<rect x="304" y="944" width="224" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="318" y="969" font-size="17" fill="#0f172a" font-weight="600">cf-format</text>
+<text x="318" y="994" font-size="16" fill="#334155" font-weight="400">容器读写 · 序列化</text>
+<rect x="544" y="944" width="224" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="558" y="969" font-size="17" fill="#0f172a" font-weight="600">cf-store</text>
+<text x="558" y="994" font-size="16" fill="#334155" font-weight="400">SQLite + 字段加密</text>
+<rect x="784" y="944" width="272" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="798" y="969" font-size="17" fill="#0f172a" font-weight="600">cf-importer / cf-exporter</text>
+<text x="798" y="994" font-size="16" fill="#334155" font-weight="400">1PUX / CSV / opvault</text>
+<rect x="64" y="1020" width="224" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="78" y="1045" font-size="17" fill="#0f172a" font-weight="600">cf-totp</text>
+<text x="78" y="1070" font-size="16" fill="#334155" font-weight="400">RFC 6238</text>
+<rect x="304" y="1020" width="224" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="318" y="1045" font-size="17" fill="#0f172a" font-weight="600">cf-audit</text>
+<text x="318" y="1070" font-size="16" fill="#334155" font-weight="400">离线体检</text>
+<rect x="544" y="1020" width="512" height="64" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="558" y="1045" font-size="17" fill="#0f172a" font-weight="600">平台适配（trait 实现）</text>
+<text x="558" y="1070" font-size="16" fill="#334155" font-weight="400">Android Keystore / macOS Keychain</text>
+<text x="40" y="1137" font-size="17" fill="#475569" font-weight="400">依赖方向严格单向：表示层 → 绑定层 → 应用服务层 → 领域层 → 基础设施层；禁止反向依赖。</text>
+</g></svg>

@@ -83,8 +83,7 @@ impl Measurement {
 
     /// 是否落在 NFR-SEC-02 的目标区间
     fn in_target_range(&self) -> bool {
-        let m = self.mean_ms();
-        m >= TARGET_MIN_MS && m <= TARGET_MAX_MS
+        (TARGET_MIN_MS..=TARGET_MAX_MS).contains(&self.mean_ms())
     }
 }
 

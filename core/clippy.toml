@@ -1,0 +1,19 @@
+# Clippy 配置
+#
+# 背景
+#   本项目对生产代码有硬性约束：禁止 unwrap() / expect()。
+#   各 crate 的 lib.rs 顶部声明了：
+#       #![deny(clippy::unwrap_used, clippy::expect_used)]
+#
+#   但那是 **crate 级** 的 deny，会连带命中 #[cfg(test)] 模块 —— 而测试代码里
+#   panic 恰恰是期望行为（断言失败就应当让测试红）。
+#
+#   实测：首次跑 `cargo clippy --all-targets` 时，cf-crypto 因测试中的
+#   15 处 expect() 直接编译失败。
+#
+# 解决
+#   用 clippy 自带的这两个开关放行测试代码，生产代码仍受 deny 约束。
+#   这比在每个测试模块上逐个加 #[allow(...)] 更不容易漏。
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

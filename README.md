@@ -4,8 +4,8 @@
 
 面向 **Android（优先）** 与 **macOS（Apple Silicon 原生）** 两端，纯单机运行，数据永不离开设备。
 
-> **仓库目录名 `coffer` 是占位。** 项目代号为 **Coffer**，Rust crate 前缀 `cf-`。
-> 若需改名（目录、crate 前缀、README 标题），请在 M0 阶段一次性完成——之后成本会快速上升。
+> **命名**：仓库目录 `coffer` · 项目代号 **Coffer** · Rust crate 前缀 `cf-`。
+> 改名已于 2026-09-24 完成 —— 当时跨 crate 代码引用仅有 1 处，是成本最低的时机。
 
 ---
 
@@ -15,26 +15,36 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 设计文档（4 份） | ✅ 完成 |
-| Rust workspace 骨架 | 🟡 目录与 11 个 crate 就位 |
-| `cf-crypto`（KDF 部分） | 🟡 代码已写，**未经编译验证** |
+| 设计文档（4 份 + 标定报告） | ✅ 完成 |
+| Rust 工具链 | ✅ 1.98.1（rustup 安装） |
+| Rust workspace 骨架 | ✅ 11 个 crate 就位 |
+| **`cf-crypto`（KDF 模块）** | ✅ **编译通过、8 个测试全绿、clippy 无警告** |
+| **Argon2id 参数标定** | 🟡 开发机摸底完成，**最低端设备待做** |
 | 其余 10 个 crate | ⬜ 仅占位（无任何可调用接口） |
 | Android 端 | ⬜ 未开始（M3） |
 | macOS 端 | ⬜ 未开始（M5） |
-| **Rust 工具链** | ❌ **当前开发机未安装** |
 | 安全审计 | ⬜ 未开始（计划两阶段，见 `docs/04-系统设计.md` §12.5） |
 
 ### 必须明确的两件事
 
-**1. 代码现在还不能构建。**
+**1. 能编译、能测试，但远不是可用的软件。**
 
-当前开发机未安装 Rust 工具链，`core/cf-crypto` 的代码是依据 `argon2` 0.6.0 与 `chacha20poly1305` 0.11.0 的**官方文档**编写的，但**没有经过 `cargo build` 验证**。已知需要校准的 API 细节写在 `core/cf-crypto/src/kdf.rs` 的模块注释顶部。
+截至 2026-09-24：
 
-`cf-crypto` 中有一个 `STATUS` 常量与配套测试，专门用来防止「看起来做过了」—— 它会在有人把状态标成"已验证"时强制留下一次显式决策痕迹。
+| 检查项 | 结果 |
+| --- | --- |
+| `cargo build` | ✅ 通过，无警告 |
+| `cargo test` | ✅ 8 个用例全部通过 |
+| `cargo clippy --all-targets` | ✅ 无警告 |
+| 工具链 | rustc 1.98.1 (2026-09-01)，aarch64-apple-darwin |
+
+但**只有 `cf-crypto` 的 KDF 模块有实质实现**。AEAD、存储引擎、导入器、会话管理、两端 UI 全部未写 —— 其余 10 个 crate 是空占位。
+
+> 一个值得记录的细节：这批代码最初是在**没有 Rust 工具链**的机器上、依据官方文档写成的。装上工具链后**一次编译通过**，没有出现任何 API 不匹配。
 
 **2. 现在拿不到能用的软件。**
 
-这是一个刚开工的项目，没有可安装的产物。**请不要用它存真实密码。**
+没有任何可安装的产物。**请不要用它存真实密码。**
 
 ---
 
@@ -68,11 +78,12 @@ coffer/
 │   ├── 01-需求分析.md               做什么、不做什么、为什么
 │   ├── 02-概要设计.md               分层架构、模块职责、技术选型
 │   ├── 03-详细设计.md               格式规范、DDL、算法、接口签名
-│   └── 04-系统设计.md               运行时、部署、发布、威胁模型、路线图
+│   ├── 04-系统设计.md               运行时、部署、发布、威胁模型、路线图
+│   └── 05-Argon2id参数标定.md       M0 标定报告（环境 + 逐档数据 + 分析）
 ├── core/                            Rust 工作区
 │   ├── Cargo.toml                   workspace 定义（依赖版本含校准状态标注）
 │   ├── rust-toolchain.toml
-│   ├── cf-crypto/                   🟡 KDF 已写（未编译验证）
+│   ├── cf-crypto/                   ✅ KDF 已实现，8 个测试通过
 │   ├── cf-domain/                   ⬜ 占位
 │   ├── cf-format/                   ⬜ 占位
 │   ├── cf-store/                    ⬜ 占位
@@ -96,24 +107,23 @@ coffer/
 
 ## 快速开始
 
-### 第 0 步：安装 Rust 工具链
+### 第 0 步：Rust 工具链（已安装）
 
-**当前开发机未安装。** 安装方式（任选其一）：
+✅ `rustc 1.98.1 (2026-09-01)` / `cargo 1.98.1`，通过 rustup 以 **`--no-modify-path`**
+方式安装，**没有修改你的 shell 配置**。
 
-```bash
-# 方式一：官方 rustup（推荐）
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# 方式二：Homebrew
-brew install rustup-init && rustup-init
-```
-
-安装后确认：
+因此新开终端需先启用 PATH：
 
 ```bash
-rustc --version    # 需要 >= 1.85（由 getrandom 0.4.3 的 MSRV 决定）
-cargo --version
+. "$HOME/.cargo/env"
 ```
+
+> **希望全局可用**：在 `~/.zshrc` 末尾追加一行
+> `[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"`
+>
+> **完全卸载**：`rustup self uninstall`
+>
+> 版本要求 ≥ 1.85（由 `getrandom` 0.4.3 的 MSRV 决定）。
 
 ### 第 1 步：编译并校准 API
 
@@ -150,12 +160,12 @@ cargo run --release --example bench_kdf
 
 ## M0 待办（五项，必须时间盒）
 
-| # | 事项 | 当前可做？ |
+| # | 事项 | 进度 |
 | --- | --- | --- |
-| ① | 用真实 1PUX 样本校准 `categoryUuid` 映射表 | ⏸ 需真实样本（见下） |
-| ② | UniFFI 在 Android + macOS 双向打通 | ⏸ 需先装 Rust |
-| ③ | 在**最低端目标设备**上标定 Argon2id 参数 | ⏸ 需先装 Rust；且必须用低端设备 |
-| ④ | 用第三方实现交叉验证 opvault 解密 | ⏸ 需样本 |
+| ① | 用真实 1PUX 样本校准 `categoryUuid` 映射表 | ⏸ 待真实样本（见下） |
+| ② | UniFFI 在 Android + macOS 双向打通 | ▶ **可立即开始**（Rust 已就绪） |
+| ③ | 在**最低端目标设备**上标定 Argon2id 参数 | 🟡 **开发机摸底已完成**（见 `docs/05-Argon2id参数标定.md`），低端设备待做 |
+| ④ | 用第三方实现交叉验证 opvault 解密 | ⏸ 待样本 |
 | ⑤ | **Passkey 平台能力验证**（两端各跑通创建与断言） | ⏸ 需真机 |
 
 **M0 必须时间盒**：设定期限，到期无论结论如何都要做决策（继续 / 调整方案 / 放弃某功能），避免在不确定性上无限期打转。

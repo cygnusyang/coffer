@@ -34,7 +34,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
-use crate::error::LvCryptoError;
+use crate::error::CfCryptoError;
 
 // ---------------------------------------------------------------- 常量
 
@@ -88,7 +88,7 @@ pub struct KdfParams {
 
 impl KdfParams {
     /// 构造参数组并立即校验。
-    pub fn new(m_cost_kib: u32, t_cost: u32, p_cost: u32) -> Result<Self, LvCryptoError> {
+    pub fn new(m_cost_kib: u32, t_cost: u32, p_cost: u32) -> Result<Self, CfCryptoError> {
         let p = Self {
             m_cost_kib,
             t_cost,
@@ -107,27 +107,27 @@ impl KdfParams {
     ///
     /// **必须在解锁流程中调用**（而不仅在创建库时）：参数来自库文件，
     /// 而库文件可能被篡改。
-    pub fn validate(&self) -> Result<(), LvCryptoError> {
+    pub fn validate(&self) -> Result<(), CfCryptoError> {
         if self.m_cost_kib < MIN_M_COST_KIB {
-            return Err(LvCryptoError::InvalidParams(format!(
+            return Err(CfCryptoError::InvalidParams(format!(
                 "m_cost 低于下限：{} KiB < {} KiB",
                 self.m_cost_kib, MIN_M_COST_KIB
             )));
         }
         if self.m_cost_kib > MAX_M_COST_KIB {
-            return Err(LvCryptoError::InvalidParams(format!(
+            return Err(CfCryptoError::InvalidParams(format!(
                 "m_cost 超出上限：{} KiB > {} KiB",
                 self.m_cost_kib, MAX_M_COST_KIB
             )));
         }
         if !(MIN_T_COST..=MAX_T_COST).contains(&self.t_cost) {
-            return Err(LvCryptoError::InvalidParams(format!(
+            return Err(CfCryptoError::InvalidParams(format!(
                 "t_cost 越界：{}（允许 {MIN_T_COST}..={MAX_T_COST}）",
                 self.t_cost
             )));
         }
         if !(MIN_P_COST..=MAX_P_COST).contains(&self.p_cost) {
-            return Err(LvCryptoError::InvalidParams(format!(
+            return Err(CfCryptoError::InvalidParams(format!(
                 "p_cost 越界：{}（允许 {MIN_P_COST}..={MAX_P_COST}）",
                 self.p_cost
             )));
@@ -197,13 +197,13 @@ pub fn derive_key(
     password: &str,
     salt: &[u8],
     params: KdfParams,
-) -> Result<Zeroizing<[u8; KEY_LEN]>, LvCryptoError> {
+) -> Result<Zeroizing<[u8; KEY_LEN]>, CfCryptoError> {
     // 1. 参数校验 —— 参数来自库文件，而库文件可能被篡改
     params.validate()?;
 
     // 2. 盐长度校验
     if salt.len() != SALT_LEN {
-        return Err(LvCryptoError::InvalidLength(format!(
+        return Err(CfCryptoError::InvalidLength(format!(
             "盐长度必须为 {SALT_LEN} 字节，实际为 {}",
             salt.len()
         )));
@@ -219,7 +219,7 @@ pub fn derive_key(
         params.p_cost,
         Some(KEY_LEN),
     )
-    .map_err(|e| LvCryptoError::InvalidParams(e.to_string()))?;
+    .map_err(|e| CfCryptoError::InvalidParams(e.to_string()))?;
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
 
@@ -227,7 +227,7 @@ pub fn derive_key(
     let mut out = Zeroizing::new([0u8; KEY_LEN]);
     argon2
         .hash_password_into(normalized.as_bytes(), salt, out.as_mut())
-        .map_err(|_| LvCryptoError::KdfFailed)?;
+        .map_err(|_| CfCryptoError::KdfFailed)?;
 
     Ok(out)
 }
@@ -240,7 +240,7 @@ pub fn measure_once(
     password: &str,
     salt: &[u8],
     params: KdfParams,
-) -> Result<Duration, LvCryptoError> {
+) -> Result<Duration, CfCryptoError> {
     let start = Instant::now();
     let _key = derive_key(password, salt, params)?;
     Ok(start.elapsed())
@@ -265,10 +265,10 @@ pub fn measure_once(
 ///
 /// 随机源失败时**直接返回错误，不降级**。本项目的安全性完全建立在
 /// CSPRNG 之上，用弱随机源"兜底"比直接失败危险得多。
-pub fn random_salt() -> Result<[u8; SALT_LEN], LvCryptoError> {
+pub fn random_salt() -> Result<[u8; SALT_LEN], CfCryptoError> {
     let mut salt = [0u8; SALT_LEN];
     getrandom::fill(&mut salt)
-        .map_err(|e| LvCryptoError::RandomUnavailable(e.to_string()))?;
+        .map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
     Ok(salt)
 }
 
@@ -362,7 +362,7 @@ mod tests {
         let short_salt = [0u8; 16];
 
         let err = derive_key("password", &short_salt, params);
-        assert!(matches!(err, Err(LvCryptoError::InvalidLength(_))));
+        assert!(matches!(err, Err(CfCryptoError::InvalidLength(_))));
     }
 
     #[test]

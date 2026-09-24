@@ -56,7 +56,11 @@ def build_patterns(new_name: str, new_prefix: str) -> list[tuple[str, str]]:
         (f"{OLD_PREFIX}-", f"{new_prefix}-"),
         # 4. crate 前缀：Rust 代码引用用下划线
         (f"{OLD_PREFIX}_", f"{new_prefix}_"),
-        # 5. 大写前缀（常量、环境变量等，若存在）
+        # 5. PascalCase 前缀：类型名前缀，如 LvCryptoError → CfCryptoError
+        #    ⚠️ 这一条最容易漏。首次改名时就漏了它，导致 LvCryptoError 未被替换 ——
+        #    因为 "Lv" 既不等于 "lv-" 也不等于 "lv_"，前 4 条模式全都匹配不上。
+        (OLD_PREFIX.capitalize(), new_prefix.capitalize()),
+        # 6. 全大写前缀（常量、环境变量等，若存在）
         (f"{OLD_PREFIX.upper()}_", f"{new_prefix.upper()}_"),
     ]
     # 长串优先：防止 "lv-" 先在 "lv-crypto" 中命中而影响后续判断

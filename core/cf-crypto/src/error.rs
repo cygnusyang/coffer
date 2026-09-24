@@ -10,7 +10,7 @@ use thiserror::Error;
 ///
 /// 错误码的对外映射见 `docs/03-详细设计.md` §12。
 #[derive(Debug, Error)]
-pub enum LvCryptoError {
+pub enum CfCryptoError {
     /// KDF 参数非法（越界、为零、组合不合法等）。
     ///
     /// 触发场景包括：解析 `header.json` 时发现参数被篡改为极端值。

@@ -250,12 +250,25 @@ pub fn measure_once(
 ///
 /// 用 `getrandom` 直接取操作系统 CSPRNG（见 `docs/02-概要设计.md` §3）。
 ///
-/// ⚠️ 待校准：`getrandom` 0.4 的 API 与 0.2/0.3 差异较大，
-/// 使用前请核对 `docs.rs/getrandom/0.4.3`。
+/// # ✅ API 已确认
+///
+/// `getrandom` 0.4 的函数名为 **`fill(&mut buf)`**，返回 `Result<(), Error>`。
+/// 0.2 时代该函数名为 `getrandom(&mut buf)`，已改名 —— 这是跨大版本时
+/// 最容易踩的一个坑。官方示例：
+///
+/// ```ignore
+/// let mut buf = [0u8; 16];
+/// getrandom::fill(&mut buf)?;
+/// ```
+///
+/// # 失败处理
+///
+/// 随机源失败时**直接返回错误，不降级**。本项目的安全性完全建立在
+/// CSPRNG 之上，用弱随机源"兜底"比直接失败危险得多。
 pub fn random_salt() -> Result<[u8; SALT_LEN], LvCryptoError> {
     let mut salt = [0u8; SALT_LEN];
     getrandom::fill(&mut salt)
-        .map_err(|e| LvCryptoError::InvalidParams(format!("CSPRNG 不可用：{e}")))?;
+        .map_err(|e| LvCryptoError::RandomUnavailable(e.to_string()))?;
     Ok(salt)
 }
 

@@ -28,4 +28,12 @@ pub enum LvCryptoError {
     /// 输入长度不合法（如盐长度不符）。
     #[error("输入长度不合法：{0}")]
     InvalidLength(String),
+
+    /// 系统密码学随机源不可用。
+    ///
+    /// 这是极罕见但不可忽略的情况：`getrandom` 在熵不足时可能返回错误
+    /// （见其文档「Early boot」一节）。本项目的安全完全建立在 CSPRNG 之上，
+    /// 因此**绝不能**在随机源失败时降级到一个弱随机源。
+    #[error("系统随机源不可用：{0}")]
+    RandomUnavailable(String),
 }

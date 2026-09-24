@@ -10,13 +10,13 @@
 
 ```
 macos/
-├── LocalVault.xcodeproj
-├── LocalVault/                SwiftUI 应用
+├── Coffer.xcodeproj
+├── Coffer/                SwiftUI 应用
 │   ├── Views/
 │   ├── Platform/              平台适配（Keychain / Touch ID / 剪贴板）
 │   └── PasskeyExtension/       凭据提供者扩展（macOS 14+）
 ├── CoreBindings/              UniFFI 生成的 Swift 绑定
-└── Frameworks/                liblv_ffi.a + modulemap
+└── Frameworks/                libcf_ffi.a + modulemap
 ```
 
 详见 `docs/02-概要设计.md` §2.2。
@@ -28,7 +28,7 @@ macos/
 ### 1. Entitlements（安全承诺的技术基础）
 
 ```xml
-<!-- LocalVault.entitlements -->
+<!-- Coffer.entitlements -->
 <key>com.apple.security.app-sandbox</key>                    <true/>
 <key>com.apple.security.files.user-selected.read-write</key> <true/>
 <key>com.apple.security.device.biometric</key>               <true/>
@@ -40,7 +40,7 @@ macos/
 
 **不授予 network entitlement 是 macOS 侧"零网络"的技术保证。** Hardened Runtime 下不给该权限，App 无法发起网络连接（系统层面拒绝）。
 
-验收时必须确认：`codesign -d --entitlements - LocalVault.app`
+验收时必须确认：`codesign -d --entitlements - Coffer.app`
 
 ### 2. Keychain 的 `ThisDeviceOnly`（隐蔽的数据外流通道）
 
@@ -84,7 +84,7 @@ macOS **没有** Android 那样的系统级 Autofill 框架，第三方 App 无�
 ```
 core/ (Rust)
   └─ cargo build --release --target aarch64-apple-darwin
-       └─ liblv_ffi.a (staticlib)
+       └─ libcf_ffi.a (staticlib)
             ├─ UniFFI 生成 Swift 绑定
             └─ 链接进 Xcode 工程
                  └─ codesign --options runtime → notarytool submit → stapler staple

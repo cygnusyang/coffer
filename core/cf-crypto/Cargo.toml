@@ -1,0 +1,17 @@
+[package]
+name = "cf-crypto"
+description = "Coffer 加密原语封装：Argon2id KDF、XChaCha20-Poly1305 AEAD、CSPRNG、内存清零"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2 = { workspace = true }
+zeroize = { workspace = true }
+unicode-normalization = { workspace = true }
+getrandom = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# 基准测试（examples/bench_kdf.rs）只使用 std::time，无外部依赖

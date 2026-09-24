@@ -1,10 +1,10 @@
-# LocalVault
+# Coffer
 
 > 一个功能对齐 1Password 8、但**完整移除了网络能力**的本地密码管理器。
 
 面向 **Android（优先）** 与 **macOS（Apple Silicon 原生）** 两端，纯单机运行，数据永不离开设备。
 
-> **仓库目录名 `mypassword` 是占位。** 项目代号为 **LocalVault**，Rust crate 前缀 `lv-`。
+> **仓库目录名 `coffer` 是占位。** 项目代号为 **Coffer**，Rust crate 前缀 `cf-`。
 > 若需改名（目录、crate 前缀、README 标题），请在 M0 阶段一次性完成——之后成本会快速上升。
 
 ---
@@ -17,7 +17,7 @@
 | --- | --- |
 | 设计文档（4 份） | ✅ 完成 |
 | Rust workspace 骨架 | 🟡 目录与 11 个 crate 就位 |
-| `lv-crypto`（KDF 部分） | 🟡 代码已写，**未经编译验证** |
+| `cf-crypto`（KDF 部分） | 🟡 代码已写，**未经编译验证** |
 | 其余 10 个 crate | ⬜ 仅占位（无任何可调用接口） |
 | Android 端 | ⬜ 未开始（M3） |
 | macOS 端 | ⬜ 未开始（M5） |
@@ -28,9 +28,9 @@
 
 **1. 代码现在还不能构建。**
 
-当前开发机未安装 Rust 工具链，`core/lv-crypto` 的代码是依据 `argon2` 0.6.0 与 `chacha20poly1305` 0.11.0 的**官方文档**编写的，但**没有经过 `cargo build` 验证**。已知需要校准的 API 细节写在 `core/lv-crypto/src/kdf.rs` 的模块注释顶部。
+当前开发机未安装 Rust 工具链，`core/cf-crypto` 的代码是依据 `argon2` 0.6.0 与 `chacha20poly1305` 0.11.0 的**官方文档**编写的，但**没有经过 `cargo build` 验证**。已知需要校准的 API 细节写在 `core/cf-crypto/src/kdf.rs` 的模块注释顶部。
 
-`lv-crypto` 中有一个 `STATUS` 常量与配套测试，专门用来防止「看起来做过了」—— 它会在有人把状态标成"已验证"时强制留下一次显式决策痕迹。
+`cf-crypto` 中有一个 `STATUS` 常量与配套测试，专门用来防止「看起来做过了」—— 它会在有人把状态标成"已验证"时强制留下一次显式决策痕迹。
 
 **2. 现在拿不到能用的软件。**
 
@@ -42,7 +42,7 @@
 
 1Password 从 8.0 版本起**删除了本地独立保险库**（standalone vault），转为纯云架构，官方明确表示该功能不会回归。第三方评测至今仍把「无法本地托管保险库」列为其主要缺陷。
 
-LocalVault 要填的就是这个空位：**要 1Password 的功能，不要 1Password 的云。**
+Coffer 要填的就是这个空位：**要 1Password 的功能，不要 1Password 的云。**
 
 三个关键承诺：
 
@@ -57,7 +57,7 @@ LocalVault 要填的就是这个空位：**要 1Password 的功能，不要 1Pas
 ## 目录结构
 
 ```
-mypassword/
+coffer/
 ├── README.md                      ← 你在这里
 ├── CLA.md                           贡献者许可协议（保留再许可权）
 ├── LICENSE                          MIT
@@ -72,17 +72,17 @@ mypassword/
 ├── core/                            Rust 工作区
 │   ├── Cargo.toml                   workspace 定义（依赖版本含校准状态标注）
 │   ├── rust-toolchain.toml
-│   ├── lv-crypto/                   🟡 KDF 已写（未编译验证）
-│   ├── lv-domain/                   ⬜ 占位
-│   ├── lv-format/                   ⬜ 占位
-│   ├── lv-store/                    ⬜ 占位
-│   ├── lv-importer/                 ⬜ 占位
-│   ├── lv-exporter/                 ⬜ 占位
-│   ├── lv-totp/                     ⬜ 占位
-│   ├── lv-audit/                    ⬜ 占位
-│   ├── lv-session/                  ⬜ 占位
-│   ├── lv-ffi/                      ⬜ 占位
-│   └── lv-testkit/                  ⬜ 占位
+│   ├── cf-crypto/                   🟡 KDF 已写（未编译验证）
+│   ├── cf-domain/                   ⬜ 占位
+│   ├── cf-format/                   ⬜ 占位
+│   ├── cf-store/                    ⬜ 占位
+│   ├── cf-importer/                 ⬜ 占位
+│   ├── cf-exporter/                 ⬜ 占位
+│   ├── cf-totp/                     ⬜ 占位
+│   ├── cf-audit/                    ⬜ 占位
+│   ├── cf-session/                  ⬜ 占位
+│   ├── cf-ffi/                      ⬜ 占位
+│   └── cf-testkit/                  ⬜ 占位
 ├── android/                         未开始（M3）
 ├── macos/                           未开始（M5）
 ├── tools/
@@ -122,7 +122,7 @@ cd core
 cargo build
 ```
 
-⚠️ **第一次 `cargo build` 大概率会报错，这是预期内的。** 需要校准的点已在 `core/lv-crypto/src/kdf.rs` 顶部列出（`Params::new` 的签名、`m_cost` 单位、枚举变体名）。校准方法：
+⚠️ **第一次 `cargo build` 大概率会报错，这是预期内的。** 需要校准的点已在 `core/cf-crypto/src/kdf.rs` 顶部列出（`Params::new` 的签名、`m_cost` 单位、枚举变体名）。校准方法：
 
 ```bash
 # 用 cargo 查实际 API，而不是猜
@@ -220,10 +220,10 @@ python3 tools/inspect_1pux.py <你的导出文件>.1pux > report.md
 
 ```bash
 # Android：反编译确认无 INTERNET 权限
-aapt dump permissions LocalVault.apk
+aapt dump permissions Coffer.apk
 
 # macOS：确认无 network entitlement
-codesign -d --entitlements - /Applications/LocalVault.app
+codesign -d --entitlements - /Applications/Coffer.app
 
 # 核心库：确认依赖树中无网络 crate
 cd core && cargo tree --prefix none \
@@ -243,6 +243,6 @@ cd core && cargo tree --prefix none \
 
 ## 许可证
 
-[MIT](LICENSE)。Copyright (c) 2026 LocalVault contributors.
+[MIT](LICENSE)。Copyright (c) 2026 Coffer contributors.
 
 本项目与 AgileBits Inc.（1Password 的开发方）**无任何关联**，也未获其授权或背书。「1Password」是其商标，本项目仅在对数据格式做互操作性描述时提及。

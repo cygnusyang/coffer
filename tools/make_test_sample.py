@@ -259,7 +259,7 @@ def main():
 
     attrs = {
         "version": 3,
-        "description": "LocalVault SYNTHETIC test sample - NOT real 1Password data",
+        "description": "Coffer SYNTHETIC test sample - NOT real 1Password data",
         "createdAt": 1790000000,
     }
 

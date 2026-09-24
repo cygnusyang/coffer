@@ -1,0 +1,14 @@
+[package]
+name = "cf-audit"
+description = "弱密码 / 重复密码 / 弱 URL / 陈旧密码检测，产出体检报告。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cf-domain = { workspace = true }
+cf-crypto = { workspace = true }
+thiserror = { workspace = true }
+
+# 状态：未实现（计划 M1 阶段）

@@ -13,6 +13,7 @@ cf-format = { workspace = true }
 cf-crypto = { workspace = true }
 cf-totp = { workspace = true }
 zeroize = { workspace = true }
+subtle = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

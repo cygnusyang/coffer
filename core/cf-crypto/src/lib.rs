@@ -35,14 +35,20 @@
 //! 对 `Params::new` 的签名、`Algorithm::Argon2id` / `Version::V0x13` 的变体名、
 //! 以及 `getrandom::fill` 的跨版本改名判断都是正确的。
 //!
+//! ## 已实现的部分
+//!
+//! - **KDF（Argon2id）** —— 见 `docs/03-详细设计.md` §2.3
+//! - **AEAD（XChaCha20-Poly1305）** —— 见 `docs/03-详细设计.md` §2.5，
+//!   入口集中在 [`aead`] 模块（`seal` / `open` / `build_field_aad` / `SessionKey`），
+//!   上层一律通过该模块，不得直接依赖 `chacha20poly1305` crate
+//!
 //! ## 尚未实现的部分
 //!
-//! - **AEAD（XChaCha20-Poly1305）** —— 属 M1 内容，见 `docs/03-详细设计.md` §2.5
 //! - **Argon2id 参数标定** —— M0 第 ③ 项，用 `examples/bench_kdf.rs` 执行
 //! - **HKDF 子密钥派生** —— 属 M1 内容，见 `docs/03-详细设计.md` §2.4
 //!
-//! 也就是说：`STATUS` 为 `Verified` 指的是**当前已实现的 KDF 模块**，
-//! 不代表整个 `cf-crypto` 完工。
+//! 也就是说：`STATUS` 为 `Verified` 指的是**当前已实现的 KDF + AEAD 模块**，
+//! 不代表整个 `cf-crypto` 完工（HKDF 等仍待实现）。
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
@@ -83,7 +89,7 @@ pub enum ImplementationStatus {
 ///
 /// # 注意本常量的粒度
 ///
-/// 它描述的是 **`cf-crypto` 中已实现的部分**（当前仅 KDF 模块），
-/// **不代表 AEAD 等其他 M1 内容已完成**。新增模块时请勿误用此常量，
+/// 它描述的是 **`cf-crypto` 中已实现的部分**（当前为 KDF + AEAD 模块），
+/// **不代表 HKDF 等尚未实现的内容已完成**。新增模块时请勿误用此常量，
 /// 必要时为每个模块单独标注状态。
 pub const STATUS: ImplementationStatus = ImplementationStatus::Verified;

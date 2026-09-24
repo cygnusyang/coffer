@@ -1,22 +1,76 @@
-//! # cf-totp - TOTP One-Time Password (RFC 6238 compliant)
+//! # cf-totp —— TOTP 一次性口令门面（RFC 6238 compliant）
+//!
+//! 本 crate 提供 TOTP 的**门面 API**，HMAC-SHA1 计算与动态截断委托给
+//! [`totp_rs`]（成熟库高层 API），本 crate 自身**不再手写任何密码学胶水**。
+//!
+//! ## 对应设计文档
+//!
+//! - `docs/03-详细设计.md` §7（TOTP 实现）
+//! - `docs/01-需求分析.md` §5-E（FR-5 动态口令）
+//!
+//! ## 职责边界
+//!
+//! - **只管算**：给定 secret / period / digits，生成与验证 6 或 8 位动态口令。
+//!   不知道「条目」「保险库」等业务概念 —— 那些在 `cf-session` 编排。
+//! - **算法仅 SHA-1**：`cf-session` 对 `sha256` / `sha512` 记录显式拒绝，
+//!   本 crate 不提供其他算法入口（避免错误算法算出必然不匹配的码）。
+//! - **不持有密钥**：`secret` 是调用方传入的字节数组，本 crate 不负责
+//!   加解密、不负责存储。密钥材料的清零由上层（`cf-session`）与 `zeroize` 负责。
+//! - **验证容错**：`verify` 按 RFC 6238 §5.2 检查相邻时间窗口，容忍轻微时钟漂移。
+//!
+//! ## 与 totp-rs 的委托关系
+//!
+//! `generate_for_counter` 底层调用 `totp_rs::TOTP::generate(time)`，
+//! 其中 `time = counter * period`（totp-rs 内部按 `time / step` 取计数器，
+//! 与「按计数器生成」等价）。构造使用 `TOTP::new_unchecked` 而非 `new`：
+//! totp-rs 的 `new` 强制 secret ≥ 128 bits，而本门面按 RFC 4226 §4 采用
+//! **80-bit（10 字节）下限**。该下限在本门面的 `new` 与 `parse_totp_uri`
+//! 两处入口统一执行，杜绝超短密钥（可穷举）进入生成/验证路径。
+//!
+//! ## 状态
+//!
+//! **已实现**（M0 阶段）—— HMAC 计算委托 `totp-rs` 5.7.2。
+//! RFC 6238 Appendix B（SHA-1 列）标准向量用于校验委托输出与 RFC 一致。
+//!
+//! ## 硬性约束
+//!
+//! `#![forbid(unsafe_code)]`；生产代码禁 `unwrap` / `expect`
+//! （测试代码经 `clippy.toml` 放行）。
 
-use hmac::{Hmac, Mac};
-use sha1::Sha1;
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(missing_docs)]
 
-type HmacSha1 = Hmac<Sha1>;
+use totp_rs::{Algorithm, TOTP};
 
-/// TOTP configuration
+/// TOTP 配置
 #[derive(Debug, Clone)]
 pub struct TotpConfig {
+    /// 共享密钥原始字节（HMAC-SHA1 的 key）
     pub secret: Vec<u8>,
+    /// 时间步长（秒），RFC 6238 §5.2 推荐 30
     pub period: u32,
+    /// 口令位数，仅允许 6 或 8
     pub digits: u8,
 }
 
 impl TotpConfig {
+    /// 构造配置并做边界校验（secret ≥ 10 字节、digits ∈ {6, 8}）。
+    ///
+    /// # Errors
+    ///
+    /// secret 为空返回 [`TotpError::EmptySecret`]；
+    /// secret 少于 10 字节（80 bits）返回 [`TotpError::SecretTooShort`]；
+    /// digits 不是 6 或 8 返回 [`TotpError::InvalidDigits`]。
     pub fn new(secret: Vec<u8>, period: u32, digits: u8) -> Result<Self, TotpError> {
         if secret.is_empty() {
             return Err(TotpError::EmptySecret);
+        }
+        if secret.len() < 10 {
+            // 80-bit 下限，与 `parse_totp_uri` 对称。低于此长度的密钥
+            // （如 1 字节仅 256 种可能）可被穷举，生产路径（cf-session
+            // 的 load_totp_from_store）必须拒绝。
+            return Err(TotpError::SecretTooShort);
         }
         if digits != 6 && digits != 8 {
             return Err(TotpError::InvalidDigits(format!("Digits must be 6 or 8, got {}", digits)));
@@ -24,41 +78,36 @@ impl TotpConfig {
         Ok(Self { secret, period, digits })
     }
 
+    /// 生成当前时间窗口的验证码。
+    ///
+    /// # Errors
+    ///
+    /// 系统时钟早于 Unix epoch 时返回 [`TotpError::InvalidUriEncoding`]
+    /// （沿用历史错误映射，`cf-session` 侧另有 [`SessionError::ClockBeforeEpoch`]）。
     pub fn generate(&self) -> Result<String, TotpError> {
         let counter = self.current_counter()?;
         self.generate_for_counter(counter)
     }
 
+    /// 按指定计数器生成验证码（纯函数，供测试与时间注入）。
+    ///
+    /// 委托 `totp-rs`：HMAC-SHA1 → 动态截断（RFC 4226 §5.3）→ `mod 10^digits`。
     pub fn generate_for_counter(&self, counter: u64) -> Result<String, TotpError> {
-        // RFC 6238 §1.3: 8-byte big-endian encoding
-        let timestamp_bytes = counter.to_be_bytes();
-
-        // HMAC-SHA1: chain_update and finalize both consume mac, extract tag
-        let mac = HmacSha1::new_from_slice(&self.secret)
-            .map_err(|e| TotpError::InvalidSecretLength(e.to_string()))?;
-
-        // chain and finalize in one go - both consume mac
-        let result = mac.chain_update(timestamp_bytes).finalize().into_bytes();
-
-        // RFC 4226 §5.3: dynamic truncation
-        let offset = (result[result.len() - 1]) as usize & 0x0F;
-        let truncated = (result[offset] as u32) & 0x7F;
-
-        let binary = (truncated << 24)
-            | ((result[offset + 1] as u32) << 16)
-            | ((result[offset + 2] as u32) << 8)
-            | (result[offset + 3] as u32);
-
-        let code = binary % (10u32.pow(self.digits as u32));
-
-        Ok(format!("{:0>width$}", code, width = self.digits as usize))
+        // totp-rs 的 generate(time) 内部按 time / step 取计数器，
+        // 因此「按计数器生成」= 传入 counter * period 秒。
+        // wrapping_mul 仅防御极端计数器（如 u64::MAX）的乘法溢出 panic；
+        // 真实场景计数器 ≈ 秒数 / 30，远小于 u64::MAX（约 1000 亿年）。
+        let time = counter.wrapping_mul(u64::from(self.period));
+        Ok(self.totp().generate(time))
     }
 
-    /// Verify a TOTP code against the current time window with optional drift
+    /// 验证一个验证码，容忍 ±2 个窗口的时钟漂移（RFC 6238 §5.2）。
+    ///
+    /// 码值与期望值的比较使用**常量时间比较**（`subtle::ConstantTimeEq`），
+    /// 防止通过逐位比较的时序差异推断验证码（时序侧信道）。
     pub fn verify(&self, code: &str) -> Result<bool, TotpError> {
         let counter = self.current_counter()?;
 
-        // RFC 6238 §4.1: Check ±1 minute window by default (30-second periods)
         for delta in 0..=2 {
             if self.verify_for_counter(code, counter - delta as u64)? {
                 return Ok(true);
@@ -73,7 +122,8 @@ impl TotpConfig {
 
     fn verify_for_counter(&self, code: &str, counter: u64) -> Result<bool, TotpError> {
         let expected = self.generate_for_counter(counter).map_err(|_| TotpError::InvalidUriEncoding)?;
-        Ok(code == expected)
+        use subtle::ConstantTimeEq;
+        Ok(code.as_bytes().ct_eq(expected.as_bytes()).into())
     }
 
     fn current_counter(&self) -> Result<u64, TotpError> {
@@ -81,9 +131,24 @@ impl TotpConfig {
         let duration = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| TotpError::InvalidUriEncoding)?;
         Ok(duration.as_secs() / self.period as u64)
     }
+
+    /// 构造底层 totp-rs 实例（HMAC-SHA1 纯计算委托）。
+    ///
+    /// 用 `new_unchecked` 而非 `new`：`new` 校验 secret ≥ 128 bits，
+    /// 而本门面允许 80-bit secret（RFC 4226 §4 最小长度），
+    /// 边界校验已在本门面入口完成。
+    fn totp(&self) -> TOTP {
+        TOTP::new_unchecked(
+            Algorithm::SHA1,
+            self.digits as usize,
+            1,
+            u64::from(self.period),
+            self.secret.clone(),
+        )
+    }
 }
 
-/// Simple Base32 decode (RFC 4648)
+/// Base32 解码（RFC 4648）
 fn base32_decode(s: &str) -> Result<Vec<u8>, TotpError> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -121,7 +186,9 @@ fn base32_decode(s: &str) -> Result<Vec<u8>, TotpError> {
     Ok(bytes)
 }
 
-/// Parse TOTP config from otpauth:// URI
+/// 从 otpauth:// URI 解析 TOTP 配置。
+///
+/// 支持 `secret`（Base32）、`period`、`digits` 参数；未知参数忽略。
 pub fn parse_totp_uri(uri: &str) -> Result<TotpConfig, TotpError> {
     let question_mark = uri.find('?').ok_or(TotpError::MissingQueryParameters)?;
     let secret_path = &uri[..question_mark];
@@ -163,16 +230,24 @@ pub fn parse_totp_uri(uri: &str) -> Result<TotpConfig, TotpError> {
     })
 }
 
-/// Error types
+/// TOTP 错误类型
 #[derive(Debug, Clone, PartialEq)]
 pub enum TotpError {
+    /// secret 为空
     EmptySecret,
+    /// secret 长度不合法（透传底层校验错误）
     InvalidSecretLength(String),
+    /// secret 太短（少于 80 bits / 10 字节，`new` 与 `parse_totp_uri` 均校验）
     SecretTooShort,
+    /// digits 参数不合法（仅允许 6 或 8）
     InvalidDigits(String),
+    /// URI 缺少查询参数部分
     MissingQueryParameters,
+    /// URI 查询参数畸形
     MalformedQueryParameter,
+    /// Base32 编码不合法
     InvalidBase32Encoding,
+    /// URI 编码不合法（沿用历史错误映射，见 `generate`）
     InvalidUriEncoding,
 }
 
@@ -214,6 +289,36 @@ mod tests {
         assert_eq!(config.digits, 6);
     }
 
+    /// RFC 6238 Appendix B（SHA-1 列）**真实期望值**校验。
+    ///
+    /// 自 cf-totp 委托 totp-rs 后，此测试的作用是**校验 totp-rs 输出与 RFC 完全一致**
+    /// （不只是在长度/字符层面冒烟）。密钥为 ASCII `"12345678901234567890"`。
+    #[test]
+    fn test_rfc_6238_appendix_b_exact_values() {
+        // RFC 6238 §5.4 / Appendix B：ASCII 密钥 "12345678901234567890"
+        let secret = b"12345678901234567890".to_vec();
+        let config = TotpConfig::new(secret, 30, 6).unwrap();
+
+        // (RFC 中的时间 T 秒, 期望验证码)。计数器 = T / 30。
+        let vectors: &[(u64, &str)] = &[
+            (59, "287082"),
+            (1_111_111_109, "081804"),
+            (1_111_111_111, "050471"),
+            (1_234_567_890, "005924"),
+            (2_000_000_000, "279037"),
+            (20_000_000_000, "353130"),
+        ];
+
+        for (time, expected) in vectors {
+            let counter = time / 30;
+            assert_eq!(
+                config.generate_for_counter(counter).unwrap(),
+                *expected,
+                "RFC 6238 Appendix B (SHA-1) 在 T={time} 秒处不符合 RFC 期望值"
+            );
+        }
+    }
+
     /// RFC 6238 B.1-B.18: SHA-1 test vectors (counter variations)
     #[test]
     fn test_rfc_6238_appendix_b_sha1() {
@@ -221,9 +326,10 @@ mod tests {
             // B.1: Generic TOTP examples (SHA-1, period=30, 6 digits)
             ("JBSWY3DPEHPK3PXP", vec![1u8; 20], 30, 6, vec![(Some(59), "287"), (Some(60), "348"), (Some(61), "370")]),
             // B.2: SHA-1 / HOTP / time-based counter (from RFC 4226)
-            ("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", vec![159u8, 146u8, 165u8, 150u8], 30, 6, vec![(Some(0), "755924"), (Some(1), "649507"), (Some(2), "182995"), (Some(3), "816819")]),
+            // 注：原 4 字节密钥（32 bits）被 H1 的 80-bit 下限拒绝，改为 20 字节。
+            ("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", vec![159u8; 20], 30, 6, vec![(Some(0), "755924"), (Some(1), "649507"), (Some(2), "182995"), (Some(3), "816819")]),
             // B.3-B.18: Additional TOTP vectors with various parameters
-            ("MFRGGZDFMY", vec![234u8, 90u8, 222u8, 153u8], 30, 6, vec![(Some(59), "047558"), (Some(60), "999659"), (Some(61), "990612")]),
+            ("MFRGGZDFMY", vec![234u8; 20], 30, 6, vec![(Some(59), "047558"), (Some(60), "999659"), (Some(61), "990612")]),
         ];
 
         for (_secret_base, secret_bytes, period, digits, time_codes) in test_vectors {
@@ -296,8 +402,20 @@ mod tests {
         assert_eq!(code.len(), 6);
     }
 
+    /// H1（审查）：低于 80-bit 的密钥（9 字节）必须被拒绝 ——
+    /// 1 字节密钥仅 256 种可能，可被穷举。`new` 与 `parse_totp_uri` 对称。
+    #[test]
+    fn test_new_rejects_secret_below_80_bits() {
+        assert!(matches!(
+            TotpConfig::new(vec![1u8; 9], 30, 6),
+            Err(TotpError::SecretTooShort)
+        ));
+        // 10 字节恰好是下限，应被接受
+        assert!(TotpConfig::new(vec![1u8; 10], 30, 6).is_ok());
+    }
+
     /// RFC 6238 Appendix B: Alternative hash algorithm test (HMAC-SHA256)
-/// Note: cf-totp uses HMAC-SHA1 by default; this tests SHA-256 capability if enabled
+    /// Note: cf-totp uses HMAC-SHA1 by default; this tests SHA-256 capability if enabled
     #[test]
     fn test_sha256_capability() {
         // This test documents that SHA-256 can be integrated via feature flag

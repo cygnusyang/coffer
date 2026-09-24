@@ -7,9 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-hmac = { workspace = true }
-sha1 = { workspace = true }
-sha2 = "0.10"
+# HMAC-SHA1 计算委托给 totp-rs（不再手写 hmac/sha1 胶水）。
+# totp-rs 默认 features 为空；SHA1/HMAC 为必选依赖（非 optional），
+# 未启用 otpauth（cf-totp 保留自有 URI 解析，不需要 url 依赖）。
+totp-rs = { workspace = true }
+# 验证码比对用常量时间比较（verify），防时序侧信道
+subtle = { workspace = true }
 urlencoding = "2.1"
 
 [dev-dependencies]

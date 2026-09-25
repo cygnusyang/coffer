@@ -6,10 +6,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# 依赖边界（docs/02-概要设计.md §2.1 单向依赖）：
+#   纯逻辑，无 IO、无加密、不依赖任何 cf-* 基础设施 crate。
+#   只允许外部基础依赖：serde / zeroize / thiserror / uuid。
 [dependencies]
 serde = { workspace = true }
 zeroize = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
-# 状态：未实现（计划 M1 阶段）
+# 测试专用：验证 serde 属性行为与 ItemSnapshot 的 CBOR 往返。
+# 领域层自身不承担持久化 IO；生产代码不依赖这些 crate。
+[dev-dependencies]
+ciborium = { workspace = true }
+serde_json = { workspace = true }

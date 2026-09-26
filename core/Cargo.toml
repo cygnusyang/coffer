@@ -138,7 +138,13 @@ cf-ffi      = { path = "cf-ffi" }
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
+# C-8（docs/07 §5）：必须是 unwind，不能 abort。
+# UniFFI 的 FFI 边界依赖 unwind 捕获 Rust panic 并转为抛给 Swift 的错误；
+# panic = "abort" 会让任何 Rust panic 直接杀死整个 App。
+# 兜底防线是 cf-ffi 的 ffi_guard（catch_unwind → FfiError），见 cf-ffi/src/lib.rs。
+# 取舍：unwind 在 panic 路径上比 abort 略慢且二进制略大——但 panic 本应是
+# 不变量破坏信号而非控制流，正常路径零成本，安全收益（App 存活 + 可上报）远大于代价。
+panic = "unwind"
 
 # 标定与基准测试用：比 release 更激进，但保留调试符号便于排查
 [profile.bench]

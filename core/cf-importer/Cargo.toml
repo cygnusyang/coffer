@@ -9,13 +9,19 @@ license.workspace = true
 [dependencies]
 cf-domain = { workspace = true }
 cf-crypto = { workspace = true }
+cf-store = { workspace = true }
+cf-totp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# UUIDv7：导入固定「全部新建」策略的条目 / 字段 / TOTP 行 ID（docs/07 §3.3）
+uuid = { workspace = true }
 
 [dev-dependencies]
 # KeePass KDBX 冒烟验证：读取方向为主（cf-exporter 的写入另行选择方案）。
 # save_kdbx4 仅测试需要：用最小内存数据库 保存→重开 证明解析链路可用。
 keepass = { workspace = true, features = ["save_kdbx4"] }
+# 集成测试用内存 SQLite（构造 ItemStore 门面）
+rusqlite = { workspace = true }
 
-# 状态：未实现（计划 M2 阶段）；KDBX 解析冒烟测试已就位
+# 状态：CSV 导入已实现（docs/07 §7 T03）；1PUX / opvault / KDBX 推后 v0.2+

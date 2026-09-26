@@ -376,6 +376,18 @@ struct EditFieldRowView: View {
         case .concealed:
             HStack {
                 SecureField(row.name, text: $row.value, prompt: Text(row.unchanged ? "未修改" : ""))
+                    .onChange(of: row.value) { _, newValue in
+                        // 与 buildDraft 的 unchanged 契约：unchanged==true 的行在保存时
+                        // 经 getFieldValue 取回旧值，row.value 会被覆盖丢弃。因此：
+                        //   - 用户输入非空 → 视为改动（unchanged=false），新值随 draft 提交；
+                        //   - 清空回空串 → 恢复 unchanged=true，语义为「留空 = 不修改」，
+                        //     保存时仍取回旧值（仅对有 fieldId 的既有字段成立）。
+                        if !newValue.isEmpty {
+                            row.unchanged = false
+                        } else if row.fieldId != nil {
+                            row.unchanged = true
+                        }
+                    }
                 if row.unchanged {
                     Text("未修改")
                         .font(.caption)

@@ -196,6 +196,9 @@ final class AppModel: ObservableObject {
     /// 手动锁定：清零 Rust 侧密钥，回到锁定态，并清空 UI 侧条目状态。
     func lock() {
         session?.lock()
+        // 锁定时刻剪贴板里可能仍有刚复制的密码：立即清空（clearOnLock
+        // 沿用 changeCount 纪律，用户已复制自己的内容则不动剪贴板）。
+        ClipboardManager.shared.clearOnLock()
         // 锁定即清空已解密数据的 UI 状态（docs/07 §2.4：锁定后清空已取回明文状态）
         items = []
         currentDetails = nil

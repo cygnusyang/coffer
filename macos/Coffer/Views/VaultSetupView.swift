@@ -1,7 +1,7 @@
 // VaultSetupView.swift —— 建库界面（无库时）。
 //
-// 流程：库名称 + 主密码（双输入）→ 强度条（Rust zxcvbn 优先，本地粗估兜底）
-// → 创建（Rust 侧 zxcvbn 门禁 score < 3 拒绝，错误码 1010）。
+// 流程：库名称 + 主密码（双输入）→ 强度条（Rust 工厂版 zxcvbn，无会话
+// 依赖，建库前可用）→ 创建（Rust 侧 zxcvbn 门禁 score < 3 拒绝，错误码 1010）。
 
 import SwiftUI
 
@@ -84,11 +84,6 @@ struct VaultSetupView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if model.hasSession == false {
-                    Text("本地预估，创建时以 zxcvbn 校验为准")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
                 if let estimate = model.estimateStrength(password), !estimate.warnings.isEmpty {
                     Text(estimate.warnings.joined(separator: "；"))
                         .font(.caption2)
@@ -98,7 +93,8 @@ struct VaultSetupView: View {
         }
     }
 
-    /// Rust zxcvbn（有会话）优先，否则本地粗估。
+    /// Rust 工厂版 zxcvbn（无会话依赖；门禁同源，见 PasswordStrength 仅
+    /// 作为估算失败的兜底）。
     private var currentScore: Int {
         if let estimate = model.estimateStrength(password) {
             return Int(estimate.score)

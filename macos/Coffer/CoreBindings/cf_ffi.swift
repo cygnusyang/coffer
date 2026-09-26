@@ -668,6 +668,15 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
      */
     func openVault(baseDir: String, vaultUuid: String) throws  -> VaultSession
     
+    /**
+     * 密码强度评估（zxcvbn 0–4 + 改进建议；纯计算，无会话依赖）。
+     *
+     * 建库前尚无会话（v0.1 已知限制），建库界面的强度条由本工厂方法
+     * 供能；与 [`VaultSession::strength_estimate`] 同语义（同一实现
+     * 委托 [`strength_estimate_impl`]）。
+     */
+    func strengthEstimate(candidate: String) throws  -> FfiStrengthEstimate
+    
 }
 /**
  * 应用入口工厂：库的枚举 / 创建 / 打开，以及打开会话的注册表。
@@ -795,6 +804,23 @@ open func openVault(baseDir: String, vaultUuid: String)throws  -> VaultSession  
             self.uniffiCloneHandle(),
         FfiConverterString.lower(baseDir),
         FfiConverterString.lower(vaultUuid),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 密码强度评估（zxcvbn 0–4 + 改进建议；纯计算，无会话依赖）。
+     *
+     * 建库前尚无会话（v0.1 已知限制），建库界面的强度条由本工厂方法
+     * 供能；与 [`VaultSession::strength_estimate`] 同语义（同一实现
+     * 委托 [`strength_estimate_impl`]）。
+     */
+open func strengthEstimate(candidate: String)throws  -> FfiStrengthEstimate  {
+    return try  FfiConverterTypeFfiStrengthEstimate_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_strength_estimate(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(candidate),uniffiCallStatus
     )
 })
 }
@@ -948,6 +974,10 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     
     /**
      * 密码强度评估（zxcvbn 0–4 + 改进建议）。
+     *
+     * 与 [`CofferApp::strength_estimate`] 同语义（同一实现委托，见
+     * [`strength_estimate_impl`]）；保留于会话对象仅为兼容既有调用方，
+     * 无会话场景（建库界面）请走工厂版本。
      */
     func strengthEstimate(candidate: String) throws  -> FfiStrengthEstimate
     
@@ -1284,6 +1314,10 @@ open func setLastActivity(unixSecs: Int64)  {try! rustCall() {
     
     /**
      * 密码强度评估（zxcvbn 0–4 + 改进建议）。
+     *
+     * 与 [`CofferApp::strength_estimate`] 同语义（同一实现委托，见
+     * [`strength_estimate_impl`]）；保留于会话对象仅为兼容既有调用方，
+     * 无会话场景（建库界面）请走工厂版本。
      */
 open func strengthEstimate(candidate: String)throws  -> FfiStrengthEstimate  {
     return try  FfiConverterTypeFfiStrengthEstimate_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -4928,6 +4962,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_cofferapp_open_vault() != 38146) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_strength_estimate() != 63619) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired() != 4111) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4982,7 +5019,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_last_activity() != 3130) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_strength_estimate() != 6062) {
+    if (uniffi_cf_ffi_checksum_method_vaultsession_strength_estimate() != 54383) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_totp_code() != 27456) {

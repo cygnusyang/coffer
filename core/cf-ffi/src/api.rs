@@ -144,6 +144,31 @@ impl CofferApp {
             session.inner.lock();
         }
     }
+
+    /// 密码强度评估（zxcvbn 0–4 + 改进建议；纯计算，无会话依赖）。
+    ///
+    /// 建库前尚无会话（v0.1 已知限制），建库界面的强度条由本工厂方法
+    /// 供能；与 [`VaultSession::strength_estimate`] 同语义（同一实现
+    /// 委托 [`strength_estimate_impl`]）。
+    pub fn strength_estimate(&self, candidate: String) -> Result<FfiStrengthEstimate, FfiError> {
+        Ok(strength_estimate_impl(&candidate))
+    }
+}
+
+/// 密码强度评估实现（zxcvbn + feedback 文案；工厂与会话两处共用）。
+fn strength_estimate_impl(candidate: &str) -> FfiStrengthEstimate {
+    let estimate = zxcvbn::zxcvbn(candidate, &[]);
+    let mut warnings = Vec::new();
+    if let Some(fb) = estimate.feedback() {
+        if let Some(w) = fb.warning() {
+            warnings.push(w.to_string());
+        }
+        warnings.extend(fb.suggestions().iter().map(|s| s.to_string()));
+    }
+    FfiStrengthEstimate {
+        score: estimate.score() as u8,
+        warnings,
+    }
 }
 
 impl CofferApp {
@@ -329,19 +354,12 @@ impl VaultSession {
     }
 
     /// 密码强度评估（zxcvbn 0–4 + 改进建议）。
+    ///
+    /// 与 [`CofferApp::strength_estimate`] 同语义（同一实现委托，见
+    /// [`strength_estimate_impl`]）；保留于会话对象仅为兼容既有调用方，
+    /// 无会话场景（建库界面）请走工厂版本。
     pub fn strength_estimate(&self, candidate: String) -> Result<FfiStrengthEstimate, FfiError> {
-        let estimate = zxcvbn::zxcvbn(&candidate, &[]);
-        let mut warnings = Vec::new();
-        if let Some(fb) = estimate.feedback() {
-            if let Some(w) = fb.warning() {
-                warnings.push(w.to_string());
-            }
-            warnings.extend(fb.suggestions().iter().map(|s| s.to_string()));
-        }
-        Ok(FfiStrengthEstimate {
-            score: estimate.score() as u8,
-            warnings,
-        })
+        Ok(strength_estimate_impl(&candidate))
     }
 
     // --------------------------------------------------------- 导入
@@ -816,6 +834,12 @@ mod tests {
             .strength_estimate(STRONG_PASSWORD.to_owned())
             .unwrap();
         assert!(strong.score >= 3);
+
+        // 工厂版强度评估（无会话依赖）：与 会话版 同语义
+        let factory_weak = app.strength_estimate("123456".to_owned()).unwrap();
+        assert!(factory_weak.score < 3);
+        let factory_strong = app.strength_estimate(STRONG_PASSWORD.to_owned()).unwrap();
+        assert!(factory_strong.score >= 3);
 
         // 建库门禁跨 FFI：弱密码 → 码 1010
         let weak_base = temp_base("weak");

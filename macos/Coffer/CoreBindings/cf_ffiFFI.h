@@ -279,6 +279,11 @@ void uniffi_cf_ffi_fn_method_cofferapp_lock_all(uint64_t ptr, RustCallStatus *_N
 uint64_t uniffi_cf_ffi_fn_method_cofferapp_open_vault(uint64_t ptr, RustBuffer base_dir, RustBuffer vault_uuid, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_STRENGTH_ESTIMATE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_STRENGTH_ESTIMATE
+RustBuffer uniffi_cf_ffi_fn_method_cofferapp_strength_estimate(uint64_t ptr, RustBuffer candidate, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_CLONE_VAULTSESSION
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_CLONE_VAULTSESSION
 uint64_t uniffi_cf_ffi_fn_clone_vaultsession(uint64_t handle, RustCallStatus *_Nonnull out_status
@@ -700,6 +705,12 @@ uint16_t uniffi_cf_ffi_checksum_method_cofferapp_lock_all(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_OPEN_VAULT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_OPEN_VAULT
 uint16_t uniffi_cf_ffi_checksum_method_cofferapp_open_vault(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_STRENGTH_ESTIMATE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_STRENGTH_ESTIMATE
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_strength_estimate(void
     
 );
 #endif

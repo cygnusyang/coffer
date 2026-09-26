@@ -7,21 +7,24 @@
 //!   保留（DDL 已回补，docs/03 v1.3）；
 //! - **schema 统一**：不再自建表，改由 [`crate::schema::init`] 幂等建齐
 //!   全部 11 张表；
-//! - `enc_secret` 的 AAD 语义保持既有行为：钉死在**条目** uuid 上
-//!   （`item_uuid ‖ 0x00 ‖ b"enc_totp_secret"`），既有测试语义不回退；
-//! - 新增的 `enc_issuer` / `enc_account` AAD 钉死在 **totp 行** uuid 上
-//!   （一 item 可有多条 totp，行级钉死更强）。
+//! - `enc_secret` 的 AAD 钉死在 **totp 行** uuid 上（O-1，2026-09-23
+//!   统一：原钉死在条目 uuid 上，同条目内跨记录搬运可解密——QA 对抗
+//!   验证发现该不一致；现与 `enc_issuer` / `enc_account` 语义对齐，
+//!   一 item 可有多条 totp，行级钉死更强）；
+//! - `enc_issuer` / `enc_account` AAD 同样钉死在 **totp 行** uuid 上；
+//! - 全部 AAD 带表名命名空间（`totp ‖ 0x00 ‖ 行uuid ‖ 0x00 ‖ 列名`，
+//!   见 [`crate::repo`] 模块文档映射表）。
 //!
 //! `TotpStore` 保留为兼容门面（持自有连接 + 单一 `field_key`）；
 //! 新代码请用 [`TotpRepo`]（借用连接，可参与 [`crate::ItemStore::with_tx`]）。
 
-use cf_crypto::aead::{build_field_aad, open, seal, SessionKey, SEALED_MIN_LEN};
+use cf_crypto::aead::{open, seal, SessionKey, SEALED_MIN_LEN};
 use cf_crypto::subkeys::SubKeys;
 use rusqlite::Connection;
 use zeroize::Zeroizing;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
-use crate::repo::{uuid_bytes, unix_now};
+use crate::repo::{field_aad, uuid_bytes, unix_now};
 
 /// `enc_secret` 的 AAD 列名（既有常量，保持兼容）。
 pub const COLUMN_TOTP_SECRET: &str = "enc_totp_secret";
@@ -102,8 +105,12 @@ impl<'a> TotpRepo<'a> {
         issuer: Option<&str>,
         account: Option<&str>,
     ) -> CfStoreResult<()> {
-        let item_uuid_bytes = uuid_bytes(item_uuid)?;
-        let aad = build_field_aad(&item_uuid_bytes, COLUMN_TOTP_SECRET);
+        // 两个 uuid 参数均须为合法 UUID 文本（item_uuid 不再参与 AAD，
+        // 但仍做格式校验：外键约束只查存在性，不查格式）
+        uuid_bytes(uuid)?;
+        uuid_bytes(item_uuid)?;
+
+        let aad = field_aad("totp", uuid, COLUMN_TOTP_SECRET)?;
         let enc_secret = seal(self.field_key, &aad, plain_secret).crypto()?;
 
         let enc_issuer = seal_optional(self.field_key, uuid, COLUMN_TOTP_ISSUER, issuer)?;
@@ -176,14 +183,13 @@ impl<'a> TotpRepo<'a> {
     pub fn totp_secret(&self, uuid: &str) -> CfStoreResult<Option<Zeroizing<Vec<u8>>>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT item_uuid, enc_secret FROM totp WHERE uuid = ?1")
+            .prepare("SELECT enc_secret FROM totp WHERE uuid = ?1")
             .store()?;
         let mut rows = stmt.query(rusqlite::params![uuid]).store()?;
 
         match rows.next().store()? {
             Some(row) => {
-                let item_uuid: String = row.get(0).store()?;
-                let enc_secret: Vec<u8> = row.get(1).store()?;
+                let enc_secret: Vec<u8> = row.get(0).store()?;
 
                 if enc_secret.len() < SEALED_MIN_LEN {
                     return Err(CfError::Corrupted(
@@ -191,8 +197,9 @@ impl<'a> TotpRepo<'a> {
                     ));
                 }
 
-                let item_uuid_bytes = uuid_bytes(&item_uuid)?;
-                let aad = build_field_aad(&item_uuid_bytes, COLUMN_TOTP_SECRET);
+                // AAD 钉死在 totp 行 uuid（O-1：行级钉死，与 enc_issuer /
+                // enc_account 一致）。按 uuid 查行，行 uuid 即参数 uuid。
+                let aad = field_aad("totp", uuid, COLUMN_TOTP_SECRET)?;
                 let plain = open(self.field_key, &aad, &enc_secret).crypto()?;
                 Ok(Some(Zeroizing::new(plain)))
             }
@@ -233,8 +240,7 @@ fn seal_optional(
     match plain {
         None => Ok(None),
         Some(s) => {
-            let uuid_b = uuid_bytes(record_uuid)?;
-            let aad = build_field_aad(&uuid_b, column);
+            let aad = field_aad("totp", record_uuid, column)?;
             Ok(Some(seal(key, &aad, s.as_bytes()).crypto()?))
         }
     }
@@ -250,8 +256,7 @@ fn open_optional(
     match sealed {
         None => Ok(None),
         Some(ct) => {
-            let uuid_b = uuid_bytes(record_uuid)?;
-            let aad = build_field_aad(&uuid_b, column);
+            let aad = field_aad("totp", record_uuid, column)?;
             let plain = open(key, &aad, &ct).crypto()?;
             let s = String::from_utf8(plain)
                 .map_err(|_| CfError::Corrupted("totp column not utf-8".into()))?;
@@ -550,23 +555,37 @@ mod tests {
         assert!(uuids.contains(&test_uuid(3)));
     }
 
-    /// 密文搬到别的 item（不同 AAD）→ 解密失败（防跨行搬运）
+    /// enc_secret 的 AAD 钉死在 **totp 行** uuid（O-1 修复后语义，
+    /// 2026-09-23：原钉死在条目 uuid 上，同条目内跨记录搬运可解密）：
+    /// ① 行的 item_uuid 变化不影响解密（AAD 不含条目 uuid）；
+    /// ② 密文搬到另一 totp 行 → 解密失败（行级钉死）
     #[test]
-    fn ciphertext_pinned_to_item_uuid() {
+    fn enc_secret钉死在totp行uuid上() {
         let s = store();
-        s.insert_totp(&test_uuid(1), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
+        s.insert_totp(&test_uuid(1), &test_uuid(2), b"secret-AAAA", "sha1", 6, 30, None, None)
+            .unwrap();
+        s.insert_totp(&test_uuid(3), &test_uuid(2), b"secret-BBBB", "sha1", 6, 30, None, None)
             .unwrap();
 
-        // 直接把 A 条目的密文 UPDATE 到 B 条目（模拟攻击者在库文件里搬密文）
+        // ① 把行搬到别的条目：行 uuid 不变 ⇒ AAD 不变 ⇒ 仍可解密
         s.conn
             .execute(
                 "UPDATE totp SET item_uuid = ?1 WHERE uuid = ?2",
                 rusqlite::params![test_uuid(5), test_uuid(1)],
             )
             .unwrap();
+        let got = s.totp_secret(&test_uuid(1)).unwrap().unwrap();
+        assert_eq!(&got[..], b"secret-AAAA", "item_uuid 变化不影响行级钉死的 AAD");
 
+        // ② 把 t1 的密文搬到 t3（同 item，不同 totp 行）：AAD 不匹配 ⇒ 解密失败
+        s.conn
+            .execute(
+                "UPDATE totp SET enc_secret=(SELECT enc_secret FROM totp WHERE uuid=?1) WHERE uuid=?2",
+                rusqlite::params![test_uuid(1), test_uuid(3)],
+            )
+            .unwrap();
         assert!(matches!(
-            s.totp_secret(&test_uuid(1)),
+            s.totp_secret(&test_uuid(3)),
             Err(CfError::CryptoError)
         ));
     }

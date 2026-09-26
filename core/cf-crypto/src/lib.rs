@@ -57,7 +57,7 @@ pub mod error;
 pub mod kdf;
 pub mod subkeys;
 
-pub use aead::{build_field_aad, open, seal, SessionKey, KEY_LEN as AEAD_KEY_LEN, NONCE_LEN as AEAD_NONCE_LEN};
+pub use aead::{build_field_aad, build_table_field_aad, open, seal, SessionKey, KEY_LEN as AEAD_KEY_LEN, NONCE_LEN as AEAD_NONCE_LEN};
 pub use error::CfCryptoError;
 pub use kdf::{derive_key, derive_subkey, normalize_password, KdfParams, KEY_LEN, SALT_LEN};
 pub use subkeys::{SubKeys, LABEL_ATTACH_MAC, LABEL_FIELD, LABEL_FILE, LABEL_HISTORY, LABEL_ITEM, LABEL_MANIFEST, LABEL_META};

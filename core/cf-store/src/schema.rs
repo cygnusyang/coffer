@@ -7,7 +7,9 @@
 //!   （docs/07 §2.1；当前迁移执行体为空，多建表是最便宜的"迁移"）；
 //! - **幂等**：全部 `CREATE TABLE/INDEX IF NOT EXISTS`，重复打开不报错；
 //! - **版本记录**：`meta.schema_version = 1`；已存在的版本**高于**当前支持
-//!   时拒绝打开（向前不兼容，[`CfError::UnsupportedFormat`]）；
+//!   时拒绝打开（向前不兼容，[`CfError::UnsupportedFormat`]）；版本值
+//!   损坏（非 8 字节 BLOB）时报 [`CfError::Corrupted`]，与 verify() 语义
+//!   一致，绝不静默重写（O-2，2026-09-23）；
 //! - **PRAGMA**（按 docs/03 §3.1 头注释）：WAL、synchronous=FULL、
 //!   foreign_keys=ON、page_size=4096。WAL 在内存库上会被 SQLite 静默
 //!   忽略（返回 "memory"），不视为错误。
@@ -16,6 +18,8 @@
 //!
 //! `totp` 表在文档 DDL 基础上补 `created_at INTEGER NOT NULL`（实现按
 //! 创建时间排序，docs/07 §5 C-2；docs/03 v1.3 已同步回补该列）。
+
+use std::convert::TryInto;
 
 use rusqlite::Connection;
 
@@ -186,13 +190,27 @@ pub fn init(conn: &mut Connection) -> CfStoreResult<()> {
     tx.execute_batch(DDL_BATCH).store()?;
 
     let meta = MetaRepo::new(&tx);
-    match meta.get_i64(KEY_SCHEMA_VERSION)? {
+    // 读原始 BLOB 以区分「版本行缺失」与「版本值损坏」：
+    // 损坏值（非 8 字节 BLOB）不得走 None 分支静默重写为 1（O-2，
+    // 2026-09-23）——与 verify() 报 Corrupted 的语义保持一致。
+    match meta.get(KEY_SCHEMA_VERSION)? {
         None => meta.set_i64(KEY_SCHEMA_VERSION, SCHEMA_VERSION)?,
-        Some(v) if v == SCHEMA_VERSION => {}
-        Some(v) => {
-            return Err(cf_domain::CfError::UnsupportedFormat(
-                u16::try_from(v).unwrap_or(u16::MAX),
-            ));
+        Some(blob) => {
+            let bytes: [u8; 8] = blob.as_slice().try_into().map_err(|_| {
+                cf_domain::CfError::Corrupted(
+                    "schema version value is not an 8-byte blob".into(),
+                )
+            })?;
+            let v = i64::from_le_bytes(bytes);
+            if v == SCHEMA_VERSION {
+                // 当前版本：幂等放行
+            } else {
+                // 高版本（含负数折叠）一律 UnsupportedFormat：
+                // 旧 App 打开新库必须显式失败
+                return Err(cf_domain::CfError::UnsupportedFormat(
+                    u16::try_from(v).unwrap_or(u16::MAX),
+                ));
+            }
         }
     }
     tx.commit().store()?;
@@ -215,11 +233,20 @@ pub fn verify(conn: &Connection) -> CfStoreResult<()> {
         return Err(cf_domain::CfError::Corrupted("schema version missing".into()));
     }
     let meta = MetaRepo::new(conn);
-    match meta.get_i64(KEY_SCHEMA_VERSION)? {
-        Some(v) if v == SCHEMA_VERSION => Ok(()),
-        Some(v) => Err(cf_domain::CfError::UnsupportedFormat(
-            u16::try_from(v).unwrap_or(u16::MAX),
-        )),
+    // 与 init() 一致：区分「缺失」与「损坏」（O-2）
+    match meta.get(KEY_SCHEMA_VERSION)? {
+        Some(blob) => match TryInto::<[u8; 8]>::try_into(blob.as_slice()) {
+            Ok(bytes) if i64::from_le_bytes(bytes) == SCHEMA_VERSION => Ok(()),
+            Ok(bytes) => {
+                let v = i64::from_le_bytes(bytes);
+                Err(cf_domain::CfError::UnsupportedFormat(
+                    u16::try_from(v).unwrap_or(u16::MAX),
+                ))
+            }
+            Err(_) => Err(cf_domain::CfError::Corrupted(
+                "schema version value is not an 8-byte blob".into(),
+            )),
+        },
         None => Err(cf_domain::CfError::Corrupted(
             "schema version missing".into(),
         )),

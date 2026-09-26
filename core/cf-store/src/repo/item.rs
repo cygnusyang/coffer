@@ -2,12 +2,12 @@
 //!
 //! insert / update / get / list（分页、按 state+category 过滤）/
 //! soft_delete / restore / set_favorite。`enc_title` 用 `item_key` 加解密，
-//! AAD = `build_field_aad(item_uuid, "enc_title")`。
+//! AAD = `field_aad("items", item_uuid, "enc_title")`（表名命名空间，O-1）。
 //!
 //! 本仓库只操作 items 表；fields / urls / tags / sections 由各自仓库
 //! 按 item 批量替换（update 语义 = 删旧插新）。
 
-use cf_crypto::aead::{build_field_aad, open, seal};
+use cf_crypto::aead::{open, seal};
 use cf_crypto::subkeys::SubKeys;
 use cf_domain::category::ItemCategory;
 use cf_domain::item::ItemState;
@@ -15,7 +15,7 @@ use cf_domain::secret::SecretString;
 use rusqlite::Connection;
 
 use crate::error::{CfStoreResult, CryptoResultExt, RusqliteResultExt};
-use crate::repo::{uuid_bytes, unix_now};
+use crate::repo::{field_aad, unix_now};
 
 /// items 表 `enc_title` 列名（AAD 成分）。
 pub const COLUMN_ITEM_TITLE: &str = "enc_title";
@@ -81,17 +81,15 @@ impl<'a> ItemsRepo<'a> {
         &self.subkeys.item_key
     }
 
-    /// 加密标题（AAD 钉死在条目 uuid + enc_title 列）。
+    /// 加密标题（AAD 钉死在 items 表 + 条目 uuid + enc_title 列）。
     fn seal_title(&self, item_uuid: &str, title: &SecretString) -> CfStoreResult<Vec<u8>> {
-        let uuid_b = uuid_bytes(item_uuid)?;
-        let aad = build_field_aad(&uuid_b, COLUMN_ITEM_TITLE);
+        let aad = field_aad("items", item_uuid, COLUMN_ITEM_TITLE)?;
         seal(self.item_key(), &aad, title.expose().as_bytes()).crypto()
     }
 
     /// 解密标题（AAD 不匹配 → 解密失败，不区分原因）。
     fn open_title(&self, item_uuid: &str, enc_title: &[u8]) -> CfStoreResult<SecretString> {
-        let uuid_b = uuid_bytes(item_uuid)?;
-        let aad = build_field_aad(&uuid_b, COLUMN_ITEM_TITLE);
+        let aad = field_aad("items", item_uuid, COLUMN_ITEM_TITLE)?;
         let plain = open(self.item_key(), &aad, enc_title).crypto()?;
         let s = String::from_utf8(plain)
             .map_err(|_| cf_domain::CfError::Corrupted("title not utf-8".into()))?;

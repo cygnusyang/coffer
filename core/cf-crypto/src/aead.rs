@@ -13,15 +13,27 @@
 //! 空间允许直接随机而无需计数器管理（设计 §2.5「Nonce 策略」），
 //! 这是选择 XChaCha20 而非 AES-GCM 的核心理由。
 //!
-//! ## AAD 构造规则（防跨行跨列密文搬运）
+//! ## AAD 构造规则（防跨行跨列跨表密文搬运）
+//!
+//! 存储层（cf-store）统一使用**表名命名空间**版本：
 //!
 //! ```text
-//! aad = record_uuid_bytes(16) ‖ 0x00 ‖ column_name_utf8
+//! aad = table_name_utf8 ‖ 0x00 ‖ record_uuid_bytes(16) ‖ 0x00 ‖ column_name_utf8
 //! ```
 //!
-//! 把 A 条目密文复制到 B 条目同列 → UUID 不匹配 → 解密失败；
-//! 复制到 B 条目其他列 → 列名不匹配 → 同样失败。
-//! 用 [`build_field_aad`] 构造，上层无需手拼。
+//! 用 [`build_table_field_aad`] 构造，上层无需手拼。表名前缀使密文
+//! 在（表, 行, 列）三维上被钉死：
+//!
+//! - 跨行搬运 → uuid 不匹配 → 解密失败；
+//! - 跨列搬运 → 列名不匹配 → 同样失败；
+//! - 跨表重放（即使攻击者把目标行 uuid 文本改得与源行相同）→
+//!   表名不匹配 → 仍然失败（O-1，2026-09-23 修复：
+//!   旧版 `build_field_aad` 的 `uuid ‖ 0x00 ‖ column` 布局无表名
+//!   命名空间，fields.enc_name 密文可重放到 uuid 文本相同的
+//!   tags 行并解密成功）。
+//!
+//! [`build_field_aad`]（无表名版本）保留用于 cf-crypto 自测与
+//! 非 SQLite 场景；存储层不得再使用它构造字段 AAD。
 //!
 //! ## 错误信息纪律
 //!
@@ -89,7 +101,7 @@ impl SessionKey {
 /// # 参数
 ///
 /// - `key`：会话密钥
-/// - `aad`：附加认证数据（字段加密请用 [`build_field_aad`] 构造）
+/// - `aad`：附加认证数据（库文件字段加密请用 [`build_table_field_aad`] 构造）
 /// - `plaintext`：明文
 ///
 /// # 错误
@@ -149,10 +161,33 @@ pub fn open(key: &SessionKey, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, CfCr
 
 /// 构造字段级 AAD：`record_uuid(16) ‖ 0x00 ‖ column_name`。
 ///
+/// 旧版布局（无表名命名空间）。存储层请改用
+/// [`build_table_field_aad`]（O-1，2026-09-23）；本函数保留用于
+/// cf-crypto 单元测试与非 SQLite 场景，**不得**再用于库文件字段加密。
+///
 /// 见模块文档「AAD 构造规则」。
 #[must_use]
 pub fn build_field_aad(record_uuid: &[u8; 16], column: &str) -> Vec<u8> {
     let mut aad = Vec::with_capacity(record_uuid.len() + 1 + column.len());
+    aad.extend_from_slice(record_uuid);
+    aad.push(0x00);
+    aad.extend_from_slice(column.as_bytes());
+    aad
+}
+
+/// 构造带表名命名空间的字段级 AAD（存储层统一入口，O-1）。
+///
+/// 布局：`table ‖ 0x00 ‖ record_uuid(16) ‖ 0x00 ‖ column`。
+/// 表名前缀消除跨表重放：不同表的 AAD 空间互不相交，攻击者把
+/// A 表某行密文搬到 B 表 uuid 文本相同的行，表名不匹配 → 解密失败。
+///
+/// `0x00` 分隔符是安全的：表名 / 列名均为代码内常量（不含 NUL），
+/// uuid 为固定 16 字节，解析无歧义。
+#[must_use]
+pub fn build_table_field_aad(table: &str, record_uuid: &[u8; 16], column: &str) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(table.len() + 1 + record_uuid.len() + 1 + column.len());
+    aad.extend_from_slice(table.as_bytes());
+    aad.push(0x00);
     aad.extend_from_slice(record_uuid);
     aad.push(0x00);
     aad.extend_from_slice(column.as_bytes());
@@ -276,6 +311,38 @@ mod tests {
         assert_eq!(&aad[..16], &uuid[..]);
         assert_eq!(aad[16], 0x00);
         assert_eq!(&aad[17..], b"enc_title");
+    }
+
+    /// 表名命名空间 AAD 构造格式：table ‖ 0x00 ‖ uuid ‖ 0x00 ‖ column（O-1）
+    #[test]
+    fn build_table_field_aad_format() {
+        let uuid = [0xABu8; 16];
+        let aad = build_table_field_aad("fields", &uuid, "enc_name");
+
+        assert_eq!(aad.len(), "fields".len() + 1 + 16 + 1 + "enc_name".len());
+        assert_eq!(&aad[..6], b"fields");
+        assert_eq!(aad[6], 0x00);
+        assert_eq!(&aad[7..23], &uuid[..]);
+        assert_eq!(aad[23], 0x00);
+        assert_eq!(&aad[24..], b"enc_name");
+    }
+
+    /// 同 uuid 同列名、表名不同 → AAD 不同 ⇒ 跨表重放解密失败（O-1）
+    #[test]
+    fn table_namespaced_aad_blocks_cross_table_replay() {
+        let key = test_key();
+        let uuid = [0x77u8; 16];
+
+        let aad_fields = build_table_field_aad("fields", &uuid, "enc_name");
+        let aad_tags = build_table_field_aad("tags", &uuid, "enc_name");
+        assert_ne!(aad_fields, aad_tags, "表名必须参与 AAD");
+
+        let sealed = seal(&key, &aad_fields, b"secret").unwrap();
+        assert_eq!(
+            open(&key, &aad_tags, &sealed),
+            Err(CfCryptoError::AeadOpenFailed),
+            "跨表重放（uuid 文本相同）必须解密失败"
+        );
     }
 
     /// 错误 Display 不泄露细节

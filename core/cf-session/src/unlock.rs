@@ -41,6 +41,15 @@
 //! docs/03 §2.6 的 verifier AAD 为常量 `b"cf/verifier/v1"`；本实现按
 //! docs/07 §2.2 的裁定改用 `vault_uuid_bytes ‖ b"verifier"`（把 AAD 钉死
 //! 在库上，防止 verifier 密文跨库重放）。 wrapped_dek 同理。
+//!
+//! ## v0.2 增量（docs/08 §6）
+//!
+//! [`recover_dek`]（密码 → KEK → DEK，含 verifier 校验）与
+//! [`finish_unlock`](crate::unlock::finish_unlock)（DEK → SubKeys →
+//! ItemStore）自 `unlock_store` 拆出，供生物识别通道
+//! （[`crate::unlock_bio`]）复用：`enable_biometric` 借 `recover_dek`
+//! 重验证主密码并解出 DEK（D-6），`unlock_with_biometric` 借
+//! `finish_unlock` 与主密码路径共享收尾。行为零变化（T01 验收 ①）。
 
 use std::path::Path;
 
@@ -245,15 +254,19 @@ pub fn open_vault(vault_dir: &Path) -> SessionResult<VaultSession> {
     }
 }
 
-/// 解锁内核：密码 → KEK → DEK → verifier 校验 → SubKeys → ItemStore。
+/// 解锁内核第一步（docs/08 §6 拆分裁定）：**主密码 → KEK → 解封 DEK**，
+/// 并完成 verifier 校验（主密码证明）。
 ///
-/// **全部失败统一归一为 [`CfError::UnlockFailed`]（1002）**，
-/// 详见模块文档「错误码 1002 三态合并」。
-pub(crate) fn unlock_store(
+/// `unlock_store` 与 bio 通道的 `enable_biometric` 共用本函数：
+/// enable 借此同时校验主密码并解出 DEK（D-6），错密码 → 1002。
+///
+/// 步骤 1–3（布局检查 → Argon2id → wrapped_dek 解封 → verifier 比对），
+/// 全部失败统一归一为 [`CfError::UnlockFailed`]（1002）。
+pub(crate) fn recover_dek(
     vault_dir: &Path,
     header: &cf_format::Header,
     password: &str,
-) -> SessionResult<cf_store::ItemStore> {
+) -> SessionResult<SessionKey> {
     const UNLOCK_FAILED: CfError = CfError::UnlockFailed;
 
     // 布局先于密码：db.sqlite 缺失同样合并为 1002（不区分库损坏形态）
@@ -278,14 +291,17 @@ pub(crate) fn unlock_store(
             header.wrapped_dek.ct_b64.as_str(),
         )
         .map_err(|_| UNLOCK_FAILED)?;
-        let plain = open(
+        let open_result = open(
             &kek_key,
             &header_aad(&uuid_b, AAD_PURPOSE_WRAPPED_DEK),
             &combined,
-        )
-        .map_err(|_| UNLOCK_FAILED)?;
+        );
         combined.zeroize();
-        Zeroizing::new(<[u8; 32]>::try_from(plain.as_slice()).map_err(|_| UNLOCK_FAILED)?)
+        let mut plain = open_result.map_err(|_| UNLOCK_FAILED)?;
+        let dek = Zeroizing::new(<[u8; 32]>::try_from(plain.as_slice()).map_err(|_| UNLOCK_FAILED)?);
+        // Zeroizing 持有的是拷贝；原始 Vec 同样清零，不留密钥副本
+        plain.zeroize();
+        dek
     };
 
     // 3. verifier 开封并比对固定常量（篡改 verifier → 1002，与密码错同码）
@@ -308,19 +324,49 @@ pub(crate) fn unlock_store(
         return Err(UNLOCK_FAILED);
     }
 
+    // kek_key / normalized 在此离开作用域，自动清零
+    Ok(SessionKey::new(*dek))
+}
+
+/// 解锁内核收尾（步骤 4–5）：DEK → SubKeys 派生 → ItemStore 打开。
+/// 主密码路径与 bio 路径（docs/08 §6「共享步骤 3–5」）共用。
+pub(crate) fn finish_unlock(
+    vault_dir: &Path,
+    header: &cf_format::Header,
+    dek: &SessionKey,
+) -> SessionResult<cf_store::ItemStore> {
+    const UNLOCK_FAILED: CfError = CfError::UnlockFailed;
+
+    let uuid = uuid::Uuid::parse_str(&header.vault_uuid).map_err(|_| UNLOCK_FAILED)?;
+    let uuid_b = *uuid.as_bytes();
+
     // 4. HKDF 派生 7 子密钥（失败归一为 1002——正常输入下不会发生，
     //    但不借错误分支泄露任何派生进度信息）
-    let subkeys = SubKeys::derive(&dek, &uuid_b).map_err(|_| UNLOCK_FAILED)?;
+    let subkeys = SubKeys::derive(dek.as_bytes(), &uuid_b).map_err(|_| UNLOCK_FAILED)?;
 
     // 5. 打开数据库（连接失败 / schema 版本异常 → 1002）
     let conn = Connection::open(vault_dir.join(DB_FILE)).map_err(|_| UNLOCK_FAILED)?;
     cf_store::ItemStore::open(conn, subkeys).map_err(|_| UNLOCK_FAILED)
 }
 
+/// 解锁内核：密码 → KEK → DEK → verifier 校验 → SubKeys → ItemStore。
+///
+/// **全部失败统一归一为 [`CfError::UnlockFailed`]（1002）**，
+/// 详见模块文档「错误码 1002 三态合并」。
+pub(crate) fn unlock_store(
+    vault_dir: &Path,
+    header: &cf_format::Header,
+    password: &str,
+) -> SessionResult<cf_store::ItemStore> {
+    let dek = recover_dek(vault_dir, header, password)?;
+    finish_unlock(vault_dir, header, &dek)
+}
+
 // ---------------------------------------------------------------- 内部工具
 
 /// 构造 header 段的 AAD：`vault_uuid_bytes ‖ purpose`（docs/07 §2.2）。
-fn header_aad(vault_uuid: &[u8; 16], purpose: &[u8]) -> Vec<u8> {
+/// bio 通道（unlock_bio）复用同一规则钉库（docs/08 D-2）。
+pub(crate) fn header_aad(vault_uuid: &[u8; 16], purpose: &[u8]) -> Vec<u8> {
     let mut aad = Vec::with_capacity(vault_uuid.len() + purpose.len());
     aad.extend_from_slice(vault_uuid);
     aad.extend_from_slice(purpose);
@@ -328,7 +374,7 @@ fn header_aad(vault_uuid: &[u8; 16], purpose: &[u8]) -> Vec<u8> {
 }
 
 /// header 中的 nonce_b64 + ct_b64 还原为 aead::open 需要的 `nonce ‖ ct ‖ tag`。
-fn assembled_sealed(nonce_b64: &str, ct_b64: &str) -> Result<Vec<u8>, base64::DecodeError> {
+pub(crate) fn assembled_sealed(nonce_b64: &str, ct_b64: &str) -> Result<Vec<u8>, base64::DecodeError> {
     let nonce = b64_decode(nonce_b64)?;
     let ct = b64_decode(ct_b64)?;
     let mut combined = Vec::with_capacity(nonce.len() + ct.len());
@@ -337,16 +383,17 @@ fn assembled_sealed(nonce_b64: &str, ct_b64: &str) -> Result<Vec<u8>, base64::De
     Ok(combined)
 }
 
-fn b64_encode(bytes: &[u8]) -> String {
+pub(crate) fn b64_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn b64_decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
+pub(crate) fn b64_decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
     base64::engine::general_purpose::STANDARD.decode(s)
 }
 
-/// cf-format 错误 → 统一错误（建库路径；错误文本不含敏感值，仅路径与字段名）
-fn format_err(e: cf_format::CfFormatError) -> CfError {
+/// cf-format 错误 → 统一错误（建库路径；错误文本不含敏感值，仅路径与字段名）。
+/// bio 通道的 header 重写（enable/disable）复用同一映射。
+pub(crate) fn format_err(e: cf_format::CfFormatError) -> CfError {
     match e {
         cf_format::CfFormatError::Io(s) => CfError::Io(s),
         other => CfError::Corrupted(other.to_string()),

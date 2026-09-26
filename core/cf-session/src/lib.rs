@@ -14,11 +14,15 @@
 //! `SubKeys` 形态存于 `ItemStore`，跨 FFI 永不出现）。定时器放在平台侧：
 //! 本 crate 只提供时间注入的纯逻辑（[`idle`]）。
 //!
-//! ## 模块划分（T02）
+//! ## 模块划分（T02 + docs/08 T01）
 //!
 //! - [`unlock`]：`create_vault`（建库）与 `open_vault`（打开会话）编排；
 //!   解锁数据流：NFC 归一化 → Argon2id（参数从 header 读）→ wrapped_dek
 //!   解封 → verifier 校验 → `SubKeys::derive` → `ItemStore::open`
+//! - [`unlock_bio`]：生物识别（Touch ID）DEK 封装通道（docs/08 v0.2）——
+//!   `new_biometric_unwrap_key` / `enable_biometric` / `disable_biometric`
+//!   / `unlock_with_biometric` 的会话层内核，AAD 钉库与错误码纪律见其
+//!   模块文档
 //! - [`vault`]：`VaultSession`——持有 `Mutex<Option<UnlockedState>>`，
 //!   `lock()` 置 `None` 触发全链路 `ZeroizeOnDrop` 内存清零
 //! - [`idle`]：空闲超时判定的纯函数（时间由平台注入，可测试）
@@ -50,6 +54,7 @@
 pub mod idle;
 pub mod types;
 pub mod unlock;
+pub mod unlock_bio;
 pub mod usecase;
 pub mod vault;
 
@@ -61,8 +66,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cf_totp::TotpConfig;
 
-pub use types::{ItemDetails, TotpCode, VaultInfo};
+pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
 pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
+pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};
 pub use vault::VaultSession;
 
 /// 会话层错误类型（docs/07 §5 C-6 统一）。

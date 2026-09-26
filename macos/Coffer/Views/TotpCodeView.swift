@@ -44,6 +44,15 @@ struct TotpCodeView: View {
                     Text(issuer).font(.caption).foregroundStyle(.secondary)
                 }
             }
+
+            Button {
+                copyCode()
+            } label: {
+                Label(copiedFeedback ? "已复制" : "复制",
+                      systemImage: copiedFeedback ? "checkmark" : "doc.on.doc")
+            }
+            .controlSize(.small)
+            .disabled(code == nil)
             Spacer()
         }
         .onAppear(perform: refresh)
@@ -51,6 +60,8 @@ struct TotpCodeView: View {
             refresh()
         }
     }
+
+    @State private var copiedFeedback = false
 
     private var progress: Double {
         guard detail.period > 0 else { return 0 }
@@ -70,6 +81,16 @@ struct TotpCodeView: View {
             // TOTP 生成失败不弹窗打断浏览；显示占位并在控制台可见
             code = nil
             secsRemaining = 0
+        }
+    }
+
+    /// 复制当前验证码：同样 30 秒自动清除（T05 任务书裁定，与密码复制一致）。
+    private func copyCode() {
+        guard let code else { return }
+        ClipboardManager.shared.copyWithAutoClear(code)
+        copiedFeedback = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            copiedFeedback = false
         }
     }
 }

@@ -55,6 +55,34 @@ final class AppModel: ObservableObject {
     /// 选中条目的完整详情（Concealed 值已掩码）。
     @Published var currentDetails: FfiItemDetails?
 
+    // MARK: 自动锁定配置（T05 阶段四）
+
+    /// 空闲自动锁定分钟数（0 = 从不）。默认 5 分钟（FR-12.1）。
+    @Published var autoLockMinutes: Int = AppModel.loadAutoLockMinutes() {
+        didSet {
+            // 0（从不）落盘为 -1，与「从未配置」区分
+            UserDefaults.standard.set(autoLockMinutes == 0 ? -1 : autoLockMinutes,
+                                      forKey: Self.autoLockDefaultsKey)
+            applyIdleTimeout()
+        }
+    }
+
+    /// 从 UserDefaults 读已保存档位（nonisolated，供属性默认值使用）。
+    nonisolated private static func loadAutoLockMinutes() -> Int {
+        let stored = UserDefaults.standard.integer(forKey: "autoLockMinutes")
+        // 未配置（键不存在时 integer 返回 0）→ 默认 5 分钟；-1 = 用户选了「从不」
+        switch stored {
+        case 0: return 5
+        case -1: return 0
+        default: return autoLockOptions.contains(stored) ? stored : 5
+        }
+    }
+    /// 可选档位：1 / 5 / 15 / 30 分钟、从不。
+    nonisolated static let autoLockOptions: [Int] = [1, 5, 15, 30, 0]
+    nonisolated static let autoLockDefaultsKey = "autoLockMinutes"
+    /// 自动锁定平台驱动（锁屏 / 休眠 / 屏保立即锁定 + 空闲喂入）。
+    private var lockMonitor: AutoLockMonitor?
+
     // MARK: - FFI 对象
 
     /// Rust 侧应用工厂（库的枚举 / 创建 / 打开注册表）。
@@ -81,11 +109,16 @@ final class AppModel: ObservableObject {
         self.baseDir = documents.appendingPathComponent("Coffer", isDirectory: true)
     }
 
-    /// 启动入口（RootView.onAppear 调用）：建目录 + 枚举已有库。
+    /// 启动入口（RootView.onAppear 调用）：建目录 + 枚举已有库 + 启动自动锁定监视。
     func bootstrap() {
         // 幂等：仅在 booting 阶段执行一次。
         guard phase == .booting else { return }
         try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+
+        // 自动锁定监视（持弱引用，无循环）
+        let monitor = AutoLockMonitor()
+        monitor.start(model: self)
+        lockMonitor = monitor
 
         do {
             let briefs = try factory.listVaults(baseDir: baseDir.path)
@@ -110,6 +143,7 @@ final class AppModel: ObservableObject {
             let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
             session = opened
             vaultName = brief.displayName
+            applyIdleTimeout()
             phase = .locked
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
@@ -152,16 +186,29 @@ final class AppModel: ObservableObject {
                 try target.unlock(password: password)
             }.value
             vaultName = info.displayName
+            applyIdleTimeout()
             phase = .unlocked
         } catch {
             lastErrorMessage = ErrorPresenter.text(error)
         }
     }
 
-    /// 手动锁定：清零 Rust 侧密钥，回到锁定态。
+    /// 手动锁定：清零 Rust 侧密钥，回到锁定态，并清空 UI 侧条目状态。
     func lock() {
         session?.lock()
+        // 锁定即清空已解密数据的 UI 状态（docs/07 §2.4：锁定后清空已取回明文状态）
+        items = []
+        currentDetails = nil
+        selectedItemID = nil
+        searchText = ""
         phase = session != nil ? .locked : .noVault
+    }
+
+    /// 把当前超时配置应用到会话（0 或负数 = 禁用自动锁定）。
+    private func applyIdleTimeout() {
+        guard let session else { return }
+        let secs = autoLockMinutes > 0 ? Int64(autoLockMinutes) * 60 : 0
+        session.setIdleTimeoutSecs(secs: secs)
     }
 
     /// 进程退出兜底（AppDelegate.applicationWillTerminate 调用）。

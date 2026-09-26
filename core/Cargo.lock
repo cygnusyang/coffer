@@ -449,6 +449,7 @@ dependencies = [
  "ciborium",
  "rusqlite",
  "serde",
+ "serde_json",
  "thiserror",
  "uuid",
  "zeroize",

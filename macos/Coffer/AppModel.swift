@@ -135,9 +135,6 @@ final class AppModel: ObservableObject {
 
     // MARK: - 会话管理
 
-    /// 是否存在可用会话（密码强度估算等非门禁调用需要）。
-    var hasSession: Bool { session != nil }
-
     private func openSession(_ brief: FfiVaultBrief) {
         do {
             let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
@@ -223,10 +220,9 @@ final class AppModel: ObservableObject {
 
     // MARK: - 密码强度（非门禁展示用）
 
-    /// 强度估算：有会话时走 Rust 侧 zxcvbn（锁定态也可用，非门禁接口）；
-    /// 无会话（首次建库）时返回 nil，由 UI 用本地粗估兜底。
+    /// 强度估算：走 Rust 工厂版 zxcvbn（纯计算、无会话依赖，建库前
+    /// 可用 —— v0.1 的「无会话只能本地粗估」限制已移除）。
     func estimateStrength(_ candidate: String) -> FfiStrengthEstimate? {
-        guard let session else { return nil }
-        return try? session.strengthEstimate(candidate: candidate)
+        try? factory.strengthEstimate(candidate: candidate)
     }
 }

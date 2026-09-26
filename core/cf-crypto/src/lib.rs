@@ -38,6 +38,8 @@
 //! ## 已实现的部分
 //!
 //! - **KDF（Argon2id）** —— 见 `docs/03-详细设计.md` §2.3
+//! - **HKDF 子密钥派生** —— 见 `docs/03-详细设计.md` §2.4，
+//!   入口为 [`kdf::derive_subkey`] 与 [`subkeys::SubKeys`]
 //! - **AEAD（XChaCha20-Poly1305）** —— 见 `docs/03-详细设计.md` §2.5，
 //!   入口集中在 [`aead`] 模块（`seal` / `open` / `build_field_aad` / `SessionKey`），
 //!   上层一律通过该模块，不得直接依赖 `chacha20poly1305` crate
@@ -45,10 +47,6 @@
 //! ## 尚未实现的部分
 //!
 //! - **Argon2id 参数标定** —— M0 第 ③ 项，用 `examples/bench_kdf.rs` 执行
-//! - **HKDF 子密钥派生** —— 属 M1 内容，见 `docs/03-详细设计.md` §2.4
-//!
-//! 也就是说：`STATUS` 为 `Verified` 指的是**当前已实现的 KDF + AEAD 模块**，
-//! 不代表整个 `cf-crypto` 完工（HKDF 等仍待实现）。
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
@@ -57,10 +55,12 @@
 pub mod aead;
 pub mod error;
 pub mod kdf;
+pub mod subkeys;
 
 pub use aead::{build_field_aad, open, seal, SessionKey, KEY_LEN as AEAD_KEY_LEN, NONCE_LEN as AEAD_NONCE_LEN};
 pub use error::CfCryptoError;
-pub use kdf::{derive_key, normalize_password, KdfParams, KEY_LEN, SALT_LEN};
+pub use kdf::{derive_key, derive_subkey, normalize_password, KdfParams, KEY_LEN, SALT_LEN};
+pub use subkeys::{SubKeys, LABEL_ATTACH_MAC, LABEL_FIELD, LABEL_FILE, LABEL_HISTORY, LABEL_ITEM, LABEL_MANIFEST, LABEL_META};
 
 /// 本 crate 的实现状态。上层可据此判断可用性。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,7 @@ pub enum ImplementationStatus {
 ///
 /// # 注意本常量的粒度
 ///
-/// 它描述的是 **`cf-crypto` 中已实现的部分**（当前为 KDF + AEAD 模块），
-/// **不代表 HKDF 等尚未实现的内容已完成**。新增模块时请勿误用此常量，
-/// 必要时为每个模块单独标注状态。
+/// 它描述的是 **`cf-crypto` 中已实现的部分**（当前为 KDF + AEAD + HKDF 模块），
+/// **不代表 Argon2id 参数标定等尚未完成的内容已完成**。新增模块时请勿误用
+/// 此常量，必要时为每个模块单独标注状态。
 pub const STATUS: ImplementationStatus = ImplementationStatus::Verified;

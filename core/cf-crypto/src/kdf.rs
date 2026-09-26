@@ -31,6 +31,8 @@
 use std::time::{Duration, Instant};
 
 use argon2::{Algorithm, Argon2, Params, Version};
+use hkdf::Hkdf;
+use sha2::Sha256;
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
@@ -272,6 +274,37 @@ pub fn random_salt() -> Result<[u8; SALT_LEN], CfCryptoError> {
     Ok(salt)
 }
 
+/// 用 HKDF-SHA256 从 DEK 派生一个 32 字节子密钥。
+///
+/// 对应 `docs/03-详细设计.md` §2.4：一钥一用，每个用途（元数据、条目、
+/// 字段、附件……）使用独立 label 派生独立子密钥。若某子密钥因侧信道
+/// 泄露，不会波及其他用途。
+///
+/// # 参数
+///
+/// - `dek`：数据加密密钥（32 字节）。
+/// - `vault_uuid`：保险库 UUID 的 16 字节原始形式。作为 HKDF 的 salt，
+///   保证**不同保险库**派生的子密钥不同（即使 DEK 相同）。
+/// - `label`：用途字面量（如 `"cf/meta/v1"`），见 [`crate::subkeys`]
+///   的用途常量。
+///
+/// # 返回值
+///
+/// 32 字节子密钥。理论上 `Hkdf::expand` 不会失败（HKDF-SHA256 输出上限
+/// 为 255×32 字节，32 字节必在界内），但按本 crate 纪律**不 `.expect()`**，
+/// 仍以 [`Result`] 返回并映射为 [`CfCryptoError::KdfFailed`]。
+pub fn derive_subkey(
+    dek: &[u8; KEY_LEN],
+    vault_uuid: &[u8; 16],
+    label: &str,
+) -> Result<[u8; KEY_LEN], CfCryptoError> {
+    let hk = Hkdf::<Sha256>::new(Some(vault_uuid.as_slice()), dek);
+    let mut out = [0u8; KEY_LEN];
+    hk.expand(label.as_bytes(), &mut out)
+        .map_err(|_| CfCryptoError::KdfFailed)?;
+    Ok(out)
+}
+
 // ---------------------------------------------------------------- 测试
 
 #[cfg(test)]
@@ -386,5 +419,134 @@ mod tests {
         assert_eq!(key.len(), KEY_LEN);
         // 全零输出意味着底层实现没有真正工作
         assert_ne!(key.as_ref(), &[0u8; KEY_LEN], "派生结果全零，实现可疑");
+    }
+
+    // ------------------------------------------------ HKDF 子密钥派生（§2.4）
+
+    /// 从十六进制字符串解析字节。
+    ///
+    /// RFC 测试向量直接抄 RFC 原文的十六进制表示，避免手工转写数组时出错。
+    fn hex_vec(s: &str) -> Vec<u8> {
+        s.as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                let h = |b: u8| match b {
+                    b'0'..=b'9' => b - b'0',
+                    b'a'..=b'f' => b - b'a' + 10,
+                    b'A'..=b'F' => b - b'A' + 10,
+                    _ => panic!("非法十六进制字符：{pair:?}"),
+                };
+                (h(pair[0]) << 4) | h(pair[1])
+            })
+            .collect()
+    }
+
+    /// RFC 5869 Appendix A Test Case 1（SHA-256，HKDF-SHA256）。
+    ///
+    /// 向量值已用独立 Python 实现交叉核对（2026-09-24），与 RFC 原文一致。
+    #[test]
+    fn rfc5869_测试用例1() {
+        // IKM = 0x0b × 22；salt = 0x00..0x0c；info = 0xf0..0xf9；L = 42
+        let ikm = [0x0bu8; 22];
+        let salt = [0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c];
+        let info = [0xf0u8, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
+
+        let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+        let mut okm = [0u8; 42];
+        hk.expand(&info, &mut okm).expect("42 字节在 HKDF-SHA256 输出上限内");
+
+        let expected = hex_vec(
+            "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf\
+             34007208d5b887185865",
+        );
+        assert_eq!(okm.to_vec(), expected);
+    }
+
+    /// RFC 5869 Appendix A Test Case 2（SHA-256，80 字节 IKM/salt/info，L = 82）。
+    #[test]
+    fn rfc5869_测试用例2() {
+        let ikm: Vec<u8> = (0x00u8..0x50).collect(); // 0x00..0x4f
+        let salt: Vec<u8> = (0x60u8..0xb0).collect(); // 0x60..0xaf
+        let info: Vec<u8> = (0xb0u8..=0xff).collect(); // 0xb0..0xff
+
+        let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+        let mut okm = [0u8; 82];
+        hk.expand(&info, &mut okm).expect("82 字节在 HKDF-SHA256 输出上限内");
+
+        let expected = hex_vec(
+            "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c\
+             59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71\
+             cc30c58179ec3e87c14c01d5c1f3434f1d87",
+        );
+        assert_eq!(okm.to_vec(), expected);
+    }
+
+    /// RFC 5869 Appendix A Test Case 3（SHA-256，salt 与 info 均为空，L = 42）。
+    #[test]
+    fn rfc5869_测试用例3() {
+        let ikm = [0x0bu8; 22];
+
+        let hk = Hkdf::<Sha256>::new(None, &ikm);
+        let mut okm = [0u8; 42];
+        hk.expand(b"", &mut okm).expect("42 字节在 HKDF-SHA256 输出上限内");
+
+        let expected = hex_vec(
+            "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d\
+             9d201395faa4b61a96c8",
+        );
+        assert_eq!(okm.to_vec(), expected);
+    }
+
+    /// 已知答案测试：把 `derive_subkey` 的 wrapper 语义钉死。
+    ///
+    /// 期望值由独立 Python 实现按相同输入（salt = vault_uuid、ikm = dek、
+    /// info = label）计算（2026-09-24 首算；2026-09-26 因 label 前缀
+    /// lv/ → cf/ 随项目改名而重算，旧值已双向交叉验证）。
+    #[test]
+    fn 子密钥派生与已知答案一致() {
+        let dek = [0x42u8; KEY_LEN];
+        let vault_uuid = [0x11u8; 16];
+
+        let key = derive_subkey(&dek, &vault_uuid, "cf/meta/v1").expect("派生成功");
+        let expected =
+            hex_vec("a68e12dc16778420b9d46ec6fa955b842f820ed1b00a660b3b2c28a6621cdd3d");
+        assert_eq!(key.to_vec(), expected);
+    }
+
+    #[test]
+    fn 子密钥派生是确定性的() {
+        let dek = [0x42u8; KEY_LEN];
+        let vault_uuid = [0x11u8; 16];
+
+        let k1 = derive_subkey(&dek, &vault_uuid, "cf/meta/v1").expect("派生成功");
+        let k2 = derive_subkey(&dek, &vault_uuid, "cf/meta/v1").expect("派生成功");
+        assert_eq!(k1, k2);
+    }
+
+    /// 一钥一用：不同用途 label 必须产生不同子密钥。
+    #[test]
+    fn 不同用途label产生不同子密钥() {
+        let dek = [0x42u8; KEY_LEN];
+        let vault_uuid = [0x11u8; 16];
+
+        let meta = derive_subkey(&dek, &vault_uuid, "cf/meta/v1").expect("派生成功");
+        let item = derive_subkey(&dek, &vault_uuid, "cf/item/v1").expect("派生成功");
+        let attach_mac = derive_subkey(&dek, &vault_uuid, "cf/attach-mac/v1").expect("派生成功");
+
+        assert_ne!(meta, item);
+        assert_ne!(meta, attach_mac);
+        assert_ne!(item, attach_mac);
+    }
+
+    /// salt 用 vault_uuid：不同保险库（即使 DEK 相同）也必须得到不同子密钥。
+    #[test]
+    fn 不同vault_uuid产生不同子密钥() {
+        let dek = [0x42u8; KEY_LEN];
+        let uuid_a = [0x11u8; 16];
+        let uuid_b = [0x22u8; 16];
+
+        let k1 = derive_subkey(&dek, &uuid_a, "cf/meta/v1").expect("派生成功");
+        let k2 = derive_subkey(&dek, &uuid_b, "cf/meta/v1").expect("派生成功");
+        assert_ne!(k1, k2);
     }
 }

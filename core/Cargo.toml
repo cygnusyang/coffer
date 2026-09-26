@@ -48,10 +48,15 @@ argon2 = "0.6.0"
 #          0.11 起已并入主 crate：XChaCha20Poly1305 无需额外 feature
 chacha20poly1305 = "0.11.0"
 
-# [待校准] HKDF 子密钥派生
+# [已确认] HKDF 子密钥派生（M1-0 实测：解析到 hkdf 0.12.4）
+#          `expand(info: &[u8], &mut okm) -> Result<(), InvalidLength>`，
+#          与 docs/03-详细设计.md §2.4 伪代码一致；expand 返回 Result，
+#          包装函数无需 .expect（cf-crypto 禁 expect）。
 hkdf = "0.12"
-# [待校准] SHA-2 家族 / HMAC —— 预留，cf-crypto 的 HKDF 子密钥派生
-#          与 verifier 计算需要；TOTP 已委托 totp-rs，不再直接使用
+# [已确认] SHA-2 家族 / HMAC（M1-0 实测）
+#          sha2 0.10.9 提供 HKDF 的 Sha256 哈希类型，编译通过；
+#          hmac 0.12.1 为 hkdf 的传递依赖，cf-crypto 不再直接使用；
+#          sha1 暂未使用（TOTP 已委托 totp-rs）。
 sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"

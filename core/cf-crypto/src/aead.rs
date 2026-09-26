@@ -67,6 +67,21 @@ impl SessionKey {
     pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
         &self.0
     }
+
+    /// 生成一个随机 32 字节会话密钥。
+    ///
+    /// 由系统 CSPRNG（`getrandom`）填充，供新建库时生成 DEK 等场景使用。
+    ///
+    /// # 错误
+    ///
+    /// 随机源不可用时返回 [`CfCryptoError::RandomUnavailable`]——
+    /// 绝不降级到弱随机（NFR-SEC-06）。
+    pub fn random() -> Result<Self, CfCryptoError> {
+        let mut bytes = [0u8; KEY_LEN];
+        getrandom::fill(&mut bytes)
+            .map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
+        Ok(Self(bytes))
+    }
 }
 
 /// 加密并封装为 `nonce ‖ ct ‖ tag` 格式。
@@ -170,7 +185,7 @@ mod tests {
     #[test]
     fn empty_plaintext_roundtrip() {
         let key = test_key();
-        let aad = b"lv/verifier/v1";
+        let aad = b"cf/verifier/v1";
 
         let sealed = seal(&key, aad, b"").unwrap();
         assert_eq!(sealed.len(), SEALED_MIN_LEN);
@@ -268,5 +283,20 @@ mod tests {
     fn error_display_does_not_leak() {
         let msg = format!("{}", CfCryptoError::AeadOpenFailed);
         assert!(!msg.contains("tag") && !msg.contains("aad"), "错误信息不应包含失败原因细节");
+    }
+
+    /// 随机密钥长度固定 32 字节
+    #[test]
+    fn random_key_has_correct_length() {
+        let key = SessionKey::random().expect("随机源可用");
+        assert_eq!(key.as_bytes().len(), KEY_LEN);
+    }
+
+    /// 两次随机调用得到不同密钥（CSPRNG，碰撞概率可忽略）
+    #[test]
+    fn random_keys_differ_between_calls() {
+        let k1 = SessionKey::random().expect("随机源可用");
+        let k2 = SessionKey::random().expect("随机源可用");
+        assert_ne!(k1.as_bytes(), k2.as_bytes(), "两次随机得到相同密钥——随机源可疑");
     }
 }

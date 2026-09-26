@@ -36,7 +36,7 @@ final class AutoLockMonitor {
         tickTimer = timer
 
         let center = NSWorkspace.shared.notificationCenter
-        let wsHandler: (Notification) -> Void = { [weak self] _ in
+        let wsHandler: @Sendable (Notification) -> Void = { [weak self] _ in
             MainActor.assumeIsolated { self?.lockNow() }
         }
         workspaceObservers.append(center.addObserver(

@@ -5,7 +5,9 @@
 //   2. 轮询（1 s）：changeCount 未变 → 30 s 到点后清空剪贴板；
 //      changeCount 已变（用户在此期间复制了别的内容）→ 放弃清除，
 //      绝不误清用户后来的数据。
-//   3. 多次复制：取消旧定时任务，只保留最近一次。
+//   3. 多次复制：取消旧定时任务，只保留最近一次；
+//   4. 会话锁定（AppModel.lock() → clearOnLock()）：取消待执行清除，
+//      且若剪贴板仍是我们写入的敏感内容则立即清空。
 
 import AppKit
 
@@ -39,10 +41,22 @@ final class ClipboardManager {
         pasteboard.setString(value, forType: .string)
     }
 
-    /// 取消待执行的清除（如会话锁定后不再需要）。
-    func cancelPendingClear() {
+    /// 会话锁定时的剪贴板处置（AppModel.lock() 调用）：
+    ///   1. 取消待执行的 30 s 清除任务；
+    ///   2. 若剪贴板仍是我们写入的敏感内容（changeCount 未被用户后续复制
+    ///      顶掉），立即清空 —— 锁定时刻剪贴板里可能还有密码，立即清比
+    ///      等 30 s 更安全。
+    /// 用户在此期间已复制自己的内容则不动剪贴板，与定时清除同一条纪律：
+    /// 绝不误清用户数据（changeCount 守卫）。
+    func clearOnLock() {
         clearWorkItem?.cancel()
         clearWorkItem = nil
+        guard writtenChangeCount != -1 else { return }
+        let pasteboard = NSPasteboard.general
+        if pasteboard.changeCount == writtenChangeCount {
+            pasteboard.clearContents()
+        }
+        writtenChangeCount = -1
     }
 
     private func scheduleClear() {

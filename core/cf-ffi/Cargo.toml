@@ -13,4 +13,4 @@ cf-crypto = { workspace = true }
 uniffi = { workspace = true }
 thiserror = { workspace = true }
 
-# 状态：未实现（计划 M0/M1 阶段）
+# T04 阶段 1 已落地 panic 捕获验证（ffi_guard）；UniFFI 接口见阶段 2

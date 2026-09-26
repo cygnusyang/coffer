@@ -20,6 +20,43 @@ pub struct VaultInfo {
     pub item_count: i64,
 }
 
+/// 生物识别解锁的三态（docs/08 §7.5 设置页状态行 / §3.1 双信号语义）。
+///
+/// 判定依据是两个独立信号的组合：
+///
+/// - **header 侧持久意愿**：`biometric_wrap.available`（Rust 持有，锁定态
+///   可查 [`crate::vault::VaultSession::has_biometric_wrap`]）；
+/// - **Keychain 实际可用性**：K_bio 项存在且可读（Swift 侧 `itemExists` /
+///   read，T03 范围）。
+///
+/// 两者可能不一致（指纹集变更后 Keychain 失效而 header 仍 available=true），
+/// 由纯函数 [`BiometricStatus::from_availability`] 组合判定，可本地测试。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BiometricStatus {
+    /// 已停用：header `available == false`（用户意图关闭或从未开启）。
+    Disabled,
+    /// 已启用：header `available == true` 且 Keychain 项可用。
+    Enabled,
+    /// 凭据已失效（BioStale）：header `available == true` 但 Keychain 项
+    /// 失效（指纹集变更）。UI 应显示「重新启用」入口（docs/08 §4.1）。
+    Stale,
+}
+
+impl BiometricStatus {
+    /// 由「header 持久意愿」与「Keychain 实际可用性」组合判定三态。
+    ///
+    /// Keychain 信号由平台层（Swift）注入；Rust 侧提供纯判定逻辑，
+    /// 使状态机可完全本地测试（T01 验收范围）。
+    #[must_use]
+    pub fn from_availability(header_available: bool, keychain_readable: bool) -> Self {
+        match (header_available, keychain_readable) {
+            (true, true) => Self::Enabled,
+            (true, false) => Self::Stale,
+            (false, _) => Self::Disabled,
+        }
+    }
+}
+
 /// TOTP 当前验证码（docs/07 §2.3 `TotpCode`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TotpCode {

@@ -39,6 +39,7 @@ use cf_store::ItemListFilter;
 
 use crate::idle;
 use crate::types::{ItemDetails, TotpCode, TotpDetail, VaultInfo};
+use crate::unlock_bio;
 use crate::usecase;
 use crate::{SessionResult, TotpSession};
 use cf_domain::CfError;
@@ -61,7 +62,9 @@ pub struct VaultSession {
     vault_dir: PathBuf,
     vault_uuid: cf_domain::VaultId,
     display_name: String,
-    header: cf_format::Header,
+    /// header 副本（bio enable/disable 会重写它，docs/08）。`&self` 门面
+    /// 一致性：与 `state` 同用 `Mutex` 内部可变；读取侧短暂加锁后克隆。
+    header: Mutex<cf_format::Header>,
     state: Mutex<Option<UnlockedState>>,
     last_activity: AtomicI64,
     idle_timeout_secs: AtomicI64,
@@ -76,8 +79,7 @@ impl VaultSession {
             display_name: header.display_name.clone(),
             vault_dir,
             vault_uuid,
-            header,
-            state: Mutex::new(None),
+            header: Mutex::new(header),            state: Mutex::new(None),
             last_activity: AtomicI64::new(crate::unix_now().unwrap_or(0)),
             idle_timeout_secs: AtomicI64::new(DEFAULT_IDLE_TIMEOUT_SECS),
         })
@@ -110,12 +112,13 @@ impl VaultSession {
     ///
     /// 已解锁时幂等：直接返回当前信息，不重复执行 KDF。
     pub fn unlock(&self, password: &str) -> SessionResult<VaultInfo> {
+        let header = self.header_snapshot();
         let mut guard = self.state_guard();
         if let Some(state) = guard.as_ref() {
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
-        let store = crate::unlock::unlock_store(&self.vault_dir, &self.header, password)?;
+        let store = crate::unlock::unlock_store(&self.vault_dir, &header, password)?;
         let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
         self.last_activity
             .store(crate::unix_now().unwrap_or(0), Ordering::Release);
@@ -174,6 +177,85 @@ impl VaultSession {
         } else {
             false
         }
+    }
+
+    // ------------------------------------------------ 生物识别（docs/08）
+
+    /// 是否启用了生物识别封装（header `biometric_wrap.available`，
+    /// docs/08 D-1：语义 = 「用户意图开启」，锁定态可查）。
+    ///
+    /// 纯读 header，无密钥操作；供 LockView 决定是否显示 Touch ID 按钮。
+    /// 实际可用性由 Swift 侧 Keychain 信号组合判定（三态见
+    /// [`crate::types::BiometricStatus`]）。
+    #[must_use]
+    pub fn has_biometric_wrap(&self) -> bool {
+        self.header_snapshot().biometric_wrap.available
+    }
+
+    /// 启用 Touch ID 解锁（docs/08 §4.1 enable，header 侧）。
+    ///
+    /// 门禁：需解锁态（设置页在解锁后才可达，错误码 1001）。传入主密码
+    /// 而非 DEK（D-6）：内部经 `recover_dek` 重验证主密码并解出 DEK
+    /// （错 → 1002，此时 header 未变）→ K_bio 封装 → 原子重写 header。
+    ///
+    /// `k_bio` 必须为 32 字节随机数（Swift 经 FFI 从
+    /// `new_biometric_unwrap_key` 取得并已先行写入 Keychain——先 Keychain
+    /// 后 header 顺序裁定，docs/08 §4.1）；长度不符 → 5002。本方法失败
+    /// 时 header 保持原样，Keychain 补偿删除由 Swift 依据 Err 执行。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错 / 5002 k_bio 长度 / 5001·1005 写失败。
+    pub fn enable_biometric(&self, password: &str, k_bio: &[u8]) -> SessionResult<()> {
+        let _guard = self.unlocked()?;
+        let header = self.header_snapshot();
+        let new_header =
+            unlock_bio::enable_biometric_impl(&self.vault_dir, &header, password, k_bio)?;
+        // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
+        *self.header_guard() = new_header;
+        Ok(())
+    }
+
+    /// 关闭 Touch ID 解锁（docs/08 §4.1 disable，header 侧）。
+    ///
+    /// 门禁：需解锁态（1001）。重写 header → 禁用态；**幂等**——已是
+    /// 禁用态时不重写文件。Keychain 项删除在 Swift 侧先行且幂等，两侧
+    /// 独立可重试；本方法失败非致命，可重试（docs/08 §8 降级矩阵）。
+    pub fn disable_biometric(&self) -> SessionResult<()> {
+        let _guard = self.unlocked()?;
+        let header = self.header_snapshot();
+        if let Some(new_header) =
+            unlock_bio::disable_biometric_impl(&self.vault_dir, &header)?
+        {
+            *self.header_guard() = new_header;
+        }
+        Ok(())
+    }
+
+    /// Touch ID 解锁（docs/08 §6 `unlock_with_biometric` 的会话层门面）。
+    ///
+    /// K_bio 解封 wrapped_dek_bio → DEK → SubKeys → ItemStore——收尾与
+    /// 主密码 [`VaultSession::unlock`] 完全共享。获得的会话与主密码路径
+    /// 同生共死（`lock()` / 自动锁定清零密钥，D-5）。
+    ///
+    /// 已解锁时幂等：直接返回当前信息，不做密钥操作。
+    ///
+    /// # 错误（D-8）
+    ///
+    /// 未启用 → 4001；k_bio 非 32B → 5002；其余失败统一 1002。
+    pub fn unlock_with_biometric(&self, k_bio: &[u8]) -> SessionResult<VaultInfo> {
+        let header = self.header_snapshot();
+        let mut guard = self.state_guard();
+        if let Some(state) = guard.as_ref() {
+            return vault_info(&state.store, self.vault_uuid, &self.display_name);
+        }
+
+        let store = unlock_bio::unlock_store_with_bio(&self.vault_dir, &header, k_bio)?;
+        let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
+        self.last_activity
+            .store(crate::unix_now().unwrap_or(0), Ordering::Release);
+        *guard = Some(UnlockedState { store });
+        Ok(info)
     }
 
     // ------------------------------------------------------ 条目 CRUD
@@ -386,6 +468,19 @@ impl VaultSession {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// header 互斥锁守卫（poison 处理同 [`Self::state_guard`]）。
+    fn header_guard(&self) -> MutexGuard<'_, cf_format::Header> {
+        self.header
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// header 快照：短暂加锁克隆（header 为数百字节级明文结构，
+    /// 克隆开销可忽略），避免跨锁持有（如 KDF 全程）阻塞并发查询。
+    fn header_snapshot(&self) -> cf_format::Header {
+        self.header_guard().clone()
     }
 }
 

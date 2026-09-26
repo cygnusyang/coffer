@@ -389,6 +389,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_strength_estimate(uint64_t ptr, 
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_totp_code(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_TOTP_CONFIG
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_TOTP_CONFIG
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_totp_config(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UNLOCK
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UNLOCK
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_unlock(uint64_t ptr, RustBuffer password, RustCallStatus *_Nonnull out_status
@@ -397,6 +402,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_unlock(uint64_t ptr, RustBuffer 
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UPDATE_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UPDATE_ITEM
 void uniffi_cf_ffi_fn_method_vaultsession_update_item(uint64_t ptr, RustBuffer item_id, RustBuffer draft, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UPDATE_ITEM_WITH_TOTP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UPDATE_ITEM_WITH_TOTP
+void uniffi_cf_ffi_fn_method_vaultsession_update_item_with_totp(uint64_t ptr, RustBuffer item_id, RustBuffer draft, RustBuffer totp, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_VAULT_DIR
@@ -813,6 +823,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_totp_code(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_TOTP_CONFIG
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_TOTP_CONFIG
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_totp_config(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UNLOCK
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UNLOCK
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_unlock(void
@@ -822,6 +838,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_unlock(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UPDATE_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UPDATE_ITEM
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_update_item(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UPDATE_ITEM_WITH_TOTP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UPDATE_ITEM_WITH_TOTP
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_update_item_with_totp(void
     
 );
 #endif

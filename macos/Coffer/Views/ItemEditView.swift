@@ -3,8 +3,11 @@
 // 掩码纪律（docs/07 §4.2）：
 //   - 编辑时 Concealed 字段不回填明文，显示占位「未修改」；
 //     保存时若用户未改动，才经 getFieldValue 取回真实值随 draft 提交。
-//   - TOTP 密钥不可读回（FFI 无此接口）：编辑含 TOTP 条目时若不重新粘贴
-//     otpauth URI，保存会移除 TOTP —— 用确认弹窗明确告知，避免静默丢失。
+//   - TOTP 密钥不可读回（FFI 无此接口，安全设计）：编辑含 TOTP 条目时
+//     默认「保留既有 TOTP」（totp_config 只下发元数据供展示，保存走
+//     updateItemWithTotp(.keep)，存储里的加密行完全不动）；粘贴新
+//     otpauth URI 才替换（.replace）；提供显式「移除」按钮（.remove）。
+//     三态显式，不再有 v0.1 的静默丢失 / 确认弹窗。
 //   - 模板外字段（导入带来的自定义字段）原样保留，不做静默丢弃。
 
 import SwiftUI
@@ -37,7 +40,10 @@ struct ItemEditView: View {
     @State private var otpauthText = ""
     @State private var isSaving = false
     @State private var saveError: String?
-    @State private var confirmTotpRemoval = false
+    /// 既有 TOTP 元数据（编辑模式加载；绝不含 secret）。
+    @State private var existingTotpMeta: FfiTotpMeta?
+    /// 用户显式点了「移除」：保存时提交 .remove（粘贴新 URI 会覆盖本标记）。
+    @State private var totpRemoved = false
 
     private var category: FfiItemCategory {
         switch mode {
@@ -52,7 +58,7 @@ struct ItemEditView: View {
     }
 
     private var hasExistingTotp: Bool {
-        existingDetails?.totp != nil
+        existingTotpMeta != nil && !totpRemoved
     }
 
     var body: some View {
@@ -72,11 +78,7 @@ struct ItemEditView: View {
                 TextField("标签（逗号分隔）", text: $tagsText, prompt: Text("工作, 邮箱"))
 
                 if category == .login {
-                    SecureField(
-                        existingDetails?.totp != nil ? "otpauth URI（留空并保存将移除 TOTP）" : "otpauth URI（可选）",
-                        text: $otpauthText,
-                        prompt: Text("otpauth://totp/…?secret=…")
-                    )
+                    totpSection
                 }
             }
             .formStyle(.grouped)
@@ -93,13 +95,57 @@ struct ItemEditView: View {
         } message: {
             Text(saveError ?? "")
         }
-        .confirmationDialog(
-            "保存将移除现有 TOTP（密钥无法读回）。如需保留，请重新粘贴 otpauth URI。",
-            isPresented: $confirmTotpRemoval,
-            titleVisibility: .visible
-        ) {
-            Button("仍然保存", role: .destructive) { save(forceTotpRemoval: true) }
-            Button("取消", role: .cancel) {}
+    }
+
+    // MARK: - TOTP 三态区（保留 / 替换 / 移除）
+
+    /// 编辑含 TOTP 条目时展示既有元数据（SHA-1 · 6 位 · 30s），默认保留；
+    /// 粘贴新 URI 才替换；提供显式「移除」（可撤销）。无既有 TOTP 时
+    /// 仅显示 URI 输入框（新建即写入）。
+    @ViewBuilder
+    private var totpSection: some View {
+        if let meta = existingTotpMeta, !totpRemoved {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.badge.checkmark")
+                        .foregroundStyle(.secondary)
+                    Text(verbatim: "已有 TOTP（\(Self.algoLabel(meta.algo)) · \(meta.digits) 位 · \(meta.period)s）")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("移除", role: .destructive) { totpRemoved = true }
+                        .controlSize(.small)
+                }
+                Text("保存时保留现有动态验证码；粘贴新 URI 可替换。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        } else if totpRemoved {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.badge.xmark")
+                    .foregroundStyle(.secondary)
+                Text("保存后移除现有 TOTP")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("撤销") { totpRemoved = false }
+                    .controlSize(.small)
+            }
+        }
+        SecureField(
+            hasExistingTotp ? "otpauth URI（粘贴以替换现有 TOTP）" : "otpauth URI（可选）",
+            text: $otpauthText,
+            prompt: Text("otpauth://totp/…?secret=…")
+        )
+    }
+
+    /// DDL 算法名 → 展示名（运行时仅 sha1，兜底原文）。
+    private static func algoLabel(_ algo: String) -> String {
+        switch algo {
+        case "sha1": return "SHA-1"
+        case "sha256": return "SHA-256"
+        case "sha512": return "SHA-512"
+        default: return algo.uppercased()
         }
     }
 
@@ -120,7 +166,7 @@ struct ItemEditView: View {
             Button("取消") { dismiss() }
                 .keyboardShortcut(.cancelAction)
             Button {
-                save(forceTotpRemoval: false)
+                save()
             } label: {
                 if isSaving {
                     ProgressView().controlSize(.small).frame(width: 44)
@@ -146,6 +192,8 @@ struct ItemEditView: View {
             urlText = details.urls.first(where: { $0.isPrimary })?.url ?? ""
             tagsText = details.tags.joined(separator: ", ")
             rows = Self.buildRows(for: details)
+            // 既有 TOTP 元数据（绝不含 secret）：展示「已有 TOTP」并默认保留
+            existingTotpMeta = try? model.totpConfig(itemId: details.uuid)
         } else {
             rows = ItemTemplates.fields(for: category).map { spec in
                 EditFieldRow(
@@ -236,19 +284,25 @@ struct ItemEditView: View {
 
     // MARK: - 保存
 
-    private func save(forceTotpRemoval: Bool) {
+    private func save() {
         guard canSave else { return }
-        // TOTP 保护：原条目有 TOTP 且用户未粘贴新 URI → 先确认
-        if !forceTotpRemoval && hasExistingTotp && otpauthText.trimmingCharacters(in: .whitespaces).isEmpty {
-            confirmTotpRemoval = true
-            return
-        }
 
         do {
             let draft = try buildDraft()
             isSaving = true
             if let details = existingDetails {
-                try model.updateItem(itemId: details.uuid, draft: draft)
+                // 编辑：TOTP 三态显式（粘贴新 URI → 替换；点了移除 → 删除；
+                // 其余 → 保留既有加密行，与 draft.totp 无关）
+                let trimmed = otpauthText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let totpUpdate: FfiTotpUpdate
+                if !trimmed.isEmpty {
+                    totpUpdate = .replace(draft: try model.parseOtpauth(uri: trimmed))
+                } else if totpRemoved {
+                    totpUpdate = .remove
+                } else {
+                    totpUpdate = .keep
+                }
+                try model.updateItem(itemId: details.uuid, draft: draft, totpUpdate: totpUpdate)
             } else {
                 _ = try model.createItem(draft: draft)
             }
@@ -264,6 +318,9 @@ struct ItemEditView: View {
     }
 
     /// 组装 FfiItemDraft：模板 + 保留字段、URL、标签、TOTP。
+    ///
+    /// TOTP：编辑模式下 draft.totp 恒为 nil（更新路径以三态参数为准，
+    /// 且 FFI 拿不到原 secret 也无需构造）；新建模式解析粘贴的 URI 写入。
     private func buildDraft() throws -> FfiItemDraft {
         var fields: [FfiFieldDraft] = []
 
@@ -316,11 +373,13 @@ struct ItemEditView: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
-        // TOTP
+        // TOTP：编辑模式恒 nil（三态参数另行提交）；新建解析粘贴的 URI
         var totp: FfiTotpDraft?
-        let trimmedOtpauth = otpauthText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedOtpauth.isEmpty {
-            totp = try model.parseOtpauth(uri: trimmedOtpauth)
+        if existingDetails == nil {
+            let trimmedOtpauth = otpauthText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedOtpauth.isEmpty {
+                totp = try model.parseOtpauth(uri: trimmedOtpauth)
+            }
         }
 
         return FfiItemDraft(

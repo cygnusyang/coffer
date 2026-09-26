@@ -957,15 +957,33 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func totpCode(itemId: String) throws  -> FfiTotpCode
     
     /**
+     * 读取条目 TOTP 元数据（**绝不含 secret**，编辑界面展示用）。
+     *
+     * 返回 algo / digits / period / issuer / account，供编辑界面展示
+     * 「已有 TOTP（SHA-1 · 6 位 · 30s）」并默认保留（见
+     * [`VaultSession::update_item_with_totp`]）。条目无 TOTP 记录 →
+     * `None`。
+     */
+    func totpConfig(itemId: String) throws  -> FfiTotpMeta?
+    
+    /**
      * 解锁：NFC 归一化 → Argon2id → DEK 解封 → verifier 校验。
      * 密码错 / 数据篡改统一码 1002（FR-1.4）。
      */
     func unlock(password: String) throws  -> FfiVaultInfo
     
     /**
-     * 更新条目（整体替换：fields / urls / tags / totp 删旧插新）。
+     * 更新条目（整体替换：fields / urls / tags 删旧插新；TOTP **默认
+     * 保留** —— FFI 不下发 secret，编辑无法重提交原密钥，默认删旧会
+     * 静默丢失 TOTP）。TOTP 三态显式控制走 [`VaultSession::update_item_with_totp`]。
      */
     func updateItem(itemId: String, draft: FfiItemDraft) throws 
+    
+    /**
+     * 更新条目（TOTP 三态显式版）：`keep` 保留既有加密行 / `replace`
+     * 删旧插新 / `remove` 移除。draft 的 `totp` 字段在此路径被忽略。
+     */
+    func updateItemWithTotp(itemId: String, draft: FfiItemDraft, totp: FfiTotpUpdate) throws 
     
     /**
      * 库工作目录。
@@ -1291,6 +1309,24 @@ open func totpCode(itemId: String)throws  -> FfiTotpCode  {
 }
     
     /**
+     * 读取条目 TOTP 元数据（**绝不含 secret**，编辑界面展示用）。
+     *
+     * 返回 algo / digits / period / issuer / account，供编辑界面展示
+     * 「已有 TOTP（SHA-1 · 6 位 · 30s）」并默认保留（见
+     * [`VaultSession::update_item_with_totp`]）。条目无 TOTP 记录 →
+     * `None`。
+     */
+open func totpConfig(itemId: String)throws  -> FfiTotpMeta?  {
+    return try  FfiConverterOptionTypeFfiTotpMeta.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_totp_config(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 解锁：NFC 归一化 → Argon2id → DEK 解封 → verifier 校验。
      * 密码错 / 数据篡改统一码 1002（FR-1.4）。
      */
@@ -1305,7 +1341,9 @@ open func unlock(password: String)throws  -> FfiVaultInfo  {
 }
     
     /**
-     * 更新条目（整体替换：fields / urls / tags / totp 删旧插新）。
+     * 更新条目（整体替换：fields / urls / tags 删旧插新；TOTP **默认
+     * 保留** —— FFI 不下发 secret，编辑无法重提交原密钥，默认删旧会
+     * 静默丢失 TOTP）。TOTP 三态显式控制走 [`VaultSession::update_item_with_totp`]。
      */
 open func updateItem(itemId: String, draft: FfiItemDraft)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
@@ -1313,6 +1351,21 @@ open func updateItem(itemId: String, draft: FfiItemDraft)throws   {try rustCallW
             self.uniffiCloneHandle(),
         FfiConverterString.lower(itemId),
         FfiConverterTypeFfiItemDraft_lower(draft),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 更新条目（TOTP 三态显式版）：`keep` 保留既有加密行 / `replace`
+     * 删旧插新 / `remove` 移除。draft 的 `totp` 字段在此路径被忽略。
+     */
+open func updateItemWithTotp(itemId: String, draft: FfiItemDraft, totp: FfiTotpUpdate)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_update_item_with_totp(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),
+        FfiConverterTypeFfiItemDraft_lower(draft),
+        FfiConverterTypeFfiTotpUpdate_lower(totp),uniffiCallStatus
     )
 }
 }
@@ -2085,7 +2138,8 @@ public struct FfiItemDraft: Equatable, Hashable {
      */
     public var fields: [FfiFieldDraft]
     /**
-     * TOTP 配置（若有）
+     * TOTP 配置（若有；`createItem` 路径用。更新路径请走
+     * `updateItemWithTotp` 的三态参数 —— 本字段在更新时被忽略）
      */
     public var totp: FfiTotpDraft?
 
@@ -2111,7 +2165,8 @@ public struct FfiItemDraft: Equatable, Hashable {
          * 字段草稿列表
          */fields: [FfiFieldDraft], 
         /**
-         * TOTP 配置（若有）
+         * TOTP 配置（若有；`createItem` 路径用。更新路径请走
+         * `updateItemWithTotp` 的三态参数 —— 本字段在更新时被忽略）
          */totp: FfiTotpDraft?) {
         self.title = title
         self.category = category
@@ -2975,6 +3030,106 @@ public func FfiConverterTypeFfiTotpDraft_lift(_ buf: RustBuffer) throws -> FfiTo
 #endif
 public func FfiConverterTypeFfiTotpDraft_lower(_ value: FfiTotpDraft) -> RustBuffer {
     return FfiConverterTypeFfiTotpDraft.lower(value)
+}
+
+
+/**
+ * TOTP 元数据读取态（`totpConfig` 专用；刻意不含共享密钥，也不含记录
+ * ID —— 供编辑界面展示「已有 TOTP（SHA-1 · 6 位 · 30s）」并默认保留）。
+ */
+public struct FfiTotpMeta: Equatable, Hashable {
+    /**
+     * 哈希算法（运行时仅支持 sha1）
+     */
+    public var algo: String
+    /**
+     * 口令位数（6 或 8）
+     */
+    public var digits: UInt8
+    /**
+     * 时间窗口秒数
+     */
+    public var period: UInt32
+    /**
+     * 发行方显示名（可选）
+     */
+    public var issuer: String?
+    /**
+     * 账户名（可选）
+     */
+    public var account: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 哈希算法（运行时仅支持 sha1）
+         */algo: String, 
+        /**
+         * 口令位数（6 或 8）
+         */digits: UInt8, 
+        /**
+         * 时间窗口秒数
+         */period: UInt32, 
+        /**
+         * 发行方显示名（可选）
+         */issuer: String?, 
+        /**
+         * 账户名（可选）
+         */account: String?) {
+        self.algo = algo
+        self.digits = digits
+        self.period = period
+        self.issuer = issuer
+        self.account = account
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTotpMeta: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTotpMeta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTotpMeta {
+        return
+            try FfiTotpMeta(
+                algo: FfiConverterString.read(from: &buf), 
+                digits: FfiConverterUInt8.read(from: &buf), 
+                period: FfiConverterUInt32.read(from: &buf), 
+                issuer: FfiConverterOptionString.read(from: &buf), 
+                account: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTotpMeta, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.algo, into: &buf)
+        FfiConverterUInt8.write(value.digits, into: &buf)
+        FfiConverterUInt32.write(value.period, into: &buf)
+        FfiConverterOptionString.write(value.issuer, into: &buf)
+        FfiConverterOptionString.write(value.account, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTotpMeta_lift(_ buf: RustBuffer) throws -> FfiTotpMeta {
+    return try FfiConverterTypeFfiTotpMeta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTotpMeta_lower(_ value: FfiTotpMeta) -> RustBuffer {
+    return FfiConverterTypeFfiTotpMeta.lower(value)
 }
 
 
@@ -4132,6 +4287,105 @@ public func FfiConverterTypeFfiItemState_lower(_ value: FfiItemState) -> RustBuf
 }
 
 
+
+/**
+ * TOTP 更新三态（**更新路径专用**，`updateItemWithTotp` 参数）。
+ *
+ * 背景：FFI 刻意不下发 TOTP secret（安全设计），编辑条目时调用方
+ * 无法「重提交」原密钥，`Option` 草稿的 `None` 又无法区分「删 / 留」。
+ * 故更新路径用显式三态：
+ *
+ * - `keep`：保留既有加密行（**默认**，secret 不出会话层）；
+ * - `replace { draft }`：粘贴了新 otpauth URI，删旧插新；
+ * - `remove`：显式移除既有 TOTP。
+ */
+
+public enum FfiTotpUpdate: Equatable, Hashable {
+    
+    /**
+     * 保留既有 TOTP（编辑入口默认）
+     */
+    case keep
+    /**
+     * 删旧插新：写入新配置
+     */
+    case replace(
+        /**
+         * 新 TOTP 配置（共享密钥原始字节，随用随弃）
+         */draft: FfiTotpDraft
+    )
+    /**
+     * 移除既有 TOTP
+     */
+    case remove
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiTotpUpdate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTotpUpdate: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTotpUpdate
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTotpUpdate {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .keep
+        
+        case 2: return .replace(draft: try FfiConverterTypeFfiTotpDraft.read(from: &buf)
+        )
+        
+        case 3: return .remove
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTotpUpdate, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .keep:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .replace(draft):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeFfiTotpDraft.write(draft, into: &buf)
+            
+        
+        case .remove:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTotpUpdate_lift(_ buf: RustBuffer) throws -> FfiTotpUpdate {
+    return try FfiConverterTypeFfiTotpUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTotpUpdate_lower(_ value: FfiTotpUpdate) -> RustBuffer {
+    return FfiConverterTypeFfiTotpUpdate.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -4271,6 +4525,30 @@ fileprivate struct FfiConverterOptionTypeFfiTotpDraft: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiTotpDraft.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiTotpMeta: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTotpMeta?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiTotpMeta.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiTotpMeta.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4710,10 +4988,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_totp_code() != 27456) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_totp_config() != 28304) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_unlock() != 59587) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_update_item() != 19808) {
+    if (uniffi_cf_ffi_checksum_method_vaultsession_update_item() != 63723) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_update_item_with_totp() != 5161) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_vault_dir() != 22841) {

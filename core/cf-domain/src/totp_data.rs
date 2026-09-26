@@ -35,6 +35,30 @@ pub struct TotpData {
     pub period: u32,
 }
 
+/// TOTP 更新三态（**更新路径专用**，docs/07 §2.2 update 语义）。
+///
+/// 背景与裁定：FFI 刻意不下发 TOTP secret（安全设计），编辑条目时
+/// 调用方天然无法「重提交」原密钥。若 update 继续沿用 ItemDraft 的
+/// `Option<TotpData>`（None = 删还是留？）会产生歧义并导致编辑静默
+/// 丢失 TOTP。故更新路径改为显式三态：
+///
+/// - [`TotpUpdate::Keep`]：既有加密行**原样保留**（secret 不出会话层，
+///   调用方无需也无法提供密钥）；
+/// - [`TotpUpdate::Replace`]：删旧插新（提交新密钥）；
+/// - [`TotpUpdate::Remove`]：删除既有行。
+///
+/// 新建路径（create）不用本类型：`ItemDraft.totp` 的
+/// `Option<TotpData>`（有则写入、无则不写）语义无歧义。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TotpUpdate {
+    /// 保留既有 TOTP（完全不动存储行）
+    Keep,
+    /// 删旧插新：用新配置替换既有 TOTP
+    Replace(TotpData),
+    /// 移除既有 TOTP
+    Remove,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

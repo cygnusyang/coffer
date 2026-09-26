@@ -13,7 +13,7 @@ use cf_crypto::kdf::KdfParams;
 use cf_domain::category::ItemCategory;
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::{FieldDraft, ItemDraft, ItemState};
-use cf_domain::totp_data::{TotpAlgo, TotpData};
+use cf_domain::totp_data::{TotpAlgo, TotpData, TotpUpdate};
 use cf_session::unlock::{create_vault_with_kdf, open_vault};
 use cf_session::VaultSession;
 
@@ -387,11 +387,14 @@ fn 四类条目crud编排() {
         .unwrap()
         .is_none());
 
-    // ---- 更新：标题 + 字段 + TOTP 整体替换 ----
+    // ---- 更新：标题 + 字段整体替换；TOTP 三态之 Remove ----
+    // （update_item 默认 Keep 保留 TOTP；删除需显式 TotpUpdate::Remove）
     let mut updated = login_draft("GitHub 工作登录");
     updated.fields[1].value = Some("new-password-77".to_owned());
-    updated.totp = None; // 删除 TOTP
-    session.update_item(&login_id, &updated).unwrap();
+    updated.totp = None; // 更新路径忽略 draft.totp，以三态参数为准
+    session
+        .update_item_with_totp(&login_id, &updated, TotpUpdate::Remove)
+        .unwrap();
 
     let reloaded = session.get_item(&login_id).unwrap().unwrap();
     assert_eq!(reloaded.title.expose(), "GitHub 工作登录");
@@ -401,7 +404,7 @@ fn 四类条目crud编排() {
         .find(|f| f.designation == Some(Designation::Password))
         .unwrap();
     assert_eq!(pw.value.as_ref().unwrap().expose(), "new-password-77");
-    assert!(reloaded.totp.is_none(), "TOTP 应被整体替换删除");
+    assert!(reloaded.totp.is_none(), "Remove 后 TOTP 应被删除");
     assert_eq!(
         session.list_items(None).unwrap().len(),
         4,
@@ -569,4 +572,95 @@ fn 打开不存在的库报未找到() {
         Ok(_) => panic!("打开不存在的库应报错"),
     };
     assert_eq!(err.code(), 1003);
+}
+
+// ============================================================ v0.2 三态
+
+/// 构造不含 TOTP 的 Login 草稿（更新路径 draft.totp 被忽略，用于模拟
+/// FFI 编辑场景：调用方拿不到 secret、无法在草稿里重提交原 TOTP）。
+fn login_draft_without_totp(title: &str) -> ItemDraft {
+    let mut d = login_draft(title);
+    d.totp = None;
+    d
+}
+
+/// TotpUpdate::Keep：更新后既有 TOTP 完整保留（元数据不变，仍可出码）。
+#[test]
+fn 更新keep保留既有totp() {
+    let (_base, session) = fresh_session("totp_keep");
+    session.unlock(STRONG).unwrap();
+
+    let id = session.create_item(&login_draft("带TOTP登录")).unwrap();
+    let before = session.get_item(&id).unwrap().unwrap().totp.clone().unwrap();
+
+    // FFI 编辑场景：草稿不含 TOTP，默认 Keep
+    session
+        .update_item(&id, &login_draft_without_totp("改标题不动TOTP"))
+        .unwrap();
+
+    let reloaded = session.get_item(&id).unwrap().unwrap();
+    let after = reloaded.totp.clone().expect("Keep 后 TOTP 必须保留");
+    assert_eq!(after.algo, before.algo);
+    assert_eq!(after.digits, before.digits);
+    assert_eq!(after.period, before.period);
+    // 加密行未被动过（uuid 不变 = 原行保留，未删旧插新）
+    assert_eq!(after.uuid, before.uuid, "Keep 必须原样保留既有行");
+    // 保留后仍可出码（secret 未丢）
+    assert_eq!(session.totp_code(&id).unwrap().code.len(), 6);
+}
+
+/// TotpUpdate::Replace：删旧插新，新配置生效、旧行消失。
+#[test]
+fn 更新replace删旧插新() {
+    let (_base, session) = fresh_session("totp_replace");
+    session.unlock(STRONG).unwrap();
+
+    let id = session.create_item(&login_draft("待替换登录")).unwrap();
+    let old = session.get_item(&id).unwrap().unwrap().totp.clone().unwrap();
+
+    let mut updated = login_draft_without_totp("替换后");
+    updated.totp = Some(TotpData {
+        secret: b"new-secret-0123456789".to_vec(),
+        algo: TotpAlgo::Sha1,
+        digits: 8,
+        period: 60,
+    });
+    session
+        .update_item_with_totp(&id, &updated, TotpUpdate::Replace(updated.totp.clone().unwrap()))
+        .unwrap();
+
+    let reloaded = session.get_item(&id).unwrap().unwrap();
+    let after = reloaded.totp.clone().expect("Replace 后 TOTP 必须存在");
+    assert_ne!(after.uuid, old.uuid, "Replace 必须删旧插新（新行）");
+    assert_eq!(after.digits, 8);
+    assert_eq!(after.period, 60);
+}
+
+/// TotpUpdate::Remove：既有 TOTP 被删除；Replace 载荷非法被拒且不落库。
+#[test]
+fn 更新remove删除且非法replace被拒() {
+    let (_base, session) = fresh_session("totp_remove");
+    session.unlock(STRONG).unwrap();
+
+    let id = session.create_item(&login_draft("待移除登录")).unwrap();
+
+    // 非法 Replace（secret 过短）：拒绝且不落库（元数据原样保留）
+    let bad = TotpData {
+        secret: vec![0u8; 9],
+        algo: TotpAlgo::Sha1,
+        digits: 6,
+        period: 30,
+    };
+    assert!(session
+        .update_item_with_totp(&id, &login_draft_without_totp("非法载荷"), TotpUpdate::Replace(bad))
+        .is_err());
+    assert!(session.get_item(&id).unwrap().unwrap().totp.is_some());
+
+    // 显式 Remove：删除成功
+    session
+        .update_item_with_totp(&id, &login_draft_without_totp("移除后"), TotpUpdate::Remove)
+        .unwrap();
+    assert!(session.get_item(&id).unwrap().unwrap().totp.is_none());
+    // 出码 → ItemNotFound（无 TOTP 记录）
+    assert_eq!(session.totp_code(&id).unwrap_err().code(), 1011);
 }

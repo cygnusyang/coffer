@@ -881,7 +881,8 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     
     /**
      * 按需取字段明文值（密码等敏感值，随取随走，docs/07 §4.2）。
-     * 条目或字段不存在返回 `None`。
+     * 条目不存在返回 Err(1011)（ItemNotFound）；条目存在但字段不存在
+     * 返回 `None`（QA F-2：文档对齐实现，1011 语义保留）。
      */
     func getFieldValue(itemId: String, fieldId: String) throws  -> String?
     
@@ -1099,7 +1100,8 @@ open func generatePassword(opts: FfiPasswordGenOptions)throws  -> String  {
     
     /**
      * 按需取字段明文值（密码等敏感值，随取随走，docs/07 §4.2）。
-     * 条目或字段不存在返回 `None`。
+     * 条目不存在返回 Err(1011)（ItemNotFound）；条目存在但字段不存在
+     * 返回 `None`（QA F-2：文档对齐实现，1011 语义保留）。
      */
 open func getFieldValue(itemId: String, fieldId: String)throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -3495,7 +3497,7 @@ enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      */
     case InternalPanic(
         /**
-         * panic 摘要（非敏感）
+         * 脱敏摘要（固定文案 + 载荷类型/字节数指纹，内容永不透传）
          */message: String
     )
 
@@ -4663,7 +4665,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_generate_password() != 13850) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_get_field_value() != 29575) {
+    if (uniffi_cf_ffi_checksum_method_vaultsession_get_field_value() != 40249) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_get_item() != 15539) {

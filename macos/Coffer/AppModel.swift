@@ -31,12 +31,29 @@ enum AppPhase: Equatable {
 final class AppModel: ObservableObject {
     // MARK: - Published 状态
 
-    @Published private(set) var phase: AppPhase = .booting
+    @Published var phase: AppPhase = .booting
     @Published private(set) var vaultName: String = ""
     /// 最近一次可呈现的错误文案（code+message 直出，见 ErrorPresenter）。
     @Published var lastErrorMessage: String?
     /// 慢调用（建库 / 解锁 / 导入）进行中标记，用于禁用按钮。
     @Published private(set) var isBusy = false
+
+    // MARK: 条目列表 / 详情状态（T05 阶段二）
+
+    /// 当前过滤 + 搜索下的条目摘要列表。
+    @Published var items: [FfiItemSummary] = []
+    /// 侧栏过滤条件（变更即重载列表）。
+    @Published var sidebarFilter: SidebarFilter = .all {
+        didSet { guard oldValue != sidebarFilter else { return }; reloadItems() }
+    }
+    /// 标题搜索词（非空时走 search 接口）。
+    @Published var searchText: String = ""
+    /// 当前选中条目 ID。
+    @Published var selectedItemID: String? {
+        didSet { guard oldValue != selectedItemID else { return }; loadSelectedDetails() }
+    }
+    /// 选中条目的完整详情（Concealed 值已掩码）。
+    @Published var currentDetails: FfiItemDetails?
 
     // MARK: - FFI 对象
 

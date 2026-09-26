@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox：零网络承诺（FR-14.5）的技术基础。
+	     必须且只能出现以下权限；任何 com.apple.security.network.* 都是违规。 -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- CSV 导入：允许用户通过 NSOpenPanel 选择文件读取 -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+</dict>
+</plist>

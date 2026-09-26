@@ -7,6 +7,7 @@ struct MainView: View {
     private var model: AppModel
 
     @State private var newSheetCategory: FfiItemCategory?
+    @State private var showImport = false
 
     var body: some View {
         NavigationSplitView {
@@ -76,11 +77,20 @@ struct MainView: View {
                 }
                 autoLockMenu
                 Button {
+                    showImport = true
+                } label: {
+                    Label("导入 CSV", systemImage: "square.and.arrow.down")
+                }
+                Button {
                     model.lock()
                 } label: {
                     Label("锁定", systemImage: "lock")
                 }
             }
+        }
+        .sheet(isPresented: $showImport) {
+            ImportView()
+                .environmentObject(model)
         }
     }
 

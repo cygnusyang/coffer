@@ -661,6 +661,16 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
     func lockAll() 
     
     /**
+     * 生成 32 字节随机 bio unwrap-key（K_bio，docs/08 §6 / D-3）。
+     *
+     * cf-crypto CSPRNG（`SessionKey::random`），仅生成、不落任何状态；
+     * 调用方（Swift）负责存入 Keychain（`ThisDeviceOnly` +
+     * `biometryCurrentSet`，docs/08 §3.2）。K_bio 是随机封装密钥——非
+     * KEK、非主密码派生物，DEK 语义不变。两次调用必不相同。
+     */
+    func newBiometricUnwrapKey() throws  -> Data
+    
+    /**
      * 打开会话（**幂等**）：同 uuid 已打开则返回同一实例，避免双会话
      * 并发写库（docs/07 §7 T04 验收 ⑤）。
      *
@@ -792,6 +802,23 @@ open func lockAll()  {try! rustCall() {
 }
     
     /**
+     * 生成 32 字节随机 bio unwrap-key（K_bio，docs/08 §6 / D-3）。
+     *
+     * cf-crypto CSPRNG（`SessionKey::random`），仅生成、不落任何状态；
+     * 调用方（Swift）负责存入 Keychain（`ThisDeviceOnly` +
+     * `biometryCurrentSet`，docs/08 §3.2）。K_bio 是随机封装密钥——非
+     * KEK、非主密码派生物，DEK 语义不变。两次调用必不相同。
+     */
+open func newBiometricUnwrapKey()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_new_biometric_unwrap_key(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 打开会话（**幂等**）：同 uuid 已打开则返回同一实例，避免双会话
      * 并发写库（docs/07 §7 T04 验收 ⑤）。
      *
@@ -896,9 +923,33 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func deleteItem(itemId: String, hard: Bool) throws 
     
     /**
+     * 关闭 Touch ID 解锁（docs/08 §4.1 disable，header 侧）。
+     *
+     * 门禁：需解锁态（1001）。原子重写 header → 禁用态；**幂等**——
+     * 已是禁用态时不重写文件。Keychain 项删除在 Swift 侧先行且幂等；
+     * 本方法失败非致命、可重试（docs/08 §8 降级矩阵）。
+     */
+    func disableBiometric() throws 
+    
+    /**
      * 库显示名（锁定时也可见）。
      */
     func displayName()  -> String
+    
+    /**
+     * 启用 Touch ID 解锁（docs/08 §4.1 enable，header 侧）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。传入主密码而非 DEK（D-6）：内部
+     * 经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，此时 header
+     * 未变）→ K_bio 封装 DEK → 原子重写 header。
+     *
+     * `k_bio` 必须为 32 字节（否则 5002，建议经
+     * [`CofferApp::new_biometric_unwrap_key`] 取得）。调用前 Swift 已把
+     * k_bio 写入 Keychain（先 Keychain 后 header，docs/08 §4.1）；
+     * 本方法返回 Err 时 header 保持原样，Swift 依据 Err 补偿删除
+     * Keychain 项。
+     */
+    func enableBiometric(password: String, kBio: Data) throws 
     
     /**
      * 生成随机密码（CSPRNG，参数见 [`FfiPasswordGenOptions`]）。
@@ -916,6 +967,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 读取条目完整详情（Concealed 字段值掩码，docs/07 §4.2）。
      */
     func getItem(itemId: String) throws  -> FfiItemDetails?
+    
+    /**
+     * 是否启用 Touch ID 封装（header `biometric_wrap.available`，
+     * docs/08 D-1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，
+     * 无密钥操作；供 LockView 决定是否显示 Touch ID 按钮。实际可用性
+     * 由 Swift 侧 Keychain 信号组合判定（docs/08 §8 降级矩阵）。
+     */
+    func hasBiometricWrap()  -> Bool
     
     /**
      * CSV 导入（单事务 all-or-nothing；锁定态 → 码 1001）。
@@ -1001,6 +1060,22 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 密码错 / 数据篡改统一码 1002（FR-1.4）。
      */
     func unlock(password: String) throws  -> FfiVaultInfo
+    
+    /**
+     * Touch ID 解锁后半段（docs/08 §6）。
+     *
+     * open(K_bio, aad=uuid‖b"wrapped_dek_bio", wrapped_dek_bio) → DEK →
+     * SubKeys → ItemStore——收尾与主密码 [`VaultSession::unlock`] 完全
+     * 共享；获得的会话与主密码路径同生共死（lock / 自动锁定清零，D-5）。
+     *
+     * # 错误（D-8）
+     *
+     * 未启用（`available == false`）→ 4001；k_bio 非 32 字节 → 5002；
+     * 其余失败（k_bio 不匹配 / 封装被篡改 / 跨库搬运）统一 1002。
+     * 4002（凭据已变更）**Rust 不产生**——发生在 Swift 侧 Keychain
+     * 读取，根本不到达 Rust。
+     */
+    func unlockWithBiometric(kBio: Data) throws  -> FfiVaultInfo
     
     /**
      * 更新条目（整体替换：fields / urls / tags 删旧插新；TOTP **默认
@@ -1122,6 +1197,21 @@ open func deleteItem(itemId: String, hard: Bool)throws   {try rustCallWithError(
 }
     
     /**
+     * 关闭 Touch ID 解锁（docs/08 §4.1 disable，header 侧）。
+     *
+     * 门禁：需解锁态（1001）。原子重写 header → 禁用态；**幂等**——
+     * 已是禁用态时不重写文件。Keychain 项删除在 Swift 侧先行且幂等；
+     * 本方法失败非致命、可重试（docs/08 §8 降级矩阵）。
+     */
+open func disableBiometric()throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_disable_biometric(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * 库显示名（锁定时也可见）。
      */
 open func displayName() -> String  {
@@ -1131,6 +1221,29 @@ open func displayName() -> String  {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * 启用 Touch ID 解锁（docs/08 §4.1 enable，header 侧）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。传入主密码而非 DEK（D-6）：内部
+     * 经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，此时 header
+     * 未变）→ K_bio 封装 DEK → 原子重写 header。
+     *
+     * `k_bio` 必须为 32 字节（否则 5002，建议经
+     * [`CofferApp::new_biometric_unwrap_key`] 取得）。调用前 Swift 已把
+     * k_bio 写入 Keychain（先 Keychain 后 header，docs/08 §4.1）；
+     * 本方法返回 Err 时 header 保持原样，Swift 依据 Err 补偿删除
+     * Keychain 项。
+     */
+open func enableBiometric(password: String, kBio: Data)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_enable_biometric(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(password),
+        FfiConverterData.lower(kBio),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -1171,6 +1284,21 @@ open func getItem(itemId: String)throws  -> FfiItemDetails?  {
     uniffi_cf_ffi_fn_method_vaultsession_get_item(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(itemId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 是否启用 Touch ID 封装（header `biometric_wrap.available`，
+     * docs/08 D-1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，
+     * 无密钥操作；供 LockView 决定是否显示 Touch ID 按钮。实际可用性
+     * 由 Swift 侧 Keychain 信号组合判定（docs/08 §8 降级矩阵）。
+     */
+open func hasBiometricWrap() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_has_biometric_wrap(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1370,6 +1498,30 @@ open func unlock(password: String)throws  -> FfiVaultInfo  {
     uniffi_cf_ffi_fn_method_vaultsession_unlock(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(password),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Touch ID 解锁后半段（docs/08 §6）。
+     *
+     * open(K_bio, aad=uuid‖b"wrapped_dek_bio", wrapped_dek_bio) → DEK →
+     * SubKeys → ItemStore——收尾与主密码 [`VaultSession::unlock`] 完全
+     * 共享；获得的会话与主密码路径同生共死（lock / 自动锁定清零，D-5）。
+     *
+     * # 错误（D-8）
+     *
+     * 未启用（`available == false`）→ 4001；k_bio 非 32 字节 → 5002；
+     * 其余失败（k_bio 不匹配 / 封装被篡改 / 跨库搬运）统一 1002。
+     * 4002（凭据已变更）**Rust 不产生**——发生在 Swift 侧 Keychain
+     * 读取，根本不到达 Rust。
+     */
+open func unlockWithBiometric(kBio: Data)throws  -> FfiVaultInfo  {
+    return try  FfiConverterTypeFfiVaultInfo_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_unlock_with_biometric(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(kBio),uniffiCallStatus
     )
 })
 }
@@ -4959,6 +5111,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_cofferapp_lock_all() != 17977) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_new_biometric_unwrap_key() != 54999) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_cofferapp_open_vault() != 38146) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4974,7 +5129,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_delete_item() != 13382) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_disable_biometric() != 59338) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_display_name() != 43087) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric() != 41906) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_generate_password() != 13850) {
@@ -4984,6 +5145,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_get_item() != 15539) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap() != 31384) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_csv() != 58011) {
@@ -5029,6 +5193,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_unlock() != 59587) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_unlock_with_biometric() != 31045) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_update_item() != 63723) {

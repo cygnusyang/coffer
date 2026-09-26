@@ -20,6 +20,19 @@
 //! 不允许出现任何运行时拼接的用户数据。注意：panic hook 只影响 stderr
 //! 输出，不作用于 [`crate::ffi_guard`] 捕获的 `catch_unwind` 载荷，
 //! 脱敏必须在本函数内完成。
+//!
+//! ## 4001 / 4002：生物识别码位（docs/08 D-8 裁定）
+//!
+//! - **4001（BiometricUnavailable）**：header `biometric_wrap.available
+//!   == false` 却调用 bio 解锁，由 cf-session 层产生
+//!   （`CfError::BiometricUnavailable`），经 `From<CfError>` 常规映射，
+//!   本层无特判；Swift 侧 LAContext 认证失败/不可用也展示 4001 文案。
+//! - **4002（BiometricInvalidated）**：**Rust 不产生此码**——「指纹集
+//!   已变更」发生在 Swift 侧 Keychain 读取
+//!   （`errSecItemNotFound` / `errSecAuthFailed`），根本不到达 Rust。
+//!   此码仅在 docs/03 §12 码表占位、由 Swift 侧直接使用；映射位由
+//!   cf-domain 冻结测试钉住（下方 [`FfiError`] 测试 4001/4002 两行），
+//!   仅作契约完整性保留。
 
 use cf_domain::CfError;
 

@@ -153,6 +153,17 @@ impl CofferApp {
     pub fn strength_estimate(&self, candidate: String) -> Result<FfiStrengthEstimate, FfiError> {
         Ok(strength_estimate_impl(&candidate))
     }
+
+    /// 生成 32 字节随机 bio unwrap-key（K_bio，docs/08 §6 / D-3）。
+    ///
+    /// cf-crypto CSPRNG（`SessionKey::random`），仅生成、不落任何状态；
+    /// 调用方（Swift）负责存入 Keychain（`ThisDeviceOnly` +
+    /// `biometryCurrentSet`，docs/08 §3.2）。K_bio 是随机封装密钥——非
+    /// KEK、非主密码派生物，DEK 语义不变。两次调用必不相同。
+    pub fn new_biometric_unwrap_key(&self) -> Result<Vec<u8>, FfiError> {
+        session_call(AssertUnwindSafe(cf_session::new_biometric_unwrap_key))
+            .map(|key| key.as_bytes().to_vec())
+    }
 }
 
 /// 密码强度评估实现（zxcvbn + feedback 文案；工厂与会话两处共用）。
@@ -228,6 +239,57 @@ impl VaultSession {
     /// 超时则锁定；返回是否执行了锁定（Swift 定时器驱动）。
     pub fn auto_lock_if_expired(&self, now_secs: i64) -> bool {
         self.inner.auto_lock_if_expired(now_secs)
+    }
+
+    // ------------------------------------------------ 生物识别（docs/08）
+
+    /// 是否启用 Touch ID 封装（header `biometric_wrap.available`，
+    /// docs/08 D-1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，
+    /// 无密钥操作；供 LockView 决定是否显示 Touch ID 按钮。实际可用性
+    /// 由 Swift 侧 Keychain 信号组合判定（docs/08 §8 降级矩阵）。
+    pub fn has_biometric_wrap(&self) -> bool {
+        self.inner.has_biometric_wrap()
+    }
+
+    /// 启用 Touch ID 解锁（docs/08 §4.1 enable，header 侧）。
+    ///
+    /// 门禁：需解锁态（锁定 → 1001）。传入主密码而非 DEK（D-6）：内部
+    /// 经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，此时 header
+    /// 未变）→ K_bio 封装 DEK → 原子重写 header。
+    ///
+    /// `k_bio` 必须为 32 字节（否则 5002，建议经
+    /// [`CofferApp::new_biometric_unwrap_key`] 取得）。调用前 Swift 已把
+    /// k_bio 写入 Keychain（先 Keychain 后 header，docs/08 §4.1）；
+    /// 本方法返回 Err 时 header 保持原样，Swift 依据 Err 补偿删除
+    /// Keychain 项。
+    pub fn enable_biometric(&self, password: String, k_bio: Vec<u8>) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.enable_biometric(&password, &k_bio)))
+    }
+
+    /// 关闭 Touch ID 解锁（docs/08 §4.1 disable，header 侧）。
+    ///
+    /// 门禁：需解锁态（1001）。原子重写 header → 禁用态；**幂等**——
+    /// 已是禁用态时不重写文件。Keychain 项删除在 Swift 侧先行且幂等；
+    /// 本方法失败非致命、可重试（docs/08 §8 降级矩阵）。
+    pub fn disable_biometric(&self) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.disable_biometric()))
+    }
+
+    /// Touch ID 解锁后半段（docs/08 §6）。
+    ///
+    /// open(K_bio, aad=uuid‖b"wrapped_dek_bio", wrapped_dek_bio) → DEK →
+    /// SubKeys → ItemStore——收尾与主密码 [`VaultSession::unlock`] 完全
+    /// 共享；获得的会话与主密码路径同生共死（lock / 自动锁定清零，D-5）。
+    ///
+    /// # 错误（D-8）
+    ///
+    /// 未启用（`available == false`）→ 4001；k_bio 非 32 字节 → 5002；
+    /// 其余失败（k_bio 不匹配 / 封装被篡改 / 跨库搬运）统一 1002。
+    /// 4002（凭据已变更）**Rust 不产生**——发生在 Swift 侧 Keychain
+    /// 读取，根本不到达 Rust。
+    pub fn unlock_with_biometric(&self, k_bio: Vec<u8>) -> Result<FfiVaultInfo, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.unlock_with_biometric(&k_bio)))
+            .map(Into::into)
     }
 
     // ------------------------------------------------------ 条目 CRUD
@@ -774,6 +836,140 @@ mod tests {
             session.totp_config(item_id.clone()).unwrap().is_none(),
             "Remove 后 TOTP 应消失"
         );
+    }
+
+    // -------------------------------------------------- 生物识别（docs/08 T02）
+
+    /// 4 接口跨 FFI 冒烟（docs/08 §9 T02 验收 ①）：两次
+    /// `new_biometric_unwrap_key` 不同且 32B → enable（错密码 1002）→
+    /// 正确密码 → hasBiometricWrap=true → lock → unlockWithBiometric 成功。
+    #[test]
+    fn bio四接口跨ffi冒烟() {
+        let base = temp_base("bio_smoke");
+        let brief = setup_vault(&base, "生物识别库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        // 工厂接口：32B 随机钥匙，两次调用不同（CSPRNG）
+        let k_bio = app.new_biometric_unwrap_key().unwrap();
+        assert_eq!(k_bio.len(), 32, "K_bio 必须是 32 字节（docs/08 D-3）");
+        let k_bio_other = app.new_biometric_unwrap_key().unwrap();
+        assert_ne!(k_bio, k_bio_other, "两次调用必须产生不同的随机数");
+
+        // 未启用态：hasBiometricWrap=false
+        assert!(!session.has_biometric_wrap());
+
+        // 解锁（enable 的门禁要求解锁态）→ 错密码 enable → 1002 且 header 未变
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        let err = session
+            .enable_biometric("wrong password indeed!".to_owned(), k_bio.clone())
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert!(!session.has_biometric_wrap(), "错密码 enable 后 header 不得变更");
+
+        // 正确密码 enable → 意图位翻转
+        session
+            .enable_biometric(STRONG_PASSWORD.to_owned(), k_bio.clone())
+            .unwrap();
+        assert!(session.has_biometric_wrap());
+
+        // 锁定 → bio 解锁成功（与主密码路径同收尾）
+        session.lock();
+        assert!(!session.is_unlocked());
+        let info = session.unlock_with_biometric(k_bio).unwrap();
+        assert_eq!(info.display_name, "生物识别库");
+        assert_eq!(info.vault_uuid, brief.uuid.to_string());
+        assert!(session.is_unlocked());
+    }
+
+    /// `available == false` 时调 `unlock_with_biometric` → 4001
+    /// （docs/08 §9 T02 验收 ②；D-8：Rust 只产 4001，不产 4002）
+    #[test]
+    fn bio未启用时解锁跨ffi返回4001() {
+        let base = temp_base("bio_unavailable");
+        let brief = setup_vault(&base, "未启用库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let k_bio = app.new_biometric_unwrap_key().unwrap();
+        assert!(!session.has_biometric_wrap());
+        let err = session.unlock_with_biometric(k_bio).unwrap_err();
+        assert_eq!(err.code(), 4001);
+        assert!(!session.is_unlocked(), "4001 后会话必须保持锁定");
+    }
+
+    /// k_bio 非 32 字节 → 5002（enable 与 unlock 双门禁，docs/08 §6）
+    #[test]
+    fn bio接口k_bio长度不符返回5002() {
+        let base = temp_base("bio_len");
+        let brief = setup_vault(&base, "长度库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let short = vec![7u8; 16];
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        assert_eq!(
+            session
+                .enable_biometric(STRONG_PASSWORD.to_owned(), short.clone())
+                .unwrap_err()
+                .code(),
+            5002
+        );
+        assert!(!session.has_biometric_wrap(), "长度门禁失败后 header 不得变更");
+
+        // 解锁路径的 4001（未启用）先于长度门禁（D-8 检查顺序），
+        // 须先正确启用才能在 unlock 侧命中 5002
+        let k_bio = app.new_biometric_unwrap_key().unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD.to_owned(), k_bio)
+            .unwrap();
+        session.lock();
+        assert_eq!(
+            session.unlock_with_biometric(short).unwrap_err().code(),
+            5002
+        );
+    }
+
+    /// 锁定态 enable / disable → 1001（门禁在 Rust 侧强制，docs/08 §6）
+    #[test]
+    fn bio接口锁定态门禁返回1001() {
+        let base = temp_base("bio_locked");
+        let brief = setup_vault(&base, "锁定门禁库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let k_bio = app.new_biometric_unwrap_key().unwrap();
+        assert_eq!(
+            session
+                .enable_biometric(STRONG_PASSWORD.to_owned(), k_bio.clone())
+                .unwrap_err()
+                .code(),
+            1001
+        );
+        assert_eq!(session.disable_biometric().unwrap_err().code(), 1001);
+        assert!(!session.has_biometric_wrap(), "锁定态门禁失败后 header 不得变更");
+    }
+
+    /// panic 注入（新接口同守卫）→ 5999 不杀进程
+    /// （docs/08 §9 T02 验收 ③；机制与全部导出方法一致）
+    #[test]
+    fn bio接口panic注入转为错误码5999_进程存活() {
+        let result = session_call(AssertUnwindSafe(
+            || -> cf_session::SessionResult<Vec<u8>> {
+                panic!("模拟随机源不变量破坏");
+            },
+        ));
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), 5999);
+        assert!(matches!(err, FfiError::InternalPanic { .. }));
     }
 
     /// list_vaults 枚举：只读 header.json，损坏目录跳过不中断

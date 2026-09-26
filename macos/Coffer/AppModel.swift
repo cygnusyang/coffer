@@ -5,12 +5,14 @@
 //   - appPhase 状态机：booting → noVault / locked → unlocked
 //   - 建库 / 解锁 / 锁定的异步编排（Argon2id 慢调用用 Task.detached 包裹）
 //
-// 明文纪律（docs/07 §2.4 / §4.2）：
+// 明文纪律（docs/07 §2.4 / §4.2；docs/08 §7.4）：
 //   - 主密码只作为方法参数传入，不落任何 @State / @Published 属性
 //   - 明文字段值只在取值那一刻经 FFI 取回，用完即弃，不进本模型
+//   - K_bio（bio unwrap-key）同纪律：Keychain 取回即用，不落任何属性
 
 import AppKit
 import Foundation
+import LocalAuthentication
 import SwiftUI
 
 /// 应用阶段状态机。
@@ -33,6 +35,8 @@ final class AppModel: ObservableObject {
 
     @Published var phase: AppPhase = .booting
     @Published private(set) var vaultName: String = ""
+    /// 当前库 UUID 文本（Keychain bio 项的 account，docs/08 §3.2；非密钥材料）。
+    @Published private(set) var vaultUUID: String = ""
     /// 最近一次可呈现的错误文案（code+message 直出，见 ErrorPresenter）。
     @Published var lastErrorMessage: String?
     /// 慢调用（建库 / 解锁 / 导入）进行中标记，用于禁用按钮。
@@ -140,8 +144,10 @@ final class AppModel: ObservableObject {
             let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
             session = opened
             vaultName = brief.displayName
+            vaultUUID = brief.vaultUuid
             applyIdleTimeout()
             phase = .locked
+            refreshTouchIDStatus()
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
         }
@@ -202,6 +208,7 @@ final class AppModel: ObservableObject {
         selectedItemID = nil
         searchText = ""
         phase = session != nil ? .locked : .noVault
+        refreshTouchIDStatus()
     }
 
     /// 把当前超时配置应用到会话（0 或负数 = 禁用自动锁定）。
@@ -209,6 +216,116 @@ final class AppModel: ObservableObject {
         guard let session else { return }
         let secs = autoLockMinutes > 0 ? Int64(autoLockMinutes) * 60 : 0
         session.setIdleTimeoutSecs(secs: secs)
+    }
+
+    // MARK: - Touch ID 解锁（docs/08 §7.2 / §7.4 / §8）
+
+    /// Touch ID 通道三态（docs/08 §8 降级矩阵 / §7.5 状态行）：
+    /// 组合 header `biometric_wrap.available`（Rust 侧用户意图，D-8/T01）
+    /// 与 Keychain 项存在性（Swift 侧实际可用）。
+    enum TouchIDStatus: Equatable {
+        /// header available=false（或无会话）：功能未启用
+        case disabled
+        /// header available=true 且 Keychain 项存在：可用
+        case enabled
+        /// header available=true 但 Keychain 项不可用（指纹集变更等，BioStale）：
+        /// 需主密码解锁后「重新启用」
+        case stale
+    }
+
+    /// Touch ID 通道状态（openSession / lock 时刷新；enable/disable 后由
+    /// 设置页（T04）再触发刷新）。
+    @Published private(set) var touchIDStatus: TouchIDStatus = .disabled
+
+    /// 当前设备是否支持生物识别（LAContext 只检测不弹窗，docs/08 §8 第一行）。
+    /// false 时 UI 应整体隐藏 Touch ID 入口（LockView 按钮 / 设置节，T04 消费）。
+    var isTouchIDSupported: Bool {
+        BiometricKeychain.isBiometricsAvailable()
+    }
+
+    /// 刷新三态：纯读操作（header 布尔 + Keychain 属性查询），无密钥操作。
+    /// 注意：biometryCurrentSet 失效后 Keychain 项通常仍「存在」（读取才失败），
+    /// 因此 stale 终判以 unlockWithTouchID 的 read 失败为准（docs/08 §4.1）。
+    func refreshTouchIDStatus() {
+        guard let session, !vaultUUID.isEmpty else {
+            touchIDStatus = .disabled
+            return
+        }
+        guard session.hasBiometricWrap() else {
+            touchIDStatus = .disabled
+            return
+        }
+        touchIDStatus = BiometricKeychain().itemExists(vaultUUID: vaultUUID) ? .enabled : .stale
+    }
+
+    /// Touch ID 解锁（docs/08 §7.2 时序）：
+    /// LAContext 认证 → Keychain 读 K_bio → FFI unlockWithBiometric →
+    /// 与主密码解锁完全相同的收尾（D-5：一次 Touch ID 换一次 DEK 解封）。
+    ///
+    /// K_bio 纪律（§7.4）：取回即用——K_bio 只作局部变量捕获进 Task 闭包，
+    /// 用完即弃，不落任何 @Published / 不进全局状态（与主密码同纪律）。
+    /// isBusy 互斥与主密码解锁共用。
+    func unlockWithTouchID() async {
+        guard let session, !isBusy, phase == .locked else { return }
+
+        // 前置门禁（Swift 侧先行判定，避免无谓跨桥；Rust 侧同语义兜底 4001，D-8）：
+        // ① header 未启用 bio 封装（available=false → Rust 会回 4001）；
+        // ② 设备无 Touch ID / 未录入指纹（canEvaluatePolicy=false → 4001）。
+        guard session.hasBiometricWrap(), BiometricKeychain.isBiometricsAvailable() else {
+            lastErrorMessage = ErrorPresenter.text(TouchIDError.unavailable)
+            return
+        }
+
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            // ① 弹 Touch ID 认证（主线程触发，LAContext UI 纪律，docs/08 §7.4）
+            let context = LAContext()
+            try await Self.authenticateWithBiometrics(context: context)
+
+            // ② 认证通过 → 同一 context 读 K_bio（不再二次弹窗）。
+            //    读取失败（项不存在 / biometryCurrentSet 失效）→ 4002 降级（§4.1）：
+            //    不改 header、不删项——用户主密码解锁后可在设置页「重新启用」。
+            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID, context: context)
+
+            // ③ 后半段走 FFI：open(K_bio, aad) → DEK → SubKeys → ItemStore。
+            //    K_bio 拷贝进 Task 闭包，本函数返回后局部变量即弃。
+            //    AEAD open 失败（K_bio 不匹配 / 篡改）→ Rust 统一 1002（D-8）。
+            let target = session
+            let info = try await Task.detached(priority: .userInitiated) {
+                try target.unlockWithBiometric(kBio: kBio)
+            }.value
+
+            // ④ 状态机切换：与主密码解锁同收尾（锁定/自动锁定路径零新增，D-5）
+            vaultName = info.displayName
+            applyIdleTimeout()
+            phase = .unlocked
+        } catch {
+            // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
+            // FfiError（1002 / 4001 / 5999）各自语义化呈现
+            lastErrorMessage = ErrorPresenter.text(error)
+        }
+    }
+
+    /// LAContext 生物识别认证（evaluatePolicy 的 async 包装）。
+    /// 取消 / 失败 / 不可用一律 → 4001 文案（docs/08 §7.2：LA 失败显示 4001）。
+    private static func authenticateWithBiometrics(context: LAContext) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            context.evaluatePolicy(
+                .deviceOwnerAuthenticationWithBiometrics,
+                localizedReason: "解锁 Coffer"
+            ) { success, error in
+                if success {
+                    continuation.resume()
+                } else {
+                    // 保留系统错误信息用于调试日志；用户面统一 4001 文案
+                    NSLog("Coffer TouchID evaluatePolicy 失败: \(String(describing: error))")
+                    continuation.resume(throwing: TouchIDError.unavailable)
+                }
+            }
+        }
     }
 
     /// 进程退出兜底（AppDelegate.applicationWillTerminate 调用）。

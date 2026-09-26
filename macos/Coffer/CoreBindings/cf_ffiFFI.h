@@ -274,6 +274,11 @@ RustBuffer uniffi_cf_ffi_fn_method_cofferapp_list_vaults(uint64_t ptr, RustBuffe
 void uniffi_cf_ffi_fn_method_cofferapp_lock_all(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_NEW_BIOMETRIC_UNWRAP_KEY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_NEW_BIOMETRIC_UNWRAP_KEY
+RustBuffer uniffi_cf_ffi_fn_method_cofferapp_new_biometric_unwrap_key(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_OPEN_VAULT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_OPEN_VAULT
 uint64_t uniffi_cf_ffi_fn_method_cofferapp_open_vault(uint64_t ptr, RustBuffer base_dir, RustBuffer vault_uuid, RustCallStatus *_Nonnull out_status
@@ -309,9 +314,19 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_create_item(uint64_t ptr, RustBu
 void uniffi_cf_ffi_fn_method_vaultsession_delete_item(uint64_t ptr, RustBuffer item_id, int8_t hard, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISABLE_BIOMETRIC
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISABLE_BIOMETRIC
+void uniffi_cf_ffi_fn_method_vaultsession_disable_biometric(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISPLAY_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISPLAY_NAME
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_display_name(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
+void uniffi_cf_ffi_fn_method_vaultsession_enable_biometric(uint64_t ptr, RustBuffer password, RustBuffer k_bio, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_PASSWORD
@@ -327,6 +342,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_get_field_value(uint64_t ptr, Ru
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GET_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GET_ITEM
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_get_item(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
+int8_t uniffi_cf_ffi_fn_method_vaultsession_has_biometric_wrap(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_CSV
@@ -402,6 +422,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_totp_config(uint64_t ptr, RustBu
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UNLOCK
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UNLOCK
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_unlock(uint64_t ptr, RustBuffer password, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UNLOCK_WITH_BIOMETRIC
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UNLOCK_WITH_BIOMETRIC
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_unlock_with_biometric(uint64_t ptr, RustBuffer k_bio, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_UPDATE_ITEM
@@ -702,6 +727,12 @@ uint16_t uniffi_cf_ffi_checksum_method_cofferapp_lock_all(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_NEW_BIOMETRIC_UNWRAP_KEY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_NEW_BIOMETRIC_UNWRAP_KEY
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_new_biometric_unwrap_key(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_OPEN_VAULT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_OPEN_VAULT
 uint16_t uniffi_cf_ffi_checksum_method_cofferapp_open_vault(void
@@ -732,9 +763,21 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_delete_item(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISABLE_BIOMETRIC
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISABLE_BIOMETRIC
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_disable_biometric(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISPLAY_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISPLAY_NAME
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_display_name(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric(void
     
 );
 #endif
@@ -753,6 +796,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_get_field_value(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GET_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GET_ITEM
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_get_item(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap(void
     
 );
 #endif
@@ -843,6 +892,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_totp_config(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UNLOCK
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UNLOCK
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_unlock(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UNLOCK_WITH_BIOMETRIC
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_UNLOCK_WITH_BIOMETRIC
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_unlock_with_biometric(void
     
 );
 #endif

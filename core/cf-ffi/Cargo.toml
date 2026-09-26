@@ -10,7 +10,28 @@ license.workspace = true
 cf-session = { workspace = true }
 cf-domain = { workspace = true }
 cf-crypto = { workspace = true }
+cf-store = { workspace = true }
+cf-format = { workspace = true }
+cf-audit = { workspace = true }
+cf-importer = { workspace = true }
 uniffi = { workspace = true }
 thiserror = { workspace = true }
+# strength_estimate：zxcvbn 评估 + feedback（建议/告警文案）
+zxcvbn = { workspace = true }
+# open_vault：vault uuid 合法性校验（防路径拼接逃逸）
+uuid = { workspace = true }
 
-# T04 阶段 1 已落地 panic 捕获验证（ffi_guard）；UniFFI 接口见阶段 2
+[features]
+default = []
+# Swift/Kotlin 绑定生成器入口（tools/build_swift_bindings.sh 专用；
+# 运行时与测试不需要）。启用后 `cargo run --features bindgen-cli --bin uniffi-bindgen`。
+bindgen-cli = ["uniffi/cli"]
+
+# uniffi-bindgen CLI（Mozilla 推荐模式：版本与 uniffi runtime 锁死，避免
+# 独立安装的 uniffi-bindgen 版本漂移导致生成物与 scaffolding 不匹配，docs/07 R-1）
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen-cli"]
+
+# T04 阶段 2：UniFFI proc-macro 绑定（CofferApp 工厂 + VaultSession 会话门面）

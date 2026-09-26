@@ -389,11 +389,17 @@ dependencies = [
 name = "cf-ffi"
 version = "0.1.0"
 dependencies = [
+ "cf-audit",
  "cf-crypto",
  "cf-domain",
+ "cf-format",
+ "cf-importer",
  "cf-session",
+ "cf-store",
  "thiserror",
  "uniffi",
+ "uuid",
+ "zxcvbn",
 ]
 
 [[package]]
@@ -436,6 +442,7 @@ dependencies = [
  "cf-crypto",
  "cf-domain",
  "cf-format",
+ "cf-importer",
  "cf-store",
  "cf-totp",
  "rusqlite",
@@ -572,6 +579,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946"
 dependencies = [
  "clap_builder",
+ "clap_derive",
 ]
 
 [[package]]
@@ -582,6 +590,19 @@ checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
 dependencies = [
  "anstyle",
  "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9c751b79415d4e559e3d1fcf128e09e720eb673a06d26cf6f392d37d75b66e0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -1955,7 +1976,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76407f5f396a2c949a069eff4a9fca9ce462410eb872bffef4c2b7b89804a77a"
 dependencies = [
  "anyhow",
+ "camino",
  "cargo_metadata",
+ "clap",
  "uniffi_bindgen",
  "uniffi_core",
  "uniffi_macros",

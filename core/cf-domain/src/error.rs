@@ -8,7 +8,8 @@
 //!
 //! 带 `String` 载荷的变体（[`CfError::Corrupted`]、[`CfError::StorageError`]、
 //! [`CfError::Io`]、[`CfError::ImportFailed`]、[`CfError::ExportFailed`]、
-//! [`CfError::TotpError`]、[`CfError::InvalidArgument`]）会被写入日志，
+//! [`CfError::TotpError`]、[`CfError::InvalidArgument`]、[`CfError::Validation`]）
+//! 会被写入日志，
 //! 因此载荷**不得**包含：
 //!
 //! - 口令、密钥、明文敏感值（载荷是普通 `String`，不受
@@ -33,6 +34,14 @@
 //!    `String` 载荷的 [`CfError::Corrupted`] 与 [`CfError::Io`] 都带 `: {0}`，
 //!    且存储细节对排障有实质价值。**待同步修订 §4.4 与 §12 第 1009 行。**
 //! 2. §4.4 的 `#[derive]` 未列 `PartialEq`，实现中需要（测试与 UI 层比对）。
+//!
+//! ## v0.1 纵切增补（docs/07 §2.1 / §2.2，C-6 / T01 / T02）
+//!
+//! 以下三个变体由 `docs/07-macOS纵切设计.md` 增补，已同步 `docs/03` §4.4 / §12：
+//!
+//! - [`CfError::WeakPassword`]（1010）：主密码强度门禁（zxcvbn score < 3 拒绝建库）；
+//! - [`CfError::ItemNotFound`]（1011）：条目不存在（cf-store 仓库层写操作的前置校验）；
+//! - [`CfError::Validation`]（1012）：领域/存储层校验失败（可操作的用户提示）。
 
 use thiserror::Error;
 
@@ -82,6 +91,20 @@ pub enum CfError {
     #[error("storage error: {0}")]
     StorageError(String),
 
+    /// 主密码强度不足（zxcvbn score < 3，docs/07 §2.2 建库门禁）。
+    ///
+    /// 用户可见文案不得提示"再试哪个密码能过"——只提示强度要求。
+    #[error("password too weak")]
+    WeakPassword,
+
+    /// 条目不存在（写操作的前置校验失败，docs/07 §2.1）。
+    #[error("item not found")]
+    ItemNotFound,
+
+    /// 数据校验失败。{0} 为可操作的错误说明（docs/07 §2.1）。
+    #[error("validation failed: {0}")]
+    Validation(String),
+
     /// 导入失败。{0} 为失败原因。
     #[error("import failed: {0}")]
     ImportFailed(String),
@@ -123,7 +146,7 @@ impl CfError {
     /// UI 层应当用本方法（而非 [`Display`](std::fmt::Display) 文本）做
     /// 本地化映射 —— 消息文本可随措辞调整，错误码是跨版本契约。
     ///
-    /// 段的划分：1001–1009 保险库与加密，2001–2003 导入导出，
+    /// 段的划分：1001–1012 保险库与加密与存储校验，2001–2003 导入导出，
     /// 3001 验证码，4001–4002 生物识别，5001–5002 系统级。
     ///
     /// **无 `_` 兜底分支**：新增变体时编译器会强制在此补码。
@@ -156,6 +179,9 @@ impl CfError {
             Self::KdfError => 1007,
             Self::CryptoError => 1008,
             Self::StorageError(_) => 1009,
+            Self::WeakPassword => 1010,
+            Self::ItemNotFound => 1011,
+            Self::Validation(_) => 1012,
             Self::ImportUnknownFormat => 2001,
             Self::ImportFailed(_) => 2002,
             Self::ExportFailed(_) => 2003,
@@ -191,6 +217,9 @@ mod tests {
             CfError::KdfError => "KdfError",
             CfError::CryptoError => "CryptoError",
             CfError::StorageError(_) => "StorageError",
+            CfError::WeakPassword => "WeakPassword",
+            CfError::ItemNotFound => "ItemNotFound",
+            CfError::Validation(_) => "Validation",
             CfError::ImportUnknownFormat => "ImportUnknownFormat",
             CfError::ImportFailed(_) => "ImportFailed",
             CfError::ExportFailed(_) => "ExportFailed",
@@ -202,7 +231,7 @@ mod tests {
         }
     }
 
-    /// 全部 17 个变体各一份实例。
+    /// 全部 20 个变体各一份实例。
     ///
     /// 载荷取值刻意做成互不相同，便于失败时从调试输出直接定位。
     fn all_variants() -> Vec<CfError> {
@@ -216,6 +245,9 @@ mod tests {
             CfError::KdfError,
             CfError::CryptoError,
             CfError::StorageError("sqlite busy".into()),
+            CfError::WeakPassword,
+            CfError::ItemNotFound,
+            CfError::Validation("title is empty".into()),
             CfError::ImportUnknownFormat,
             CfError::ImportFailed("row 7".into()),
             CfError::ExportFailed("disk full".into()),
@@ -227,8 +259,8 @@ mod tests {
         ]
     }
 
-    /// 按 `docs/03-详细设计.md` §12 顺序排列的 17 个变体名。
-    const EXPECTED_VARIANTS: [&str; 17] = [
+    /// 按 `docs/03-详细设计.md` §12 顺序排列的 20 个变体名。
+    const EXPECTED_VARIANTS: [&str; 20] = [
         "VaultLocked",
         "UnlockFailed",
         "VaultNotFound",
@@ -238,6 +270,9 @@ mod tests {
         "KdfError",
         "CryptoError",
         "StorageError",
+        "WeakPassword",
+        "ItemNotFound",
+        "Validation",
         "ImportUnknownFormat",
         "ImportFailed",
         "ExportFailed",
@@ -262,9 +297,10 @@ mod tests {
 
     #[test]
     fn error_codes_match_design_doc_section_12() {
-        // 期望值逐项抄自 docs/03-详细设计.md §12 错误码表（1527–1545 行）。
+        // 期望值逐项抄自 docs/03-详细设计.md §12 错误码表。
+        // 1010–1012 为 docs/07 纵切增补（已同步 docs/03 §12）。
         // 本表是**冻结快照**：改动必须同步文档，且走评审。
-        let expected: [(CfError, u16); 17] = [
+        let expected: [(CfError, u16); 20] = [
             (CfError::VaultLocked, 1001),
             (CfError::UnlockFailed, 1002),
             (CfError::VaultNotFound, 1003),
@@ -274,6 +310,9 @@ mod tests {
             (CfError::KdfError, 1007),
             (CfError::CryptoError, 1008),
             (CfError::StorageError(String::new()), 1009),
+            (CfError::WeakPassword, 1010),
+            (CfError::ItemNotFound, 1011),
+            (CfError::Validation(String::new()), 1012),
             (CfError::ImportUnknownFormat, 2001),
             (CfError::ImportFailed(String::new()), 2002),
             (CfError::ExportFailed(String::new()), 2003),
@@ -346,6 +385,13 @@ mod tests {
         assert_eq!(
             CfError::StorageError("sqlite busy".into()).to_string(),
             "storage error: sqlite busy"
+        );
+        // 1010–1012：docs/07 纵切增补的三个变体
+        assert_eq!(CfError::WeakPassword.to_string(), "password too weak");
+        assert_eq!(CfError::ItemNotFound.to_string(), "item not found");
+        assert_eq!(
+            CfError::Validation("title is empty".into()).to_string(),
+            "validation failed: title is empty"
         );
         assert_eq!(
             CfError::ImportFailed("row 7".into()).to_string(),

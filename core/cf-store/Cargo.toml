@@ -12,9 +12,15 @@ cf-format = { workspace = true }
 cf-domain = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 ciborium = { workspace = true }
 zeroize = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
-# 状态：未实现（计划 M1 阶段）
+[dev-dependencies]
+rusqlite = { workspace = true }
+cf-crypto = { workspace = true }
+uuid = { workspace = true }
+
+# 状态：T01 已实现（schema / 仓库层 / 事务 / 错误统一）

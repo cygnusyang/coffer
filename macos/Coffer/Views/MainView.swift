@@ -8,6 +8,8 @@ struct MainView: View {
 
     @State private var newSheetCategory: FfiItemCategory?
     @State private var showImport = false
+    /// 安全设置 sheet（docs/08 §7.5：Touch ID 设置节入口）。
+    @State private var showSecuritySettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -76,6 +78,14 @@ struct MainView: View {
                     Label("新建", systemImage: "plus")
                 }
                 autoLockMenu
+                // 安全设置入口：无 Touch ID 设备整体隐藏（docs/08 §7.5 降级）
+                if model.isTouchIDSupported {
+                    Button {
+                        showSecuritySettings = true
+                    } label: {
+                        Label("安全设置", systemImage: "lock.shield")
+                    }
+                }
                 Button {
                     showImport = true
                 } label: {
@@ -90,6 +100,10 @@ struct MainView: View {
         }
         .sheet(isPresented: $showImport) {
             ImportView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showSecuritySettings) {
+            SecuritySettingsView()
                 .environmentObject(model)
         }
     }

@@ -148,79 +148,121 @@ impl TotpConfig {
     }
 }
 
-/// Base32 解码（RFC 4648）
-fn base32_decode(s: &str) -> Result<Vec<u8>, TotpError> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-    // Normalize and validate input using let binding
-    let s_lower = s.to_lowercase();
-    let s_normalized = s_lower.trim_end_matches('=');
-
-    if s_normalized.is_empty() {
-        return Err(TotpError::InvalidBase32Encoding);
-    }
-
-    // Base32 lookup table
-    let mut lookup = [0u16; 256];
-    for (i, &c) in ALPHABET.iter().enumerate() {
-        lookup[c as usize] = i as u16;
-    }
-
-    // Add padding and decode
-    let chars: Vec<u8> = s_normalized.as_bytes().iter().chain(std::iter::repeat_n(&b'=', 8 - s_normalized.len() % 8)).copied().collect();
-
-    let mut bytes = Vec::new();
-    for chunk in chars.chunks(8) {
-        let mut nibble: u16 = 0;
-        for &byte in chunk.iter() {
-            if byte == b'=' { break; }
-            nibble = (nibble << 5) | lookup[byte as usize];
-        }
-
-        bytes.push((nibble >> 12) as u8);
-        bytes.push(((nibble >> 7) & 0x0F) as u8);
-        bytes.push(((nibble >> 2) & 0x3F) as u8);
-        bytes.push((nibble & 0x07) as u8);
-    }
-
-    Ok(bytes)
-}
-
-/// 从 otpauth:// URI 解析 TOTP 配置。
+/// Base32 解码（RFC 4648，严格字符集 + 规范填充校验）。
 ///
-/// 支持 `secret`（Base32）、`period`、`digits` 参数；未知参数忽略。
-pub fn parse_totp_uri(uri: &str) -> Result<TotpConfig, TotpError> {
-    let question_mark = uri.find('?').ok_or(TotpError::MissingQueryParameters)?;
-    let secret_path = &uri[..question_mark];
-
-    if secret_path.is_empty() {
-        return Err(TotpError::EmptySecret);
-    }
-
-    let s = secret_path.trim_end_matches('=');
+/// 规则：
+/// - 仅接受 RFC 4648 字母表（`A-Z` / `2-7`，大小写不敏感）；任何越界
+///   字符（含 `0` / `1` / `8` / `9` / `!`）都拒绝——错解出的密钥会静默
+///   产生永远错误的验证码，宁可报错；
+/// - `=` 填充只允许出现在末尾（`=` 之后再出现数据字符即拒绝）；
+/// - **带填充**时：含填充的总长度必须是 8 的倍数（规范形式）；
+/// - **无填充**时（真实 otpauth URI 的主流形式——Google Authenticator、
+///   GitHub 等导出的 secret 普遍省略填充，如 26 字符的 128-bit 密钥）：
+///   按隐式补齐处理；但数据长度 mod 8 ∈ {1, 3, 6} 的输入在 RFC 4648
+///   中不存在规范填充形式（承载了被丢弃的额外比特），一律拒绝。
+///
+/// 公开给 `cf-importer` 复用（`parse_otpauth` 的 secret 解码委托此实现，
+/// 消除重复实现、保证两条入口的解码行为完全一致）。
+pub fn base32_decode(s: &str) -> Result<Vec<u8>, TotpError> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
     if s.is_empty() {
         return Err(TotpError::EmptySecret);
     }
 
-    let secret_bytes = base32_decode(s)?;
-
-    if secret_bytes.len() < 10 {
-        return Err(TotpError::SecretTooShort);
+    let bytes = s.as_bytes();
+    // '=' 只允许出现在末尾：找到首个 '=' 后，其后必须全是 '='
+    let data_len = bytes.iter().position(|&b| b == b'=').unwrap_or(bytes.len());
+    if bytes[data_len..].iter().any(|&b| b != b'=') {
+        return Err(TotpError::InvalidBase32Encoding);
+    }
+    // RFC 4648 规范长度：数据段 mod 8 只允许 {0, 2, 4, 5, 7}
+    // （{1, 3, 6} 无规范填充形式，会隐藏被丢弃的额外比特）
+    match data_len % 8 {
+        1 | 3 | 6 => return Err(TotpError::InvalidBase32Encoding),
+        _ => {}
+    }
+    // 带填充时：总长度（含填充）必须是 8 的倍数；
+    // 无填充时按隐式补齐放行（真实 otpauth URI 的主流形式）
+    if data_len < bytes.len() && bytes.len() % 8 != 0 {
+        return Err(TotpError::InvalidBase32Encoding);
     }
 
-    let params = &uri[question_mark + 1..];
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    let mut out = Vec::with_capacity(data_len * 5 / 8);
+    for &ch in &bytes[..data_len] {
+        let c = ch.to_ascii_uppercase();
+        let v = ALPHABET
+            .iter()
+            .position(|&a| a == c)
+            .ok_or(TotpError::InvalidBase32Encoding)?;
+        acc = (acc << 5) | v as u32;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+/// 从 otpauth:// URI 解析 TOTP 配置（标准 otpauth 布局）。
+///
+/// 形如 `otpauth://totp/<label>?secret=<Base32>&digits=..&period=..`：
+/// 共享密钥取自**查询参数 `secret`**（严格 Base32 解码，见
+/// [`base32_decode`]），而非 `?` 之前的路径段——路径是 issuer:account
+/// 标签，把它当密钥解码会得到完全错误的密钥字节（历史缺陷，已修复）。
+///
+/// 支持 `secret`（必需）、`period`（默认 30）、`digits`（默认 6）参数；
+/// 未知参数忽略。仅接受 totp 类型（v0.1 算法仅 SHA-1，见 crate 文档）。
+///
+/// # Errors
+///
+/// - 非 `otpauth://` 前缀 / 非 totp 类型 → [`TotpError::InvalidUriEncoding`]；
+/// - 无查询参数段或缺少 `secret` → [`TotpError::MissingQueryParameters`]；
+/// - `secret` 为空 → [`TotpError::EmptySecret`]；Base32 非法 →
+///   [`TotpError::InvalidBase32Encoding`]；解码后不足 10 字节 →
+///   [`TotpError::SecretTooShort`]。
+pub fn parse_totp_uri(uri: &str) -> Result<TotpConfig, TotpError> {
+    let rest = uri
+        .strip_prefix("otpauth://")
+        .ok_or(TotpError::InvalidUriEncoding)?;
+    let (type_part, tail) = rest
+        .split_once('/')
+        .ok_or(TotpError::MissingQueryParameters)?;
+    if !type_part.eq_ignore_ascii_case("totp") {
+        // v0.1 仅支持 TOTP/SHA-1（hotp 等类型不进入生成/验证路径）
+        return Err(TotpError::InvalidUriEncoding);
+    }
+
+    let (_label, query) = tail
+        .split_once('?')
+        .ok_or(TotpError::MissingQueryParameters)?;
+
+    let mut secret_b32: Option<&str> = None;
     let mut period = Some(30u32);
     let mut digits = Some(6u8);
 
-    for pair in params.split('&').filter(|p| !p.is_empty()) {
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
         if let Some((key, value)) = pair.split_once('=') {
             match key {
+                "secret" => secret_b32 = Some(value),
                 "period" => period = value.parse().ok(),
                 "digits" => digits = value.parse().ok(),
                 _ => {}
             }
         }
+    }
+
+    let secret_b32 = secret_b32.ok_or(TotpError::MissingQueryParameters)?;
+    if secret_b32.is_empty() {
+        return Err(TotpError::EmptySecret);
+    }
+    let secret_bytes = base32_decode(secret_b32)?;
+
+    if secret_bytes.len() < 10 {
+        return Err(TotpError::SecretTooShort);
     }
 
     Ok(TotpConfig {
@@ -287,6 +329,113 @@ mod tests {
         let config = parse_totp_uri(uri).unwrap();
         assert_eq!(config.period, 30);
         assert_eq!(config.digits, 6);
+        // secret 取自查询参数（"Hello!\xDE\xAD\xBE\xEF" 的 Base32），不是路径段
+        assert_eq!(config.secret, vec![0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x21, 0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    /// 标准向量端到端：RFC 6238 Appendix B（SHA-1）的 20 字节密钥
+    /// `"12345678901234567890"`，Base32 形式以 `GEZDGNBVGY3TQOJQ…` 开头。
+    /// 从 URI 解析出的配置在 T=59 处必须产出标准 8 位码 94287082。
+    #[test]
+    fn test_parse_uri_rfc6238_vector_roundtrip() {
+        let uri = "otpauth://totp/RFC:vector?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8&period=30";
+        let config = parse_totp_uri(uri).unwrap();
+        assert_eq!(config.secret, b"12345678901234567890".to_vec());
+        assert_eq!(config.digits, 8);
+        assert_eq!(config.period, 30);
+        // RFC 6238 Appendix B SHA-1：T=59（counter=1）→ 94287082
+        assert_eq!(config.generate_for_counter(59 / 30).unwrap(), "94287082");
+        assert_eq!(config.generate_for_counter(1).unwrap(), "94287082");
+    }
+
+    /// 小写 secret / 带填充 secret 解码一致
+    #[test]
+    fn test_parse_uri_lowercase_and_padded_secret() {
+        let plain = parse_totp_uri(
+            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP",
+        )
+        .unwrap();
+        let lower = parse_totp_uri(
+            "otpauth://totp/x?secret=jbswy3dpehpk3pxp",
+        )
+        .unwrap();
+        assert_eq!(plain.secret, lower.secret);
+
+        // 带 `=` 填充（RFC 4648）：数据段 18 字符 + 6 个 `=` = 24（8 的倍数），
+        // 与无填充前 18 字符解码结果一致
+        let plain18 = parse_totp_uri(
+            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXPKA",
+        )
+        .unwrap();
+        let padded = parse_totp_uri(
+            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXPKA======",
+        )
+        .unwrap();
+        assert_eq!(plain18.secret, padded.secret);
+    }
+
+    /// 非法 secret 逐一拒绝：非 Base32 字符、孤立填充、非规范长度、
+    /// 缺 secret、非 otpauth 前缀、hotp 类型
+    #[test]
+    fn test_parse_uri_rejects_invalid_secrets() {
+        // 字符集外（0 / 1 / !）
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?secret=JBSWY3DPEHPK3PX0").unwrap_err(),
+            TotpError::InvalidBase32Encoding
+        );
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?secret=NOT!BASE32").unwrap_err(),
+            TotpError::InvalidBase32Encoding
+        );
+        // '=' 之后又出现数据字符
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?secret=JBSW=Y3DPEHPK3PXP").unwrap_err(),
+            TotpError::InvalidBase32Encoding
+        );
+        // 非规范长度（mod 8 ∈ {1,3,6} 无规范填充形式，会隐藏被丢弃的比特）
+        assert_eq!(
+            parse_totp_uri(
+                "otpauth://totp/x?secret=JBSWY3DPEHPK3PXPK" // 17 字符，mod 8 = 1
+            )
+            .unwrap_err(),
+            TotpError::InvalidBase32Encoding
+        );
+        // 无填充但属规范长度（mod 8 = 7）：放行，解码后不足 10 字节报短密钥
+        // （15 字符 = 75 bit → 9 字节）
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?secret=JBSWY3DPEHPK3PX").unwrap_err(),
+            TotpError::SecretTooShort
+        );
+        // 空 secret
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?secret=").unwrap_err(),
+            TotpError::EmptySecret
+        );
+        // 解码后不足 10 字节（8 字符 = 5 字节）
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?secret=AAAAAAAA").unwrap_err(),
+            TotpError::SecretTooShort
+        );
+        // 缺 secret 参数
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/x?digits=6").unwrap_err(),
+            TotpError::MissingQueryParameters
+        );
+        // 无查询参数段
+        assert_eq!(
+            parse_totp_uri("otpauth://totp/label").unwrap_err(),
+            TotpError::MissingQueryParameters
+        );
+        // 非 otpauth 前缀
+        assert_eq!(
+            parse_totp_uri("https://example.com?secret=JBSWY3DPEHPK3PXP").unwrap_err(),
+            TotpError::InvalidUriEncoding
+        );
+        // hotp 类型：v0.1 仅支持 totp
+        assert_eq!(
+            parse_totp_uri("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP").unwrap_err(),
+            TotpError::InvalidUriEncoding
+        );
     }
 
     /// RFC 6238 Appendix B（SHA-1 列）**真实期望值**校验。

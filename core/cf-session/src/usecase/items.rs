@@ -58,6 +58,18 @@ pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, C
 /// 更新条目：读旧快照（v0.2 history 预留）→ 校验 → 单事务整体替换。
 ///
 /// 条目不存在返回 [`CfError::ItemNotFound`]；校验失败不产生任何写入。
+///
+/// 状态语义（QA 已知问题 #2 裁定）：update_item **只允许作用于 Active 态**
+/// 条目。对 Trashed / Archived 条目返回
+/// [`CfError::Validation`]（1012，附可操作提示）而不静默改状态——
+/// 旧实现硬编码 `state: Active, trashed_at: None` 会把回收站条目
+/// 「强制复活」。选 `Validation` 而非 `ItemNotFound` 的理由：条目真实
+/// 存在，报「不存在」会误导调用方；1012 的定位正是「可操作的用户
+/// 提示」（恢复后再编辑），语义最贴切。
+///
+/// 收藏语义（QA 已知问题 #1 裁定）：编辑内容**不改变收藏态**——
+/// `is_favorite` / `fav_index` 从旧行继承，收藏的增减只走
+/// [`set_favorite`]。
 pub fn update_item(store: &mut ItemStore, item_id: &str, draft: &ItemDraft) -> Result<(), CfError> {
     cf_domain::validate::validate_item(draft)?;
 
@@ -65,20 +77,33 @@ pub fn update_item(store: &mut ItemStore, item_id: &str, draft: &ItemDraft) -> R
     let title = SecretString::from_exposed(draft.title.clone());
 
     store.with_tx(|repos| {
-        // 旧快照：存在性检查 + v0.2 history 预留（v0.1 读取后即弃，不落 history 表）
+        // 旧快照：存在性检查 + 状态门禁 + 收藏态继承源
+        // （v0.2 history 预留；v0.1 读取后即弃，不落 history 表）
         let old = repos.items.get_row(item_id)?.ok_or(CfError::ItemNotFound)?;
-        let _ = old;
+        if old.state != ItemState::Active {
+            let state_name = match old.state {
+                ItemState::Active => "活跃",
+                ItemState::Trashed => "回收站",
+                ItemState::Archived => "归档",
+            };
+            return Err(CfError::Validation(format!(
+                "条目处于{state_name}状态，不能编辑；请先恢复为活跃状态"
+            )));
+        }
 
         repos.items.update_row(&ItemRow {
             uuid: item_id.to_owned(),
             category: draft.category,
-            state: ItemState::Active,
-            is_favorite: false,
-            fav_index: 0,
-            created_at: 0, // update_row 不覆盖 created_at，占位值无副作用
+            // 门禁保证此处必为 Active 且 trashed_at 为空；不硬编码，
+            // 显式继承旧行以防未来状态机扩展时静默迁移
+            state: old.state,
+            // 编辑不改变收藏态（QA #1）：从旧行继承
+            is_favorite: old.is_favorite,
+            fav_index: old.fav_index,
+            created_at: old.created_at, // 语义上不覆盖（update_row 也不写该列）
             updated_at: now,
-            trashed_at: None,
-            position: 0,
+            trashed_at: old.trashed_at,
+            position: old.position,
         })?;
         repos.items.update_title(item_id, &title)?;
         write_children(repos, item_id, draft)?;

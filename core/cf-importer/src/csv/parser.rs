@@ -6,9 +6,12 @@
 //! 施加 DoS 上限、避免第三方库的配置漂移。支持的 RFC 4180 语义：
 //!
 //! - `""` 引号转义；引号内可含逗号、换行（`\n` 与 `\r\n`，引号内的
-//!   `\r\n` 归一为 `\n`）；
+//!   CRLF 与孤立 CR 均归一为 `\n`）；
 //! - 引号只能出现在字段开头；闭合引号后只允许分隔符 / 换行 / EOF
 //!   （严格模式，畸形输入报错并指明行号）；
+//! - 引号外只接受 CRLF / LF 作为记录边界；**孤立 CR（裸 `\r`，老 Mac
+//!   行尾）报错**——RFC 4180 不认可，静默切分会把行尾格式问题伪装成
+//!   导入成功；
 //! - 全列按字符串处理（前导零保留，禁止数值化，docs/07 §3.1）。
 //!
 //! ## DoS 上限（docs/07 §3.1 / docs/04 §4.2 D 类威胁）
@@ -76,7 +79,9 @@ pub struct ParsedCsv {
 /// - 无效 UTF-8 → [`CfError::ImportFailed`]（提示转码后重试）；
 /// - 数据行数 / 单字段大小 / 列数超限 → [`CfError::ImportFailed`] 并指明行号；
 /// - RFC 4180 畸形输入（未闭合引号、字段中间出现引号、闭合引号后
-///   出现非法字符）→ [`CfError::ImportFailed`] 并指明行号。
+///   出现非法字符）→ [`CfError::ImportFailed`] 并指明行号；
+/// - 引号外出现孤立 CR（老 Mac 行尾）→ [`CfError::ImportFailed`]，
+///   提示转换行尾后重试。
 pub fn parse_csv(input: &[u8]) -> Result<ParsedCsv, CfError> {
     if input.len() > MAX_FILE_BYTES {
         return Err(CfError::ImportFailed(format!(
@@ -117,7 +122,8 @@ pub fn parse_csv(input: &[u8]) -> Result<ParsedCsv, CfError> {
                     }
                 }
                 b'\r' => {
-                    // 引号内的 CRLF 归一为 LF；孤立 CR 保留
+                    // 引号内的 CRLF 与孤立 CR 均归一为 LF（与下方引号外
+                    // 「裸 CR 报错」的严格性独立：引号内是数据，归一即可）
                     if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
                         i += 1;
                     }
@@ -152,10 +158,25 @@ pub fn parse_csv(input: &[u8]) -> Result<ParsedCsv, CfError> {
                 record.push(std::mem::take(&mut field));
                 quote_just_closed = false;
             }
-            b'\r' | b'\n' => {
-                if b == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                    i += 1; // CRLF 视为一条换行
+            b'\r' => {
+                // 裸 CR（后随非 LF）：RFC 4180 只认 CRLF / LF 为记录边界，
+                // 老 Mac（Mac OS 9 及更早）行尾文件不在支持范围——静默切分
+                // 会把行尾格式问题伪装成「导入成功」，故与解析器严格模式
+                // 哲学一致：报错并提示可能原因。
+                if i + 1 >= bytes.len() || bytes[i + 1] != b'\n' {
+                    return Err(CfError::ImportFailed(format!(
+                        "第 {line} 行出现孤立的 CR（\\r）：疑似老 Mac 行尾文件，\
+                         请转换为 LF 或 CRLF 行尾后重试"
+                    )));
                 }
+                i += 1; // CRLF 视为一条换行
+                line += 1;
+                record.push(std::mem::take(&mut field));
+                push_record(&mut header, &mut rows, std::mem::take(&mut record), record_line)?;
+                record_line = line;
+                quote_just_closed = false;
+            }
+            b'\n' => {
                 line += 1;
                 record.push(std::mem::take(&mut field));
                 push_record(&mut header, &mut rows, std::mem::take(&mut record), record_line)?;

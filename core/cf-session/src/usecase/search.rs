@@ -8,19 +8,27 @@
 //!
 //! - 仅匹配**标题**（深度搜索推后，docs/07 §1.2）；
 //! - 多关键词**全命中**（空白分隔）；
-//! - 大小写不敏感（统一转小写比较）；
+//! - **NFC 归一化 + 小写折叠**（docs/03 §3.3）：查询串与标题两侧都做
+//!   Unicode NFC 归一化后再折叠小写。理由与解锁流主密码归一化
+//!   （`cf-crypto::normalize_password`）同构——macOS 输入法 / 复制粘贴
+//!   混排时，视觉相同的字符串可能落成 NFC 与 NFD 两种字节序列
+//!   （如 `é` = U+00E9 与 `e` + U+0301），不归一化会双向 miss；
 //! - 仅搜索 Active 态条目（归档 / 回收站不出现在搜索结果）；
 //! - 空查询返回空结果（列表展示走 `list_items`）。
 
 use cf_domain::item::{ItemState, ItemSummary};
 use cf_domain::CfError;
 use cf_store::{ItemListFilter, ItemStore};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::usecase::items::to_summary;
 
-/// 标题搜索：多关键词全命中、大小写不敏感、仅 Active 态。
+/// 标题搜索：多关键词全命中、NFC 归一化 + 小写折叠、仅 Active 态。
 pub fn search(store: &ItemStore, query: &str) -> Result<Vec<ItemSummary>, CfError> {
-    let keywords: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let keywords: Vec<String> = query
+        .split_whitespace()
+        .map(|k| k.nfc().collect::<String>().to_lowercase())
+        .collect();
     if keywords.is_empty() {
         return Ok(Vec::new());
     }
@@ -34,7 +42,7 @@ pub fn search(store: &ItemStore, query: &str) -> Result<Vec<ItemSummary>, CfErro
     items
         .into_iter()
         .filter(|it| {
-            let title = it.title.expose().to_lowercase();
+            let title = it.title.expose().nfc().collect::<String>().to_lowercase();
             keywords.iter().all(|k| title.contains(k))
         })
         .map(|it| to_summary(it.row, &it.title))

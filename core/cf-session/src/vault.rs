@@ -34,10 +34,11 @@ use std::sync::{Mutex, MutexGuard};
 use cf_domain::item::ItemDraft;
 use cf_domain::item::ItemSummary;
 use cf_domain::secret::SecretString;
+use cf_domain::totp_data::TotpUpdate;
 use cf_store::ItemListFilter;
 
 use crate::idle;
-use crate::types::{ItemDetails, TotpCode, VaultInfo};
+use crate::types::{ItemDetails, TotpCode, TotpDetail, VaultInfo};
 use crate::usecase;
 use crate::{SessionResult, TotpSession};
 use cf_domain::CfError;
@@ -186,12 +187,31 @@ impl VaultSession {
     }
 
     /// 更新条目：读旧快照（为 v0.2 history 预留接口，v0.1 不写 history 表）
-    /// → 校验 → 单事务整体替换（fields / urls / tags / sections / totp
-    /// 均为「删旧插新」语义）。
+    /// → 校验 → 单事务整体替换（fields / urls / tags / sections 均「删旧
+    /// 插新」语义）。
+    ///
+    /// TOTP **默认保留**（[`TotpUpdate::Keep`]）：FFI 刻意不下发 secret，
+    /// 调用方无法重提交原密钥，默认删旧会让编辑静默丢失 TOTP。三态
+    /// 显式控制走 [`VaultSession::update_item_with_totp`]；draft 的
+    /// `totp` 字段在更新路径始终忽略。
     pub fn update_item(&self, item_id: &str, draft: &ItemDraft) -> SessionResult<()> {
         let mut guard = self.unlocked()?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::update_item(&mut state.store, item_id, draft)
+    }
+
+    /// 更新条目（TOTP 三态显式版）：Keep 保留既有加密行 / Replace 删旧
+    /// 插新 / Remove 删除。语义详见
+    /// [`usecase::items::update_item_with_totp`]。
+    pub fn update_item_with_totp(
+        &self,
+        item_id: &str,
+        draft: &ItemDraft,
+        totp: TotpUpdate,
+    ) -> SessionResult<()> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::items::update_item_with_totp(&mut state.store, item_id, draft, totp)
     }
 
     /// 删除条目：`hard = false` 移入回收站（软删），`hard = true`
@@ -301,6 +321,34 @@ impl VaultSession {
             code,
             secs_remaining: session.secs_until_next_window(now.max(0) as u64),
         })
+    }
+
+    /// 读取条目 TOTP 元数据（**绝不含 secret**，FR-5.4 编辑界面展示用）。
+    ///
+    /// 与 [`VaultSession::totp_code`] 的差异：只回 algo / digits / period /
+    /// issuer / account 等非敏感元数据，供编辑界面展示「已有 TOTP
+    /// （SHA-1 · 6 位 · 30s）」并默认保留。条目无 TOTP 记录（含条目不
+    /// 存在）→ `Ok(None)`——编辑界面只需区分「有 / 无」，不区分两种
+    /// 不存在，避免多一层错误分流。
+    pub fn totp_config(&self, item_id: &str) -> SessionResult<Option<TotpDetail>> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        let repos = state.store.repos();
+
+        let Some(totp_uuid) = repos.totp.totp_uuids_for_item(item_id)?.into_iter().next() else {
+            return Ok(None);
+        };
+        Ok(repos
+            .totp
+            .totp_meta(&totp_uuid)?
+            .map(|m| TotpDetail {
+                uuid: m.uuid,
+                algo: m.algo,
+                digits: m.digits,
+                period: m.period,
+                issuer: m.issuer,
+                account: m.account,
+            }))
     }
 
     // ----------------------------------------------------------- 导入

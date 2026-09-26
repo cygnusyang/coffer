@@ -14,7 +14,7 @@
 
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::{ItemDraft, ItemState, ItemSummary};
-use cf_domain::totp_data::{TotpAlgo, TotpData};
+use cf_domain::totp_data::{TotpAlgo, TotpData, TotpUpdate};
 use cf_session::types::{
     FieldDetail, ItemDetails, SectionDetail, TotpCode, TotpDetail, UrlDetail, VaultInfo,
 };
@@ -458,6 +458,34 @@ pub struct FfiTotpDetail {
     pub account: Option<String>,
 }
 
+/// TOTP 元数据读取态（`totpConfig` 专用；刻意不含共享密钥，也不含记录
+/// ID —— 供编辑界面展示「已有 TOTP（SHA-1 · 6 位 · 30s）」并默认保留）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTotpMeta {
+    /// 哈希算法（运行时仅支持 sha1）
+    pub algo: String,
+    /// 口令位数（6 或 8）
+    pub digits: u8,
+    /// 时间窗口秒数
+    pub period: u32,
+    /// 发行方显示名（可选）
+    pub issuer: Option<String>,
+    /// 账户名（可选）
+    pub account: Option<String>,
+}
+
+impl From<TotpDetail> for FfiTotpMeta {
+    fn from(t: TotpDetail) -> Self {
+        Self {
+            algo: t.algo,
+            digits: t.digits,
+            period: t.period,
+            issuer: t.issuer,
+            account: t.account,
+        }
+    }
+}
+
 /// 条目完整详情（docs/07 §2.3 `ItemDetails`）。
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FfiItemDetails {
@@ -651,6 +679,40 @@ impl FfiTotpDraft {
     }
 }
 
+/// TOTP 更新三态（**更新路径专用**，`updateItemWithTotp` 参数）。
+///
+/// 背景：FFI 刻意不下发 TOTP secret（安全设计），编辑条目时调用方
+/// 无法「重提交」原密钥，`Option` 草稿的 `None` 又无法区分「删 / 留」。
+/// 故更新路径用显式三态：
+///
+/// - `keep`：保留既有加密行（**默认**，secret 不出会话层）；
+/// - `replace { draft }`：粘贴了新 otpauth URI，删旧插新；
+/// - `remove`：显式移除既有 TOTP。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiTotpUpdate {
+    /// 保留既有 TOTP（编辑入口默认）
+    Keep,
+    /// 删旧插新：写入新配置
+    Replace {
+        /// 新 TOTP 配置（共享密钥原始字节，随用随弃）
+        draft: FfiTotpDraft,
+    },
+    /// 移除既有 TOTP
+    Remove,
+}
+
+impl FfiTotpUpdate {
+    /// → 领域 [`TotpUpdate`]（Replace 载荷校验交给 cf-session 编排层）。
+    #[must_use]
+    pub fn to_domain(&self) -> TotpUpdate {
+        match self {
+            Self::Keep => TotpUpdate::Keep,
+            Self::Replace { draft } => TotpUpdate::Replace(draft.to_domain()),
+            Self::Remove => TotpUpdate::Remove,
+        }
+    }
+}
+
 /// 条目创建/更新草稿（docs/07 §2.3 `ItemDraft`）。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FfiItemDraft {
@@ -666,7 +728,8 @@ pub struct FfiItemDraft {
     pub sections: Vec<FfiSectionDraft>,
     /// 字段草稿列表
     pub fields: Vec<FfiFieldDraft>,
-    /// TOTP 配置（若有）
+    /// TOTP 配置（若有；`createItem` 路径用。更新路径请走
+    /// `updateItemWithTotp` 的三态参数 —— 本字段在更新时被忽略）
     pub totp: Option<FfiTotpDraft>,
 }
 

@@ -231,10 +231,27 @@ impl VaultSession {
         session_call(AssertUnwindSafe(|| self.inner.create_item(&draft)))
     }
 
-    /// 更新条目（整体替换：fields / urls / tags / totp 删旧插新）。
+    /// 更新条目（整体替换：fields / urls / tags 删旧插新；TOTP **默认
+    /// 保留** —— FFI 不下发 secret，编辑无法重提交原密钥，默认删旧会
+    /// 静默丢失 TOTP）。TOTP 三态显式控制走 [`VaultSession::update_item_with_totp`]。
     pub fn update_item(&self, item_id: String, draft: FfiItemDraft) -> Result<(), FfiError> {
         let draft = draft.to_domain()?;
         session_call(AssertUnwindSafe(|| self.inner.update_item(&item_id, &draft)))
+    }
+
+    /// 更新条目（TOTP 三态显式版）：`keep` 保留既有加密行 / `replace`
+    /// 删旧插新 / `remove` 移除。draft 的 `totp` 字段在此路径被忽略。
+    pub fn update_item_with_totp(
+        &self,
+        item_id: String,
+        draft: FfiItemDraft,
+        totp: FfiTotpUpdate,
+    ) -> Result<(), FfiError> {
+        let draft = draft.to_domain()?;
+        let totp = totp.to_domain();
+        session_call(AssertUnwindSafe(|| {
+            self.inner.update_item_with_totp(&item_id, &draft, totp)
+        }))
     }
 
     /// 删除条目：`hard = false` 进回收站，`hard = true` 级联硬删。
@@ -277,6 +294,17 @@ impl VaultSession {
     /// 生成条目当前 TOTP 验证码（共享密钥不出会话层）。
     pub fn totp_code(&self, item_id: String) -> Result<FfiTotpCode, FfiError> {
         session_call(AssertUnwindSafe(|| self.inner.totp_code(&item_id))).map(Into::into)
+    }
+
+    /// 读取条目 TOTP 元数据（**绝不含 secret**，编辑界面展示用）。
+    ///
+    /// 返回 algo / digits / period / issuer / account，供编辑界面展示
+    /// 「已有 TOTP（SHA-1 · 6 位 · 30s）」并默认保留（见
+    /// [`VaultSession::update_item_with_totp`]）。条目无 TOTP 记录 →
+    /// `None`。
+    pub fn totp_config(&self, item_id: String) -> Result<Option<FfiTotpMeta>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.totp_config(&item_id)))
+            .map(|opt| opt.map(Into::into))
     }
 
     /// 解析 otpauth:// URI（仅 SHA-1）；失败 → 码 1012。
@@ -556,6 +584,178 @@ mod tests {
         let code = session.totp_code(item_id).unwrap();
         assert_eq!(code.code.len(), 6);
         assert!(code.secs_remaining > 0 && code.secs_remaining <= 30);
+    }
+
+    /// 编辑保留 TOTP 端到端（v0.2 三态语义）：update_item 默认 Keep →
+    /// 编辑后 totp_config 元数据仍在、totp_code 仍可出码；随后三态
+    /// 显式控制（Replace / Remove）逐一验证。
+    #[test]
+    fn 编辑保留totp后仍可出码() {
+        let base = temp_base("totp_keep");
+        let brief = setup_vault(&base, "保留库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+
+        // 建条目（含 TOTP）
+        let totp = session
+            .parse_otpauth_uri(
+                "otpauth://totp/GitHub:alice@github.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+                    .to_owned(),
+            )
+            .unwrap();
+        let item_id = session
+            .create_item(FfiItemDraft {
+                title: "GitHub".to_owned(),
+                category: FfiItemCategory::Login,
+                urls: Vec::new(),
+                tags: Vec::new(),
+                sections: Vec::new(),
+                fields: vec![
+                    FfiFieldDraft {
+                        name: "用户名".to_owned(),
+                        value: Some("alice".to_owned()),
+                        field_type: FfiFieldType::Text,
+                        designation: Some(FfiDesignation::Username),
+                        section_index: None,
+                        position: 0,
+                    },
+                    FfiFieldDraft {
+                        name: "密码".to_owned(),
+                        value: Some("p@ssw0rd!".to_owned()),
+                        field_type: FfiFieldType::Concealed,
+                        designation: Some(FfiDesignation::Password),
+                        section_index: None,
+                        position: 1,
+                    },
+                ],
+                totp: Some(totp),
+            })
+            .unwrap();
+
+        // 编辑（草稿不带 TOTP —— FFI 本就拿不到 secret）：默认保留
+        let edited = FfiItemDraft {
+            title: "GitHub 工作".to_owned(),
+            category: FfiItemCategory::Login,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![
+                FfiFieldDraft {
+                    name: "用户名".to_owned(),
+                    value: Some("alice-work".to_owned()),
+                    field_type: FfiFieldType::Text,
+                    designation: Some(FfiDesignation::Username),
+                    section_index: None,
+                    position: 0,
+                },
+                FfiFieldDraft {
+                    name: "密码".to_owned(),
+                    value: Some("new-pass-42!".to_owned()),
+                    field_type: FfiFieldType::Concealed,
+                    designation: Some(FfiDesignation::Password),
+                    section_index: None,
+                    position: 1,
+                },
+            ],
+            totp: None,
+        };
+        session.update_item(item_id.clone(), edited).unwrap();
+
+        // 元数据仍在（secret 永不下发，编辑界面据此展示「已有 TOTP」）
+        let meta = session.totp_config(item_id.clone()).unwrap().unwrap();
+        assert_eq!(meta.algo, "sha1");
+        assert_eq!(meta.digits, 6);
+        assert_eq!(meta.period, 30);
+        // v0.1 已知边界：issuer/account 暂不采集入库（otpauth 解析随 T03）
+        assert_eq!(meta.issuer, None);
+
+        // 保留后仍可出码：原 secret 未被替换
+        let code = session.totp_code(item_id.clone()).unwrap();
+        assert_eq!(code.code.len(), 6);
+
+        // Replace：粘贴新 URI → 元数据切换为 8 位（draft 的 totp 字段
+        // 被忽略，以三态参数为准；必填字段照常提交）
+        let new_totp = session
+            .parse_otpauth_uri(
+                "otpauth://totp/New:svc?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8"
+                    .to_owned(),
+            )
+            .unwrap();
+        let replace_draft = FfiItemDraft {
+            title: "GitHub 工作".to_owned(),
+            category: FfiItemCategory::Login,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![
+                FfiFieldDraft {
+                    name: "用户名".to_owned(),
+                    value: Some("alice-work".to_owned()),
+                    field_type: FfiFieldType::Text,
+                    designation: Some(FfiDesignation::Username),
+                    section_index: None,
+                    position: 0,
+                },
+                FfiFieldDraft {
+                    name: "密码".to_owned(),
+                    value: Some("new-pass-42!".to_owned()),
+                    field_type: FfiFieldType::Concealed,
+                    designation: Some(FfiDesignation::Password),
+                    section_index: None,
+                    position: 1,
+                },
+            ],
+            totp: None,
+        };
+        session
+            .update_item_with_totp(
+                item_id.clone(),
+                replace_draft,
+                FfiTotpUpdate::Replace { draft: new_totp },
+            )
+            .unwrap();
+        let replaced = session.totp_config(item_id.clone()).unwrap().unwrap();
+        assert_eq!(replaced.digits, 8, "Replace 后应切换为新配置");
+        let replaced_code = session.totp_code(item_id.clone()).unwrap();
+        assert_eq!(replaced_code.code.len(), 8);
+
+        // Remove：显式移除 → 元数据消失
+        let remove_draft = FfiItemDraft {
+            title: "GitHub 工作".to_owned(),
+            category: FfiItemCategory::Login,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![
+                FfiFieldDraft {
+                    name: "用户名".to_owned(),
+                    value: Some("alice-work".to_owned()),
+                    field_type: FfiFieldType::Text,
+                    designation: Some(FfiDesignation::Username),
+                    section_index: None,
+                    position: 0,
+                },
+                FfiFieldDraft {
+                    name: "密码".to_owned(),
+                    value: Some("new-pass-42!".to_owned()),
+                    field_type: FfiFieldType::Concealed,
+                    designation: Some(FfiDesignation::Password),
+                    section_index: None,
+                    position: 1,
+                },
+            ],
+            totp: None,
+        };
+        session
+            .update_item_with_totp(item_id.clone(), remove_draft, FfiTotpUpdate::Remove)
+            .unwrap();
+        assert!(
+            session.totp_config(item_id.clone()).unwrap().is_none(),
+            "Remove 后 TOTP 应消失"
+        );
     }
 
     /// list_vaults 枚举：只读 header.json，损坏目录跳过不中断

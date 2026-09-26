@@ -71,10 +71,22 @@ extension AppModel {
         return id
     }
 
-    /// 更新条目（整体替换）。
+    /// 更新条目（整体替换；TOTP 默认保留 —— FFI 不下发 secret，编辑
+    /// 无法重提交原密钥，默认删旧会静默丢失 TOTP）。
     func updateItem(itemId: String, draft: FfiItemDraft) throws {
         guard let session else { throw FfiError.Coffer(code: 1001, message: "会话不存在") }
         try session.updateItem(itemId: itemId, draft: draft)
+        reloadItems()
+        if selectedItemID == itemId {
+            loadSelectedDetails()
+        }
+    }
+
+    /// 更新条目（TOTP 三态显式版）：`.keep` 保留既有加密行 /
+    /// `.replace(draft:)` 删旧插新 / `.remove` 移除。
+    func updateItem(itemId: String, draft: FfiItemDraft, totpUpdate: FfiTotpUpdate) throws {
+        guard let session else { throw FfiError.Coffer(code: 1001, message: "会话不存在") }
+        try session.updateItemWithTotp(itemId: itemId, draft: draft, totp: totpUpdate)
         reloadItems()
         if selectedItemID == itemId {
             loadSelectedDetails()
@@ -121,6 +133,13 @@ extension AppModel {
     func totpCode(itemId: String) throws -> FfiTotpCode {
         guard let session else { throw FfiError.Coffer(code: 1001, message: "会话不存在") }
         return try session.totpCode(itemId: itemId)
+    }
+
+    /// 读取条目 TOTP 元数据（绝不含 secret；编辑界面展示「已有 TOTP
+    /// （SHA-1 · 6 位 · 30s）」并默认保留）。条目无 TOTP → nil。
+    func totpConfig(itemId: String) throws -> FfiTotpMeta? {
+        guard let session else { throw FfiError.Coffer(code: 1001, message: "会话不存在") }
+        return try session.totpConfig(itemId: itemId)
     }
 
     /// 解析 otpauth:// URI（仅 SHA-1；失败 → 码 1012）。

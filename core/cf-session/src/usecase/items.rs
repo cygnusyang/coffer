@@ -2,8 +2,10 @@
 //!
 //! 流程：`cf-domain::validate_item` 前置校验（校验失败**不落库**）→
 //! `ItemStore::with_tx` 单事务写库（NFR-REL-01）。update 语义 = 整体替换：
-//! 行数据 / 标题就地更新，fields / urls / tags / sections / totp 按
-//! 「删旧插新」批量替换（仓库层天然覆盖字段增删改）。
+//! 行数据 / 标题就地更新，fields / urls / tags / sections 按「删旧插新」
+//! 批量替换（仓库层天然覆盖字段增删改）；TOTP 为显式三态
+//! （[`TotpUpdate`]：Keep 保留既有加密行 / Replace 删旧插新 / Remove 删除），
+//! 因 FFI 不下发 secret，更新默认 Keep 以免编辑静默丢失 TOTP。
 //!
 //! update 前读取旧快照，为 v0.2 的 history 表预留接口；v0.1 **不写**
 //! history 表（docs/07 §2.2）。
@@ -16,6 +18,7 @@
 
 use cf_domain::item::{ItemDraft, ItemState, ItemSummary};
 use cf_domain::secret::SecretString;
+use cf_domain::totp_data::TotpUpdate;
 use cf_domain::CfError;
 use cf_store::rows::{FieldRow, SectionRow, TagRow, UrlRow};
 use cf_store::{ItemListFilter, ItemRow, ItemStore};
@@ -48,7 +51,14 @@ pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, C
             },
             &title,
         )?;
-        write_children(repos, &item_uuid, draft)?;
+        // create 路径的 TOTP 语义：草稿有则写入、无则不写（Option 无歧义，
+        // 三态类型仅更新路径需要；Remove 对无旧行的新条目是空操作）
+        let totp = draft
+            .totp
+            .clone()
+            .map(TotpUpdate::Replace)
+            .unwrap_or(TotpUpdate::Remove);
+        write_children(repos, &item_uuid, draft, &totp)?;
         repos.meta.add_item_count(1)?;
         Ok(())
     })?;
@@ -57,7 +67,13 @@ pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, C
 
 /// 更新条目：读旧快照（v0.2 history 预留）→ 校验 → 单事务整体替换。
 ///
-/// 条目不存在返回 [`CfError::ItemNotFound`]；校验失败不产生任何写入。
+/// TOTP 语义（v0.2 裁定）：本入口为**默认保留**（[`TotpUpdate::Keep`]）——
+/// FFI 刻意不下发 secret，调用方无法重提交原密钥，默认删旧会静默
+/// 丢失 TOTP。三态显式控制走 [`update_item_with_totp`]。
+///
+/// 其余语义：条目不存在返回 [`CfError::ItemNotFound`]；校验失败不产生
+/// 任何写入。draft 的 `totp` 字段在更新路径**始终忽略**（以显式三态
+/// 参数为准），见 [`update_item_with_totp`] 文档。
 ///
 /// 状态语义（QA 已知问题 #2 裁定）：update_item **只允许作用于 Active 态**
 /// 条目。对 Trashed / Archived 条目返回
@@ -71,7 +87,40 @@ pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, C
 /// `is_favorite` / `fav_index` 从旧行继承，收藏的增减只走
 /// [`set_favorite`]。
 pub fn update_item(store: &mut ItemStore, item_id: &str, draft: &ItemDraft) -> Result<(), CfError> {
-    cf_domain::validate::validate_item(draft)?;
+    update_item_with_totp(store, item_id, draft, TotpUpdate::Keep)
+}
+
+/// 更新条目（TOTP 三态显式版）。
+///
+/// [`TotpUpdate`] 语义：
+///
+/// - `Keep`：既有加密 TOTP 行**完全不动**（secret 不出会话层，调用方
+///   无需也无法提供原密钥）；
+/// - `Replace(data)`：删旧插新，写入 `data`（校验与 create 路径一致）；
+/// - `Remove`：删除既有 TOTP 行。
+///
+/// ## draft.totp 在更新路径被忽略
+///
+/// 整体替换语义下 `ItemDraft.totp: Option<TotpData>` 的 `None` 无法区分
+/// 「删」与「留」（歧义来源，见 [`TotpUpdate`] 模块文档），且 FFI 侧
+/// 读回详情本就**不含** secret、调用方无法构造「原样重写」的草稿。
+/// 故更新路径一律以 `totp` 参数为准，`draft.totp` 被显式清空后再校验，
+/// 避免两个数据源互相矛盾。Replace 的载荷经同一套 TOTP 校验
+/// （secret ≥ 10 字节、digits ∈ {6,8}、period > 0）。
+pub fn update_item_with_totp(
+    store: &mut ItemStore,
+    item_id: &str,
+    draft: &ItemDraft,
+    totp: TotpUpdate,
+) -> Result<(), CfError> {
+    // 校验：draft.totp 以三态参数为准（Keep / Remove 时清空，Replace 时
+    // 换成载荷），保证 replace 载荷过同一套校验、draft 携带的 totp 不生效
+    let mut checked = draft.clone();
+    match &totp {
+        TotpUpdate::Replace(data) => checked.totp = Some(data.clone()),
+        TotpUpdate::Keep | TotpUpdate::Remove => checked.totp = None,
+    }
+    cf_domain::validate::validate_item(&checked)?;
 
     let now = crate::unix_now()?;
     let title = SecretString::from_exposed(draft.title.clone());
@@ -106,7 +155,7 @@ pub fn update_item(store: &mut ItemStore, item_id: &str, draft: &ItemDraft) -> R
             position: old.position,
         })?;
         repos.items.update_title(item_id, &title)?;
-        write_children(repos, item_id, draft)?;
+        write_children(repos, item_id, draft, &totp)?;
         Ok(())
     })
 }
@@ -266,10 +315,14 @@ pub(crate) fn to_summary(row: ItemRow, title: &SecretString) -> Result<ItemSumma
 /// 写入条目从表：sections → fields → urls → tags → totp（批量替换语义）。
 ///
 /// 必须在 items 行已插入的事务内调用（外键约束）。
+///
+/// `totp` 控制 TOTP 从表写法：`Keep` 完全不动（既有加密行原样保留）、
+/// `Replace` 删旧插新、`Remove` 删旧（create 路径无旧行，删除为空操作）。
 fn write_children(
     repos: &cf_store::Repos<'_>,
     item_uuid: &str,
     draft: &ItemDraft,
+    totp: &TotpUpdate,
 ) -> Result<(), CfError> {
     // 分区：草稿下标 → 生成 uuid，供字段挂接引用
     let sections: Vec<SectionRow> = draft
@@ -329,21 +382,30 @@ fn write_children(
         .collect();
     repos.tags.replace_for_item(item_uuid, &tags)?;
 
-    // TOTP：整体替换（删旧插新），与 fields 等从表语义一致
-    for old_uuid in repos.totp.totp_uuids_for_item(item_uuid)? {
-        repos.totp.delete_totp(&old_uuid)?;
-    }
-    if let Some(t) = &draft.totp {
-        repos.totp.insert_totp(
-            &uuid::Uuid::now_v7().to_string(),
-            item_uuid,
-            &t.secret,
-            algo_to_str(t.algo),
-            t.digits,
-            t.period,
-            None, // issuer / account v0.1 暂不采集（otpauth 解析随 T03 引入）
-            None,
-        )?;
+    // TOTP：三态显式（v0.2 裁定）。Keep 不动既有加密行；Replace / Remove
+    // 均先删旧（Replace 再插新；create 路径无旧行，删除为空操作）
+    match totp {
+        TotpUpdate::Keep => {}
+        TotpUpdate::Replace(t) => {
+            for old_uuid in repos.totp.totp_uuids_for_item(item_uuid)? {
+                repos.totp.delete_totp(&old_uuid)?;
+            }
+            repos.totp.insert_totp(
+                &uuid::Uuid::now_v7().to_string(),
+                item_uuid,
+                &t.secret,
+                algo_to_str(t.algo),
+                t.digits,
+                t.period,
+                None, // issuer / account v0.1 暂不采集（otpauth 解析随 T03 引入）
+                None,
+            )?;
+        }
+        TotpUpdate::Remove => {
+            for old_uuid in repos.totp.totp_uuids_for_item(item_uuid)? {
+                repos.totp.delete_totp(&old_uuid)?;
+            }
+        }
     }
     Ok(())
 }

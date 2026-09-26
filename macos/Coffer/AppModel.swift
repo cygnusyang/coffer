@@ -359,7 +359,7 @@ final class AppModel: ObservableObject {
             // 失败补偿（docs/08 §4.1）：删除刚写入的 Keychain 项（幂等），
             // header 保持原样（Rust 失败时不重写文件）。密码错 1002 与
             // Keychain 失败均经 ErrorPresenter 呈现（T04 验收③）。
-            try? BiometricKeychain().delete(vaultUUID: uuid)
+            _ = try? BiometricKeychain().delete(vaultUUID: uuid)
             lastErrorMessage = ErrorPresenter.text(error)
             refreshTouchIDStatus()
             return false

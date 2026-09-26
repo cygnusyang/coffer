@@ -441,6 +441,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "subtle",
+ "unicode-normalization",
  "uuid",
  "zeroize",
  "zxcvbn",

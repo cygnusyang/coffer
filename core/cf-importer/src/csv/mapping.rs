@@ -368,11 +368,14 @@ fn parse_bool_signal(
 ///
 /// # 与 cf-totp 的关系（实现备注）
 ///
-/// 共享密钥的边界校验（80-bit 下限、digits 合法性）委托
-/// `cf_totp::TotpConfig::new`。但 secret 参数的**提取**在本函数内完成：
-/// `cf_totp::parse_totp_uri` 现实现把 `?` 之前的整个路径当作 secret 参与
-/// Base32 解码（对 `otpauth://totp/…` 输入会产生错误的密钥字节），
-/// 导入路径不能使用；该缺陷已单独上报，不在本任务内修改 cf-totp。
+/// `cf_totp::parse_totp_uri` 的历史缺陷（把 `?` 前路径当 secret 解码）
+/// 已由 cf-totp 侧修复为标准 otpauth 解析。但本函数**不能整体切回**：
+/// 导入路径还需要 `issuer` / `account` 提取（含路径标签兜底与 percent
+/// 解码）与人类可读的 `String` 错误（用于预检 warnings），而
+/// `TotpConfig` 不承载 issuer/account。因此本函数保留自己的参数解析，
+/// 把**共享密钥的 Base32 解码委托**给 `cf_totp::base32_decode`——
+/// 两条入口（解析 URI / 导入 CSV）的解码行为保证完全一致（严格
+/// RFC 4648 字符集 + 规范填充校验，容忍省略填充的真实 otpauth 形式）。
 pub fn parse_otpauth(uri: &str) -> Result<OtpauthData, String> {
     let uri = uri.trim();
     let rest = uri
@@ -450,7 +453,9 @@ pub fn parse_otpauth(uri: &str) -> Result<OtpauthData, String> {
         return Err("period 必须为正整数".to_owned());
     }
     let digits = digits.unwrap_or(6);
-    let secret_bytes = base32_decode(&secret_b32)?;
+    // Base32 解码委托 cf_totp（严格 RFC 4648），与 cf_totp::parse_totp_uri 同一实现
+    let secret_bytes =
+        cf_totp::base32_decode(&secret_b32).map_err(|e| e.to_string())?;
 
     // 边界校验（secret ≥ 10 字节、digits ∈ {6,8}）委托 cf-totp 门面
     cf_totp::TotpConfig::new(secret_bytes.clone(), period, digits)
@@ -465,35 +470,8 @@ pub fn parse_otpauth(uri: &str) -> Result<OtpauthData, String> {
     })
 }
 
-/// RFC 4648 Base32 解码（大小写不敏感，容忍 `=` 填充）。
-///
-/// 非法字符（含 `!`、`0`、`1` 等）报错——导入侧必须严格：错解出的密钥
-/// 会静默产生永远错误的验证码。
-fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let mut acc: u32 = 0;
-    let mut bits: u32 = 0;
-    let mut out = Vec::with_capacity(s.len() * 5 / 8);
-    for &ch in s.as_bytes() {
-        if ch == b'=' {
-            break; // 填充只可能出现在末尾；遇到即停
-        }
-        let c = ch.to_ascii_uppercase();
-        let v = ALPHABET
-            .iter()
-            .position(|&a| a == c)
-            .ok_or_else(|| format!("secret 不是合法的 Base32（非法字符 {}）", ch as char))?;
-        acc = (acc << 5) | (v as u32);
-        bits += 5;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-        }
-    }
-    Ok(out)
-}
-
 /// 最小 percent 解码（`%XX` → 字节）；非法序列原样保留。
+/// （Base32 解码已委托 `cf_totp::base32_decode`，本模块不再保留重复实现。）
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

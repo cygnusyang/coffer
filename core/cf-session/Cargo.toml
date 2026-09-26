@@ -14,6 +14,9 @@ cf-crypto = { workspace = true }
 cf-totp = { workspace = true }
 # 建库门禁：zxcvbn 强度评估（FR-1.3 / docs/07 §2.2，score < 3 → WeakPassword）
 cf-audit = { workspace = true }
+# T04：VaultSession::import_csv 薄委托 cf-importer（T03 偏差记录预留的落点，
+# cf-ffi 由此获得导入能力而不必触碰 ItemStore 内部）
+cf-importer = { workspace = true }
 zxcvbn = { workspace = true }
 zeroize = { workspace = true }
 subtle = { workspace = true }

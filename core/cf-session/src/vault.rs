@@ -302,6 +302,24 @@ impl VaultSession {
         })
     }
 
+    // ----------------------------------------------------------- 导入
+
+    /// CSV 导入（docs/07 §2.3 `import_csv`）：单事务 all-or-nothing，
+    /// 任一行失败整体回滚、已有数据零影响（NFR-REL-04）。
+    ///
+    /// 薄委托 [`cf_importer::import_csv`]——T03 偏差记录预留的落点：
+    /// 导入编排归 cf-session，cf-ffi 由此获得导入能力而不必接触
+    /// `ItemStore` 内部（DEK / SubKeys 依旧不跨 FFI）。
+    ///
+    /// # 错误
+    ///
+    /// 锁定态 → 1001；解析 / 映射 / 写入失败 → 2001 / 2002（docs/03 §12）。
+    pub fn import_csv(&self, path: &Path) -> SessionResult<cf_importer::CsvImportResult> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        cf_importer::import_csv(path, &mut state.store)
+    }
+
     // ------------------------------------------------------- 内部工具
 
     /// 解锁态守卫：未解锁返回错误码 1001（不泄露其余状态）。

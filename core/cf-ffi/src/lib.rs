@@ -111,12 +111,7 @@ mod tests {
             panic!("模拟不变量破坏");
         });
 
-        assert_eq!(
-            result,
-            Err(FfiError::InternalPanic {
-                message: "模拟不变量破坏".to_string()
-            }
-        ));
+        assert!(matches!(result, Err(FfiError::InternalPanic { .. })));
         assert_eq!(result.unwrap_err().code(), 5999);
 
         // 捕获后进程存活：守卫之后的代码正常执行（能走到这里即是证据）
@@ -124,31 +119,51 @@ mod tests {
         assert_eq!(ok, Ok(42));
     }
 
-    /// String 载荷与非字符串载荷都归一为 String 摘要
+    /// 载荷脱敏（QA F-1）：panic 文案（可能内嵌敏感值）的内容绝不进入
+    /// message——只保留固定文案 + 类型/字节数指纹。
     #[test]
-    fn panic载荷归一为字符串摘要() {
-        let s_payload = ffi_guard(|| std::panic::panic_any(String::from("动态构造的panic")));
-        assert_eq!(
-            s_payload,
-            Err(FfiError::InternalPanic {
-                message: "动态构造的panic".to_string()
+    fn panic载荷脱敏_内容不透传() {
+        const SENSITIVE: &str = "TOPSECRET-主密码-p@ssw0rd";
+        let err = ffi_guard(|| panic!("unlock failed: password={SENSITIVE}")).unwrap_err();
+        assert_eq!(err.code(), 5999);
+        match &err {
+            FfiError::InternalPanic { message } => {
+                assert!(!message.contains(SENSITIVE), "泄漏敏感值: {message:?}");
+                assert!(!message.contains("unlock failed"), "panic 文案透传: {message:?}");
+                assert!(
+                    message.contains("panic payload redacted (type=String"),
+                    "message 应为脱敏指纹，实际 {message:?}"
+                );
             }
-        ));
+            other => panic!("应为 InternalPanic，实际 {other:?}"),
+        }
 
-        let static_payload = ffi_guard(|| panic!("静态panic"));
-        assert_eq!(
-            static_payload,
-            Err(FfiError::InternalPanic {
-                message: "静态panic".to_string()
+        // String 载荷同样脱敏（panic_any 动态构造场景）
+        let err = ffi_guard(|| std::panic::panic_any(String::from("内容含{敏感值}"))).unwrap_err();
+        match &err {
+            FfiError::InternalPanic { message } => {
+                assert!(!message.contains("敏感值"));
+                assert!(message.contains("type=String"));
             }
+            other => panic!("应为 InternalPanic，实际 {other:?}"),
+        }
+    }
+
+    /// 非字符串载荷归一为脱敏指纹（type=non-string，无字节长度语义）
+    #[test]
+    fn panic载荷归一为脱敏指纹() {
+        let static_payload = ffi_guard(|| panic!("静态panic"));
+        assert!(matches!(
+            static_payload,
+            Err(FfiError::InternalPanic { ref message })
+                if message.contains("type=&str") && !message.contains("静态panic")
         ));
 
         let other = ffi_guard(|| std::panic::panic_any(vec![1u8, 2, 3]));
-        assert_eq!(
+        assert!(matches!(
             other,
-            Err(FfiError::InternalPanic {
-                message: "non-string panic payload".to_string()
-            }
+            Err(FfiError::InternalPanic { ref message })
+                if message.contains("type=non-string")
         ));
     }
 
@@ -167,13 +182,11 @@ mod tests {
             Err(FfiErrorOr::Domain("业务错误"))
         );
 
-        // panic → Panic 态
-        assert_eq!(
+        // panic → Panic 态（message 已脱敏，不含载荷内容）
+        assert!(matches!(
             ffi_guard_result(|| -> Result<i32, &'static str> { panic!("炸了") }),
-            Err(FfiErrorOr::Panic(FfiError::InternalPanic {
-                message: "炸了".to_string()
-            }))
-        );
+            Err(FfiErrorOr::Panic(FfiError::InternalPanic { .. }))
+        ));
     }
 
     /// 借用参数经 AssertUnwindSafe 包装后可用（FFI 入口的常见形态：

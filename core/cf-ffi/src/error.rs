@@ -10,8 +10,16 @@
 //! Rust panic 经 [`crate::ffi_guard`] 捕获后映射为 [`FfiError::InternalPanic`]，
 //! 码取 **5999**（系统级 5001–5002 段之后的保留位）。这是 FFI 层自有的
 //! 防御性兜底——业务代码不应产出该码；若 UI 收到 5999 说明触发了
-//! Rust 侧不变量破坏，应上报日志（message 为 panic 摘要，不含敏感值，
-//! panic hook 侧已声明过滤）。
+//! Rust 侧不变量破坏，应上报日志。
+//!
+//! **message 为脱敏摘要（QA F-1 修复）**：panic 载荷（`String` / `&str`）
+//! 常由运行时拼接而成（如 `panic!("断言失败: {密码}")`），内容可能内嵌
+//! 密码等敏感值，且无法可靠区分敏感与不敏感片段——因此载荷内容**一律
+//! 不透传**，只保留类型与字节数指纹（如
+//! `panic payload redacted (type=String, bytes=32)`）。FFI 错误消息中
+//! 不允许出现任何运行时拼接的用户数据。注意：panic hook 只影响 stderr
+//! 输出，不作用于 [`crate::ffi_guard`] 捕获的 `catch_unwind` 载荷，
+//! 脱敏必须在本函数内完成。
 
 use cf_domain::CfError;
 
@@ -38,7 +46,7 @@ pub enum FfiError {
     /// Rust panic 兜底（错误码 5999，见模块文档）。
     #[error("internal panic: {message}")]
     InternalPanic {
-        /// panic 摘要（非敏感）
+        /// 脱敏摘要（固定文案 + 载荷类型/字节数指纹，内容永不透传）
         message: String,
     },
 }
@@ -63,14 +71,27 @@ impl From<CfError> for FfiError {
     }
 }
 
-/// panic 载荷归一为 [`FfiError::InternalPanic`]。
+/// panic 载荷归一为 [`FfiError::InternalPanic`]（载荷内容脱敏，QA F-1）。
+///
+/// 脱敏策略：载荷内容（可能内嵌敏感值）**整段丢弃**，message 只保留
+/// 「固定文案 + 类型/字节数指纹」——不做白名单前缀透传，因为 panic 文案
+/// 是任意运行时拼接的字符串，无法可靠判定哪段非敏感；类型与字节数
+/// 足以支撑排障定位且不含用户数据。
 pub(crate) fn panic_payload_to_error(payload: Box<dyn std::any::Any + Send>) -> FfiError {
+    /// 构造脱敏 message：固定文案 + 载荷类型指纹（`byte_len` 为字符串
+    /// 载荷的字节数；非字符串载荷无长度语义，指纹只含类型）。
+    fn redacted(kind: &str, byte_len: Option<usize>) -> String {
+        match byte_len {
+            Some(n) => format!("panic payload redacted (type={kind}, bytes={n})"),
+            None => format!("panic payload redacted (type={kind})"),
+        }
+    }
     let message = if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
+        redacted("String", Some(s.len()))
     } else if let Some(s) = payload.downcast_ref::<&str>() {
-        (*s).to_string()
+        redacted("&str", Some(s.len()))
     } else {
-        "non-string panic payload".to_string()
+        redacted("non-string", None)
     };
     FfiError::InternalPanic { message }
 }
@@ -117,11 +138,21 @@ mod tests {
         }
     }
 
-    /// panic 兜底码固定 5999（docs/03 §12 之外的自有保留位）
+    /// panic 兜底码固定 5999（docs/03 §12 之外的自有保留位）；
+    /// message 脱敏（QA F-1）：载荷内容不透传，只保留类型/字节指纹
     #[test]
-    fn panic兜底错误码为5999() {
+    fn panic兜底错误码为5999_且载荷内容脱敏() {
         let err = panic_payload_to_error(Box::new("boom"));
         assert_eq!(err.code(), 5999);
-        assert!(matches!(err, FfiError::InternalPanic { ref message } if message == "boom"));
+        match &err {
+            FfiError::InternalPanic { message } => {
+                assert!(!message.contains("boom"), "载荷内容不得透传: {message:?}");
+                assert!(
+                    message.contains("panic payload redacted (type=&str, bytes=4)"),
+                    "message 应为脱敏指纹，实际 {message:?}"
+                );
+            }
+            other => panic!("应为 InternalPanic，实际 {other:?}"),
+        }
     }
 }

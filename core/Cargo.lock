@@ -396,6 +396,7 @@ dependencies = [
  "cf-importer",
  "cf-session",
  "cf-store",
+ "rusqlite",
  "thiserror",
  "uniffi",
  "uuid",

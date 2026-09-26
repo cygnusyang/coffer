@@ -261,7 +261,8 @@ impl VaultSession {
     // ---------------------------------------------------- 取值与 TOTP
 
     /// 按需取字段明文值（密码等敏感值，随取随走，docs/07 §4.2）。
-    /// 条目或字段不存在返回 `None`。
+    /// 条目不存在返回 Err(1011)（ItemNotFound）；条目存在但字段不存在
+    /// 返回 `None`（QA F-2：文档对齐实现，1011 语义保留）。
     pub fn get_field_value(
         &self,
         item_id: String,

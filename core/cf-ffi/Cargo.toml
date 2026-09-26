@@ -41,3 +41,7 @@ path = "uniffi-bindgen.rs"
 required-features = ["bindgen-cli"]
 
 # T04 阶段 2：UniFFI proc-macro 绑定（CofferApp 工厂 + VaultSession 会话门面）
+
+[dev-dependencies]
+# QA 集成测试：外部裸连接制造 SQLite 写冲突（1009 跨 FFI 形态验证）
+rusqlite = { workspace = true }

@@ -1,17 +1,17 @@
 //! tags 表仓库（`docs/07-macOS纵切设计.md` §2.1）。
 //!
 //! 与 fields / urls 相同的"按 item 批量替换"模式。`enc_name` 用
-//! `field_key` 加密，AAD 钉死在标签行 uuid + 列名上（见
+//! `field_key` 加密，AAD 钉死在（tags 表, 标签行 uuid, 列名）上（见
 //! [`crate::repo`] 模块文档映射表）。
 
-use cf_crypto::aead::{build_field_aad, open, seal};
+use cf_crypto::aead::{open, seal};
 use cf_crypto::subkeys::SubKeys;
 use cf_domain::secret::SecretString;
 use rusqlite::Connection;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
 use crate::repo::url::require_item;
-use crate::repo::uuid_bytes;
+use crate::repo::field_aad;
 
 /// 列名常量（AAD 成分）。
 pub const COLUMN_TAG_NAME: &str = "enc_name";
@@ -57,10 +57,9 @@ impl<'a> TagsRepo<'a> {
             .execute("DELETE FROM tags WHERE item_uuid=?1", [item_uuid])
             .store()?;
         for t in tags {
-            let uuid_b = uuid_bytes(&t.uuid)?;
             let enc_name = seal(
                 &self.subkeys.field_key,
-                &build_field_aad(&uuid_b, COLUMN_TAG_NAME),
+                &field_aad("tags", &t.uuid, COLUMN_TAG_NAME)?,
                 t.name.as_bytes(),
             )
             .crypto()?;
@@ -87,7 +86,7 @@ impl<'a> TagsRepo<'a> {
             let enc_name: Vec<u8> = r.get(2).store()?;
             let plain = open(
                 &self.subkeys.field_key,
-                &build_field_aad(&uuid_bytes(&uuid)?, COLUMN_TAG_NAME),
+                &field_aad("tags", &uuid, COLUMN_TAG_NAME)?,
                 &enc_name,
             )
             .crypto()?;

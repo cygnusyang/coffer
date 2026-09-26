@@ -79,7 +79,7 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `repo/item.rs` | items 表 CRUD：insert / update（含 state 迁移）/ get / list（分页、按 state+category 过滤）/ soft_delete / restore / set_favorite。`enc_title` 用 `item_key` 加解密，AAD = `build_field_aad(item_uuid, "enc_title")`（复用 cf-crypto 现有函数） |
+| `repo/item.rs` | items 表 CRUD：insert / update（含 state 迁移）/ get / list（分页、按 state+category 过滤）/ soft_delete / restore / set_favorite。`enc_title` 用 `item_key` 加解密，AAD = `build_table_field_aad("items", item_uuid, "enc_title")`（表名命名空间，O-1 修订：复用 cf-crypto 函数） |
 | `repo/field.rs` | fields 表：按 item 批量替换写入（update 语义 = 删旧插新，天然覆盖字段增删改）、按 item 读出 |
 | `repo/url.rs` / `repo/tag.rs` | urls / tags 表：同上批量替换模式 |
 | `repo/meta.rs` | meta 表键值读写（`item_count`、`schema_version` 等） |

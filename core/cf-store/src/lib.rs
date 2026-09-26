@@ -27,9 +27,10 @@
 //! ## 密文落盘纪律
 //!
 //! 敏感列（`enc_title` / `enc_name` / `enc_value` / `enc_url` /
-//! `enc_label` / tags 的 `enc_name` / `enc_secret` / `enc_issuer` /
-//! `enc_account`）一律 AEAD 密文 BLOB 落盘，AAD 钉死在（行 uuid, 列名）
-//! 上防跨行跨列搬运。集成测试断言**数据库文件字节里找不到明文敏感值**。
+//! `enc_label` / tags 的 `enc_name` / totp 的 `enc_secret` / `enc_issuer` /
+//! `enc_account`）一律 AEAD 密文 BLOB 落盘，AAD 钉死在
+//! （表名, 行 uuid, 列名）上防跨行跨列**跨表**搬运（表名命名空间，
+//! O-1，2026-09-23）。集成测试断言**数据库文件字节里找不到明文敏感值**。
 //!
 //! ## 错误信息纪律（docs/04 §4.2）
 //!

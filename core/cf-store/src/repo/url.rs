@@ -1,16 +1,16 @@
 //! urls 表仓库（`docs/07-macOS纵切设计.md` §2.1）。
 //!
 //! 与 fields 相同的"按 item 批量替换"模式。`enc_label` / `enc_url` 用
-//! `field_key` 加密，AAD 钉死在各 url 行 uuid + 列名上（见
+//! `field_key` 加密，AAD 钉死在（urls 表, 各 url 行 uuid, 列名）上（见
 //! [`crate::repo`] 模块文档映射表）。
 
-use cf_crypto::aead::{build_field_aad, open, seal};
+use cf_crypto::aead::{open, seal};
 use cf_crypto::subkeys::SubKeys;
 use cf_domain::secret::SecretString;
 use rusqlite::Connection;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
-use crate::repo::uuid_bytes;
+use crate::repo::field_aad;
 
 /// 列名常量（AAD 成分）。
 pub const COLUMN_URL_LABEL: &str = "enc_label";
@@ -70,16 +70,15 @@ impl<'a> UrlsRepo<'a> {
             .execute("DELETE FROM urls WHERE item_uuid=?1", [item_uuid])
             .store()?;
         for u in urls {
-            let uuid_b = uuid_bytes(&u.uuid)?;
             let enc_url = seal(
                 &self.subkeys.field_key,
-                &build_field_aad(&uuid_b, COLUMN_URL),
+                &field_aad("urls", &u.uuid, COLUMN_URL)?,
                 u.url.as_bytes(),
             )
             .crypto()?;
             let enc_label = match &u.label {
                 Some(l) => {
-                    let aad = build_field_aad(&uuid_b, COLUMN_URL_LABEL);
+                    let aad = field_aad("urls", &u.uuid, COLUMN_URL_LABEL)?;
                     Some(seal(&self.subkeys.field_key, &aad, l.as_bytes()).crypto()?)
                 }
                 None => None,
@@ -115,11 +114,14 @@ impl<'a> UrlsRepo<'a> {
         let mut out = Vec::new();
         while let Some(r) = rows.next().store()? {
             let uuid: String = r.get(0).store()?;
-            let uuid_b = uuid_bytes(&uuid)?;
 
             let enc_url: Vec<u8> = r.get(3).store()?;
-            let url = open(&self.subkeys.field_key, &build_field_aad(&uuid_b, COLUMN_URL), &enc_url)
-                .crypto()?;
+            let url = open(
+                &self.subkeys.field_key,
+                &field_aad("urls", &uuid, COLUMN_URL)?,
+                &enc_url,
+            )
+            .crypto()?;
             let url = String::from_utf8(url)
                 .map_err(|_| CfError::Corrupted("url not utf-8".into()))?;
 
@@ -127,7 +129,7 @@ impl<'a> UrlsRepo<'a> {
                 Some(ct) => {
                     let plain = open(
                         &self.subkeys.field_key,
-                        &build_field_aad(&uuid_b, COLUMN_URL_LABEL),
+                        &field_aad("urls", &uuid, COLUMN_URL_LABEL)?,
                         &ct,
                     )
                     .crypto()?;

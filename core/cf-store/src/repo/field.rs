@@ -8,9 +8,9 @@
 //!
 //! 加密：`enc_name` / `enc_value` / `enc_title` 用 `field_key`
 //! （分区标题用 `item_key`，见 [`crate::repo`] 模块文档的映射表），
-//! AAD 钉死在各自行 uuid + 列名上。
+//! AAD 钉死在（表名, 各自行 uuid, 列名）上（表名命名空间，O-1）。
 
-use cf_crypto::aead::{build_field_aad, open, seal};
+use cf_crypto::aead::{open, seal};
 use cf_crypto::subkeys::SubKeys;
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::secret::SecretString;
@@ -18,7 +18,7 @@ use rusqlite::Connection;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
 use crate::repo::url::require_item;
-use crate::repo::uuid_bytes;
+use crate::repo::field_aad;
 
 /// 列名常量（AAD 成分）。
 pub const COLUMN_SECTION_TITLE: &str = "enc_title";
@@ -120,8 +120,7 @@ impl<'a> FieldsRepo<'a> {
             .execute("DELETE FROM sections WHERE item_uuid=?1", [item_uuid])
             .store()?;
         for s in sections {
-            let uuid_b = uuid_bytes(&s.uuid)?;
-            let aad = build_field_aad(&uuid_b, COLUMN_SECTION_TITLE);
+            let aad = field_aad("sections", &s.uuid, COLUMN_SECTION_TITLE)?;
             let enc_title = seal(&self.subkeys.item_key, &aad, s.title.as_bytes()).crypto()?;
             self.conn
                 .execute(
@@ -148,8 +147,7 @@ impl<'a> FieldsRepo<'a> {
         while let Some(r) = rows.next().store()? {
             let uuid: String = r.get(0).store()?;
             let enc_title: Vec<u8> = r.get(2).store()?;
-            let uuid_b = uuid_bytes(&uuid)?;
-            let aad = build_field_aad(&uuid_b, COLUMN_SECTION_TITLE);
+            let aad = field_aad("sections", &uuid, COLUMN_SECTION_TITLE)?;
             let plain = open(&self.subkeys.item_key, &aad, &enc_title).crypto()?;
             let title = String::from_utf8(plain)
                 .map_err(|_| CfError::Corrupted("section title not utf-8".into()))?;
@@ -179,16 +177,15 @@ impl<'a> FieldsRepo<'a> {
             .execute("DELETE FROM fields WHERE item_uuid=?1", [item_uuid])
             .store()?;
         for f in fields {
-            let uuid_b = uuid_bytes(&f.uuid)?;
             let enc_name = seal(
                 &self.subkeys.field_key,
-                &build_field_aad(&uuid_b, COLUMN_FIELD_NAME),
+                &field_aad("fields", &f.uuid, COLUMN_FIELD_NAME)?,
                 f.name.as_bytes(),
             )
             .crypto()?;
             let enc_value = match &f.value {
                 Some(v) => {
-                    let aad = build_field_aad(&uuid_b, COLUMN_FIELD_VALUE);
+                    let aad = field_aad("fields", &f.uuid, COLUMN_FIELD_VALUE)?;
                     Some(seal(&self.subkeys.field_key, &aad, v.as_bytes()).crypto()?)
                 }
                 None => None,
@@ -238,10 +235,9 @@ impl<'a> FieldsRepo<'a> {
         let mut out = Vec::new();
         while let Some(r) = rows.next().store()? {
             let uuid: String = r.get(0).store()?;
-            let uuid_b = uuid_bytes(&uuid)?;
 
             let enc_name: Vec<u8> = r.get(5).store()?;
-            let aad_name = build_field_aad(&uuid_b, COLUMN_FIELD_NAME);
+            let aad_name = field_aad("fields", &uuid, COLUMN_FIELD_NAME)?;
             let name = open(&self.subkeys.field_key, &aad_name, &enc_name).crypto()?;
             let name = String::from_utf8(name)
                 .map_err(|_| CfError::Corrupted("field name not utf-8".into()))?;
@@ -249,7 +245,7 @@ impl<'a> FieldsRepo<'a> {
             let enc_value: Option<Vec<u8>> = r.get(6).store()?;
             let value = match enc_value {
                 Some(ct) => {
-                    let aad_value = build_field_aad(&uuid_b, COLUMN_FIELD_VALUE);
+                    let aad_value = field_aad("fields", &uuid, COLUMN_FIELD_VALUE)?;
                     let plain = open(&self.subkeys.field_key, &aad_value, &ct).crypto()?;
                     let plain = String::from_utf8(plain)
                         .map_err(|_| CfError::Corrupted("field value not utf-8".into()))?;

@@ -11,20 +11,22 @@
 //! | [`meta`] | meta 表键值读写（item_count、schema_version 等） |
 //! | [`totp`] | TOTP 记录（原 `TotpStore` 迁入改造，`enc_issuer`/`enc_account` 加密列，C-2） |
 //!
-//! ## 加密密钥与 AAD 映射（全仓库层统一约定）
+//! ## 加密密钥与 AAD 映射（全仓库层统一约定，O-1 后版本）
 //!
-//! | 列 | 子密钥 | AAD record_uuid |
-//! | --- | --- | --- |
-//! | `items.enc_title` | `item_key` | 条目 uuid |
-//! | `sections.enc_title` | `item_key` | 分区 uuid |
-//! | `fields.enc_name` / `enc_value` | `field_key` | 字段 uuid |
-//! | `urls.enc_label` / `enc_url` | `field_key` | url 行 uuid |
-//! | `tags.enc_name` | `field_key` | 标签行 uuid |
-//! | `totp.enc_secret` | `field_key` | **条目** uuid（既有行为，测试已钉死） |
-//! | `totp.enc_issuer` / `enc_account` | `field_key` | totp 行 uuid（新列，钉死到行） |
+//! AAD 统一带**表名命名空间**：`表名 ‖ 0x00 ‖ 行uuid(16) ‖ 0x00 ‖ 列名`
+//! （构造见 [`field_aad`] → `cf_crypto::aead::build_table_field_aad`），
+//! 密文被钉死在（表, 行, 列）三维位置上——跨表重放（即使 uuid 文本
+//! 相同）也解密失败（O-1，2026-09-23，QA 对抗性验证发现）。
 //!
-//! AAD 统一用 [`cf_crypto::aead::build_field_aad`] 构造：
-//! `record_uuid(16) ‖ 0x00 ‖ column_name`，密文被钉死在（行, 列）位置上。
+//! | 列 | 子密钥 | 表名 | AAD record_uuid |
+//! | --- | --- | --- | --- |
+//! | `items.enc_title` | `item_key` | `items` | 条目 uuid |
+//! | `sections.enc_title` | `item_key` | `sections` | 分区 uuid |
+//! | `fields.enc_name` / `enc_value` | `field_key` | `fields` | 字段 uuid |
+//! | `urls.enc_label` / `enc_url` | `field_key` | `urls` | url 行 uuid |
+//! | `tags.enc_name` | `field_key` | `tags` | 标签行 uuid |
+//! | `totp.enc_secret` | `field_key` | `totp` | **totp 行** uuid（O-1 统一：原钉条目 uuid，与 enc_issuer/enc_account 语义对齐） |
+//! | `totp.enc_issuer` / `enc_account` | `field_key` | `totp` | totp 行 uuid |
 
 pub mod field;
 pub mod item;
@@ -74,6 +76,19 @@ pub(crate) fn uuid_bytes(uuid: &str) -> Result<[u8; 16], cf_domain::CfError> {
     let parsed = uuid::Uuid::parse_str(uuid)
         .map_err(|_| cf_domain::CfError::Corrupted("invalid uuid".into()))?;
     Ok(*parsed.as_bytes())
+}
+
+/// 构造字段级 AAD（全仓库层统一入口，O-1）。
+///
+/// 布局：`表名 ‖ 0x00 ‖ 行uuid(16) ‖ 0x00 ‖ 列名`。uuid 非法时返回
+/// [`cf_domain::CfError::Corrupted`]。
+pub(crate) fn field_aad(
+    table: &str,
+    record_uuid: &str,
+    column: &str,
+) -> Result<Vec<u8>, cf_domain::CfError> {
+    let uuid_b = uuid_bytes(record_uuid)?;
+    Ok(cf_crypto::aead::build_table_field_aad(table, &uuid_b, column))
 }
 
 /// 当前 Unix 秒。系统时钟早于 epoch 时返回错误（不猜测）。

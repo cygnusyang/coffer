@@ -1,8 +1,14 @@
 # macos —— macOS 端
 
-**状态：未开始**（计划 **M5** 阶段）
+**状态：绑定链路已通，App 工程未开始**（计划 **M5** 阶段）
 
-本目录将来放置 macOS 客户端工程。当前为空，**没有任何可构建的内容**。
+本目录将来放置 macOS 客户端工程。当前已有的可构建内容：
+
+- `Coffer/CoreBindings/` —— UniFFI 生成的 Swift 绑定（**由 `tools/build_swift_bindings.sh` 生成，勿手改**）。
+  运行该脚本（或先 `cargo build -p cf-ffi --release`）后，可用 swiftc 冒烟验证
+  Rust ↔ Swift 全链路（建库 / 解锁 / 错误码跨 FFI），命令见脚本尾部注释：
+  `macos/Coffer/SmokeTest/main.swift` 编译链接 `core/target/release/libcf_ffi.a`。
+- Xcode 工程本体（Coffer.xcodeproj / SwiftUI App / PasskeyExtension）尚未开始。
 
 ---
 

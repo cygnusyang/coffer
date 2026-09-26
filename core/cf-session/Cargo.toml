@@ -1,6 +1,6 @@
 [package]
 name = "cf-session"
-description = "解锁 / 锁定、用例编排、权限门禁、空闲计时判定、TOTP 验证 (M1)"
+description = "解锁 / 锁定、用例编排、权限门禁、空闲计时判定、TOTP 验证。"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,10 +12,22 @@ cf-store = { workspace = true }
 cf-format = { workspace = true }
 cf-crypto = { workspace = true }
 cf-totp = { workspace = true }
+# 建库门禁：zxcvbn 强度评估（FR-1.3 / docs/07 §2.2，score < 3 → WeakPassword）
+cf-audit = { workspace = true }
+zxcvbn = { workspace = true }
 zeroize = { workspace = true }
 subtle = { workspace = true }
-thiserror = { workspace = true }
-
-[dev-dependencies]
+# 解锁流：打开 db.sqlite / 生成条目 UUIDv7
 rusqlite = { workspace = true }
 uuid = { workspace = true }
+# header.json 内各 *_b64 字段编解码（与 cf-format 同版本 0.22）
+base64 = "0.22"
+
+[dev-dependencies]
+cf-crypto = { workspace = true }
+cf-store = { workspace = true }
+serde_json = { workspace = true }
+zeroize = { workspace = true }
+
+# 状态：T02 已实现（真实解锁流 / VaultSession / idle 纯函数 / CRUD 与搜索编排 /
+#       错误统一 C-6）；CSV 导入编排（usecase/import_csv）待 T03 集成。

@@ -1,84 +1,102 @@
-//! # cf-session —— 会话与应用服务 (M1: TOTP 集成)
+//! # cf-session —— 会话与应用服务
 //!
-//! 解锁 / 锁定、用例编排、权限门禁、TOTP 验证。
+//! 解锁 / 锁定、用例编排、权限门禁、空闲计时判定、TOTP 验证。
 //!
 //! ## 对应设计文档
 //!
 //! - `docs/02-概要设计.md` §4.3（会话与锁定模型）
-//! - `docs/03-详细设计.md` §7（TOTP 实现）、§11（内存安全与自动锁定）
+//! - `docs/03-详细设计.md` §2（密钥层次）、§7（TOTP）、§11（内存安全与自动锁定）
+//! - `docs/07-macOS纵切设计.md` §2.2（T02：真实解锁流 / VaultSession / 用例编排）
 //!
 //! ## 职责边界
 //!
-//! 本 crate 是**唯一持有 DEK 的模块**（待实现，M1 后续阶段）。
-//! 定时器放在平台侧：本 crate 只提供时间注入的纯逻辑。
+//! 本 crate 是**唯一持有 DEK 的模块**（经 [`unlock`] 编排解出后仅以
+//! `SubKeys` 形态存于 `ItemStore`，跨 FFI 永不出现）。定时器放在平台侧：
+//! 本 crate 只提供时间注入的纯逻辑（[`idle`]）。
 //!
-//! ## 状态
+//! ## 模块划分（T02）
 //!
-//! TOTP 会话验证已实现（FR-5.1/FR-5.2 核心路径）；
-//! DEK 管理与解锁编排待实现。
+//! - [`unlock`]：`create_vault`（建库）与 `open_vault`（打开会话）编排；
+//!   解锁数据流：NFC 归一化 → Argon2id（参数从 header 读）→ wrapped_dek
+//!   解封 → verifier 校验 → `SubKeys::derive` → `ItemStore::open`
+//! - [`vault`]：`VaultSession`——持有 `Mutex<Option<UnlockedState>>`，
+//!   `lock()` 置 `None` 触发全链路 `ZeroizeOnDrop` 内存清零
+//! - [`idle`]：空闲超时判定的纯函数（时间由平台注入，可测试）
+//! - [`usecase`]：条目 CRUD（四类完整 + 只读兜底）与标题搜索编排
+//! - [`types`]：跨模块的会话层数据结构（`VaultInfo` / `ItemDetails` / `TotpCode`）
+//!
+//! ## 错误统一（docs/07 §5 C-6）
+//!
+//! 本 crate 不再自持错误类型：[`SessionError`] 即 [`cf_domain::CfError`]
+//! 的类型别名。解锁路径上的错误合并纪律见 [`unlock`] 模块文档。
+//!
+//! ## 内存清零边界（docs/07 §2.2）
+//!
+//! | 位置 | 策略 |
+//! | --- | --- |
+//! | 主密码 | unlock/create 内 `Zeroizing` 包装，返回前清零 |
+//! | DEK / 子密钥 | `SessionKey` / `SubKeys` ZeroizeOnDrop；`lock()` 置 state=None 触发 drop |
+//! | 条目明文 | 每次查询临时解密，随返回值生命周期结束；不常驻缓存 |
+//!
+//! ## 硬性约束
+//!
+//! `#![forbid(unsafe_code)]`；生产代码禁 `unwrap` / `expect`
+//! （测试代码经 `clippy.toml` 放行）。
 
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
 
-use cf_totp::TotpConfig;
+pub mod idle;
+pub mod types;
+pub mod unlock;
+pub mod usecase;
+pub mod vault;
+
+#[cfg(test)]
+mod tests_support;
+
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 会话层错误类型
+use cf_totp::TotpConfig;
+
+pub use types::{ItemDetails, TotpCode, VaultInfo};
+pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
+pub use vault::VaultSession;
+
+/// 会话层错误类型（docs/07 §5 C-6 统一）。
 ///
-/// 注：cf-domain 尚未实现（M1 待办），错误类型暂由本 crate 自持，
-/// 待 cf-domain 落地后迁移并统一。
-#[derive(Debug, Clone, PartialEq)]
-pub enum SessionError {
-    /// 保险库处于锁定状态
-    Locked,
-    /// TOTP 会话不存在（未加载或 UUID 错误）
-    TotpSessionNotFound(String),
-    /// TOTP 计算失败（透传自 cf-totp）
-    Totp(cf_totp::TotpError),
-    /// 存储层失败（cf-store 错误的 Display 摘要）。
-    ///
-    /// 存字符串而非 `CfStoreError` 本身：后者含 `rusqlite::Error`，
-    /// 未实现 `Clone` / `PartialEq`，而会话层错误需要可比较（测试与
-    /// 门禁判断）。会话层不需要对存储错误做结构化分支，摘要足够；
-    /// 完整错误链在 cf-store 侧记录。
-    Store(String),
-    /// 存储中的 TOTP 算法本实现尚不支持（当前仅 SHA-1）
-    UnsupportedAlgo(String),
-    /// 系统时钟早于 Unix epoch（时钟回拨到 1970 前）
-    ClockBeforeEpoch,
-}
+/// 即 [`cf_domain::CfError`]：错误码表见 `docs/03-详细设计.md` §12，
+/// UI 层按 [`cf_domain::CfError::code`] 做本地化，不解析消息文本。
+pub type SessionError = cf_domain::CfError;
 
-impl std::fmt::Display for SessionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Locked => write!(f, "vault is locked"),
-            Self::TotpSessionNotFound(uuid) => {
-                write!(f, "TOTP session not found for item: {}", uuid)
-            }
-            Self::Totp(e) => write!(f, "TOTP error: {}", e),
-            Self::Store(s) => write!(f, "store error: {}", s),
-            Self::UnsupportedAlgo(a) => write!(f, "unsupported TOTP algorithm: {}", a),
-            Self::ClockBeforeEpoch => write!(f, "system clock before Unix epoch"),
-        }
-    }
-}
-
-impl std::error::Error for SessionError {}
-
-impl From<cf_totp::TotpError> for SessionError {
-    fn from(e: cf_totp::TotpError) -> Self {
-        SessionError::Totp(e)
-    }
-}
-
-impl From<cf_store::CfStoreError> for SessionError {
-    fn from(e: cf_store::CfStoreError) -> Self {
-        SessionError::Store(e.to_string())
-    }
-}
-
-/// 会话层结果别名
+/// 会话层结果别名。
 pub type SessionResult<T> = Result<T, SessionError>;
+
+/// `cf-totp` 错误 → 统一错误（3001 TotpError）。
+///
+/// 载荷仅含算法层摘要（如"密钥过短"），不含密钥材料。
+pub(crate) fn totp_error(e: cf_totp::TotpError) -> SessionError {
+    cf_domain::CfError::TotpError(e.to_string())
+}
+
+/// 当前 Unix 秒；系统时钟早于 epoch 时返回错误（不猜测）。
+pub(crate) fn unix_now() -> SessionResult<i64> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| cf_domain::CfError::StorageError("system clock before unix epoch".into()))?
+        .as_secs() as i64)
+}
+
+/// 常量时间比较，防止验证码 / verifier 比对的时序侧信道。
+///
+/// 委托 `subtle` 实现：`ConstantTimeEq` 对切片逐元素异或折叠，
+/// 不按首个差异字节提前返回（`subtle` 的文档示例即为此用途）。
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
+}
 
 /// TOTP 会话：一个条目的动态口令验证器
 ///
@@ -94,6 +112,7 @@ pub struct TotpSession {
 
 impl TotpSession {
     /// 创建 TOTP 会话，默认 ±1 窗口容错
+    #[must_use]
     pub fn new(config: TotpConfig) -> Self {
         Self {
             totp_config: config,
@@ -103,7 +122,7 @@ impl TotpSession {
 
     /// 生成当前时间窗口的验证码
     pub fn generate(&self) -> SessionResult<String> {
-        Ok(self.totp_config.generate()?)
+        self.totp_config.generate().map_err(totp_error)
     }
 
     /// 验证用户输入的验证码（带时间漂移容错）
@@ -115,7 +134,10 @@ impl TotpSession {
 
         for delta in -(self.drift_windows as i64)..=(self.drift_windows as i64) {
             let counter = (current as i64 + delta).max(0) as u64;
-            let expected = self.totp_config.generate_for_counter(counter)?;
+            let expected = self
+                .totp_config
+                .generate_for_counter(counter)
+                .map_err(totp_error)?;
             if constant_time_eq(code.as_bytes(), expected.as_bytes()) {
                 return Ok(true);
             }
@@ -126,37 +148,29 @@ impl TotpSession {
 
     /// 当前时间计数器（时间可注入测试见 `counter_at`）
     fn current_counter(&self) -> SessionResult<u64> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let duration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| SessionError::ClockBeforeEpoch)?;
-
-        Ok(duration.as_secs() / u64::from(self.totp_config.period))
+        let now = unix_now()?;
+        Ok((now.max(0) as u64) / u64::from(self.totp_config.period))
     }
 
     /// 指定 Unix 时间戳对应的计数器（纯函数，供测试与平台侧复用）
+    #[must_use]
     pub fn counter_at(&self, unix_secs: u64) -> u64 {
         unix_secs / u64::from(self.totp_config.period)
     }
 
     /// 距下一个窗口的剩余秒数（供 UI 显示倒计时）
+    #[must_use]
     pub fn secs_until_next_window(&self, unix_secs: u64) -> u64 {
         let period = u64::from(self.totp_config.period);
         period - (unix_secs % period)
     }
 }
 
-/// 常量时间比较，防止验证码比对的时序侧信道。
+/// 遗留 TOTP 门禁骨架（M1 阶段的 `Session`，T02 前的唯一会话形态）。
 ///
-/// 委托 `subtle` 实现：`ConstantTimeEq` 对切片逐元素异或折叠，
-/// 不按首个差异字节提前返回（`subtle` 的文档示例即为此用途）。
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    use subtle::ConstantTimeEq;
-    a.ct_eq(b).into()
-}
-
-/// 主会话结构（DEK 持有者，M1 后续阶段完成解锁编排）
+/// T02 之后真实解锁流走 [`VaultSession`]；本结构仅保留给既有 TOTP
+/// 单元测试与离线验证场景使用——其 `unlocked` 门禁不含密钥材料，
+/// 不构成安全边界。新代码请使用 [`VaultSession`]。
 pub struct Session {
     /// 解锁状态门禁
     unlocked: bool,
@@ -166,6 +180,7 @@ pub struct Session {
 
 impl Session {
     /// 创建锁定状态的会话
+    #[must_use]
     pub fn new() -> Self {
         Self {
             unlocked: false,
@@ -180,14 +195,11 @@ impl Session {
         if self.unlocked {
             Ok(())
         } else {
-            Err(SessionError::Locked)
+            Err(cf_domain::CfError::VaultLocked)
         }
     }
 
-    /// 解锁保险库
-    ///
-    /// 注：主密码验证与 DEK 解密待 M1 后续阶段实现，
-    /// 当前只翻转门禁状态供下游用例联调。
+    /// 解锁保险库（遗留骨架：只翻转门禁，无密钥材料）
     pub fn unlock(&mut self) -> SessionResult<()> {
         self.unlocked = true;
         Ok(())
@@ -206,23 +218,16 @@ impl Session {
 
     /// 从存储加载一条 TOTP 记录并注册为该条目的会话。
     ///
-    /// 完整链路：`cf-store` 解密密钥（AAD 钉死在 item_uuid 上）
+    /// 完整链路：`cf-store` 解密密钥（AAD 钉死在 totp 行 uuid 上）
     /// → 构造 [`TotpConfig`] → 注册到本条目名下。
-    ///
-    /// # 参数
-    ///
-    /// - `store`：已打开的 [`cf_store::TotpStore`]（持有字段密钥）
-    /// - `totp_uuid`：TOTP 记录的 UUID（`totp` 表主键）
-    ///
-    /// # 前置条件
-    ///
-    /// 必须已解锁（门禁检查）。记录不存在或解密失败返回相应错误。
+    /// 新代码请直接使用 [`VaultSession::totp_code`]（`field_key` 由
+    /// 解锁态 `SubKeys` 注入）。
     ///
     /// # 算法支持
     ///
-    /// 当前仅支持 `sha1`（`cf-totp` 已实现部分）；`sha256` / `sha512`
-    /// 记录返回 [`SessionError::UnsupportedAlgo`]——显式拒绝而非静默
-    /// 按 SHA-1 计算（错误算法算出的码必然不匹配服务端）。
+    /// 当前仅支持 `sha1`；`sha256` / `sha512` 记录返回
+    /// [`CfError::Validation`]——显式拒绝而非静默按 SHA-1 计算
+    /// （错误算法算出的码必然不匹配服务端）。
     pub fn load_totp_from_store(
         &mut self,
         store: &cf_store::TotpStore,
@@ -232,17 +237,21 @@ impl Session {
 
         let meta = store
             .totp_meta(totp_uuid)?
-            .ok_or_else(|| SessionError::TotpSessionNotFound(totp_uuid.to_string()))?;
+            .ok_or(cf_domain::CfError::ItemNotFound)?;
 
         if meta.algo != "sha1" {
-            return Err(SessionError::UnsupportedAlgo(meta.algo));
+            return Err(cf_domain::CfError::Validation(format!(
+                "unsupported TOTP algorithm: {}",
+                meta.algo
+            )));
         }
 
         let secret = store
             .totp_secret(totp_uuid)?
-            .ok_or_else(|| SessionError::TotpSessionNotFound(totp_uuid.to_string()))?;
+            .ok_or(cf_domain::CfError::ItemNotFound)?;
 
-        let config = TotpConfig::new(secret.to_vec(), meta.period, meta.digits)?;
+        let config =
+            TotpConfig::new(secret.to_vec(), meta.period, meta.digits).map_err(totp_error)?;
         self.register_totp_session(&meta.item_uuid, TotpSession::new(config));
         Ok(())
     }
@@ -253,7 +262,7 @@ impl Session {
         let session = self
             .totp_sessions
             .get(item_uuid)
-            .ok_or_else(|| SessionError::TotpSessionNotFound(item_uuid.to_string()))?;
+            .ok_or(cf_domain::CfError::ItemNotFound)?;
         session.generate()
     }
 
@@ -263,7 +272,7 @@ impl Session {
         let session = self
             .totp_sessions
             .get(item_uuid)
-            .ok_or_else(|| SessionError::TotpSessionNotFound(item_uuid.to_string()))?;
+            .ok_or(cf_domain::CfError::ItemNotFound)?;
         session.verify(code)
     }
 }
@@ -277,7 +286,6 @@ impl Default for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeroize::{Zeroize, Zeroizing};
 
     /// FR-5.1: TOTP 生成走通
     #[test]
@@ -293,7 +301,7 @@ mod tests {
         assert!(code.chars().all(|c| c.is_ascii_digit()));
     }
 
-    /// 门禁规则：未解锁时数据访问被拒绝（§4.3）
+    /// 门禁规则：未解锁时数据访问被拒绝（§4.3，错误码 1001）
     #[test]
     fn test_locked_vault_rejects_access() {
         let mut session = Session::new();
@@ -302,11 +310,11 @@ mod tests {
 
         assert_eq!(
             session.generate_item_totp("item-1"),
-            Err(SessionError::Locked)
+            Err(cf_domain::CfError::VaultLocked)
         );
         assert_eq!(
             session.verify_item_totp("item-1", "123456"),
-            Err(SessionError::Locked)
+            Err(cf_domain::CfError::VaultLocked)
         );
     }
 
@@ -320,13 +328,16 @@ mod tests {
         session.lock();
 
         // 门禁优先：锁定状态直接拒绝，不泄露会话是否存在（§4.3）
-        assert_eq!(session.generate_item_totp("item-1"), Err(SessionError::Locked));
+        assert_eq!(
+            session.generate_item_totp("item-1"),
+            Err(cf_domain::CfError::VaultLocked)
+        );
 
         // 重新解锁后会话已清除
         session.unlock().unwrap();
         assert!(matches!(
             session.generate_item_totp("item-1"),
-            Err(SessionError::TotpSessionNotFound(_))
+            Err(cf_domain::CfError::ItemNotFound)
         ));
     }
 
@@ -350,7 +361,9 @@ mod tests {
         let config = TotpConfig::new(vec![7u8; 32], 30, 6).unwrap();
         session.register_totp_session("item-1", TotpSession::new(config));
 
-        assert!(!session.verify_item_totp("item-1", "000000").unwrap_or(false));
+        assert!(!session
+            .verify_item_totp("item-1", "000000")
+            .unwrap_or(false));
     }
 
     /// 未注册的条目返回明确错误
@@ -361,7 +374,7 @@ mod tests {
 
         assert!(matches!(
             session.generate_item_totp("no-such-item"),
-            Err(SessionError::TotpSessionNotFound(_))
+            Err(cf_domain::CfError::ItemNotFound)
         ));
     }
 
@@ -388,6 +401,8 @@ mod tests {
     /// 敏感数据清零（NFR-SEC-04 模式验证）
     #[test]
     fn test_zeroize_pattern() {
+        use zeroize::{Zeroize, Zeroizing};
+
         let mut secret = String::from("sensitive-master-password");
         secret.zeroize();
         assert!(secret.is_empty());
@@ -411,13 +426,25 @@ mod tests {
 
         let item_uuid = uuid::Uuid::from_bytes([2; 16]).to_string();
         let totp_uuid = uuid::Uuid::from_bytes([1; 16]).to_string();
-        conn.execute("INSERT INTO items (uuid) VALUES (?1)", rusqlite::params![item_uuid])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO items (uuid) VALUES (?1)",
+            rusqlite::params![item_uuid],
+        )
+        .unwrap();
 
         let key = SessionKey::new([0x55u8; 32]);
         let store = TotpStore::new(conn, key).unwrap();
         store
-            .insert_totp(&totp_uuid, &item_uuid, secret, "sha1", 6, 30, Some("GitHub"), None)
+            .insert_totp(
+                &totp_uuid,
+                &item_uuid,
+                secret,
+                "sha1",
+                6,
+                30,
+                Some("GitHub"),
+                None,
+            )
             .unwrap();
 
         (store, totp_uuid, item_uuid)
@@ -451,7 +478,7 @@ mod tests {
         let mut session = Session::new();
         assert_eq!(
             session.load_totp_from_store(&store, &totp_uuid),
-            Err(SessionError::Locked)
+            Err(cf_domain::CfError::VaultLocked)
         );
     }
 
@@ -464,7 +491,7 @@ mod tests {
         session.unlock().unwrap();
         assert!(matches!(
             session.load_totp_from_store(&store, "missing-uuid"),
-            Err(SessionError::TotpSessionNotFound(_))
+            Err(cf_domain::CfError::ItemNotFound)
         ));
     }
 
@@ -472,22 +499,37 @@ mod tests {
     #[test]
     fn load_rejects_unsupported_algo() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);").unwrap();
+        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);")
+            .unwrap();
         let item_uuid = uuid::Uuid::from_bytes([2; 16]).to_string();
         let totp_uuid = uuid::Uuid::from_bytes([1; 16]).to_string();
-        conn.execute("INSERT INTO items (uuid) VALUES (?1)", rusqlite::params![item_uuid]).unwrap();
+        conn.execute(
+            "INSERT INTO items (uuid) VALUES (?1)",
+            rusqlite::params![item_uuid],
+        )
+        .unwrap();
 
         let key = SessionKey::new([0x55u8; 32]);
         let store = TotpStore::new(conn, key).unwrap();
         store
-            .insert_totp(&totp_uuid, &item_uuid, b"0123456789abcdef0123", "sha256", 6, 30, None, None)
+            .insert_totp(
+                &totp_uuid,
+                &item_uuid,
+                b"0123456789abcdef0123",
+                "sha256",
+                6,
+                30,
+                None,
+                None,
+            )
             .unwrap();
 
         let mut session = Session::new();
         session.unlock().unwrap();
-        assert_eq!(
-            session.load_totp_from_store(&store, &totp_uuid),
-            Err(SessionError::UnsupportedAlgo("sha256".to_string()))
-        );
+        let err = session
+            .load_totp_from_store(&store, &totp_uuid)
+            .unwrap_err();
+        assert_eq!(err.code(), 1012, "不支持算法应报 Validation(1012)");
+        assert!(err.to_string().contains("sha256"), "{err}");
     }
 }

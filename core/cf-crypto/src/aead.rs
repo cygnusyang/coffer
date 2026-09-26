@@ -162,7 +162,7 @@ pub fn open(key: &SessionKey, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, CfCr
 /// 构造字段级 AAD：`record_uuid(16) ‖ 0x00 ‖ column_name`。
 ///
 /// 旧版布局（无表名命名空间）。存储层请改用
-/// [`build_table_field_aad`]（O-1，2026-09-23）；本函数保留用于
+/// [`build_table_field_aad`]（O-1，2026-09-26）；本函数保留用于
 /// cf-crypto 单元测试与非 SQLite 场景，**不得**再用于库文件字段加密。
 ///
 /// 见模块文档「AAD 构造规则」。

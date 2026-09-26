@@ -417,26 +417,33 @@ version = "0.1.0"
 dependencies = [
  "cf-crypto",
  "cf-domain",
+ "cf-store",
+ "cf-totp",
  "keepass",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror",
+ "uuid",
 ]
 
 [[package]]
 name = "cf-session"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "cf-audit",
  "cf-crypto",
  "cf-domain",
  "cf-format",
  "cf-store",
  "cf-totp",
  "rusqlite",
+ "serde_json",
  "subtle",
- "thiserror",
  "uuid",
  "zeroize",
+ "zxcvbn",
 ]
 
 [[package]]

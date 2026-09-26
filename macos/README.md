@@ -1,14 +1,34 @@
 # macos —— macOS 端
 
-**状态：绑定链路已通，App 工程未开始**（计划 **M5** 阶段）
+**状态：v0.1 纵切已交付（T05 完成）——建库 / 解锁 / 条目 CRUD / 搜索 / 复制 / 自动锁定 / CSV 导入全流程可用**
 
-本目录将来放置 macOS 客户端工程。当前已有的可构建内容：
+## 一条命令构建
 
-- `Coffer/CoreBindings/` —— UniFFI 生成的 Swift 绑定（**由 `tools/build_swift_bindings.sh` 生成，勿手改**）。
-  运行该脚本（或先 `cargo build -p cf-ffi --release`）后，可用 swiftc 冒烟验证
-  Rust ↔ Swift 全链路（建库 / 解锁 / 错误码跨 FFI），命令见脚本尾部注释：
-  `macos/Coffer/SmokeTest/main.swift` 编译链接 `core/target/release/libcf_ffi.a`。
-- Xcode 工程本体（Coffer.xcodeproj / SwiftUI App / PasskeyExtension）尚未开始。
+```bash
+./tools/build_macos_app.sh          # 产物 → macos/build/Coffer.app
+open macos/build/Coffer.app         # 启动
+```
+
+- 工程组织：**swiftc + Info.plist 直出 .app bundle**（本机无 xcodegen；
+  手写 pbxproj 维护成本高，理由见脚本头注释）。无 Xcode 工程依赖，
+  装有 Xcode CLT 即可复现。
+- 构建前置：Rust 静态库 + Swift 绑定已入库（`CoreBindings/`）；如改了 Rust
+  FFI 接口，先跑 `tools/build_swift_bindings.sh`（或给构建脚本加
+  `--rebuild-bindings`）。
+- 零网络承诺核查（FR-14.5）：`codesign -d --entitlements - macos/build/Coffer.app`
+  —— 输出只应包含 `app-sandbox` 与 `files.user-selected.read-write`，
+  无任何 `com.apple.security.network.*`。
+
+## 当前已有内容
+
+- `Coffer/` —— SwiftUI 应用（App 壳 / 建库 / 解锁 / 条目列表·详情·编辑 /
+  回收站 / CSV 导入 / Clipboard·AutoLockMonitor 平台层）。
+- `Coffer/CoreBindings/` —— UniFFI 生成的 Swift 绑定（**由
+  `tools/build_swift_bindings.sh` 生成，勿手改**）。
+- `Coffer/SmokeTest/main.swift` —— swiftc 冒烟样例（链接静态库验证
+  Rust ↔ Swift 全链路），编译命令见 `tools/build_swift_bindings.sh` 尾部注释。
+- v0.1 明确不做（推后清单见 `docs/07-macOS纵切设计.md` §1.2）：Touch ID、
+  菜单栏常驻、全局快捷键、Passkey、1PUX 导入。
 
 ---
 

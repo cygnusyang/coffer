@@ -74,6 +74,7 @@ struct MainView: View {
                 } label: {
                     Label("新建", systemImage: "plus")
                 }
+                autoLockMenu
                 Button {
                     model.lock()
                 } label: {
@@ -81,6 +82,18 @@ struct MainView: View {
                 }
             }
         }
+    }
+
+    /// 自动锁定超时档位（1 / 5 / 15 / 30 分钟、从不）。
+    private var autoLockMenu: some View {
+        Picker(selection: $model.autoLockMinutes) {
+            ForEach(AppModel.autoLockOptions, id: \.self) { minutes in
+                Text(minutes == 0 ? "从不" : "\(minutes) 分钟").tag(minutes)
+            }
+        } label: {
+            Label("自动锁定", systemImage: "timer")
+        }
+        .pickerStyle(.menu)
     }
 
     // MARK: - 详情

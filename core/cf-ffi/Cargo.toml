@@ -6,6 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# Swift 侧消费形态（tools/build_swift_bindings.sh）：
+# - cdylib   → uniffi-bindgen --library 提取绑定元数据
+# - staticlib → Xcode 静态链接（macos/Coffer/CoreBindings/libcf_ffi.a）
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
 [dependencies]
 cf-session = { workspace = true }
 cf-domain = { workspace = true }

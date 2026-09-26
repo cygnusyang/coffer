@@ -13,6 +13,11 @@ zeroize = { workspace = true }
 unicode-normalization = { workspace = true }
 getrandom = { workspace = true }
 thiserror = { workspace = true }
+# HKDF 子密钥派生（docs/03-详细设计.md §2.4）。
+# hkdf 0.12 的 `expand(info: &[u8], &mut okm)` 签名与设计文档伪代码一致，
+# 需同时引入 sha2 提供 `Hkdf::<Sha256>` 的哈希类型。
+hkdf = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 # 基准测试（examples/bench_kdf.rs）只使用 std::time，无外部依赖

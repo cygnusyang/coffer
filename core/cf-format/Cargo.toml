@@ -9,7 +9,18 @@ license.workspace = true
 [dependencies]
 cf-crypto = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 ciborium = { workspace = true }
 thiserror = { workspace = true }
+zeroize = { workspace = true }
 
-# 状态：未实现（计划 M1 阶段）
+# MANIFEST.json 的完整性 MAC（HMAC-SHA256），见 docs/03-详细设计.md §1.5
+hmac = { workspace = true }
+sha2 = { workspace = true }
+
+# [已确认] base64 0.22 —— header.json 内各 *_b64 字段的编解码。
+#           Cargo.lock 已锁定 0.22.1（同时存在 0.23.1，属其他依赖的传递闭包，不影响）。
+base64 = "0.22"
+
+# 状态：header.json / 容器操作 / MANIFEST 已实现（M1-1）。
+# 历史快照的 CBOR 序列化归 cf-store，不在本 crate。

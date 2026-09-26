@@ -84,10 +84,13 @@ struct TotpCodeView: View {
         }
     }
 
-    /// 复制当前验证码：同样 30 秒自动清除（T05 任务书裁定，与密码复制一致）。
+    /// 复制当前验证码：不触发剪贴板清除（FR-5.5）。
+    /// 理由：TOTP 码 30s 自然过期、低价值，清除只有摩擦没有安全收益；
+    /// 且用户复制验证码常需粘贴到别的设备/表单。主理人裁定 2026-09-27，
+    /// 推翻 T05 任务书中「与密码复制一致」的口误（需求文档为准）。
     private func copyCode() {
         guard let code else { return }
-        ClipboardManager.shared.copyWithAutoClear(code)
+        ClipboardManager.shared.copyPlain(code)
         copiedFeedback = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             copiedFeedback = false

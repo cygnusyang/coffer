@@ -42,6 +42,12 @@ final class AppModel: ObservableObject {
     /// 慢调用（建库 / 解锁 / 导入）进行中标记，用于禁用按钮。
     @Published private(set) var isBusy = false
 
+    /// 建库成功后的可选「启用 Touch ID」步骤标记（docs/08 §4.1 建库可选启用）。
+    /// 建库成功时置位（仅 Touch ID 设备）；用户在首次解锁后的引导 sheet 中
+    /// 完成或跳过后清除。无 Touch ID 设备恒 false——v0.1 建库流程零变化
+    /// （docs/08 §9 T04 验收①）。
+    @Published var pendingBioOffer = false
+
     // MARK: 条目列表 / 详情状态（T05 阶段二）
 
     /// 当前过滤 + 搜索下的条目摘要列表。
@@ -169,6 +175,11 @@ final class AppModel: ObservableObject {
                 try factory.createVault(baseDir: dir, name: name, password: password)
             }.value
             openSession(brief)
+            // 建库成功 → 首次解锁后提供可选「启用 Touch ID」步骤（docs/08 §4.1）。
+            // 仅 Touch ID 设备置位；无 Touch ID 机器不置位，v0.1 流程零变化。
+            // 注意：enable 需解锁态（Rust 1001 门禁），故引导 sheet 挂在
+            // 首次解锁完成后（RootView），而非建库成功即刻。
+            pendingBioOffer = isTouchIDSupported
         } catch {
             lastErrorMessage = ErrorPresenter.text(error)
         }
@@ -220,30 +231,28 @@ final class AppModel: ObservableObject {
 
     // MARK: - Touch ID 解锁（docs/08 §7.2 / §7.4 / §8）
 
-    /// Touch ID 通道三态（docs/08 §8 降级矩阵 / §7.5 状态行）：
-    /// 组合 header `biometric_wrap.available`（Rust 侧用户意图，D-8/T01）
-    /// 与 Keychain 项存在性（Swift 侧实际可用）。
-    enum TouchIDStatus: Equatable {
-        /// header available=false（或无会话）：功能未启用
-        case disabled
-        /// header available=true 且 Keychain 项存在：可用
-        case enabled
-        /// header available=true 但 Keychain 项不可用（指纹集变更等，BioStale）：
-        /// 需主密码解锁后「重新启用」
-        case stale
-    }
-
     /// Touch ID 通道状态（openSession / lock 时刷新；enable/disable 后由
-    /// 设置页（T04）再触发刷新）。
+    /// 设置页再触发刷新）。三态定义与组合规则见 Support/TouchIDStatus.swift
+    /// （docs/08 §9 T04 验收②：组合逻辑为纯函数，独立单测）。
     @Published private(set) var touchIDStatus: TouchIDStatus = .disabled
 
+    /// 降级验证开关（docs/08 §9 T04 验收①）：强制视为「无 Touch ID 设备」，
+    /// 验证全 UI 降级路径（设置入口隐藏 / LockView 无按钮 / 建库步骤不出现）。
+    /// 用法：`defaults write app.coffer.Coffer debugDisableTouchID -bool true`
+    /// 后重启 App；`-bool false` / `defaults delete` 恢复。
+    nonisolated static let debugDisableTouchIDKey = "debugDisableTouchID"
+
     /// 当前设备是否支持生物识别（LAContext 只检测不弹窗，docs/08 §8 第一行）。
-    /// false 时 UI 应整体隐藏 Touch ID 入口（LockView 按钮 / 设置节，T04 消费）。
+    /// false 时 UI 应整体隐藏 Touch ID 入口（LockView 按钮 / 设置入口 / 建库步骤）。
     var isTouchIDSupported: Bool {
-        BiometricKeychain.isBiometricsAvailable()
+        if UserDefaults.standard.bool(forKey: Self.debugDisableTouchIDKey) {
+            return false
+        }
+        return BiometricKeychain.isBiometricsAvailable()
     }
 
     /// 刷新三态：纯读操作（header 布尔 + Keychain 属性查询），无密钥操作。
+    /// 组合逻辑委托 TouchIDStatus.resolve 纯函数（docs/08 §9 T04 验收②）。
     /// 注意：biometryCurrentSet 失效后 Keychain 项通常仍「存在」（读取才失败），
     /// 因此 stale 终判以 unlockWithTouchID 的 read 失败为准（docs/08 §4.1）。
     func refreshTouchIDStatus() {
@@ -251,11 +260,10 @@ final class AppModel: ObservableObject {
             touchIDStatus = .disabled
             return
         }
-        guard session.hasBiometricWrap() else {
-            touchIDStatus = .disabled
-            return
-        }
-        touchIDStatus = BiometricKeychain().itemExists(vaultUUID: vaultUUID) ? .enabled : .stale
+        touchIDStatus = TouchIDStatus.resolve(
+            headerWrapAvailable: session.hasBiometricWrap(),
+            keychainItemExists: BiometricKeychain().itemExists(vaultUUID: vaultUUID)
+        )
     }
 
     /// Touch ID 解锁（docs/08 §7.2 时序）：
@@ -305,6 +313,95 @@ final class AppModel: ObservableObject {
             // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
             // FfiError（1002 / 4001 / 5999）各自语义化呈现
             lastErrorMessage = ErrorPresenter.text(error)
+            // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
+            refreshTouchIDStatus()
+        }
+    }
+
+    /// 启用 Touch ID 解锁（docs/08 §4.1 enable 流程，T04 设置页与建库可选
+    /// 步骤共用编排）。D-6：enable 需主密码重新验证——Rust 侧 recover_dek
+    /// 校验密码并解出 DEK（错 → 1002），密码不落任何属性。
+    ///
+    /// 顺序裁定 D-9：**先 Keychain 后 header**——
+    ///   ① Rust CSPRNG 生成 K_bio（32B）；
+    ///   ② Keychain 写入（失败 → 直接报错，header 未动，无半启用态）；
+    ///   ③ FFI enableBiometric（失败 → 补偿删除 Keychain 项，不留孤儿半启用态；
+    ///     孤儿项本身危害 ≈ 0，但补偿使幂等重试路径更干净）。
+    ///
+    /// - Parameter password: 主密码（仅作参数传入，用后即弃，不落状态）。
+    /// - Returns: 是否启用成功（调用方据此关闭对话框）。
+    @discardableResult
+    func enableTouchID(password: String) async -> Bool {
+        guard let session, !isBusy, phase == .unlocked,
+              isTouchIDSupported, !vaultUUID.isEmpty else {
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+
+        let factory = self.factory
+        let uuid = vaultUUID
+        do {
+            // ① K_bio：Rust CSPRNG 随机 32B（docs/08 D-3；非 DEK、非派生物）
+            let kBio = try factory.newBiometricUnwrapKey()
+            // ② 先 Keychain（D-9）：biometryCurrentSet 门禁，ThisDeviceOnly
+            try BiometricKeychain().save(key: kBio, vaultUUID: uuid, requireBiometry: true)
+            // ③ 后 header：recover_dek(password) → seal → 原子重写（慢调用，
+            //    Argon2id 约 1s，Task.detached 包裹）。K_bio 拷贝进 Task 闭包，
+            //    本函数返回后局部变量即弃（docs/08 R-2 同纪律）。
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.enableBiometric(password: password, kBio: kBio)
+            }.value
+            refreshTouchIDStatus()
+            return true
+        } catch {
+            // 失败补偿（docs/08 §4.1）：删除刚写入的 Keychain 项（幂等），
+            // header 保持原样（Rust 失败时不重写文件）。密码错 1002 与
+            // Keychain 失败均经 ErrorPresenter 呈现（T04 验收③）。
+            try? BiometricKeychain().delete(vaultUUID: uuid)
+            lastErrorMessage = ErrorPresenter.text(error)
+            refreshTouchIDStatus()
+            return false
+        }
+    }
+
+    /// 关闭 Touch ID 解锁（docs/08 §4.1 disable 流程）。D-9 反向：
+    /// **先删 Keychain 再改 header**——Keychain 删除幂等；header 写失败时
+    /// 功能实际已失效（项已删），报非致命错误、可重试。
+    ///
+    /// - Returns: 是否关闭成功。
+    @discardableResult
+    func disableTouchID() async -> Bool {
+        guard let session, !isBusy, phase == .unlocked, !vaultUUID.isEmpty else {
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+
+        let uuid = vaultUUID
+        // ① 先删 Keychain（D-9 反向；幂等）
+        do {
+            try BiometricKeychain().delete(vaultUUID: uuid)
+        } catch {
+            // 删除失败属系统层异常：header 未动，功能未关，可重试
+            lastErrorMessage = ErrorPresenter.text(error)
+            return false
+        }
+        // ② 后 header：原子重写 → 禁用态（幂等）
+        do {
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.disableBiometric()
+            }.value
+            refreshTouchIDStatus()
+            return true
+        } catch {
+            // header 写失败：非致命（docs/08 §8）——Keychain 已删，Touch ID
+            // 解锁实际已不可用；header 残留密文无泄露面，可重试关闭
+            lastErrorMessage = ErrorPresenter.text(error)
+            refreshTouchIDStatus()
+            return false
         }
     }
 

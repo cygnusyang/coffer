@@ -68,9 +68,10 @@ logs/
 
 # 例外：仓库内的合成测试样本必须保留（它是用 tools/make_test_sample.py
 # 生成的，不含任何真实数据，且带 "NOT real 1Password data" 标记）
+# 注意 **：必须递归覆盖 tests/fixtures/csv/ 子目录（v0.2 教训：单层 * 使
+# 夹具子目录全部被 *.csv 吞掉，从未入库，工作树回退即丢失）
 !tests/fixtures/*.1pux
-!tests/fixtures/*.csv
-!tests/fixtures/csv/*.csv
+!tests/fixtures/**/*.csv
 
 # ---------- 本地环境变量 ----------
 .env

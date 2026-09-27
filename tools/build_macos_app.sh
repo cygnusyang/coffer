@@ -5,7 +5,11 @@
 # 需要维护 Xcode 版本兼容。故采用 **swiftc + Info.plist 直出 .app bundle**：
 #   - 无 Xcode 工程依赖，CI / 任意装有 Xcode CLT 的机器可复现
 #   - 链接 release 静态库 libcf_ffi.a + UniFFI 生成 Swift 绑定
-#   - ad-hoc codesign + App Sandbox entitlements（零 network.* 权限）
+#   - Apple Development 证书 codesign + App Sandbox entitlements（方案 A，
+#     见 docs/KNOWN-ISSUES.md BUG-2；ad-hoc 签名创建 Keychain 条目必报 -34018）
+#
+#   免费账号的 Apple Development 证书约 1 年有效，过期后重新运行本脚本
+#   重签即可（本地构建无 notarization 依赖）。
 #
 # 用法：
 #   ./tools/build_macos_app.sh                    # 产物 → macos/build/Coffer.app
@@ -71,9 +75,13 @@ fi
 mkdir -p "${APP_DIR}/Contents/Resources"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 
-# ---- 4/4 签名（ad-hoc + App Sandbox entitlements）----
-step "4/4 ad-hoc codesign（App Sandbox，无 network.* 权限）"
-codesign --force --sign - \
+# ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements）----
+step "4/4 codesign（Apple Development 证书 + App Sandbox entitlements）"
+IDENTITY=$(security find-identity -v -p codesigning \
+  | awk -F'"' '/Apple Development/{print $2; exit}')
+[[ -n "${IDENTITY}" ]] || die "未找到 codesigning 身份（方案 A 要求 Apple Development 证书，BUG-2）：请在 Xcode → Settings → Accounts 登录 Apple ID 并生成证书后重试。不回退 ad-hoc。"
+printf '签名身份: %s\n' "${IDENTITY}"
+codesign --force --sign "${IDENTITY}" \
   --entitlements "${SRC_DIR}/Coffer.entitlements" \
   "${APP_DIR}" || die "codesign 失败。"
 
@@ -82,4 +90,4 @@ codesign --verify --strict "${APP_DIR}" || die "签名校验失败。"
 step "完成 ✅"
 echo "  App : ${APP_DIR}"
 echo "  启动: open ${APP_DIR}"
-echo "  核查零网络权限: codesign -d --entitlements - ${APP_DIR}"
+echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

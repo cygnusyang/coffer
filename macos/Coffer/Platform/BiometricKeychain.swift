@@ -94,6 +94,10 @@ struct BiometricKeychain {
 
         if requireBiometry {
             // D-4 裁定：WhenUnlockedThisDeviceOnly + biometryCurrentSet 组合。
+            // 注意：kSecAttrAccessControl 与 kSecAttrAccessible 互斥——同时指定
+            // SecItemAdd 必返回 errSecParam(-50)（2026-09-27 真机实证，BUG-2）。
+            // 可访问性已包含在 ACL 对象（kSecAttrAccessibleWhenUnlockedThisDeviceOnly），
+            // 此处只能设置 kSecAttrAccessControl。
             var accessError: Unmanaged<CFError>?
             guard let access = SecAccessControlCreateWithFlags(
                 nil,
@@ -104,7 +108,6 @@ struct BiometricKeychain {
                 // ACL 创建失败属系统层异常，按参数错误归类（带日志语义的注释）
                 throw BiometricKeychainError.unexpected(errSecParam)
             }
-            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             attributes[kSecAttrAccessControl as String] = access
         } else {
             // 测试路径：无 ACL，但仍强制 ThisDeviceOnly

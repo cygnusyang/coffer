@@ -6,13 +6,13 @@
 
 ---
 
-## BUG-2（🔴 未修复，延后）：Touch ID 启用失败——Keychain -34018
+## BUG-2（✅ 已修复）：Touch ID 启用失败——Keychain -34018
 
 **登记日期**：2026-09-27
 **发现环境**：cygnus 真机（MacBookPro17,1 / macOS 26.6.2 / Touch ID 已录入）
-**状态**：🔴 延后修复——等待签名身份决策（方案 A/B/C 见下）
-**方案 A 落地进展（2026-09-27）**：构建脚本已改为 Apple Development 真证书签名（commit `51ad7c5`），待证书就位后做正路径验收——**BUG-2 状态保持 🔴 不变**（正路径未验收即未解除）。
-**证据**：`~/Library/Containers/app.coffer.Coffer/Data/Library/Logs/Coffer-diag.log`（两条 -34018 记录）
+**状态**：✅ 已修复（2026-09-27 真机验收通过，修复记录见下方「修复记录」）
+**证据**：`~/Library/Containers/app.coffer.Coffer/Data/Library/Logs/Coffer-diag.log`（历史 -34018 / -50 记录留档；最后一条失败为 06:54:41 UTC 的 -50）
+**方案 A 落地进展（2026-09-27，历史留档）**：构建脚本已改为 Apple Development 真证书签名（commit `51ad7c5`），待证书就位后做正路径验收——**BUG-2 状态保持 🔴 不变**（正路径未验收即未解除）。**此判断被后续验证修正**：真证书就位后 -34018 依旧复现，见下方「根因修正」。
 
 ### 现象
 
@@ -30,11 +30,29 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 | 数据保护钥匙串（kSecUseDataProtectionKeychain=true） | ❌ -34018（DP 钥匙串访问凭证绑定 application-identifier，ad-hoc 没有） |
 | 加 `keychain-access-groups` entitlement | ❌ **App 直接拒绝启动**（launchd error 163，entitlement 对 ad-hoc 非法），已回滚 |
 
-### 修复路径（按优先级）
+### 根因修正（2026-09-27 验收阶段实证，取代上节结论的「充分性」）
 
-- **方案 A（推荐）**：cygnus 在 Xcode → Settings → Accounts 登录 Apple ID（免费账号即可），Xcode 自动生成「Apple Development」证书。构建脚本改用真证书签名 → DP 钥匙串 + biometryCurrentSet ACL 按原设计工作，**安全语义零妥协**。代码侧无需改动（`useDataProtection` 缝隙已就位）。
-- **方案 B（立即可用，安全降级）**：`save/read` 改为 `requireBiometry: false`（去掉条目级 ACL），K_bio 以普通 ThisDeviceOnly 项存储；解锁时 App 层 LAContext 把关。**安全降级**：门禁从「系统强制」降为「App 自律」，理论上同用户权限的恶意程序可读取。需在 README 与 docs/08 标注。
-- **方案 C**：先 B 后 A——构建脚本检测到真证书自动用 A，否则降级 B。
+原结论「ad-hoc 签名导致」**必要但不充分**。真证书签名后 -34018 依旧复现（diag log 06:28 UTC 记录，该 App 已是 `TeamIdentifier=A6DS985SJJ` 真证书签名），逐层实证后根因是**三层叠加**：
+
+1. **entitlement 层（-34018 的真根因）**：TN3137 明言 macOS 数据保护钥匙串的访问组列表**完全由代码签名 entitlements 构建**——`Coffer.entitlements` 缺 `keychain-access-groups`，访问组列表为空，与签名身份无关地报 `errSecMissingEntitlement`。
+2. **profile 授权层（拒启动的真根因）**：`keychain-access-groups` 属**受限 entitlement，必须经 provisioning profile 授权**。真证书 + 该 entitlement 但无 profile → 进程 spawn 即被 AMFI SIGKILL（`open` 报 launchd error 163，与上表第三行 ad-hoc 时期同症——**当初的「拒启动」根因同样是缺 profile 授权，而非 ad-hoc 本身**）。本机 Mac 设备注册 + profile 生成以 `xcodebuild -allowProvisioningUpdates -allowProvisioningDeviceRegistration` 借 Xcode 已登录的免费 Apple ID 自动完成。
+3. **代码层（-50，被 -34018 掩盖）**：entitlement 修好后露出 `errSecParam(-50)`——`BiometricKeychain.save` 的 requireBiometry 分支**同时设置 `kSecAttrAccessible` 与 `kSecAttrAccessControl`**（两者互斥，SecItemAdd 必返回参数错误）。此前从未暴露，因 entitlement 层先失败。
+
+### 修复记录（2026-09-27，方案 A.2 落地——安全语义零妥协；方案 B/C 作废未采用）
+
+| # | 改动 | 说明 |
+| --- | --- | --- |
+| 1 | `macos/Coffer/Coffer.entitlements` | 新增 `keychain-access-groups = [A6DS985SJJ.app.coffer.Coffer]`（TeamID 硬编码——codesign 不展开 `$(AppIdentifierPrefix)` 变量） |
+| 2 | `tools/profilegen/`（新增） | 一次性最小 Xcode 工程（bundle id `app.coffer.Coffer` + 团队 `A6DS985SJJ` + 自动签名），用于生成/刷新开发描述文件 |
+| 3 | `tools/make_provisioning_profile.sh`（新增） | 生成/刷新 profile → `macos/build/app.coffer.Coffer.provisionprofile`（git 忽略）。**免费账号 profile 仅 7 天有效**（本次到期 2026-10-04），过期重跑刷新 |
+| 4 | `tools/build_macos_app.sh` | 签名前自动嵌入 profile 为 `Contents/embedded.provisionprofile`；缺失即 fail-fast 并指路刷新命令 |
+| 5 | `macos/Coffer/Platform/BiometricKeychain.swift` | `save` 的 requireBiometry 分支删除 `kSecAttrAccessible` 键（与 `kSecAttrAccessControl` 互斥），可访问性已包含在 ACL 对象内 |
+
+**验收（2026-09-27 真机）**：设置页「启用 Touch ID 解锁」→ 主密码确认 → Touch ID 弹窗出现，K_bio 写入成功，无 4001 报错；diag log 此后无新增失败记录。构建链全绿：真证书签名 + `keychain-access-groups` + profile 嵌入 + App Sandbox（无任何 network.*）。
+
+**过程事故留档**：修复期间一次 `git reset --hard`（14:41）将未提交的 entitlements 修改连带回滚，导致 06:44/06:53 UTC 两次「修复后仍 -34018」的假象；重新应用后闭环。教训：**跨多文件的修复应尽快提交**，避免被并行的 git 整理操作冲掉。
+
+**运维注意（长期有效）**：profile 过期后 App **无法启动**（SIGKILL）——症状回到 launchd error 163。处置：`./tools/make_provisioning_profile.sh && ./tools/build_macos_app.sh`。
 
 ### 复现与诊断
 
@@ -46,7 +64,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 - `BiometricKeychain` 全接口带 `useDataProtection` 测试缝隙（默认 true）
 - `DiagLog` 共享诊断日志（Support/DiagLog.swift）+ 模块内步级日志
-- 回滚记录：keychain-access-groups entitlement 尝试已撤销（导致拒启动）
+- 历史回滚记录：ad-hoc 时期的 keychain-access-groups 尝试曾撤销（拒启动）——现已随方案 A.2 在「真证书 + profile 授权」前提下重新加入并验收通过，见上方修复记录
 
 ---
 

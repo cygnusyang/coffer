@@ -9,5 +9,15 @@
 	<!-- CSV 导入：允许用户通过 NSOpenPanel 选择文件读取 -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- 数据保护钥匙串访问组（TN3137：macOS 的 DP 钥匙串访问组列表
+	     完全由本 entitlement 构建，缺失即 -34018；BUG-2 方案 A.2）。
+	     TeamID 硬编码——codesign 不展开 $(AppIdentifierPrefix) 变量。
+	     本 entitlement 属受限权限，须配合 provisioning profile
+	     （tools/make_provisioning_profile.sh 生成）。无 network.*，
+	     零网络承诺不受影响。 -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>A6DS985SJJ.app.coffer.Coffer</string>
+	</array>
 </dict>
 </plist>

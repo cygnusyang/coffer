@@ -7,6 +7,8 @@
 #   - 链接 release 静态库 libcf_ffi.a + UniFFI 生成 Swift 绑定
 #   - Apple Development 证书 codesign + App Sandbox entitlements（方案 A，
 #     见 docs/KNOWN-ISSUES.md BUG-2；ad-hoc 签名创建 Keychain 条目必报 -34018）
+#   - 嵌入 Mac App Development provisioning profile（方案 A.2：keychain-access-groups
+#     属受限 entitlement，须经 profile 授权；profile 由 make_provisioning_profile.sh 生成）
 #
 #   免费账号的 Apple Development 证书约 1 年有效，过期后重新运行本脚本
 #   重签即可（本地构建无 notarization 依赖）。
@@ -75,12 +77,21 @@ fi
 mkdir -p "${APP_DIR}/Contents/Resources"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 
-# ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements）----
-step "4/4 codesign（Apple Development 证书 + App Sandbox entitlements）"
+# ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
+step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
 IDENTITY=$(security find-identity -v -p codesigning \
   | awk -F'"' '/Apple Development/{print $2; exit}')
 [[ -n "${IDENTITY}" ]] || die "未找到 codesigning 身份（方案 A 要求 Apple Development 证书，BUG-2）：请在 Xcode → Settings → Accounts 登录 Apple ID 并生成证书后重试。不回退 ad-hoc。"
 printf '签名身份: %s\n' "${IDENTITY}"
+
+# keychain-access-groups 是受限 entitlement，必须嵌入 provisioning profile
+# 授权，否则进程 spawn 即被 SIGKILL（BUG-2 方案 A.2）。
+PROFILE="${ROOT_DIR}/macos/build/app.coffer.Coffer.provisionprofile"
+if [[ ! -f "${PROFILE}" ]]; then
+  die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
+fi
+cp "${PROFILE}" "${APP_DIR}/Contents/embedded.provisionprofile"
+
 codesign --force --sign "${IDENTITY}" \
   --entitlements "${SRC_DIR}/Coffer.entitlements" \
   "${APP_DIR}" || die "codesign 失败。"

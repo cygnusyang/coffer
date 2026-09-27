@@ -56,9 +56,14 @@ struct BiometricKeychain {
     /// 预期不触发认证弹窗（docs/08 Q-2，T05 真机复核）。
     /// 注意：biometryCurrentSet 失效后项通常仍存在（读取时才报 AuthFailed），
     /// 「存在」≠「可读」，stale 终判以 read 失败为准（docs/08 §4.1）。
-    func itemExists(vaultUUID: String) -> Bool {
+    func itemExists(vaultUUID: String, useDataProtection: Bool = true) -> Bool {
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(Self.baseQuery(vaultUUID: vaultUUID) as CFDictionary, &item)
+        let status = SecItemCopyMatching(
+            Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection) as CFDictionary,
+            &item)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            DiagLog.append("Keychain.itemExists 失败 status=\(status)（\(vaultUUID.prefix(8))…）")
+        }
         return status == errSecSuccess
     }
 
@@ -71,7 +76,8 @@ struct BiometricKeychain {
     ///     true；单测在无 Touch ID 环境用 false 走可自动化路径（docs/08 §9
     ///     T03 验收①「无 accessControl 的测试路径」）。两档都强制
     ///     ThisDeviceOnly——密钥材料绝不离开本机（docs/03 §10.4）。
-    func save(key: Data, vaultUUID: String, requireBiometry: Bool = true) throws {
+    func save(key: Data, vaultUUID: String, requireBiometry: Bool = true,
+              useDataProtection: Bool = true) throws {
         guard key.count == Self.keyLength else {
             throw BiometricKeychainError.invalidKeyLength(key.count)
         }
@@ -81,9 +87,10 @@ struct BiometricKeychain {
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: vaultUUID,
             kSecValueData as String: key,
-            // 与 baseQuery 同步：走数据保护钥匙串（-34018 修复，见 baseQuery 注释）
-            kSecUseDataProtectionKeychain as String: true,
         ]
+        if useDataProtection {
+            attributes[kSecUseDataProtectionKeychain as String] = true
+        }
 
         if requireBiometry {
             // D-4 裁定：WhenUnlockedThisDeviceOnly + biometryCurrentSet 组合。
@@ -111,24 +118,27 @@ struct BiometricKeychain {
             // kSecAttrAccessControl——指纹集变更后旧项 ACL 已失效，仅更新
             // kSecValueData 会留下「新密文 + 永不可读旧 ACL」。删旧重写才是
             // biometryCurrentSet 语义下正确的幂等覆盖。
-            SecItemDelete(Self.baseQuery(vaultUUID: vaultUUID) as CFDictionary)
+            SecItemDelete(Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection) as CFDictionary)
             status = SecItemAdd(attributes as CFDictionary, nil)
         }
         guard status == errSecSuccess else {
+            DiagLog.append("Keychain.save 失败 status=\(status) requireBiometry=\(requireBiometry) useDP=\(useDataProtection)")
             throw Self.mapStatus(status)
         }
     }
 
     /// 读取 K_bio。认证与读取绑定同一 LAContext：调用方在 `evaluatePolicy`
     /// 成功后传入同一 context，读取时复用认证结果、不再二次弹窗（docs/08 §3.2）。
-    func read(vaultUUID: String, context: LAContext) throws -> Data {
-        var query = Self.baseQuery(vaultUUID: vaultUUID)
+    func read(vaultUUID: String, context: LAContext,
+              useDataProtection: Bool = true) throws -> Data {
+        var query = Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
         query[kSecReturnData as String] = true
         query[kSecUseAuthenticationContext as String] = context
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess else {
+            DiagLog.append("Keychain.read 失败 status=\(status)（\(vaultUUID.prefix(8))…）")
             throw Self.mapStatus(status)
         }
         guard let data = item as? Data else {
@@ -141,8 +151,8 @@ struct BiometricKeychain {
     /// 删除 K_bio 项。幂等：项不存在视为成功（docs/08 §7.3）。
     /// - Returns: 是否实际删除了项（单测断言用）。
     @discardableResult
-    func delete(vaultUUID: String) throws -> Bool {
-        let status = SecItemDelete(Self.baseQuery(vaultUUID: vaultUUID) as CFDictionary)
+    func delete(vaultUUID: String, useDataProtection: Bool = true) throws -> Bool {
+        let status = SecItemDelete(Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection) as CFDictionary)
         switch status {
         case errSecSuccess:
             return true
@@ -150,6 +160,7 @@ struct BiometricKeychain {
             // 幂等：已不存在视为成功
             return false
         default:
+            DiagLog.append("Keychain.delete 失败 status=\(status)（\(vaultUUID.prefix(8))…）")
             throw Self.mapStatus(status)
         }
     }
@@ -157,18 +168,21 @@ struct BiometricKeychain {
     // MARK: - 内部
 
     /// 定位查询（service + account，不含返回数据开关与认证上下文）。
-    private static func baseQuery(vaultUUID: String) -> [String: Any] {
-        [
+    private static func baseQuery(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: vaultUUID,
-            // 数据保护钥匙串（iOS 语义，macOS 10.15+ 可选启用）：
-            // 沙盒 App 在文件型登录钥匙串上使用 biometryCurrentSet ACL 会报
-            // -34018（errSecMissingEntitlement，2026-09-27 真机实测）；
-            // DP 钥匙串原生支持 ThisDeviceOnly + biometryCurrentSet 组合，
-            // 且无需 keychain-access-groups entitlement。
-            kSecUseDataProtectionKeychain as String: true,
         ]
+        // 数据保护钥匙串（iOS 语义，macOS 10.15+）：2026-09-27 真机实测，
+        // 沙盒 App 走文件型登录钥匙串的 biometryCurrentSet ACL 与 DP 钥匙串
+        // 均 -34018（ad-hoc 签名无 application-identifier）——待加
+        // keychain-access-groups entitlement 后再定生产组合。
+        // useDataProtection=false 为单测缝隙（无签名 CLI 可跑文件钥匙串）。
+        if useDataProtection {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+        return query
     }
 
     /// OSStatus → 语义错误（docs/08 §4.1：NotFound / AuthFailed 均为降级信号）。

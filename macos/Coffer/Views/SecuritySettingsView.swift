@@ -25,6 +25,10 @@ struct SecuritySettingsView: View {
     @EnvironmentObject
     private var model: AppModel
 
+    /// 关闭本 sheet（BUG-3：此前无任何关闭控件，失败后用户被困页面内）。
+    @Environment(\.dismiss)
+    private var dismiss
+
     /// 主密码确认行的展开状态（nil = 收起；启用与重新启用共用同一流程）。
     @State private var showPasswordPrompt = false
     /// 关闭功能前的二次确认（docs/08 §7.5：开→关需二次确认）。
@@ -45,9 +49,19 @@ struct SecuritySettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            // BUG-3：显式退出口——无论启用/停用成功或失败都必须能离开本页
+            Section {
+                HStack {
+                    Spacer()
+                    Button("完成") { dismiss() }
+                        .buttonStyle(.borderedProminent)
+                    Spacer()
+                }
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 260)
+        .frame(width: 460, height: 340)
         .onAppear { model.refreshTouchIDStatus() }
         .ffiErrorAlert($model.lastErrorMessage)
         .confirmationDialog(

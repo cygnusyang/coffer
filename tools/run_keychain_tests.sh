@@ -24,6 +24,7 @@ swiftc -O \
   -target "${ARCH}-apple-macos14.0" \
   "${ROOT_DIR}/macos/Tests/KeychainTests/main.swift" \
   "${ROOT_DIR}/macos/Coffer/Platform/BiometricKeychain.swift" \
+  "${ROOT_DIR}/macos/Coffer/Support/DiagLog.swift" \
   -o "${OUT_DIR}/KeychainTests"
 
 "${OUT_DIR}/KeychainTests"

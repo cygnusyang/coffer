@@ -182,7 +182,7 @@ final class AppModel: ObservableObject {
             pendingBioOffer = isTouchIDSupported
         } catch {
             let errText = ErrorPresenter.text(error)
-            Self.logDiag(errText)
+            DiagLog.append(errText)
             lastErrorMessage = errText
         }
     }
@@ -206,25 +206,8 @@ final class AppModel: ObservableObject {
             phase = .unlocked
         } catch {
             let errText = ErrorPresenter.text(error)
-            Self.logDiag(errText)
+            DiagLog.append(errText)
             lastErrorMessage = errText
-        }
-    }
-
-    /// 诊断日志（永久保留）：错误原文追加到 ~/Library/Logs/Coffer-diag.log。
-    /// 只含错误文案（Rust 层已脱敏、无字段值），不含任何密钥材料。
-    private static func logDiag(_ text: String) {
-        let line = "\(Date()) \(text)\n"
-        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Logs")
-        let url = dir.appendingPathComponent("Coffer-diag.log")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        if let handle = FileHandle(forWritingAtPath: url.path) {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8)!)
-            try? handle.close()
-        } else {
-            try? line.write(to: url, atomically: true, encoding: .utf8)
         }
     }
 
@@ -334,7 +317,7 @@ final class AppModel: ObservableObject {
             // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
             // FfiError（1002 / 4001 / 5999）各自语义化呈现
             let errText = ErrorPresenter.text(error)
-            Self.logDiag(errText)
+            DiagLog.append(errText)
             lastErrorMessage = errText
             // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
             refreshTouchIDStatus()
@@ -384,7 +367,7 @@ final class AppModel: ObservableObject {
             // Keychain 失败均经 ErrorPresenter 呈现（T04 验收③）。
             _ = try? BiometricKeychain().delete(vaultUUID: uuid)
             let errText = ErrorPresenter.text(error)
-            Self.logDiag(errText)
+            DiagLog.append(errText)
             lastErrorMessage = errText
             refreshTouchIDStatus()
             return false
@@ -411,7 +394,7 @@ final class AppModel: ObservableObject {
         } catch {
             // 删除失败属系统层异常：header 未动，功能未关，可重试
             let errText = ErrorPresenter.text(error)
-            Self.logDiag(errText)
+            DiagLog.append(errText)
             lastErrorMessage = errText
             return false
         }
@@ -427,7 +410,7 @@ final class AppModel: ObservableObject {
             // header 写失败：非致命（docs/08 §8）——Keychain 已删，Touch ID
             // 解锁实际已不可用；header 残留密文无泄露面，可重试关闭
             let errText = ErrorPresenter.text(error)
-            Self.logDiag(errText)
+            DiagLog.append(errText)
             lastErrorMessage = errText
             refreshTouchIDStatus()
             return false

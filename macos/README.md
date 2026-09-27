@@ -29,6 +29,10 @@ open macos/build/Coffer.app         # 启动
   Rust ↔ Swift 全链路），编译命令见 `tools/build_swift_bindings.sh` 尾部注释。
 - v0.1 明确不做（推后清单见 `docs/07-macOS纵切设计.md` §1.2）：Touch ID、
   菜单栏常驻、全局快捷键、Passkey、1PUX 导入。
+- **Touch ID 现状补充**：代码已完成（`docs/08-TouchID解锁设计.md` T01–T04），
+  但被 **BUG-2（Keychain -34018，ad-hoc 签名无代码签名身份）** 阻塞，
+  **真机上尚不可用**；解锁流程的真机端到端验收（08-T05）待 cygnus 执行。
+  详见 `docs/KNOWN-ISSUES.md` BUG-2。
 
 ---
 

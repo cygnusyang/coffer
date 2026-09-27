@@ -20,7 +20,7 @@
 3. 技术栈不变：Rust workspace（11 crate）、macOS 14+ Apple Silicon、SwiftUI、UniFFI（`uniffi 0.32.2`，proc-macro 模式）。
 4. 存储路线不变：**rusqlite (bundled) + 字段级 AEAD**，不引入 SQLCipher（理由见 §6.3）。
 
-基线现状（提交 `7ccf35b`，157 测试全绿）：cf-crypto / cf-totp / cf-domain（22 类模型）/ cf-format（容器主体）可用；cf-session 只有 TOTP 门禁骨架、**无真实解锁流**；cf-store 只有 `totp_secrets` 单表、**无条目主表与事务**；cf-ffi / cf-importer 为空占位；macOS 工程未开始。
+> 各 crate 与里程碑的**当前状态不在本文档维护** —— 进度一律以 `docs/06-开发计划.md` 为准（见该文件 §1「设计文档不承载进度信息」）。本文档只承载纵切的**范围与设计决策**，不含进度数字。
 
 ---
 
@@ -37,7 +37,7 @@
 | 搜索 | 标题子串 + 多关键词全命中，全量解密内存搜索（方案 A） | FR-11.1 / FR-11.2 / FR-11.4 |
 | 复制 | 复制密码 / 字段值 / TOTP 验证码到剪贴板，30 s 自动清除（TOTP 复制不清除，FR-5.5） | FR-4.6 / FR-4.7 / FR-5.4 |
 | TOTP | otpauth URI 粘贴录入（仅 SHA-1）、验证码实时显示 | FR-5.1（SHA-1）/ FR-5.3 / FR-5.4 |
-| CSV 导入 | 1Password 9 列 CSV，预检 → 确认 → 单事务导入 | FR-7.2 / FR-7.4（最小形态） |
+| CSV 导入 | 9 列 CSV（1PUX 兼容导出格式），预检 → 确认 → 单事务导入 | FR-7.2 / FR-7.4（最小形态） |
 | 密码生成器 | 参数化（长度 8–100、字符集）+ 强度指示 | FR-3.1 / FR-3.2 / FR-3.4 |
 | Schema | 一次建齐 docs/03 §3.1 DDL v1 **全部表**（含 attachments/history/passkeys），仓库层只实现子集——格式冻结，后续功能不改表 | — |
 
@@ -245,7 +245,7 @@ UI 原则：密码默认掩码；锁屏后 AppModel 清空已取回的明文状�
 
 ### 3.2 字段映射（对齐 docs/03 §6.4.4）
 
-| CSV 列（1Password 9 列） | 映射目标 |
+| CSV 列（9 列格式） | 映射目标 |
 | --- | --- |
 | Title | `items.enc_title` |
 | Website | `urls`（is_primary=1） |
@@ -345,8 +345,8 @@ Swift `String` 不可清零、`NSArray`/值类型复制语义无法保证擦除�
 
 | ID | 任务 | 主要文件 | 依赖 | 优先级 | 验收标准（可测试） |
 | --- | --- | --- | --- | --- | --- |
-| **T01** | **cf-store 存储引擎 + 错误统一** | `core/cf-store/src/{schema.rs,tx.rs,error.rs,lib.rs}`、`repo/{item.rs,field.rs,url.rs,tag.rs,meta.rs,totp.rs}`、`core/cf-domain/src/error.rs`（补 1010 WeakPassword 等）、`docs/03-详细设计.md`（DDL 补 created_at，回 C-2） | 无 | P0 | ① schema.rs 一键建齐 §3.1 全部 11 表 + 索引，重复执行幂等，`schema_version=1` 写入 meta；② items/fields/urls/tags 仓库 CRUD 往返测试通过；③ enc_title 密文落盘断言（BLOB ≠ 明文）+ 密文跨行搬运解密失败断言（沿 TotpStore 测试模式）；④ with_tx 内注入失败 → 全部回滚（行数不变）；⑤ cf-store/cf-session 错误类型迁移到 `cf_domain::CfError`，`cargo test --workspace` 全绿、clippy 零警告；⑥ 既有 157 测试不回归 |
-| **T02** | **cf-session 解锁流 + CRUD/搜索编排 + 生成器参数化** | `core/cf-session/src/{vault.rs,unlock.rs,idle.rs,lib.rs}`、`usecase/{items.rs,search.rs}`、`core/cf-audit/src/lib.rs`（generate_password 参数化） | T01 | P0 | ① create_vault→lock→unlock 往返：正确密码解锁成功、错误密码/篡改 wrapped_dek/篡改 verifier 三者返回**同一**错误码 1002；② lock() 后 require_unlocked 拒绝且内存中 SubKeys drop（可用 mimalloc 外断言或 Drop 观测测试）；③ NFC 归一化：合成主密码两种 Unicode 形式均可解锁；④ ItemDraft 校验失败（cf-domain::validate_item）→ 拒绝且不落库；⑤ CRUD 编排集成测试（临时目录真文件库）；⑥ 搜索：子串命中、多关键词全命中、1000 条模拟 ≤200ms 基线记录；⑦ idle 纯函数边界测试；⑧ zxcvbn score<3 拒绝建库 |
+| **T01** | **cf-store 存储引擎 + 错误统一** | `core/cf-store/src/{schema.rs,tx.rs,error.rs,lib.rs}`、`repo/{item.rs,field.rs,url.rs,tag.rs,meta.rs,totp.rs}`、`core/cf-domain/src/error.rs`（补 1010 WeakPassword 等）、`docs/03-详细设计.md`（DDL 补 created_at，回 C-2） | 无 | P0 | ① schema.rs 一键建齐 §3.1 全部 11 表 + 索引，重复执行幂等，`schema_version=1` 写入 meta；② items/fields/urls/tags 仓库 CRUD 往返测试通过；③ enc_title 密文落盘断言（BLOB ≠ 明文）+ 密文跨行搬运解密失败断言（沿 TotpStore 测试模式）；④ with_tx 内注入失败 → 全部回滚（行数不变）；⑤ cf-store/cf-session 错误类型迁移到 `cf_domain::CfError`，`cargo test --workspace` 全绿、clippy 零警告；⑥ 既有测试零回归 |
+| **T02** | **cf-session 解锁流 + CRUD/搜索编排 + 生成器参数化** | `core/cf-session/src/{vault.rs,unlock.rs,idle.rs,lib.rs}`、`usecase/{items.rs,search.rs}`、`core/cf-audit/src/lib.rs`（generate_password 参数化） | T01 | P0 | ① create_vault→lock→unlock 往返：正确密码解锁成功、错误密码/篡改 wrapped_dek/篡改 verifier 三者返回**同一**错误码 1002；② lock() 后 require_unlocked 拒绝且内存中 SubKeys drop（可用 mimalloc 外断言或 Drop 观测测试）；③ NFC 归一化：合成主密码两种 Unicode 形式均可解锁；④ ItemDraft 校验失败（cf-domain::validate_item）→ 拒绝且不落库；⑤ CRUD 编排集成测试（临时目录真文件库）；⑥ 搜索：子串命中、多关键词全命中、1000 条模拟 ≤200ms **基线记录**（⚠️ 与实现的差距：实现当前写成**硬断言** `assert!(elapsed < 200ms)`，见 `core/cf-session/src/usecase/search.rs:198-199`，**测试强度已超出本项「基线记录」的要求**；应按本项规格把断言改为记录分布 / 统计阈值，**不得反向把规格改成硬断言来迁就实现**。根因登记见 `docs/KNOWN-ISSUES.md` BUG-4）；⑦ idle 纯函数边界测试；⑧ zxcvbn score<3 拒绝建库 |
 | **T03** | **cf-importer CSV 导入** | `core/cf-importer/src/{csv/parser.rs,csv/mapping.rs,precheck.rs,lib.rs}`、`core/cf-session/src/usecase/import_csv.rs`、`tests/fixtures/csv/*.csv`（边界样本：BOM、引号内换行、公式前缀、坏 otpauth、未知列、GBK 误投） | T01（T02 后集成） | P0 | ① RFC 4180 全边界解析测试（引号转义/内嵌换行/CRLF）；② 超限 DoS 用例（10k+ 行、64KiB 字段）被拒并报行号；③ 9 列映射往返：CSV → ImportModel → 写库 → 读回逐字段相等；④ 公式前缀值原样入库 + warnings 命中；⑤ 坏 otpauth 行不丢数据（并入 Notes）+ 预检行号准确；⑥ 未知列并入 Notes + unmapped_columns 列出；⑦ 导入中途注入失败 → 库零变化（事务回滚）；⑧ 无效 UTF-8 文件被拒 |
 | **T04** | **cf-ffi UniFFI 绑定 + Swift 构建链** | `core/cf-ffi/src/{lib.rs,api.rs,types.rs,error.rs}`、`core/cf-ffi/Cargo.toml`、`tools/build_swift_bindings.sh`、`core/Cargo.toml`（panic 策略调整，回 C-8） | T02、T03 | P0 | ① 最小 Demo（`add(a,b)`）经 `build_swift_bindings.sh` 生成 Swift 绑定并在 Xcode 命令行测试 target 调用成功（M0-① 补课）；② §2.3 全部接口跨 FFI 冒烟：Rust 单元测试 + Swift 侧一条端到端测试（建临时库→解锁→建条目→搜索→取密码）；③ 错误映射：锁定态调 get_field_value → Swift 捕获 code=1001；密码错误 → code=1002；④ Rust panic（注入测试）不杀死进程，转为 FFI 错误；⑤ `list_vaults`/`open_vault` 幂等：同 uuid 两次 open 返回同一会话（is_unlocked 状态共享） |
 | **T05** | **macOS SwiftUI 壳 + 端到端闭环** | `macos/Coffer.xcodeproj`、`macos/Coffer/{CofferApp.swift,AppModel.swift,Info.plist,Coffer.entitlements}`、`Views/{VaultSetupView,LockView,ItemListView,ItemDetailView,ItemEditView,TrashView,ImportView}.swift`、`Platform/{Clipboard,AutoLockMonitor}.swift`、`macos/README.md`（状态更新，回 C-1） | T04 | P0 | ① 手工验收脚本走通全流程：创建库（弱密码被拒）→ 锁定 → 解锁 → 新建 Login（含 otpauth URI）→ 搜索命中 → 复制密码 30s 后剪贴板为空（changeCount 断言）→ 复制 TOTP 不清除 → 编辑 → 回收站 → 恢复 → 硬删；② 导入 tests/fixtures/csv 样本后条目数与预检一致；③ 系统锁屏/休眠触发立即锁定（NSWorkspace 通知手工验证）；④ 空闲超时自动锁定（超时可配置，默认 5 分钟）；⑤ entitlements 不含 network.*（代码评审 + `codesign -d` 核查）；⑥ 密码默认掩码、错误文案按 code 映射 |

@@ -10,6 +10,7 @@
 //! | [`tag`] | tags 表：同批量替换模式 |
 //! | [`meta`] | meta 表键值读写（item_count、schema_version 等） |
 //! | [`totp`] | TOTP 记录（原 `TotpStore` 迁入改造，`enc_issuer`/`enc_account` 加密列，C-2） |
+//! | [`history`] | history 表（FR-2.9 条目历史版本，快照 = ItemSnapshot CBOR + `hist_key` AEAD） |
 //!
 //! ## 加密密钥与 AAD 映射（全仓库层统一约定，O-1 后版本）
 //!
@@ -29,6 +30,7 @@
 //! | `totp.enc_issuer` / `enc_account` | `field_key` | `totp` | totp 行 uuid |
 
 pub mod field;
+pub mod history;
 pub mod item;
 pub mod meta;
 pub mod tag;
@@ -55,6 +57,8 @@ pub struct Repos<'a> {
     pub meta: meta::MetaRepo<'a>,
     /// totp 表仓库。
     pub totp: totp::TotpRepo<'a>,
+    /// history 表仓库（FR-2.9）。
+    pub history: history::HistoryRepo<'a>,
 }
 
 impl<'a> Repos<'a> {
@@ -67,6 +71,7 @@ impl<'a> Repos<'a> {
             tags: tag::TagsRepo::new(conn, subkeys),
             meta: meta::MetaRepo::new(conn),
             totp: totp::TotpRepo::new(conn, subkeys),
+            history: history::HistoryRepo::new(conn, subkeys),
         }
     }
 }

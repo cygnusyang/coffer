@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  Coffer macOS 密码管理器 · UI 重设计 · 高保真交互原型
+  ----------------------------------------------------------------------------
+  说明：
+  - 本文件是「方向确认原型」，用于在浏览器中直接点看 Apple HIG 风格的新界面。
+  - 方向确认后，将映射回 SwiftUI 代码（LockView / VaultSetupView /
+    MainView(NavigationSplitView) / ItemDetailView / ItemEditView /
+    SecuritySettingsView 等）。本阶段不含任何 Swift 代码。
+  - 设计令牌（色彩 / 排版 / 间距 / 圆角 / 组件类 / 内联 SVG 图标）逐字取自
+    coffer-design-tokens.md（accent 锁定系统蓝 #0A84FF，禁止硬编码业务色，
+    深浅双模一等公民）。
+  - 零外部依赖：单文件、内联 CSS + 内联 SVG + 原生 JS。
+  ============================================================================
+-->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coffer · UI 重设计原型</title>
+<style>
+/* ===========================================================================
+   1. DESIGN TOKENS — 逐字采用 coffer-design-tokens.md 的 :root 与 @media dark
+   =========================================================================== */
+:root {
+  /* Accent — macOS systemBlue #0A84FF (深浅同值) */
+  --accent: #0A84FF;
+  --accent-hover: #0A6FD6;
+  --accent-press: #0A5FBE;
+  --accent-fill: rgba(10,132,255,.12);
+  --accent-fill-hover: rgba(10,132,255,.18);
+  --accent-ring: rgba(10,132,255,.30);
+
+  /* Label / Text */
+  --label: #000000;
+  --secondary-label: rgba(60,60,67,.60);
+  --tertiary-label: rgba(60,60,67,.30);
+  --quaternary-label: rgba(60,60,67,.18);
+
+  /* Backgrounds */
+  --window-bg: #FFFFFF;
+  --text-bg: #FFFFFF;
+  --control-bg: #FFFFFF;
+  --fill-secondary: rgba(120,120,128,.16);
+  --fill-tertiary: rgba(118,118,128,.12);
+  --fill-quaternary: rgba(118,118,128,.08);
+
+  /* Separator (hairline) */
+  --separator: rgba(60,60,67,.29);
+  --hairline: 1px solid var(--separator);
+
+  /* Semantic system colors */
+  --system-red: #FF3B30;
+  --system-green: #34C759;
+  --system-yellow: #FFCC00;
+  --system-orange: #FF9500;
+  --system-mint: #00C7BE;
+
+  /* Window chrome (traffic lights — fixed OS constants) */
+  --tl-red: #FF5F57;
+  --tl-yellow: #FEBC2E;
+  --tl-green: #28C840;
+  --titlebar-height: 52px;
+  --window-radius: 10px;
+  --border-control: rgba(0,0,0,.18);
+
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Spacing (core 8/12/16/20/24) */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+
+  /* Radius (8/10/12) */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Controls */
+  --control-height: 28px;
+  --control-height-lg: 32px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #0A84FF;
+    --accent-hover: #0A6FD6;
+    --accent-press: #0A5FBE;
+    --accent-fill: rgba(10,132,255,.22);
+    --accent-fill-hover: rgba(10,132,255,.30);
+    --accent-ring: rgba(10,132,255,.40);
+
+    --label: #FFFFFF;
+    --secondary-label: rgba(235,235,245,.60);
+    --tertiary-label: rgba(235,235,245,.30);
+    --quaternary-label: rgba(235,235,245,.16);
+
+    --window-bg: #1E1E1E;
+    --text-bg: #1E1E1E;
+    --control-bg: #2A2A2A;
+    --fill-secondary: rgba(118,118,128,.32);
+    --fill-tertiary: rgba(118,118,128,.24);
+    --fill-quaternary: rgba(118,118,128,.18);
+
+    --separator: rgba(84,84,88,.65);
+    --hairline: 1px solid var(--separator);
+
+    --system-red: #FF453A;
+    --system-green: #30D158;
+    --system-yellow: #FFD60A;
+    --system-orange: #FF9F0A;
+    --system-mint: #30D5C8;
+
+    --border-control: rgba(255,255,255,.18);
+
+    /* 原型外壳 viewer chrome（非业务色，变量化以支持深浅双模） */
+    --stage-bg: #151517;
+    --shell-fill: rgba(118,118,128,.14);
+    --shell-fill-soft: rgba(118,118,128,.08);
+    --shadow-soft: rgba(0,0,0,.35);
+    --shadow-seg: rgba(0,0,0,.18);
+  }
+}
+
+/* 手动切换支持：属性选择器必须置于 @media 之后以取得覆盖优先级 */
+:root[data-theme="dark"] {
+  --accent: #0A84FF; --accent-hover: #0A6FD6; --accent-press: #0A5FBE;
+  --accent-fill: rgba(10,132,255,.22); --accent-fill-hover: rgba(10,132,255,.30); --accent-ring: rgba(10,132,255,.40);
+  --label: #FFFFFF; --secondary-label: rgba(235,235,245,.60); --tertiary-label: rgba(235,235,245,.30); --quaternary-label: rgba(235,235,245,.16);
+  --window-bg: #1E1E1E; --text-bg: #1E1E1E; --control-bg: #2A2A2A;
+  --fill-secondary: rgba(118,118,128,.32); --fill-tertiary: rgba(118,118,128,.24); --fill-quaternary: rgba(118,118,128,.18);
+  --separator: rgba(84,84,88,.65); --hairline: 1px solid var(--separator);
+  --system-red: #FF453A; --system-green: #30D158; --system-yellow: #FFD60A; --system-orange: #FF9F0A; --system-mint: #30D5C8;
+  --border-control: rgba(255,255,255,.18);
+}
+:root[data-theme="light"] {
+  --accent: #0A84FF; --accent-hover: #0A6FD6; --accent-press: #0A5FBE;
+  --accent-fill: rgba(10,132,255,.12); --accent-fill-hover: rgba(10,132,255,.18); --accent-ring: rgba(10,132,255,.30);
+  --label: #000000; --secondary-label: rgba(60,60,67,.60); --tertiary-label: rgba(60,60,67,.30); --quaternary-label: rgba(60,60,67,.18);
+  --window-bg: #FFFFFF; --text-bg: #FFFFFF; --control-bg: #FFFFFF;
+  --fill-secondary: rgba(120,120,128,.16); --fill-tertiary: rgba(118,118,128,.12); --fill-quaternary: rgba(118,118,128,.08);
+  --separator: rgba(60,60,67,.29); --hairline: 1px solid var(--separator);
+  --system-red: #FF3B30; --system-green: #34C759; --system-yellow: #FFCC00; --system-orange: #FF9500; --system-mint: #00C7BE;
+  --border-control: rgba(0,0,0,.18);
+
+    /* 原型外壳 viewer chrome（非业务色，变量化以支持深浅双模） */
+    --stage-bg: #e9e9ec;
+    --shell-fill: rgba(120,120,128,.10);
+    --shell-fill-soft: rgba(120,120,128,.06);
+    --shadow-soft: rgba(0,0,0,.35);
+    --shadow-seg: rgba(0,0,0,.18);
+  }
+}
+
+/* ===========================================================================
+   2. TYPOGRAPHY SCALE — SF Pro Dynamic Type
+   =========================================================================== */
+.t-largeTitle { font-size:34px; font-weight:400; line-height:41px; letter-spacing:-.02em; }
+.t-title1     { font-size:28px; font-weight:400; line-height:34px; letter-spacing:-.01em; }
+.t-title2     { font-size:22px; font-weight:400; line-height:28px; }
+.t-title3     { font-size:20px; font-weight:400; line-height:24px; }
+.t-headline   { font-size:17px; font-weight:600; line-height:22px; }
+.t-body       { font-size:17px; font-weight:400; line-height:22px; }
+.t-callout    { font-size:16px; font-weight:400; line-height:21px; }
+.t-subhead    { font-size:15px; font-weight:400; line-height:20px; }
+.t-footnote   { font-size:13px; font-weight:400; line-height:18px; }
+.t-caption1   { font-size:12px; font-weight:400; line-height:16px; }
+.t-caption2   { font-size:11px; font-weight:400; line-height:13px; }
+
+/* ===========================================================================
+   3. COMPONENT CLASSES — 逐字采用 coffer-design-tokens.md §5
+   =========================================================================== */
+.window { position:relative; display:flex; flex-direction:column; overflow:hidden;
+  background:var(--window-bg); border-radius:var(--window-radius); color:var(--label);
+  font-family:var(--font-sans);
+  box-shadow:0 22px 70px rgba(0,0,0,.28), 0 0 0 .5px rgba(0,0,0,.18); }
+.titlebar { height:var(--titlebar-height); display:flex; align-items:center;
+  padding:0 var(--space-16); border-bottom:var(--hairline); position:relative; flex:none; }
+.traffic-lights { display:flex; gap:var(--space-8); align-items:center; }
+.tl { width:12px; height:12px; border-radius:var(--radius-pill); }
+.tl.red{background:var(--tl-red);} .tl.yellow{background:var(--tl-yellow);} .tl.green{background:var(--tl-green);}
+.titlebar-title { position:absolute; left:0; right:0; text-align:center;
+  font-size:13px; font-weight:600; color:var(--label); pointer-events:none; }
+.toolbar { display:flex; align-items:center; gap:var(--space-8); margin-left:auto; position:relative; z-index:1; }
+
+.sidebar { width:220px; flex:none; background:var(--fill-quaternary); border-right:var(--hairline); overflow:auto; }
+.sidebar-section { padding:var(--space-12) var(--space-8) var(--space-4); }
+.sidebar-header { font-size:11px; font-weight:600; color:var(--tertiary-label);
+  text-transform:uppercase; letter-spacing:.04em; padding:0 var(--space-12) var(--space-4); }
+.sidebar-item { display:flex; align-items:center; gap:var(--space-8);
+  height:28px; padding:0 var(--space-12); border-radius:var(--radius-sm);
+  color:var(--label); font-size:13px; cursor:default; user-select:none; }
+.sidebar-item:hover { background:var(--fill-tertiary); }
+.sidebar-item.active { background:var(--accent-fill); color:var(--accent); font-weight:500; }
+.sidebar-item.active.bar { box-shadow:inset 3px 0 0 var(--accent); background:transparent; }
+.sidebar-ico { width:20px; height:20px; flex:none; border-radius:var(--radius-sm);
+  display:flex; align-items:center; justify-content:center; color:var(--secondary-label); font-size:15px; }
+.sidebar-item.active .sidebar-ico { color:var(--accent); }
+.count-badge { margin-left:auto; font-size:12px; color:var(--tertiary-label); }
+
+.list { list-style:none; margin:0; padding:0; }
+.list-row { display:flex; align-items:center; gap:var(--space-12);
+  min-height:44px; padding:0 var(--space-16); border-bottom:var(--hairline); cursor:default; user-select:none; }
+.list-row:hover { background:var(--fill-quaternary); }
+.list-row.active { background:var(--accent-fill); }
+.list-row.active .row-title { color:var(--accent); }
+.row-ico { width:24px; height:24px; flex:none; border-radius:var(--radius-sm);
+  background:var(--fill-secondary); display:flex; align-items:center; justify-content:center;
+  font-size:13px; color:var(--label); overflow:hidden; }
+.row-main { display:flex; flex-direction:column; min-width:0; flex:1; }
+.row-title { font-size:14px; color:var(--label); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row-sub { font-size:12px; color:var(--secondary-label); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row-trailing { margin-left:auto; color:var(--tertiary-label); font-size:12px; display:flex; align-items:center; gap:4px; }
+.row-masked .row-title { font-family:var(--font-mono); letter-spacing:2px; }
+
+.btn { height:var(--control-height); display:inline-flex; align-items:center; justify-content:center;
+  gap:var(--space-8); padding:0 var(--space-16); border-radius:var(--radius-sm);
+  font-size:13px; font-weight:500; border:none; cursor:default; font-family:inherit; }
+.btn-lg { height:var(--control-height-lg); }
+.btn-primary { background:var(--accent); color:#FFFFFF; }
+.btn-primary:hover { background:var(--accent-hover); }
+.btn-primary:active { background:var(--accent-press); }
+.btn-primary:disabled { background:var(--fill-tertiary); color:var(--tertiary-label); cursor:default; }
+.btn-primary.unlocked { background:var(--system-green); color:#FFFFFF; }
+.btn-secondary { background:transparent; color:var(--label); border:1px solid var(--border-control); }
+.btn-secondary:hover { background:var(--fill-secondary); }
+.btn-secondary:disabled { color:var(--tertiary-label); border-color:transparent; }
+.btn-plain { background:transparent; color:var(--accent); padding:0 var(--space-8); }
+.btn-plain:hover { background:var(--fill-quaternary); }
+.btn-plain:disabled { color:var(--tertiary-label); }
+
+.card { background:var(--fill-secondary); border-radius:var(--radius-lg); padding:var(--space-16); }
+.section-title { font-size:12px; font-weight:600; color:var(--secondary-label);
+  text-transform:uppercase; letter-spacing:.04em; margin:0 0 var(--space-8); }
+.group { background:var(--fill-secondary); border-radius:var(--radius-lg); overflow:hidden; }
+.group-row { display:flex; align-items:center; min-height:40px; padding:0 var(--space-16);
+  border-bottom:var(--hairline); gap:var(--space-12); }
+.group-row:last-child { border-bottom:none; }
+.group-row .gr-label { color:var(--label); font-size:14px; }
+.group-row .gr-value { margin-left:auto; color:var(--secondary-label); font-size:14px;
+  text-align:right; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.field { height:var(--control-height); width:100%; padding:0 var(--space-12);
+  border-radius:var(--radius-sm); background:var(--control-bg);
+  border:1px solid transparent; color:var(--label); font-size:13px; font-family:inherit; }
+.field::placeholder { color:var(--tertiary-label); }
+.field:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-ring); }
+
+.empty-state { flex:1; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:var(--space-12); padding:var(--space-24); text-align:center; }
+.empty-state .es-ico { width:48px; height:48px; color:var(--tertiary-label); font-size:48px; }
+.empty-state .es-title { font-size:17px; font-weight:600; color:var(--label); }
+.empty-state .es-sub { font-size:13px; color:var(--secondary-label); max-width:280px; }
+
+.totp { display:inline-flex; align-items:center; gap:var(--space-8); }
+.totp-code { font-family:var(--font-mono); font-variant-numeric:tabular-nums;
+  font-size:17px; letter-spacing:1px; color:var(--label); }
+.totp-ring { width:18px; height:18px; transform:rotate(-90deg); }
+.totp-ring circle { fill:none; stroke-width:2.5; }
+.totp-ring .track { stroke:var(--fill-tertiary); }
+.totp-ring .prog { stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset 1s linear; }
+.totp-ring.warn .prog { stroke:var(--system-red); }
+.totp-secs { font-size:12px; color:var(--secondary-label); }
+
+.strength { display:flex; gap:var(--space-4); align-items:center; }
+.strength-seg { flex:1; height:6px; border-radius:var(--radius-pill); background:var(--fill-quaternary); }
+.strength-seg.on { background:var(--strength-color); }
+.strength-label { font-size:12px; font-weight:500; color:var(--strength-color); }
+
+.field.error { border-color:var(--system-red); }
+.field.error:focus { box-shadow:0 0 0 3px rgba(255,59,48,.30); }
+.error-text { color:var(--system-red); font-size:12px; margin-top:var(--space-4);
+  display:flex; align-items:center; gap:var(--space-4); }
+.banner-error { display:flex; gap:var(--space-8); align-items:flex-start;
+  padding:var(--space-12); border-radius:var(--radius-md);
+  background:rgba(255,59,48,.10); border:1px solid var(--system-red);
+  color:var(--label); font-size:13px; }
+
+.ico-svg { width:1em; height:1em; display:inline-block; vertical-align:-.125em; }
+
+/* ===========================================================================
+   4. PROTOTYPE SHELL + SCREEN-SPECIFIC LAYOUT（原型外壳与版面）
+   =========================================================================== */
+* { box-sizing:border-box; }
+html, body { margin:0; padding:0; height:100%; }
+body { font-family:var(--font-sans); color:var(--label);
+  background:var(--stage-bg); }
+
+.shell { display:flex; height:100vh; }
+
+/* 左侧原型导航 */
+.shell-nav { width:208px; flex:none; background:var(--shell-fill);
+  border-right:var(--hairline); padding:var(--space-16) var(--space-12); display:flex; flex-direction:column; gap:var(--space-4); }
+.shell-brand { display:flex; align-items:center; gap:var(--space-8); padding:var(--space-4) var(--space-8) var(--space-12); }
+.shell-brand .b-ico { width:28px; height:28px; border-radius:var(--radius-sm); background:var(--accent);
+  color:#fff; display:flex; align-items:center; justify-content:center; font-size:17px; }
+.shell-brand .b-name { font-size:15px; font-weight:600; color:var(--label); }
+.shell-brand .b-sub { font-size:11px; color:var(--tertiary-label); }
+.shell-nav-label { font-size:11px; font-weight:600; color:var(--tertiary-label); text-transform:uppercase;
+  letter-spacing:.04em; padding:var(--space-8) var(--space-8) var(--space-4); }
+.nav-item { display:flex; align-items:center; gap:var(--space-8); height:32px; padding:0 var(--space-12);
+  border-radius:var(--radius-sm); font-size:13px; color:var(--label); cursor:default; user-select:none; }
+.nav-item:hover { background:var(--fill-tertiary); }
+.nav-item.active { background:var(--accent-fill); color:var(--accent); font-weight:500; }
+.nav-item .n-ico { font-size:15px; display:flex; color:var(--secondary-label); }
+.nav-item.active .n-ico { color:var(--accent); }
+.shell-foot { margin-top:auto; font-size:11px; color:var(--tertiary-label); padding:var(--space-8); line-height:1.5; }
+
+/* 主区 */
+.shell-main { flex:1; display:flex; flex-direction:column; min-width:0; }
+.shell-topbar { height:48px; flex:none; display:flex; align-items:center; padding:0 var(--space-20);
+  border-bottom:var(--hairline); background:var(--shell-fill-soft); }
+.shell-topbar .st-title { font-size:13px; font-weight:600; color:var(--label); }
+.shell-topbar .st-hint { font-size:12px; color:var(--secondary-label); margin-left:var(--space-8); }
+.shell-stage { flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center;
+  padding:var(--space-24); }
+
+/* 浅/深色分段开关 */
+.seg { display:inline-flex; background:var(--fill-tertiary); border-radius:var(--radius-sm);
+  padding:2px; margin-left:auto; }
+.seg button { border:none; background:transparent; padding:5px 14px; border-radius:6px; font-size:12px;
+  color:var(--secondary-label); cursor:default; font-family:inherit; display:flex; align-items:center; gap:6px; }
+.seg button.on { background:var(--window-bg); color:var(--label); box-shadow:0 1px 2px var(--shadow-seg); }
+
+/* 屏幕显隐 */
+.screen { display:none; }
+.screen.show { display:block; }
+
+/* 窗口尺寸变体 */
+.window.narrow { width:420px; }
+.window.setup  { width:460px; }
+.window.wide   { width:1000px; }
+.window.mid    { width:600px; }
+.window.edit   { width:560px; }
+.window.detail-standalone { width:560px; }
+
+/* ---- 锁屏 / 建库 居中布局 ---- */
+.lock-body, .setup-body { display:flex; align-items:center; justify-content:center; min-height:440px; padding:var(--space-24); }
+.lock-wrap, .setup-wrap { width:100%; max-width:340px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:var(--space-12); }
+.lock-badge { width:72px; height:72px; border-radius:var(--radius-lg); background:var(--fill-secondary);
+  display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:40px; margin-bottom:var(--space-8); }
+.setup-badge { width:64px; height:64px; border-radius:var(--radius-lg); background:var(--fill-secondary);
+  display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:34px; margin-bottom:var(--space-4); }
+.lock-sub, .setup-sub { color:var(--secondary-label); margin:0; }
+.lock-form { width:100%; display:flex; flex-direction:column; gap:var(--space-12); margin-top:var(--space-8); }
+.field-block { width:100%; text-align:left; }
+.field-block.shake { animation:shake .42s cubic-bezier(.36,.07,.19,.97); }
+@keyframes shake {
+  10%,90% { transform:translateX(-1px); } 20%,80% { transform:translateX(2px); }
+  30%,50%,70% { transform:translateX(-5px); } 40%,60% { transform:translateX(5px); }
+}
+.setup-group { width:100%; background:var(--fill-secondary); border-radius:var(--radius-lg); padding:var(--space-4) var(--space-16); }
+.setup-row { display:flex; flex-direction:column; gap:6px; padding:var(--space-8) 0; border-bottom:var(--hairline); }
+.setup-row:last-child { border-bottom:none; }
+.setup-row label { font-size:13px; color:var(--label); text-align:left; }
+.setup-strength { display:flex; flex-direction:column; gap:6px; padding:var(--space-8) 0; }
+.strength-row { display:flex; gap:var(--space-8); align-items:center; }
+
+/* ---- 主三栏 ---- */
+.window.wide .window-body { display:flex; height:600px; }
+.col-list { width:304px; flex:none; border-right:var(--hairline); display:flex; flex-direction:column; min-height:0; }
+.col-detail { flex:1; overflow:auto; min-height:0; background:var(--window-bg); }
+.search-bar { display:flex; align-items:center; gap:var(--space-8); margin:var(--space-12); padding:0 var(--space-8);
+  height:28px; background:var(--fill-tertiary); border-radius:var(--radius-sm); flex:none; }
+.search-bar .s-ico { color:var(--tertiary-label); font-size:14px; display:flex; }
+.search-input { border:none; background:transparent; outline:none; flex:1; font-size:13px; color:var(--label); font-family:inherit; }
+.search-input::placeholder { color:var(--tertiary-label); }
+.list-scroll { flex:1; overflow:auto; min-height:0; }
+
+/* ---- 详情（共用：主栏右侧 + 独立屏） ---- */
+.detail-scroll { padding:var(--space-20); display:flex; flex-direction:column; gap:var(--space-20); }
+.detail-head { display:flex; align-items:center; gap:var(--space-12); }
+.detail-head .dh-ico { width:40px; height:40px; border-radius:var(--radius-md); background:var(--fill-secondary);
+  display:flex; align-items:center; justify-content:center; font-size:20px; color:var(--label); }
+.detail-head .dh-main { flex:1; min-width:0; }
+.detail-head .dh-title { font-size:18px; font-weight:600; color:var(--label); display:flex; align-items:center; gap:var(--space-8); }
+.detail-head .dh-sub { font-size:13px; color:var(--secondary-label); }
+.star-btn { border:none; background:transparent; color:var(--tertiary-label); cursor:default; font-size:18px; display:flex; padding:4px; border-radius:var(--radius-sm); }
+.star-btn:hover { background:var(--fill-tertiary); }
+.star-btn.on { color:var(--system-yellow); }
+.trash-badge { font-size:11px; color:var(--system-red); border:1px solid var(--system-red); border-radius:var(--radius-pill); padding:1px 8px; }
+
+.detail-field { display:flex; align-items:center; gap:var(--space-12); min-height:44px; padding:0 var(--space-16); border-bottom:var(--hairline); }
+.detail-field:first-child { border-top:var(--hairline); }
+.df-label { width:92px; flex:none; color:var(--secondary-label); font-size:13px; }
+.df-value { flex:1; color:var(--label); font-size:14px; font-family:var(--font-mono); font-variant-numeric:tabular-nums;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.df-value.plain { font-family:inherit; }
+.df-actions { display:flex; align-items:center; gap:2px; }
+.icon-btn { width:28px; height:28px; border:none; background:transparent; color:var(--secondary-label);
+  border-radius:var(--radius-sm); cursor:default; display:inline-flex; align-items:center; justify-content:center; font-size:16px; }
+.icon-btn:hover { background:var(--fill-tertiary); color:var(--label); }
+.copied-tip { font-size:12px; color:var(--system-green); padding:0 4px; }
+
+/* 条目详情 · 网址链接（独立类，不复用 .totp-code） */
+.url-link { font-size:14px; color:var(--accent); text-decoration:none; display:inline-flex;
+  align-items:center; gap:6px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+
+.tags-row { display:flex; flex-wrap:wrap; gap:var(--space-8); padding:var(--space-12) var(--space-16); }
+.tag-chip { font-size:12px; color:var(--secondary-label); background:var(--fill-tertiary);
+  border-radius:var(--radius-pill); padding:3px 10px; }
+
+.info-row { display:flex; justify-content:space-between; padding:var(--space-8) var(--space-16); border-bottom:var(--hairline); font-size:13px; }
+.info-row:last-child { border-bottom:none; }
+.info-row .ir-label { color:var(--secondary-label); }
+.info-row .ir-value { color:var(--label); font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+
+/* ---- 编辑屏 ---- */
+.window.edit .window-body, .window.detail-standalone .window-body, .window.mid .window-body { display:flex; flex-direction:column; max-height:640px; }
+.edit-scroll { overflow:auto; padding:var(--space-20); display:flex; flex-direction:column; gap:var(--space-16); }
+.edit-foot { flex:none; display:flex; justify-content:flex-end; gap:var(--space-8); padding:var(--space-12) var(--space-16);
+  border-top:var(--hairline); background:var(--fill-quaternary); }
+.form-group { background:var(--fill-secondary); border-radius:var(--radius-lg); padding:var(--space-4) var(--space-16); }
+.form-row { display:flex; flex-direction:column; gap:6px; padding:var(--space-8) 0; border-bottom:var(--hairline); }
+.form-row:last-child { border-bottom:none; }
+.form-row > label { font-size:13px; color:var(--label); }
+.form-row.inline { flex-direction:row; align-items:center; }
+.form-row.inline .fr-label { flex:1; }
+.totp-meta { display:flex; align-items:center; gap:var(--space-12); padding:var(--space-8) 0; }
+.totp-meta .tm-ico { width:32px; height:32px; border-radius:var(--radius-sm); background:var(--fill-tertiary);
+  display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:18px; }
+.totp-meta .tm-main { flex:1; min-width:0; }
+.totp-meta .tm-title { font-size:14px; color:var(--label); }
+.totp-meta .tm-sub { font-size:12px; color:var(--secondary-label); font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ---- 设置屏 ---- */
+.settings-scroll { overflow:auto; padding:var(--space-20); display:flex; flex-direction:column; gap:var(--space-24); }
+.settings-section { display:flex; flex-direction:column; gap:var(--space-8); }
+.picker { height:var(--control-height); border-radius:var(--radius-sm); background:var(--control-bg);
+  border:1px solid var(--border-control); color:var(--label); font-size:13px; font-family:inherit; padding:0 var(--space-8); }
+.toggle { width:46px; height:26px; border-radius:var(--radius-pill); background:var(--fill-tertiary);
+  position:relative; cursor:default; transition:background .2s; border:1px solid var(--border-control); flex:none; }
+.toggle.on { background:var(--accent); border-color:transparent; }
+.toggle .knob { position:absolute; top:2px; left:2px; width:22px; height:22px; border-radius:var(--radius-pill);
+  background:#fff; transition:left .2s; box-shadow:0 1px 3px var(--shadow-soft); }
+.toggle.on .knob { left:22px; }
+.len-field { width:64px; text-align:center; }
+.destructive { color:var(--system-red); }
+.destructive .gr-value { color:var(--system-red); cursor:default; }
+
+/* 通用工具 */
+.hidden { display:none !important; }
+
+/* 可访问性：尊重「减弱动态效果」系统设置 */
+@media (prefers-reduced-motion: reduce) {
+  .field-block.shake { animation:none; }
+  .toggle, .toggle .knob, .seg button, .totp-ring .prog { transition:none; }
+  * { scroll-behavior:auto; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ===================== 原型外壳 · 左侧导航 ===================== -->
+  <nav class="shell-nav">
+    <div class="shell-brand">
+      <span class="b-ico"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/></svg></span>
+      <div>
+        <div class="b-name">Coffer</div>
+        <div class="b-sub">UI 重设计原型</div>
+      </div>
+    </div>
+    <div class="shell-nav-label">界面</div>
+    <div class="nav-item active" data-screen="lock"><span class="n-ico" data-ico="lock"></span>锁屏</div>
+    <div class="nav-item" data-screen="setup"><span class="n-ico" data-ico="box"></span>创建密码库</div>
+    <div class="nav-item" data-screen="main"><span class="n-ico" data-ico="tray"></span>主界面（三栏）</div>
+    <div class="nav-item" data-screen="detail"><span class="n-ico" data-ico="doc"></span>条目详情</div>
+    <div class="nav-item" data-screen="edit"><span class="n-ico" data-ico="pencil"></span>编辑条目</div>
+    <div class="nav-item" data-screen="settings"><span class="n-ico" data-ico="shield"></span>安全设置</div>
+    <div class="shell-foot">点击左侧切换界面<br>右上角切换浅 / 深色</div>
+  </nav>
+
+  <!-- ===================== 原型外壳 · 主区 ===================== -->
+  <div class="shell-main">
+    <div class="shell-topbar">
+      <span class="st-title" id="stTitle">锁屏</span>
+      <span class="st-hint" id="stHint">P0-1 · LockView</span>
+      <div class="seg" id="themeSeg">
+        <button data-theme="light"><span data-ico="sun"></span>浅色</button>
+        <button data-theme="dark"><span data-ico="moon"></span>深色</button>
+      </div>
+    </div>
+    <div class="shell-stage" id="stage">
+
+      <!-- ============ P0-1 锁屏 ============ -->
+      <section class="screen show window narrow" data-screen="lock">
+        <div class="titlebar">
+          <div class="traffic-lights"><span class="tl red"></span><span class="tl yellow"></span><span class="tl green"></span></div>
+          <div class="titlebar-title">Coffer</div>
+        </div>
+        <div class="window-body lock-body">
+          <div class="lock-wrap">
+            <div class="lock-badge"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><rect x="8" y="11" width="8" height="6" rx="1.3"/><path d="M9.5 11V9a2.5 2.5 0 0 1 5 0v2"/></svg></div>
+            <h1 class="t-largeTitle">我的密码库</h1>
+            <p class="t-subhead lock-sub">输入主密码以解锁</p>
+            <div class="lock-form">
+              <div class="field-block" id="lockFieldBlock">
+                <input class="field" id="lockPw" type="password" placeholder="主密码" autocomplete="off">
+                <div class="error-text hidden" id="lockError"><span data-ico="warn"></span> 主密码不正确</div>
+              </div>
+              <button class="btn btn-primary btn-lg" id="unlockBtn" style="width:100%" aria-label="解锁密码库">解锁</button>
+              <button class="btn btn-secondary btn-lg" id="touchBtn" style="width:100%" aria-label="使用 Touch ID 解锁"><span data-ico="finger"></span> 使用 Touch ID 解锁</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ P0-2 创建密码库 ============ -->
+      <section class="screen window setup" data-screen="setup">
+        <div class="titlebar">
+          <div class="traffic-lights"><span class="tl red"></span><span class="tl yellow"></span><span class="tl green"></span></div>
+          <div class="titlebar-title">Coffer</div>
+        </div>
+        <div class="window-body setup-body">
+          <div class="setup-wrap">
+            <div class="setup-badge"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/></svg></div>
+            <h1 class="t-title1">创建密码库</h1>
+            <p class="t-callout setup-sub">设置一个主密码来保护本地加密的密码库。它不会被上传到任何服务器。</p>
+            <div class="setup-group">
+              <div class="setup-row">
+                <label for="vaultName">库名称</label>
+                <input class="field" id="vaultName" type="text" placeholder="我的密码库" value="我的密码库">
+              </div>
+              <div class="setup-row">
+                <label for="vaultPw">主密码</label>
+                <input class="field" id="vaultPw" type="password" placeholder="输入主密码" autocomplete="off">
+              </div>
+              <div class="setup-strength" id="vaultStrengthWrap">
+                <div class="strength-row">
+                  <div class="strength" id="vaultStrength" style="flex:1">
+                    <span class="strength-seg"></span><span class="strength-seg"></span><span class="strength-seg"></span><span class="strength-seg"></span><span class="strength-seg"></span>
+                  </div>
+                </div>
+                <div class="strength-label" id="vaultStrengthLabel" style="--strength-color:var(--tertiary-label)">—</div>
+              </div>
+              <div class="setup-row">
+                <label for="vaultPw2">再次输入主密码</label>
+                <input class="field" id="vaultPw2" type="password" placeholder="确认主密码" autocomplete="off">
+                <div class="error-text hidden" id="vaultMismatch"><span data-ico="warn"></span> 两次输入的密码不一致</div>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-lg" id="createBtn" style="width:100%; margin-top:var(--space-8)">创建密码库</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ P0-3 主界面（三栏） ============ -->
+      <section class="screen window wide" data-screen="main">
+        <div class="titlebar">
+          <div class="traffic-lights"><span class="tl red"></span><span class="tl yellow"></span><span class="tl green"></span></div>
+          <div class="titlebar-title">Coffer</div>
+          <div class="toolbar">
+            <button class="btn btn-plain" id="newBtn" style="height:24px"><span data-ico="plus"></span>新建</button>
+            <button class="btn btn-secondary" style="height:24px"><span data-ico="import"></span>导入 CSV</button>
+            <button class="btn btn-plain" id="lockFromMain" style="height:24px" title="锁定"><span data-ico="lock"></span></button>
+          </div>
+        </div>
+        <div class="window-body">
+          <!-- 侧栏 -->
+          <aside class="sidebar">
+            <div class="sidebar-section">
+              <div class="sidebar-item active" data-filter="all"><span class="sidebar-ico" data-ico="tray"></span>全部条目<span class="count-badge" id="cntAll">3</span></div>
+              <div class="sidebar-item" data-filter="starred"><span class="sidebar-ico" data-ico="star"></span>收藏</div>
+            </div>
+            <div class="sidebar-header">类别</div>
+            <div class="sidebar-section" style="padding-top:0">
+              <div class="sidebar-item" data-filter="login"><span class="sidebar-ico" data-ico="key"></span>登录</div>
+              <div class="sidebar-item" data-filter="card"><span class="sidebar-ico" data-ico="creditcard"></span>信用卡</div>
+              <div class="sidebar-item" data-filter="identity"><span class="sidebar-ico" data-ico="doc"></span>身份</div>
+              <div class="sidebar-item" data-filter="passport"><span class="sidebar-ico" data-ico="globe"></span>护照</div>
+              <div class="sidebar-item" data-filter="ssh"><span class="sidebar-ico" data-ico="terminal"></span>SSH 密钥</div>
+            </div>
+            <div class="sidebar-section">
+              <div class="sidebar-item" data-filter="trash"><span class="sidebar-ico" data-ico="trash"></span>回收站</div>
+            </div>
+          </aside>
+          <!-- 列表列 -->
+          <div class="col-list">
+            <div class="search-bar">
+              <span class="s-ico" data-ico="search"></span>
+              <input class="search-input" id="searchInput" placeholder="搜索" aria-label="搜索条目" autocomplete="off">
+            </div>
+            <div class="list-scroll">
+              <ul class="list" id="listView"></ul>
+            </div>
+          </div>
+          <!-- 详情列 -->
+          <div class="col-detail" id="mainDetail"></div>
+        </div>
+      </section>
+
+      <!-- ============ P0-4 条目详情（独立屏） ============ -->
+      <section class="screen window detail-standalone" data-screen="detail">
+        <div class="titlebar">
+          <div class="traffic-lights"><span class="tl red"></span><span class="tl yellow"></span><span class="tl green"></span></div>
+          <div class="titlebar-title">条目详情</div>
+          <div class="toolbar">
+            <button class="btn btn-secondary" id="editFromDetail" style="height:24px"><span data-ico="pencil"></span>编辑</button>
+          </div>
+        </div>
+        <div class="window-body">
+          <div id="standaloneDetail" style="flex:1; overflow:auto;"></div>
+        </div>
+      </section>
+
+      <!-- ============ P0-5 编辑条目 ============ -->
+      <section class="screen window edit" data-screen="edit">
+        <div class="titlebar">
+          <div class="traffic-lights"><span class="tl red"></span><span class="tl yellow"></span><span class="tl green"></span></div>
+          <div class="titlebar-title" id="editTitlebarTitle">编辑条目</div>
+        </div>
+        <div class="window-body">
+          <div class="edit-scroll">
+            <div class="form-group">
+              <div class="form-row">
+                <label for="editTitle">标题</label>
+                <input class="field" id="editTitle" type="text" value="GitHub">
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-row">
+                <label for="editUser">用户名</label>
+                <input class="field" id="editUser" type="text" value="cygnus@github.com">
+              </div>
+              <div class="form-row">
+                <label for="editPw">密码</label>
+                <input class="field" id="editPw" type="password" value="" placeholder="未修改">
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-row">
+                <label for="editUrl">网址</label>
+                <input class="field" id="editUrl" type="text" value="github.com">
+              </div>
+              <div class="form-row">
+                <label for="editTags">标签</label>
+                <input class="field" id="editTags" type="text" value="开发, 重要">
+              </div>
+            </div>
+            <!-- TOTP 三态 -->
+            <div class="form-group">
+              <div class="section-title" style="padding-top:0">双因素认证</div>
+              <div id="totpKept">
+                <div class="totp-meta">
+                  <span class="tm-ico" data-ico="clock"></span>
+                  <div class="tm-main">
+                    <div class="tm-title">已绑定的验证器</div>
+                    <div class="tm-sub">otpauth://totp/GitHub:cygnus?secret=JBSWY3DPEHPK3PXP</div>
+                  </div>
+                  <button class="btn btn-plain" id="totpRemove" style="height:24px">移除</button>
+                </div>
+              </div>
+              <div id="totpReplaced" class="hidden">
+                <div class="form-row" style="border-bottom:none">
+                  <label for="otpUri">otpauth URI</label>
+                  <input class="field" id="otpUri" type="text" placeholder="otpauth://totp/...">
+                  <button class="btn btn-plain" id="totpUndo" style="height:24px">撤销</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="edit-foot">
+            <button class="btn btn-plain" id="editCancel">取消</button>
+            <button class="btn btn-primary" id="editSave">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ P0-6 安全设置 ============ -->
+      <section class="screen window mid" data-screen="settings">
+        <div class="titlebar">
+          <div class="traffic-lights"><span class="tl red"></span><span class="tl yellow"></span><span class="tl green"></span></div>
+          <div class="titlebar-title">安全设置</div>
+        </div>
+        <div class="window-body">
+          <div class="settings-scroll">
+            <div class="settings-section">
+              <div class="section-title">常规</div>
+              <div class="group">
+                <div class="group-row">
+                  <span class="gr-label">自动锁定</span>
+                  <select class="picker gr-value" id="autoLock" style="margin-left:auto">
+                    <option value="1">1 分钟后</option>
+                    <option value="5" selected>5 分钟后</option>
+                    <option value="15">15 分钟后</option>
+                    <option value="30">30 分钟后</option>
+                    <option value="0">从不</option>
+                  </select>
+                </div>
+                <div class="group-row">
+                  <span class="gr-label">使用 Touch ID 解锁</span>
+                  <div class="toggle on" id="touchToggle" role="switch" aria-label="使用 Touch ID 解锁" style="margin-left:auto"><span class="knob"></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="settings-section">
+              <div class="section-title">密码生成器</div>
+              <div class="group">
+                <div class="group-row">
+                  <span class="gr-label">长度</span>
+                  <input class="field len-field gr-value" id="genLen" type="number" value="20" min="8" max="64" style="margin-left:auto">
+                </div>
+                <div class="group-row">
+                  <span class="gr-label">包含符号</span>
+                  <div class="toggle on" id="symToggle" role="switch" aria-label="密码生成器包含符号" style="margin-left:auto"><span class="knob"></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="settings-section">
+              <div class="section-title">高级</div>
+              <div class="group">
+                <div class="group-row destructive" id="clearRow">
+                  <span class="gr-label">清除所有数据</span>
+                  <span class="gr-value" id="clearAction">清除…</span>
+                </div>
+              </div>
+              <p class="t-footnote" style="color:var(--secondary-label); margin:0">此操作将永久删除本地密码库，且无法恢复。请谨慎操作。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===========================================================================
+   图标库 — 内联 SVG（stroke=currentColor 继承语义色），深浅自适应
+   =========================================================================== */
+const ICONS = {
+  lock:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  box:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/></svg>',
+  tray:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h18l-2 12H5L3 8z"/><path d="M3 8l2.2-4h13.6L21 8"/></svg>',
+  doc:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M9.5 12h5M9.5 15h5M9.5 18h3"/></svg>',
+  pencil:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/><path d="M14 6l3 3"/></svg>',
+  shield:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l6 2.2v5c0 4-2.6 7-6 8.8-3.4-1.8-6-4.8-6-8.8v-5L12 3z"/><rect x="9.2" y="10.4" width="5.6" height="4.4" rx="1"/><path d="M10.2 10.4V9.3a1.8 1.8 0 0 1 3.6 0v1.1"/></svg>',
+  star:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 17l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5z"/></svg>',
+  starFill:'<svg class="ico-svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 17l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5z"/></svg>',
+  trash:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg>',
+  key:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><path d="M11 11l9 9"/><path d="M16 16l2-2"/></svg>',
+  creditcard:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/><path d="M7 14h3"/></svg>',
+  globe:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.8 2.8 2.8 15.2 0 18M12 3c-2.8 2.8-2.8 15.2 0 18"/></svg>',
+  terminal:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l3 3-3 3"/><path d="M13 16h4"/></svg>',
+  finger:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4c-3.3 0-6 2.7-6 6v3"/><path d="M18 13v-3c0-3.3-2.7-6-6-6"/><path d="M8 15v-3a4 4 0 0 1 8 0v4"/><path d="M12 11v6"/><path d="M10 17v-2"/><path d="M14 17v-3"/></svg>',
+  search:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+  plus:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  import:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M5 21h14"/></svg>',
+  eye:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7c2 0 3.7.7 5 1.7M22 12s-4 7-10 7c-2 0-3.7-.7-5-1.7"/><path d="M4 4l16 16"/><path d="M9.5 9.5a3 3 0 0 0 4.2 4.2"/></svg>',
+  copy:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>',
+  clock:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>',
+  warn:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3L12 4z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg>',
+  sun:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>',
+  moon:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5z"/></svg>',
+  link:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7.4l2.6-2.6a4 4 0 0 0-5.7-5.7L11 7.3"/><path d="M14 10a4 4 0 0 0-5.7-.4L5.7 12.2a4 4 0 0 0 5.7 5.7L13 16.7"/></svg>',
+  tag:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7l9 9-7 7-9-9V4z"/><circle cx="8.5" cy="8.5" r="1.3"/></svg>',
+  check:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-11"/></svg>',
+  x:'<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+};
+function paintIcons(root){
+  (root||document).querySelectorAll('[data-ico]').forEach(el=>{
+    const n = el.getAttribute('data-ico');
+    if(ICONS[n]){ el.innerHTML = ICONS[n]; }
+  });
+}
+
+/* ===========================================================================
+   示例数据（虚构）
+   =========================================================================== */
+const ITEMS = [
+  { id:'github', category:'login', icon:'key', title:'GitHub', sub:'cygnus@github.com', starred:true,
+    fields:[
+      {label:'用户名', value:'cygnus@github.com', masked:false},
+      {label:'密码', value:'Tg7#kP9$mQ2!wLx', masked:true},
+    ],
+    url:'github.com', tags:['开发','重要'],
+    totp:{ code:'428 913', secret:'JBSWY3DPEHPK3PXP' },
+    created:'2023-04-12 09:31', modified:'2024-11-02 14:08', itemId:'a1b2c3d4-e5f6-7890' },
+  { id:'cmb', category:'card', icon:'creditcard', title:'招商银行信用卡', sub:'6225 **** **** 8810', starred:false,
+    fields:[
+      {label:'卡号', value:'6225 8810 1234 5678', masked:true},
+      {label:'持卡人', value:'ZHANG SAN', masked:false},
+      {label:'有效期', value:'08/27', masked:false},
+      {label:'CVV', value:'418', masked:true},
+    ],
+    url:'', tags:['财务'], totp:null,
+    created:'2022-09-01 10:00', modified:'2023-06-15 11:20', itemId:'b2c3d4e5-f6a1-0123' },
+  { id:'passport', category:'passport', icon:'globe', title:'个人护照', sub:'E12345678', starred:true,
+    fields:[
+      {label:'姓名', value:'ZHANG SAN', masked:false},
+      {label:'护照号', value:'E12345678', masked:false},
+      {label:'有效期至', value:'2031-03-19', masked:false},
+      {label:'签发地', value:'SHANGHAI', masked:false},
+    ],
+    url:'', tags:['证件','重要'], totp:null,
+    created:'2021-03-20 16:40', modified:'2021-03-20 16:40', itemId:'c3d4e5f6-a1b2-3456' },
+];
+const CAT_ICON = { login:'key', card:'creditcard', identity:'doc', passport:'globe', ssh:'terminal' };
+
+/* ===========================================================================
+   状态
+   =========================================================================== */
+let activeFilter = 'all';
+let activeItemId = 'github';
+let searchTerm = '';
+
+/* ===========================================================================
+   渲染：列表
+   =========================================================================== */
+function filteredItems(){
+  let list = ITEMS;
+  if(activeFilter==='starred') list = list.filter(i=>i.starred);
+  else if(activeFilter==='trash') list = [];
+  else if(activeFilter!=='all') list = list.filter(i=>i.category===activeFilter);
+  if(searchTerm){
+    const t = searchTerm.toLowerCase();
+    list = list.filter(i=> (i.title+' '+i.sub+' '+i.tags.join(' ')).toLowerCase().includes(t));
+  }
+  return list;
+}
+function renderList(){
+  const ul = document.getElementById('listView');
+  const list = filteredItems();
+  ul.innerHTML = '';
+  if(list.length===0){
+    const li = document.createElement('li');
+    li.className = 'empty-state';
+    li.style.borderBottom = 'none';
+    li.innerHTML = '<span class="es-ico" data-ico="tray"></span>'+
+      '<div class="es-title">没有条目</div>'+
+      '<div class="es-sub">'+(activeFilter==='trash'?'回收站为空':(searchTerm?'未找到匹配的条目':'此类别下暂无条目'))+'</div>';
+    ul.appendChild(li);
+    paintIcons(ul);
+    return;
+  }
+  list.forEach(it=>{
+    const li = document.createElement('li');
+    li.className = 'list-row'+(it.id===activeItemId?' active':'');
+    li.dataset.id = it.id;
+    const star = it.starred ? '<span data-ico="starFill" style="color:var(--system-yellow)"></span>' : '';
+    li.innerHTML =
+      '<span class="row-ico" data-ico="'+it.icon+'"></span>'+
+      '<span class="row-main"><span class="row-title">'+it.title+'</span><span class="row-sub">'+it.sub+'</span></span>'+
+      '<span class="row-trailing">'+star+'</span>';
+    li.addEventListener('click', ()=>{ activeItemId = it.id; renderList(); renderDetail(document.getElementById('mainDetail'), currentItem()); });
+    ul.appendChild(li);
+  });
+  paintIcons(ul);
+}
+function currentItem(){ return ITEMS.find(i=>i.id===activeItemId) || ITEMS[0]; }
+
+/* ===========================================================================
+   渲染：详情（主栏右侧 + 独立屏共用）
+   =========================================================================== */
+function renderDetail(container, it){
+  if(!it){ container.innerHTML = '<div class="empty-state"><span class="es-ico" data-ico="doc"></span><div class="es-title">未选择条目</div><div class="es-sub">从左侧列表选择一个条目查看详情</div></div>'; paintIcons(container); return; }
+  const starBtn = it.starred ? 'on' : '';
+  let fieldsHtml = '';
+  it.fields.forEach((f,idx)=>{
+    if(f.masked){
+      fieldsHtml += '<div class="detail-field" data-field="'+idx+'">'+
+        '<span class="df-label">'+f.label+'</span>'+
+        '<span class="df-value">••••••••</span>'+
+        '<span class="df-actions">'+
+          '<button class="icon-btn" data-act="reveal" title="显示 / 隐藏" aria-label="显示或隐藏'+f.label+'"><span data-ico="eye"></span></button>'+
+          '<button class="icon-btn" data-act="copy" title="复制" aria-label="复制'+f.label+'"><span data-ico="copy"></span></button>'+
+        '</span></div>';
+    } else {
+      fieldsHtml += '<div class="detail-field">'+
+        '<span class="df-label">'+f.label+'</span>'+
+        '<span class="df-value plain">'+f.value+'</span>'+
+        '<span class="df-actions"><button class="icon-btn" data-act="copy" data-text="'+f.value+'" title="复制" aria-label="复制'+f.label+'"><span data-ico="copy"></span></button></span></div>';
+    }
+  });
+  const urlHtml = it.url ? '<div class="card"><div class="section-title">网址</div>'+
+      '<a class="url-link" href="#" onclick="return false"><span data-ico="link" style="color:var(--secondary-label)"></span>'+it.url+'</a></div>' : '';
+  const tagsHtml = it.tags.length ? '<div class="card"><div class="section-title">标签</div><div class="tags-row">'+
+      it.tags.map(t=>'<span class="tag-chip">'+t+'</span>').join('')+'</div></div>' : '';
+  const totpHtml = it.totp ? '<div class="card"><div class="section-title">双因素认证</div>'+
+      '<div class="totp"><span class="totp-code" data-totp-code>'+it.totp.code+'</span>'+
+      '<svg class="totp-ring" data-totp-ring viewBox="0 0 20 20"><circle class="track" cx="10" cy="10" r="8"/><circle class="prog" cx="10" cy="10" r="8"/></svg>'+
+      '<span class="totp-secs" data-totp-secs>30</span></div>'+
+      '<div class="t-footnote" style="color:var(--secondary-label);margin-top:8px">验证器应用已绑定 · 每 30 秒刷新</div></div>' : '';
+  const infoHtml = '<div class="card"><div class="section-title">信息</div>'+
+      '<div class="info-row"><span class="ir-label">创建时间</span><span class="ir-value">'+it.created+'</span></div>'+
+      '<div class="info-row"><span class="ir-label">修改时间</span><span class="ir-value">'+it.modified+'</span></div>'+
+      '<div class="info-row"><span class="ir-label">条目 ID</span><span class="ir-value">'+it.itemId+'</span></div></div>';
+
+  container.innerHTML =
+    '<div class="detail-scroll">'+
+      '<div class="detail-head">'+
+        '<span class="dh-ico" data-ico="'+it.icon+'"></span>'+
+        '<div class="dh-main"><div class="dh-title">'+it.title+'</div><div class="dh-sub">'+it.sub+'</div></div>'+
+        '<button class="star-btn '+(it.starred?'on':'')+'" title="收藏" aria-label="'+(it.starred?'取消收藏':'收藏')+'"><span data-ico="'+(it.starred?'starFill':'star')+'"></span></button>'+
+        (it.category==='trash'?'<span class="trash-badge">已删除</span>':'')+
+      '</div>'+
+      '<div class="card"><div class="section-title">字段</div>'+fieldsHtml+'</div>'+
+      urlHtml + tagsHtml + totpHtml + infoHtml+
+    '</div>';
+  paintIcons(container);
+  bindDetailInteractions(container, it);
+  // 重新挂载 TOTP 环到全局计时器
+  registerTotpRing(container.querySelector('[data-totp-ring]'));
+}
+
+function bindDetailInteractions(container, it){
+  container.querySelectorAll('.detail-field').forEach(fld=>{
+    const idx = fld.dataset.field;
+    if(idx===undefined) return;
+    const valEl = fld.querySelector('.df-value');
+    const real = it.fields[+idx].value;
+    const revealBtn = fld.querySelector('[data-act="reveal"]');
+    const copyBtn = fld.querySelector('[data-act="copy"]');
+    revealBtn.addEventListener('click', ()=>{
+      if(valEl.textContent==='••••••••'){ valEl.textContent = real; revealBtn.querySelector('[data-ico]').setAttribute('data-ico','eyeOff'); paintIcons(revealBtn); }
+      else { valEl.textContent='••••••••'; revealBtn.querySelector('[data-ico]').setAttribute('data-ico','eye'); paintIcons(revealBtn); }
+    });
+    copyBtn.addEventListener('click', ()=>copyFeedback(copyBtn, real));
+  });
+  container.querySelectorAll('[data-act="copy"][data-text]').forEach(b=>{
+    b.addEventListener('click', ()=>copyFeedback(b, b.dataset.text));
+  });
+}
+function copyFeedback(btn, text){
+  try { navigator.clipboard && navigator.clipboard.writeText(text); } catch(e){}
+  let tip = btn.parentElement.querySelector('.copied-tip');
+  if(!tip){ tip = document.createElement('span'); tip.className='copied-tip'; tip.textContent='已复制'; btn.parentElement.appendChild(tip); }
+  tip.style.opacity='1';
+  clearTimeout(btn._t);
+  btn._t = setTimeout(()=>{ if(tip.parentNode) tip.remove(); }, 1500);
+}
+
+/* ===========================================================================
+   TOTP 倒计时（全局每秒推进，码每 30s 刷新；<5s 环变红）
+   =========================================================================== */
+const TOTP_C = 2 * Math.PI * 8; // 周长
+const TOTP_SAMPLES = ['428 913','771 204','539 882','196 475','802 336']; // 示例码轮换池
+let totpStart = Date.now();
+let totpRing = null;
+function registerTotpRing(ring){
+  // 同一时刻仅详情区一个环；多次注册以最后一个为准（独立屏 / 主栏共用同一数据）
+  if(ring){ totpRing = ring; const prog = ring.querySelector('.prog'); prog.style.strokeDasharray = TOTP_C; }
+}
+function tickTotp(){
+  if(!totpRing) return;
+  const elapsed = (Date.now() - totpStart) / 1000;
+  const period = 30;
+  const secs = Math.max(0, Math.ceil(period - (elapsed % period)));
+  const remainingFrac = (period - (elapsed % period)) / period;
+  const prog = totpRing.querySelector('.prog');
+  prog.style.strokeDashoffset = (TOTP_C * (1 - remainingFrac)).toFixed(2);
+  const warn = secs < 5;
+  totpRing.classList.toggle('warn', warn);
+  const secEl = totpRing.closest('.totp').querySelector('[data-totp-secs]');
+  if(secEl) secEl.textContent = secs;
+  const codeEl = totpRing.closest('.totp').querySelector('[data-totp-code]');
+  if(codeEl){
+    const win = Math.floor(elapsed / period);
+    const code = TOTP_SAMPLES[win % TOTP_SAMPLES.length];
+    if(codeEl.textContent !== code) codeEl.textContent = code; // 每 30s 轮换示例码
+  }
+}
+setInterval(tickTotp, 1000);
+tickTotp();
+
+/* ===========================================================================
+   强度条（建库屏）
+   =========================================================================== */
+const STR_COLORS = ['var(--system-red)','var(--system-orange)','var(--system-yellow)','var(--system-green)','var(--system-mint)'];
+const STR_LABELS = ['Very Weak','Weak','Fair','Good','Strong'];
+function scorePw(pw){
+  if(!pw) return -1;
+  let kinds = 0;
+  if(/[a-z]/.test(pw) && /[A-Z]/.test(pw)) kinds++;
+  if(/\d/.test(pw)) kinds++;
+  if(/[^A-Za-z0-9]/.test(pw)) kinds++;
+  if(pw.length>=8) kinds++;
+  let level;
+  if(pw.length<6) level=0;
+  else if(kinds<=1) level=1;
+  else if(kinds===2) level=2;
+  else if(kinds===3) level=3;
+  else level=4;
+  return level;
+}
+function renderStrength(el, labelEl, pw){
+  const level = scorePw(pw);
+  const segs = el.querySelectorAll('.strength-seg');
+  if(level<0){ segs.forEach(s=>s.classList.remove('on')); labelEl.textContent='—'; labelEl.style.setProperty('--strength-color','var(--tertiary-label)'); return; }
+  const color = STR_COLORS[level];
+  el.style.setProperty('--strength-color', color);
+  segs.forEach((s,i)=> s.classList.toggle('on', i<=level));
+  labelEl.textContent = STR_LABELS[level];
+  labelEl.style.setProperty('--strength-color', color);
+}
+
+/* ===========================================================================
+   屏幕切换
+   =========================================================================== */
+const SCREEN_META = {
+  lock:{t:'锁屏', h:'P0-1 · LockView'},
+  setup:{t:'创建密码库', h:'P0-2 · VaultSetupView'},
+  main:{t:'主界面（三栏）', h:'P0-3 · MainView (NavigationSplitView)'},
+  detail:{t:'条目详情', h:'P0-4 · ItemDetailView'},
+  edit:{t:'编辑条目', h:'P0-5 · ItemEditView'},
+  settings:{t:'安全设置', h:'P0-6 · SecuritySettingsView'}
+};
+function showScreen(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('show', s.dataset.screen===name));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.screen===name));
+  document.getElementById('stTitle').textContent = SCREEN_META[name].t;
+  document.getElementById('stHint').textContent = SCREEN_META[name].h;
+  if(name==='main'){ renderList(); renderDetail(document.getElementById('mainDetail'), currentItem()); }
+  if(name==='detail'){ renderDetail(document.getElementById('standaloneDetail'), currentItem()); }
+  if(name==='edit'){ loadEdit(currentItem()); }
+}
+document.querySelectorAll('.nav-item').forEach(n=> n.addEventListener('click', ()=>showScreen(n.dataset.screen)));
+
+/* ===========================================================================
+   主题切换
+   =========================================================================== */
+function setTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  document.querySelectorAll('#themeSeg button').forEach(b=>b.classList.toggle('on', b.dataset.theme===theme));
+}
+document.querySelectorAll('#themeSeg button').forEach(b=> b.addEventListener('click', ()=>setTheme(b.dataset.theme)));
+(function initTheme(){
+  const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  setTheme(dark ? 'dark' : 'light');
+})();
+
+/* ===========================================================================
+   锁屏交互
+   =========================================================================== */
+const lockPw = document.getElementById('lockPw');
+const lockError = document.getElementById('lockError');
+const lockFieldBlock = document.getElementById('lockFieldBlock');
+const unlockBtn = document.getElementById('unlockBtn');
+unlockBtn.addEventListener('click', ()=>{
+  if(lockPw.value !== 'Password123'){
+    lockPw.classList.add('error');
+    lockError.classList.remove('hidden');
+    lockFieldBlock.classList.remove('shake'); void lockFieldBlock.offsetWidth; lockFieldBlock.classList.add('shake');
+  } else {
+    lockPw.classList.remove('error'); lockError.classList.add('hidden');
+    unlockBtn.textContent = '已解锁'; unlockBtn.classList.add('unlocked'); unlockBtn.disabled = true;
+  }
+});
+lockPw.addEventListener('input', ()=>{ lockPw.classList.remove('error'); lockError.classList.add('hidden'); });
+lockPw.addEventListener('keydown', e=>{ if(e.key==='Enter') unlockBtn.click(); });
+document.getElementById('touchBtn').addEventListener('click', ()=>{
+  // 仅视觉反馈：Touch ID 按钮按下态
+  const b = document.getElementById('touchBtn'); b.style.background='var(--fill-secondary)';
+  setTimeout(()=>b.style.background='', 160);
+});
+document.getElementById('lockFromMain').addEventListener('click', ()=>showScreen('lock'));
+
+/* ===========================================================================
+   建库交互
+   =========================================================================== */
+const vaultPw = document.getElementById('vaultPw');
+const vaultPw2 = document.getElementById('vaultPw2');
+const vaultStrength = document.getElementById('vaultStrength');
+const vaultStrengthLabel = document.getElementById('vaultStrengthLabel');
+const vaultMismatch = document.getElementById('vaultMismatch');
+vaultPw.addEventListener('input', ()=> renderStrength(vaultStrength, vaultStrengthLabel, vaultPw.value));
+vaultPw2.addEventListener('input', ()=>{
+  if(vaultPw2.value && vaultPw2.value !== vaultPw.value){ vaultPw2.classList.add('error'); vaultMismatch.classList.remove('hidden'); }
+  else { vaultPw2.classList.remove('error'); vaultMismatch.classList.add('hidden'); }
+});
+document.getElementById('createBtn').addEventListener('click', ()=>{
+  let ok = true;
+  if(!vaultPw.value){ vaultPw.classList.add('error'); ok=false; }
+  if(vaultPw2.value !== vaultPw.value){ vaultPw2.classList.add('error'); vaultMismatch.classList.remove('hidden'); ok=false; }
+  if(ok){ const b=document.getElementById('createBtn'); b.textContent='已创建'; b.classList.add('unlocked'); b.disabled=true; }
+});
+
+/* ===========================================================================
+   主界面：侧栏筛选 + 搜索
+   =========================================================================== */
+document.querySelectorAll('.sidebar-item').forEach(it=>{
+  it.addEventListener('click', ()=>{
+    document.querySelectorAll('.sidebar-item').forEach(s=>s.classList.remove('active'));
+    it.classList.add('active');
+    activeFilter = it.dataset.filter;
+    activeItemId = (filteredItems()[0]||{}).id || activeItemId;
+    renderList();
+    renderDetail(document.getElementById('mainDetail'), currentItem());
+  });
+});
+document.getElementById('searchInput').addEventListener('input', e=>{
+  searchTerm = e.target.value.trim();
+  activeItemId = (filteredItems()[0]||{}).id || activeItemId;
+  renderList();
+  renderDetail(document.getElementById('mainDetail'), currentItem());
+});
+document.getElementById('newBtn').addEventListener('click', ()=>{ showScreen('edit'); loadEdit(null); });
+
+/* ===========================================================================
+   编辑屏：载入条目（新建/编辑两态）+ TOTP 三态 + 导航
+   =========================================================================== */
+function loadEdit(item){
+  document.getElementById('editTitlebarTitle').textContent = item ? '编辑条目' : '新建条目';
+  document.getElementById('editTitle').value = item ? item.title : '';
+  document.getElementById('editUser').value = item ? (item.fields.find(f=>!f.masked)?.value || '') : '';
+  document.getElementById('editPw').value = ''; // 掩码字段不回显明文，保留「未修改」占位
+  document.getElementById('editUrl').value = item ? item.url : '';
+  document.getElementById('editTags').value = item ? item.tags.join(', ') : '';
+  const kept = document.getElementById('totpKept');
+  const replaced = document.getElementById('totpReplaced');
+  if(item && item.totp){ kept.classList.remove('hidden'); replaced.classList.add('hidden'); }
+  else { kept.classList.add('hidden'); replaced.classList.remove('hidden'); }
+  const save = document.getElementById('editSave'); save.textContent='保存'; save.disabled=false;
+}
+document.getElementById('editFromDetail').addEventListener('click', ()=>{ showScreen('edit'); loadEdit(currentItem()); });
+document.getElementById('totpRemove').addEventListener('click', ()=>{
+  document.getElementById('totpKept').classList.add('hidden');
+  document.getElementById('totpReplaced').classList.remove('hidden');
+});
+document.getElementById('totpUndo').addEventListener('click', ()=>{
+  document.getElementById('totpReplaced').classList.add('hidden');
+  document.getElementById('totpKept').classList.remove('hidden');
+});
+document.getElementById('editCancel').addEventListener('click', ()=>showScreen('detail'));
+document.getElementById('editSave').addEventListener('click', ()=>{ const b=document.getElementById('editSave'); b.textContent='已保存'; setTimeout(()=>{ showScreen('detail'); }, 600); });
+
+/* ===========================================================================
+   设置屏：开关 + 清除数据确认
+   =========================================================================== */
+function bindToggle(el){
+  const sync = ()=> el.setAttribute('aria-checked', el.classList.contains('on') ? 'true' : 'false');
+  el.addEventListener('click', ()=>{ el.classList.toggle('on'); sync(); });
+  sync();
+}
+bindToggle(document.getElementById('touchToggle'));
+bindToggle(document.getElementById('symToggle'));
+const clearRow = document.getElementById('clearRow');
+const clearAction = document.getElementById('clearAction');
+let clearArmed = false;
+clearRow.addEventListener('click', ()=>{
+  if(!clearArmed){ clearAction.textContent='确认清除？此操作不可撤销'; clearArmed=true; setTimeout(()=>{ if(clearArmed){ clearAction.textContent='清除…'; clearArmed=false; } }, 4000); }
+  else { clearAction.textContent='已清除'; clearArmed=false; }
+});
+
+/* ===========================================================================
+   初始化
+   =========================================================================== */
+paintIcons(document);
+document.getElementById('cntAll').textContent = ITEMS.length;
+renderList();
+renderDetail(document.getElementById('mainDetail'), currentItem());
+renderStrength(vaultStrength, vaultStrengthLabel, '');
+</script>
+</body>
+</html>

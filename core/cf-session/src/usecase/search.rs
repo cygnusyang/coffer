@@ -203,17 +203,17 @@ mod tests {
             std::time::Duration::from_millis(200)
         };
 
-        // N=3 采样取最小值，每次采样都断言命中数
-        let (hits_len, elapsed) = (0..3)
+        // N=3 采样取最小值，每次采样都断言命中数（设计意图：每样本断言，
+        // 而非只在取 min 后的样本上断言）
+        let elapsed = (0..3)
             .map(|_| {
                 let t = std::time::Instant::now();
                 let hits = search(&store, "基线 0421").unwrap();
-                (hits.len(), t.elapsed())
+                assert_eq!(hits.len(), 1, "每次采样都应恰好命中 1 条");
+                t.elapsed()
             })
-            .min_by_key(|(_, e)| *e)
+            .min()
             .unwrap();
-
-        assert_eq!(hits_len, 1);
         assert!(
             elapsed < budget,
             "1000 条搜索最小耗时 {elapsed:?}，超出 {budget:?} 预算"

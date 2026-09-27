@@ -49,10 +49,10 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-3（🟡 未修复）：安全设置 sheet 无关闭控件——失败后被困页面
+## BUG-3（✅ 已修复）：安全设置 sheet 无关闭控件——失败后被困页面
 
 **登记日期**：2026-09-27（cygnus 真机报告）
-**状态**：🟡 待修（修复成本极低，见修复路径）
+**状态**：✅ 已修复（见下方修复记录）
 
 ### 现象
 
@@ -68,11 +68,16 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 - 密码确认行的「取消」只收起确认行（cancelPrompt），不关闭 sheet
 - Form 固定 frame 460×260，无拖拽关闭的标题栏区域
 
-### 修复路径（5 分钟）
+### 修复记录（2026-09-27）
 
-加 `@Environment(\.dismiss) private var dismiss`，Form 末尾挂
-`.toolbar { Button("完成") { dismiss() } }`（或底部显式关闭按钮）。
-顺带：BUG-2 修复后此页面仍需此控件（无论成败都要能退出）。
+- `SecuritySettingsView` 加 `@Environment(\.dismiss) private var dismiss`
+- Form 末尾新增独立 Section：「完成」按钮（与 ImportView / ItemEditView 的
+  内容区关闭按钮保持同一模式，未引入 toolbar 新样式）
+- 窗口高度 260 → 340 容纳按钮
+- 复查：MainView 的其余 sheet（新建条目 / CSV 导入 / 建库）均有 dismiss 控件，
+  本缺陷仅存在于安全设置页，无同类遗漏
+
+备注：BUG-2 修复后本页仍需此控件——无论启用成功、失败或取消都要能退出。
 
 ---
 

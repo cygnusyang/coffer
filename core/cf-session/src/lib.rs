@@ -26,7 +26,10 @@
 //! - [`vault`]：`VaultSession`——持有 `Mutex<Option<UnlockedState>>`，
 //!   `lock()` 置 `None` 触发全链路 `ZeroizeOnDrop` 内存清零
 //! - [`idle`]：空闲超时判定的纯函数（时间由平台注入，可测试）
-//! - [`usecase`]：条目 CRUD（四类完整 + 只读兜底）与标题搜索编排
+//! - [`change_password`]：修改主密码（FR-1.8，只重封装 header 的 DEK，
+//!   docs/09 §3.2 D-2）
+//! - [`usecase`]：条目 CRUD（四类完整 + 只读兜底）、搜索（多字段 + 词级
+//!   近似，FR-11.2）、历史版本（FR-2.9）、Watchtower 编排（FR-6.2/6.3）
 //! - [`types`]：跨模块的会话层数据结构（`VaultInfo` / `ItemDetails` / `TotpCode`）
 //!
 //! ## 错误统一（docs/07 §5 C-6）
@@ -51,7 +54,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
 
+pub mod change_password;
 pub mod idle;
+pub mod testing;
 pub mod types;
 pub mod unlock;
 pub mod unlock_bio;
@@ -69,6 +74,8 @@ use cf_totp::TotpConfig;
 pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
 pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
 pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};
+pub use usecase::audit::{PasswordFingerprint, WatchtowerReport};
+pub use usecase::history::HistoryEntry;
 pub use vault::VaultSession;
 
 /// 会话层错误类型（docs/07 §5 C-6 统一）。

@@ -268,9 +268,9 @@ impl VaultSession {
         usecase::items::create_item(&mut state.store, draft)
     }
 
-    /// 更新条目：读旧快照（为 v0.2 history 预留接口，v0.1 不写 history 表）
-    /// → 校验 → 单事务整体替换（fields / urls / tags / sections 均「删旧
-    /// 插新」语义）。
+    /// 更新条目：替换前对当前状态写 history 快照（FR-2.9，内容无变化
+    /// 不写）→ 校验 → 单事务整体替换（fields / urls / tags / sections
+    /// 均「删旧插新」语义）。
     ///
     /// TOTP **默认保留**（[`TotpUpdate::Keep`]）：FFI 刻意不下发 secret，
     /// 调用方无法重提交原密钥，默认删旧会让编辑静默丢失 TOTP。三态
@@ -449,6 +449,77 @@ impl VaultSession {
         let mut guard = self.unlocked()?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         cf_importer::import_csv(path, &mut state.store)
+    }
+
+    // ------------------------------------------------------- 账户安全
+
+    /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，
+    /// 不重加密全库）。
+    ///
+    /// 门禁：需解锁态（1001）——与 enable_biometric 一致（设置页在解锁后
+    /// 可达）。流程：new_password 过 zxcvbn 门禁（<3 → 1010，先于任何
+    /// 文件操作）→ recover_dek(old_password) 重验证旧密码（错 → 1002，
+    /// header 未动）→ 新盐 + 新 KEK → 重封装 wrapped_dek / verifier →
+    /// `write_header` 原子重写 → 内存 header 副本更新。
+    ///
+    /// bio 封装（wrapped_dek_bio）不动：K_bio 封装的是 DEK 本身，换密后
+    /// Touch ID 解锁照常可用。`new_kdf` 可选传入新档位顺带升级 KDF
+    /// （M0-② 标定后的补偿路径）；`None` 沿用当前 header.kdf 参数。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 旧密码错 / 1010 新密码弱 / 5002 new_kdf 越界 /
+    /// 1007 密钥操作失败 / 5001·1005 写失败（磁盘 header 保持原样）。
+    pub fn change_password(
+        &self,
+        old_password: &str,
+        new_password: &str,
+        new_kdf: Option<cf_crypto::kdf::KdfParams>,
+    ) -> SessionResult<()> {
+        let _guard = self.unlocked()?;
+        let header = self.header_snapshot();
+        let new_header = crate::change_password::change_password_impl(
+            &self.vault_dir,
+            &header,
+            old_password,
+            new_password,
+            new_kdf,
+        )?;
+        // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
+        *self.header_guard() = new_header;
+        Ok(())
+    }
+
+    // ------------------------------------------------------ 历史版本
+
+    /// 列出条目的历史版本（version DESC，FR-2.9）。条目不存在 → 1011。
+    pub fn list_history(
+        &self,
+        item_id: &str,
+    ) -> SessionResult<Vec<crate::usecase::history::HistoryEntry>> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        usecase::history::list_history(&state.store, item_id)
+    }
+
+    /// 回滚条目到指定历史版本（FR-2.9）：以快照走正常 update 路径，
+    /// 回滚本身也是一次修改（可再回滚）。
+    pub fn restore_history(&self, item_id: &str, history_uuid: &str) -> SessionResult<()> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::history::restore_history(&mut state.store, item_id, history_uuid)
+    }
+
+    // ----------------------------------------------------- Watchtower
+
+    /// 运行 Watchtower 安全体检（FR-6.2 / FR-6.3）：重复密码（HMAC 指纹，
+    /// `audit_key` 注入）+ 弱密码复检 + 弱 URL。锁定态 → 1001。
+    pub fn run_watchtower(
+        &self,
+    ) -> SessionResult<crate::usecase::audit::WatchtowerReport> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        usecase::audit::run_watchtower(&state.store, &state.store.subkeys().audit_key)
     }
 
     // ------------------------------------------------------- 内部工具

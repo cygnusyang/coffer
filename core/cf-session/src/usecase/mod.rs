@@ -1,7 +1,14 @@
 //! 用例编排层（docs/07 §2.2）。
 //!
-//! - [`items`]：条目 CRUD 编排（校验前置 → 单事务写库）
-//! - [`search`]：标题搜索编排（方案 A：全量解密内存搜索）
+//! - [`items`]：条目 CRUD 编排（校验前置 → 单事务写库；update 替换前
+//!   写历史快照，FR-2.9）
+//! - [`search`]：条目搜索编排（方案 A：全量解密内存搜索；v0.2 扩展
+//!   多字段 + 词级近似匹配，FR-11.2）
+//! - [`history`]：条目历史版本编排（列表 / 回滚，FR-2.9）
+//! - [`audit`]：Watchtower 安全体检编排（重复密码 / 弱密码 / 弱 URL，
+//!   FR-6.2 / FR-6.3）
 
+pub mod audit;
+pub mod history;
 pub mod items;
 pub mod search;

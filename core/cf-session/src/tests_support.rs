@@ -1,4 +1,7 @@
-//! 测试支持工具（仅 `#[cfg(test)]` 编译）：临时目录与测试常量。
+//! 测试支持工具（仅 `#[cfg(test)]` 编译）：临时目录。
+//!
+//! 性能预算校准已上移至公开的 [`crate::testing`]（集成测试
+//! tests/*.rs 也需使用）。
 
 use std::fs;
 use std::path::PathBuf;

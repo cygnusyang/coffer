@@ -151,3 +151,23 @@ panic = "unwind"
 lto = true
 codegen-units = 1
 debug = true
+
+# ---------- Dev profile 加速（v0.2 G3，docs/09 §3.6 性能基线配套） ----------
+# debug 构建下 chacha20poly1305 / argon2 纯软件实现极慢（本仓库实测
+# 单次 AEAD open ~0.5ms），会使 1000 条搜索基线（<200ms）等性能测试
+# 在 dev profile 下失真。仅对这两个密码学包在 dev/test 下开 O3：
+# 行为不变（纯编译优化），release/bench 配置不受影响。
+# ⚠️ 本段触及共享的 workspace 根 Cargo.toml（G1/G2/G4 合并时注意保留）。
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+
+# 热点实现实际位于 chacha20 / poly1305（chacha20poly1305 的依赖 crate），
+# 需一并加速
+[profile.dev.package.chacha20]
+opt-level = 3
+
+[profile.dev.package.poly1305]
+opt-level = 3
+
+[profile.dev.package.argon2]
+opt-level = 3

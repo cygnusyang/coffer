@@ -56,6 +56,7 @@
 
 pub mod change_password;
 pub mod idle;
+pub mod reminder;
 pub mod testing;
 pub mod types;
 pub mod unlock;

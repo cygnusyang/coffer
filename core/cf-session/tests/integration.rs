@@ -533,6 +533,31 @@ fn 会话级空闲自动锁定() {
     assert!(!session.is_unlocked());
 }
 
+/// FR-14.2（会话级）：剪贴板清除时间五档配置——默认 30s、回环、
+/// 非法值拒绝、跨 lock 存活（与 idle_timeout 同策略）
+#[test]
+fn 会话级剪贴板清除时间配置() {
+    let (_base, session) = fresh_session("clip_it");
+
+    // 默认值 = 30s（向后兼容 macOS 现行固定行为）
+    assert_eq!(session.clipboard_clear_secs(), 30);
+    session.unlock(STRONG).unwrap();
+
+    // 五档回环（0 = 从不）
+    for secs in [10, 30, 60, 120, 0] {
+        session.set_clipboard_clear_secs(secs).unwrap();
+        assert_eq!(session.clipboard_clear_secs(), secs);
+    }
+
+    // 非法值拒绝（错误码 5002），原值保持
+    assert_eq!(session.set_clipboard_clear_secs(45).unwrap_err().code(), 5002);
+    assert_eq!(session.clipboard_clear_secs(), 0);
+
+    // 会话级配置：锁定后仍可读取
+    session.lock();
+    assert_eq!(session.clipboard_clear_secs(), 0);
+}
+
 /// 验收 ⑧：zxcvbn score < 3 硬拒绝建库（错误码 1010，不只是提示）
 #[test]
 fn 弱密码硬拒绝建库() {

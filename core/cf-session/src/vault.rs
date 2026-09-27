@@ -10,6 +10,7 @@
 //! │           └── ItemStore 持 SubKeys（全部 ZeroizeOnDrop）
 //! ├── last_activity: AtomicI64                         ← 平台侧喂时间
 //! └── idle_timeout_secs: AtomicI64                     ← 0 / 负值 = 禁用自动锁定
+//!     clipboard_clear_secs: AtomicI64                  ← 0 = 从不清除（FR-14.2）
 //! ```
 //!
 //! `lock()` 把 `state` 置为 `None` → `UnlockedState` 立即 drop →
@@ -38,6 +39,7 @@ use cf_domain::totp_data::TotpUpdate;
 use cf_store::ItemListFilter;
 
 use crate::idle;
+use crate::reminder;
 use crate::types::{ItemDetails, TotpCode, TotpDetail, VaultInfo};
 use crate::unlock_bio;
 use crate::usecase;
@@ -46,6 +48,30 @@ use cf_domain::CfError;
 
 /// 默认空闲超时（FR-1.6 / docs/07 §7 T05：默认 5 分钟，可配置）。
 pub const DEFAULT_IDLE_TIMEOUT_SECS: i64 = 300;
+
+/// 剪贴板自动清除的定时档位（秒，FR-14.2 / docs/09 §2 v0.2.0 范围）。
+///
+/// 「从不」档不计入本表：以 `0` 表示，见 [`validate_clipboard_clear_secs`]。
+pub const CLIPBOARD_CLEAR_TIERS_SECS: [i64; 4] = [10, 30, 60, 120];
+
+/// 默认剪贴板自动清除时间（FR-14.2：30s，与 macOS 现行固定 30s 行为向后兼容）。
+pub const DEFAULT_CLIPBOARD_CLEAR_SECS: i64 = 30;
+
+/// 校验剪贴板自动清除档位（FR-14.2）。
+///
+/// 合法值：[`CLIPBOARD_CLEAR_TIERS_SECS`] 中的 10 / 30 / 60 / 120 秒，
+/// 或 `0`（「从不」——表示法与 FR-14.1 自动锁定「从不」档语义一致：
+/// 0 = 不启用定时清除）。其余值（含负数与任意非档位秒数）返回
+/// [`CfError::InvalidArgument`]（错误码 5002），拒绝后原配置不变。
+pub fn validate_clipboard_clear_secs(secs: i64) -> SessionResult<()> {
+    if secs == 0 || CLIPBOARD_CLEAR_TIERS_SECS.contains(&secs) {
+        Ok(())
+    } else {
+        Err(CfError::InvalidArgument(format!(
+            "clipboard clear secs must be 10/30/60/120 or 0 (never), got {secs}"
+        )))
+    }
+}
 
 /// 解锁态（docs/07 §2.2 `UnlockedState` 的落地形态，见模块文档偏离说明）。
 pub(crate) struct UnlockedState {
@@ -68,6 +94,9 @@ pub struct VaultSession {
     state: Mutex<Option<UnlockedState>>,
     last_activity: AtomicI64,
     idle_timeout_secs: AtomicI64,
+    /// 剪贴板自动清除时间（秒，FR-14.2）；0 = 从不清除。会话级配置，
+    /// 与 `idle_timeout_secs` 同策略：跨 lock 存活，不随解锁态丢弃。
+    clipboard_clear_secs: AtomicI64,
 }
 
 impl VaultSession {
@@ -82,6 +111,7 @@ impl VaultSession {
             header: Mutex::new(header),            state: Mutex::new(None),
             last_activity: AtomicI64::new(crate::unix_now().unwrap_or(0)),
             idle_timeout_secs: AtomicI64::new(DEFAULT_IDLE_TIMEOUT_SECS),
+            clipboard_clear_secs: AtomicI64::new(DEFAULT_CLIPBOARD_CLEAR_SECS),
         })
     }
 
@@ -177,6 +207,58 @@ impl VaultSession {
         } else {
             false
         }
+    }
+
+    // ------------------------------------------------- 剪贴板清除（FR-14.2）
+
+    /// 设置剪贴板自动清除时间（FR-14.2 / docs/09 §2 v0.2.0 范围）。
+    ///
+    /// 合法档位：10 / 30 / 60 / 120 秒；`0` 表示「从不清除」（与 FR-14.1
+    /// 自动锁定「从不」档语义一致）。非法值（含负数）返回
+    /// [`CfError::InvalidArgument`]，且不改变当前配置。
+    ///
+    /// 会话级元配置，与 [`VaultSession::set_idle_timeout_secs`] 同策略：
+    /// 无解锁门禁、跨 `lock()` 存活（清除定时器由平台侧执行）。
+    pub fn set_clipboard_clear_secs(&self, secs: i64) -> SessionResult<()> {
+        validate_clipboard_clear_secs(secs)?;
+        self.clipboard_clear_secs.store(secs, Ordering::Release);
+        Ok(())
+    }
+
+    /// 当前剪贴板自动清除时间（秒）；`0` 表示从不清除。
+    #[must_use]
+    pub fn clipboard_clear_secs(&self) -> i64 {
+        self.clipboard_clear_secs.load(Ordering::Acquire)
+    }
+
+    // ------------------------------------------------------- 备份提醒
+
+    /// 上次成功备份时间（Unix 秒；从未备份返回 `None`，FR-8.5）。
+    ///
+    /// 打点方为 `cf_exporter::export_backup` 成功路径（写源库
+    /// `meta.last_backup_at`），本方法只读。门禁：需解锁态（1001）。
+    pub fn last_backup_at(&self) -> SessionResult<Option<i64>> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        state.store.repos().meta.last_backup_at()
+    }
+
+    /// 是否应提醒备份（FR-8.5，docs/09 §2.2）：从未备份，或距上次
+    /// 成功备份 `>= threshold_secs` 秒 → 应提醒；`threshold_secs <= 0`
+    /// 视为禁用（永不提醒）。判定规则见 [`crate::reminder`]；
+    /// `now_secs` 由平台注入（与空闲自动锁定同模式，可测试）。
+    ///
+    /// 门禁：需解锁态（1001）。
+    pub fn should_suggest_backup(
+        &self,
+        threshold_secs: i64,
+        now_secs: i64,
+    ) -> SessionResult<bool> {
+        Ok(reminder::should_suggest(
+            self.last_backup_at()?,
+            now_secs,
+            threshold_secs,
+        ))
     }
 
     // ------------------------------------------------ 生物识别（docs/08）
@@ -571,6 +653,7 @@ fn vault_info(
 
 #[cfg(test)]
 mod tests {
+    use super::DEFAULT_CLIPBOARD_CLEAR_SECS;
     use crate::unlock::{create_vault_with_kdf, open_vault};
     use cf_crypto::kdf::KdfParams;
 
@@ -665,6 +748,47 @@ mod tests {
         assert!(session.is_unlocked());
     }
 
+    /// FR-14.2：默认剪贴板清除时间为 30s（向后兼容 macOS 现行固定行为）
+    #[test]
+    fn 剪贴板清除时间默认三十秒() {
+        let base = crate::tests_support::temp_dir("clip_default");
+        let brief =
+            create_vault_with_kdf(&base, "剪贴板库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        assert_eq!(session.clipboard_clear_secs(), DEFAULT_CLIPBOARD_CLEAR_SECS);
+        assert_eq!(session.clipboard_clear_secs(), 30);
+    }
+
+    /// FR-14.2：五档（10/30/60/120/从不=0）存取回环
+    #[test]
+    fn 剪贴板清除时间五档存取回环() {
+        let base = crate::tests_support::temp_dir("clip_tiers");
+        let brief =
+            create_vault_with_kdf(&base, "剪贴板档位库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        for secs in [10, 30, 60, 120, 0] {
+            session.set_clipboard_clear_secs(secs).unwrap();
+            assert_eq!(session.clipboard_clear_secs(), secs);
+        }
+    }
+
+    /// FR-14.2：非法档位（45、负数等）拒绝，错误码 5002，且原值保持不变
+    #[test]
+    fn 剪贴板清除时间非法值拒绝() {
+        let base = crate::tests_support::temp_dir("clip_bad");
+        let brief =
+            create_vault_with_kdf(&base, "剪贴板非法库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        session.set_clipboard_clear_secs(60).unwrap();
+        for bad in [45, 5, 121, -1, i64::MIN, i64::MAX] {
+            let err = session.set_clipboard_clear_secs(bad).unwrap_err();
+            assert_eq!(err.code(), 5002, "非法值 {bad} 应报 InvalidArgument");
+            assert_eq!(session.clipboard_clear_secs(), 60, "拒绝后配置保持原值");
+        }
+    }
+
     /// SubKeys / SessionKey 的 ZeroizeOnDrop 编译期断言：
     /// lock() 置 None 后解锁态 drop，子密钥类型保证清零（NFR-SEC-04）。
     #[test]
@@ -672,5 +796,49 @@ mod tests {
         fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
         assert_zeroize_on_drop::<cf_crypto::subkeys::SubKeys>();
         assert_zeroize_on_drop::<cf_crypto::aead::SessionKey>();
+    }
+
+    /// FR-8.5 备份提醒：从未备份 → 应提醒；打点后阈值内不提醒、
+    /// 超阈值提醒、阈值 <= 0 禁用（时间注入，与空闲自动锁定同模式）
+    #[test]
+    fn 备份提醒按阈值判定() {
+        let base = crate::tests_support::temp_dir("backup_reminder");
+        let brief = create_vault_with_kdf(&base, "提醒库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        // 从未备份（meta 缺行）→ 应提醒
+        assert!(session.should_suggest_backup(7 * 86_400, 1_000).unwrap());
+
+        // 打点「上次备份 = 1000」（模拟 exporter 成功路径的写入）
+        let guard = session.unlocked().unwrap();
+        let state = guard.as_ref().unwrap();
+        state
+            .store
+            .repos()
+            .meta
+            .set_last_backup_at(1_000)
+            .unwrap();
+        drop(guard);
+
+        assert!(session.should_suggest_backup(300, 1_300).unwrap(), "恰达阈值应提醒");
+        assert!(session.should_suggest_backup(300, 9_999).unwrap(), "超阈值应提醒");
+        assert!(!session.should_suggest_backup(300, 1_299).unwrap(), "阈值内不提醒");
+        assert!(!session.should_suggest_backup(0, 9_999_999).unwrap(), "0 视为禁用");
+        assert!(!session.should_suggest_backup(-1, 9_999_999).unwrap(), "负值视为禁用");
+    }
+
+    /// FR-8.5 门禁：锁定态查询提醒状态拒绝（错误码 1001）
+    #[test]
+    fn 锁定态拒绝备份提醒查询() {
+        let base = crate::tests_support::temp_dir("backup_reminder_locked");
+        let brief =
+            create_vault_with_kdf(&base, "锁定提醒库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        let err = session.last_backup_at().unwrap_err();
+        assert_eq!(err.code(), 1001);
+        let err = session.should_suggest_backup(300, 1_000).unwrap_err();
+        assert_eq!(err.code(), 1001);
     }
 }

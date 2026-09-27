@@ -49,6 +49,33 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
+## BUG-3（🟡 未修复）：安全设置 sheet 无关闭控件——失败后被困页面
+
+**登记日期**：2026-09-27（cygnus 真机报告）
+**状态**：🟡 待修（修复成本极低，见修复路径）
+
+### 现象
+
+点「启用 Touch ID 解锁」→ 展开主密码确认行 → 启用失败（BUG-2 的 -34018）→
+错误弹窗点掉后，**安全设置 sheet 没有任何可见的关闭方式**，用户被困在页面内。
+（无 Touch ID 解锁失败的场景同样触发——该 sheet 从一开始就没有退出口。）
+
+### 根因（代码审计确认）
+
+`SecuritySettingsView` 经 `MainView.swift:105` 的
+`.sheet(isPresented: $showSecuritySettings)` 呈现，但视图内部：
+- 无 toolbar / 无「完成」按钮 / 无 `@Environment(\.dismiss)` 调用
+- 密码确认行的「取消」只收起确认行（cancelPrompt），不关闭 sheet
+- Form 固定 frame 460×260，无拖拽关闭的标题栏区域
+
+### 修复路径（5 分钟）
+
+加 `@Environment(\.dismiss) private var dismiss`，Form 末尾挂
+`.toolbar { Button("完成") { dismiss() } }`（或底部显式关闭按钮）。
+顺带：BUG-2 修复后此页面仍需此控件（无论成败都要能退出）。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

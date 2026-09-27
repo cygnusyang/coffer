@@ -45,12 +45,12 @@
 
 | 推后项 | 版本 | 推后理由 |
 | --- | --- | --- |
-| Touch ID / 生物识别解锁 | v0.2 | 依赖 Keychain 封装链路（`wrapped_dek_biometric`）与 LocalAuthentication，独立横切面；主密码路径已闭环可用 |
-| 菜单栏常驻 + 全局快捷键 | v0.2 | 纯 UX 增强，主窗口流程先行验证数据链路 |
-| 1PUX / opvault / KDBX 导入 | v0.2+ | `categoryUuid` 映射表待真实样本校准（M0-③，D-02）；CSV 已覆盖最常见迁移需求 |
-| Watchtower 体检（重复/弱 URL/陈旧） | v0.2 | zxcvbn 强度已在创建/编辑时复用；批量体检非日常刚需 |
+| Touch ID / 生物识别解锁 | v0.2.0 | 依赖 Keychain 封装链路（`wrapped_dek_biometric`）与 LocalAuthentication，独立横切面；主密码路径已闭环可用 |
+| 菜单栏常驻 + 全局快捷键 | v0.2.0 | 纯 UX 增强，主窗口流程先行验证数据链路 |
+| 1PUX / opvault / KDBX 导入 | v0.2.0+ | `categoryUuid` 映射表待真实样本校准（M0-③，D-02）；CSV 已覆盖最常见迁移需求 |
+| Watchtower 体检（重复/弱 URL/陈旧） | v0.2.0 | zxcvbn 强度已在创建/编辑时复用；批量体检非日常刚需 |
 | 拟真 CLI | 推后（可能取消） | 纵切后 macOS App 本身就是端到端验证载体，CLI 的验证价值被取代 |
-| 条目历史版本 / 附件 / Passkey / 改主密码 / 多保险库 UI / 明文导出 | v0.2+ | 非日常使用最小集；表结构已建，仓库层后补 |
+| 条目历史版本 / 附件 / Passkey / 改主密码 / 多保险库 UI / 明文导出 | v0.2.0+ | 非日常使用最小集；表结构已建，仓库层后补 |
 | SHA-256/512 TOTP | 保持现状 | cf-session 显式拒绝（有意推迟，非遗漏） |
 | 深度搜索（用户名/URL/备注） | v0.1 仅标题 | docs/03 §3.3 + D-08 建议；性能实测后再开 |
 
@@ -62,7 +62,7 @@
 | **Password** | 完整 CRUD | 纯密码条目 |
 | **Secure Note** | 完整 CRUD | 多行备注 |
 | **Credit Card** | 完整 CRUD | 卡号（Concealed）、有效期、CVV |
-| **其余 18 类 + Custom** | 只读展示（导入兜底） | CSV 导入本就只产 Login 类数据；其余类别由 1PUX（v0.2）引入，`cf-domain` 模型已备好，届时只加模板 UI |
+| **其余 18 类 + Custom** | 只读展示（导入兜底） | CSV 导入本就只产 Login 类数据；其余类别由 1PUX（v0.2.0）引入，`cf-domain` 模型已备好，届时只加模板 UI |
 
 ---
 
@@ -73,7 +73,7 @@
 **Schema（对齐 docs/03 §3.1，缺口与修正见 §5 冲突清单 C-2/C-4）**：
 
 - 新增 `schema.rs`：一次性执行 §3.1 完整 DDL（meta / items / sections / fields / urls / tags / attachments / history / audit_local / totp / passkeys + 全部索引），PRAGMA 按 DDL 头注释（WAL、synchronous=FULL、foreign_keys=ON、page_size=4096），并写 `meta.schema_version = 1`。
-- **attachments / history / passkeys 三表只建不用**：格式一次性冻结为 v1，避免 v0.2 加表触发 schema 迁移（当前迁移执行体为空，`migrate()` 恒不支持——现在多建表是最便宜的"迁移"）。
+- **attachments / history / passkeys 三表只建不用**：格式一次性冻结为 v1，避免 v0.2.0 加表触发 schema 迁移（当前迁移执行体为空，`migrate()` 恒不支持——现在多建表是最便宜的"迁移"）。
 
 **仓库层（新增 `repo/` 模块）**：
 
@@ -144,7 +144,7 @@ impl Drop — UnlockedState 释放即清零；store 内明文缓存无（见搜�
 
 - `unlock.rs`：`create_vault` / `unlock` / `lock` 编排（如上数据流）。
 - `idle.rs`：`set_last_activity(ts)`、`is_expired(now, timeout)` 纯函数（时间注入，平台侧定时器驱动，docs/03 §11.2 决策对齐）。
-- `usecase/items.rs`：CRUD 编排——`cf-domain::validate_item` 前置校验 → `with_tx` 写库；update 前读旧快照（为 v0.2 history 预留接口，v0.1 不写 history 表）。
+- `usecase/items.rs`：CRUD 编排——`cf-domain::validate_item` 前置校验 → `with_tx` 写库；update 前读旧快照（为 v0.2.0 history 预留接口，v0.1 不写 history 表）。
 - `usecase/search.rs`：方案 A 内存搜索（docs/03 §3.3 伪代码）。**v0.1 不做常驻明文缓存**（autofill_cache 类似物）——每次搜索现解密（1000 条 ≈ 数毫秒级），锁定即无需清理，牺牲微小性能换内存清零边界的简单。
 - `lib.rs`：`SessionError` 迁移到 `cf_domain::CfError`（见 C-6）；现有 TotpSession/TOTP 编排保留，改从 `VaultSession` 取 `field_key`。
 
@@ -169,7 +169,7 @@ impl Drop — UnlockedState 释放即清零；store 内明文缓存无（见搜�
 | 会话对象生命周期 | `VaultSession` 为 `#[uniffi::export(Object)]`（Rust `Arc<VaultSession>`）；**新增 `CofferApp` 工厂 Object** 持有 `Mutex<HashMap<uuid, Arc<VaultSession>>>` | Swift 只持 Arc 引用计数，不管理生命周期；重复 `open_vault` 同一 uuid 返回同一实例，避免双会话并发写库；`lock_all()` 供 Swift 侧系统事件批量锁定 |
 | 密钥暴露面 | **DEK / SubKeys 永不跨 FFI**（类型不出现在任何接口签名中）；跨 FFI 只有条目明文字段 | 会话门禁 + 加解密全部在 Rust 侧强制（docs/02 §4.3） |
 | 错误映射 | cf-ffi 自持 `FfiError` enum（`#[derive(uniffi::Error)]`，带 `code: u16` + `message`），从 `cf_domain::CfError` 的错误码表（docs/03 §12）映射 | thiserror 类型不跨 FFI；UI 按 code 本地化，不解析 message 文本 |
-| 平台回调 | v0.1 **无** callback interface | 无生物识别（不回调）；剪贴板归 Swift（C-5）；CSV 导入量级小无进度条需求。`PlatformHost` 整体推后到 v0.2 生物识别时再定 |
+| 平台回调 | v0.1 **无** callback interface | 无生物识别（不回调）；剪贴板归 Swift（C-5）；CSV 导入量级小无进度条需求。`PlatformHost` 整体推后到 v0.2.0 生物识别时再定 |
 
 **v0.1 接口清单**（docs/03 §5 的子集，命名沿用）：
 
@@ -240,7 +240,7 @@ UI 原则：密码默认掩码；锁屏后 AppModel 清空已取回的明文状�
 
 - **RFC 4180**：`""` 转义、引号内换行、`\n` 与 `\r\n` 兼容。选型：**自写解析器**（约 150 行），理由：格式足够简单、可精确施加 DoS 上限、避免 `csv` crate 配置漂移；配 RFC 4180 边界用例测试（含引号内逗号/换行/引号、跨行字段）。
 - **DoS 上限**（docs/04 §4.2 D 类威胁）：文件 ≤ 50 MB、行数 ≤ 10 000、单字段 ≤ 64 KiB、列数 ≤ 64；超限报 `ImportFailed` 并指明行号。
-- **编码**：v0.1 支持 UTF-8（含 BOM 剥离）；无效 UTF-8 → 报错提示「请将导出文件转为 UTF-8 后重试」。GBK 回退（`encoding_rs`）推后 v0.2（见 C-7）。
+- **编码**：v0.1 支持 UTF-8（含 BOM 剥离）；无效 UTF-8 → 报错提示「请将导出文件转为 UTF-8 后重试」。GBK 回退（`encoding_rs`）推后 v0.2.0（见 C-7）。
 - 前导零：全列按字符串处理，禁止数值化。
 
 ### 3.2 字段映射（对齐 docs/03 §6.4.4）
@@ -259,7 +259,7 @@ UI 原则：密码默认掩码；锁屏后 AppModel 清空已取回的明文状�
 
 - **表头识别**：大小写不敏感匹配上述 9 列名；无法识别的表头 → 整文件拒绝（格式校验），**非空数据列的未知表头** → 记入 `unmapped_columns` 并在预检报告展示（不静默丢弃原则：未知列的值并入该条目 Notes，前缀「[未映射列 <名>]」）。
 - 缺失 Title 的行：预检告警，导入时以 `（无标题）` 兜底；全空行跳过。
-- **公式注入**：导入侧对以 `= + - @ \t` 开头的 Username/Notes/未映射列值**保留原值存储**（数据完整性优先），在预检 `warnings` 中按行号提示「该字段以公式前缀字符开头，若导出为 CSV 时将被转义」；**防护主战场在导出侧**（v0.2 导出时加 `'` 前缀，docs/03 §6.4.4）。Password 列不告警（密码以 `=` 开头合法且常见，Concealed 不可被表格软件解释为公式以外的攻击面——它本来就是要被复制出去的）。
+- **公式注入**：导入侧对以 `= + - @ \t` 开头的 Username/Notes/未映射列值**保留原值存储**（数据完整性优先），在预检 `warnings` 中按行号提示「该字段以公式前缀字符开头，若导出为 CSV 时将被转义」；**防护主战场在导出侧**（v0.2.0 导出时加 `'` 前缀，docs/03 §6.4.4）。Password 列不告警（密码以 `=` 开头合法且常见，Concealed 不可被表格软件解释为公式以外的攻击面——它本来就是要被复制出去的）。
 
 ### 3.3 预检报告（最小形态）
 
@@ -294,7 +294,7 @@ Swift `String` 不可清零、`NSArray`/值类型复制语义无法保证擦除�
 
 1. 明文只在取值那一刻跨越 FFI（`get_field_value` / `totp_code`），ItemDetails 结构体中 Password 字段只回掩码占位（如 `""`），真实值单独按需取。
 2. 取回即用（写剪贴板/临时展示），不进 AppModel 状态、不进 SwiftUI 环境对象持久化。
-3. Keychain（v0.2 生物识别用）一律 `ThisDeviceOnly`；库文件允许系统备份，密钥材料绝不跨设备（既有约束，重申）。
+3. Keychain（v0.2.0 生物识别用）一律 `ThisDeviceOnly`；库文件允许系统备份，密钥材料绝不跨设备（既有约束，重申）。
 
 ---
 
@@ -305,10 +305,10 @@ Swift `String` 不可清零、`NSArray`/值类型复制语义无法保证擦除�
 | C-1 | `macos/README.md` 写「计划 **M5** 阶段」，与概要设计 v1.2 / 开发计划的「macOS 优先（M3）」矛盾 | `macos/README.md` 首行 | 更新 README 状态段（纵切交付时一并改） |
 | C-2 | docs/03 §3.1 DDL 的 `totp` 表用 `enc_issuer`/`enc_account`（加密），现有 `TotpStore` 实现为明文 `issuer`/`account` TEXT；且实现多了 `created_at` 列（DDL 没有） | `core/cf-store/src/lib.rs` vs `docs/03` L424-434 | **以 DDL 为准**：v0.1 重构 `repo/totp.rs` 时改加密列；DDL 补 `created_at` 列（回改 docs/03，升 DDL v1 冻结前完成） |
 | C-3 | docs/02 §4.2 仍描述 `vault.lvvault` 为单 SQLite 文件，已被 docs/03 修正 A（目录形态）取代，02 未回改，且 `cf-format` 按目录实现 | `docs/02` §4.2 vs `cf-format/container.rs` | 在 docs/02 加一行指向修正 A 的标注（低优先） |
-| C-4 | meta 表的 `record_count` + `root_mac` 防删除/防回滚校验（docs/03 §3.1、docs/02 §8.2）现状无实现 | `cf-store` 无 meta 逻辑 | v0.1：建表含字段但只维护 `item_count`；`root_mac` 每事务重算全量 HMAC 成本高且解锁时校验语义未定，**推后 v0.2**，诚实告知（与 §8.2「无法绝对防回滚」一致） |
+| C-4 | meta 表的 `record_count` + `root_mac` 防删除/防回滚校验（docs/03 §3.1、docs/02 §8.2）现状无实现 | `cf-store` 无 meta 逻辑 | v0.1：建表含字段但只维护 `item_count`；`root_mac` 每事务重算全量 HMAC 成本高且解锁时校验语义未定，**推后 v0.2.0**，诚实告知（与 §8.2「无法绝对防回滚」一致） |
 | C-5 | docs/03 §5.5 `PlatformHost.copy_to_clipboard` 回调与 docs/02 §2.3 职责矩阵「macOS 层：剪贴板」矛盾 | 03 §5.5 vs 02 §2.3 | **剪贴板归 Swift 层**（changeCount 轮询清除必须走 AppKit，Rust 做不了）；从 §5.5 删除该回调或标注仅 Android 用 |
 | C-6 | docs/03 §4.4 错误契约要求统一 `CfError`（含错误码表 §12），但 cf-store/cf-session 现状各自持私有错误类型（注释自称「待 cf-domain 落地后统一」） | `cf-store/src/lib.rs` L38-54、`cf-session/src/lib.rs` L26-49 | cf-domain 已落地，v0.1 必须完成迁移（FFI 错误映射依赖统一错误码），纳入 T01 |
-| C-7 | docs/03 §6.4.4 要求 CSV「无 BOM 则 UTF-8 失败回退 GBK」；GBK 解码需 `encoding_rs`（新增依赖） | docs/03 L1018 | v0.1 仅 UTF-8（BOM 剥离），GBK 回退随 v0.2 一并做；`encoding_rs` 为 MIT/Apache，许可无障碍 |
+| C-7 | docs/03 §6.4.4 要求 CSV「无 BOM 则 UTF-8 失败回退 GBK」；GBK 解码需 `encoding_rs`（新增依赖） | docs/03 L1018 | v0.1 仅 UTF-8（BOM 剥离），GBK 回退随 v0.2.0 一并做；`encoding_rs` 为 MIT/Apache，许可无障碍 |
 | C-8 | workspace `[profile.release] panic = "abort"` 与 UniFFI 的 panic→FFI 错误转换机制冲突：UniFFI 依赖 unwind 捕获 Rust panic 转为抛给 Swift 的错误，panic=abort 会让任何 Rust panic 直接杀死整个 App | `core/Cargo.toml` L120 | cf-ffi 的发布构建改为可 unwind（`[profile.release.package.cf-ffi]` 不可行，需改用自定义 profile 或将 panic 策略放宽为 `panic = "unwind"` + FFI 层 `catch_unwind` 兜底）；**在 T04 第一周验证** |
 | C-9 | docs/06 §9「近期工作重点」仍是「M1 收尾 → 拟真 CLI → M2 → M3」横向顺序，与纵切决策冲突 | `docs/06` §9 | 纵切方案批准后更新 docs/06（本设计为准，06 只记进度） |
 
@@ -322,7 +322,7 @@ Swift `String` 不可清零、`NSArray`/值类型复制语义无法保证擦除�
 | --- | --- | --- |
 | R-1 | **绑定版本漂移**：生成的 Swift 绑定与 Rust 侧 uniffi runtime 版本强耦合，混用版本导致 protocol 不匹配/链接失败 | 绑定只由 `tools/build_swift_bindings.sh` 统一生成，脚本头部断言 `uniffi` 版本；CoreBindings 目录 .gitignore 生成物还是入库？——**建议入库**并锁定版本，避免工程师环境差异 |
 | R-2 | **panic=abort**（见 C-8） | T04 首项验证；短期可在 FFI 边界 `catch_unwind` 包装 + 避免 panic（现有 crate 已禁 unwrap/expect，风险面小） |
-| R-3 | UniFFI async 的 Swift 并发注解兼容性（0.3x 系列多次改动 Sendable 标注） | 本设计全同步接口，绕开；v0.2 若引入 async 需重新评估 |
+| R-3 | UniFFI async 的 Swift 并发注解兼容性（0.3x 系列多次改动 Sendable 标注） | 本设计全同步接口，绕开；v0.2.0 若引入 async 需重新评估 |
 | R-4 | Object 类型（`Arc<VaultSession>`）在 Swift 侧被提前释放导致 DEK drop | `CofferApp` 注册表持强引用，App 退出时统一 `lock_all()`；Session 释放即密钥清零，不存在悬垂密钥 |
 | R-5 | 静态库 + modulemap 引入 Xcode 的签名/搜索路径问题（首次搭建最常见卡点） | T04 用最小 Demo（一个 `add(a,b)` 函数）先打通端到端构建再上真实接口（即 M0-① 的补课） |
 | R-6 | `uniffi-bindgen` 生成代码依赖 Swift 5.7+ 特性，Xcode 版本差异 | 锁定 Xcode 15+（macOS 14 SDK 本就要求） |

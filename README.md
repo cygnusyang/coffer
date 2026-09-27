@@ -34,7 +34,7 @@
 | **22 类条目** | Login、Credit Card、Identity、Passport、SSH Key 等 22 类模板 + 自定义字段（"22 类"的口径与来源见 `docs/03-详细设计.md` §4.1） | ✅ 已实现（`cf-domain`） |
 | **TOTP** | 内置验证码生成（RFC 6238），当前支持 SHA-1 | ✅ 已实现，全链路测试绿 |
 | **从 1PUX / CSV 迁移** | 1PUX / CSV 导入，字段映射逐项可核对、未知字段不静默丢弃 | 🟡 CSV 导入已交付（`cf-importer`）；1PUX 待真实样本类别校准 |
-| **Passkey** | 完整能力进 v1.0 | 平台验证未完成 |
+| **Passkey** | 完整能力进 v1.0.0 | 平台验证未完成 |
 | **离线安全检查** | 弱密码 / 重复密码 / 弱 URL / 陈旧密码检测 | 🟡 仅 zxcvbn 强度评估可用，检测项未实现 |
 | **原生而非 Electron** | Android = Kotlin + Compose；macOS = Swift + SwiftUI | 🟡 macOS 端 v0.1 已交付；Android 端未开始（M5） |
 | **开源 MIT** | 代码可审计、可验证 | ✅ |
@@ -85,7 +85,7 @@ Rust 工作区（`core/`）11 个 crate：
 | `cf-ffi` | 唯一对外边界：UniFFI 类型与错误映射，暴露给 Kotlin / Swift |
 | `cf-testkit` | 测试夹具、合成样本生成、跨端一致性比对辅助 |
 
-设计文档：`docs/01-需求分析.md` → `docs/02-概要设计.md` → `docs/03-详细设计.md` → `docs/04-系统设计.md` → `docs/05-Argon2id 参数标定.md`。进度追踪见 `docs/06-开发计划.md`。
+设计文档：`docs/01-需求分析.md` → `docs/02-概要设计.md` → `docs/03-详细设计.md` → `docs/04-系统设计.md` → `docs/05-Argon2id 参数标定.md`。进度追踪见 `docs/06-开发计划.md`；版本计划见 `docs/09-版本开发计划.md`。
 
 ---
 
@@ -102,8 +102,8 @@ Rust 工作区（`core/`）11 个 crate：
 
 **当前进展（2026-09-27）**：
 
-- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试共 **422 个用例**，门禁命令下**实际执行 420 条、全部通过**
-- ⚠️ 另 2 条**不纳入门禁**，且是**两类不同问题**：1 条 1 GiB KDF 用例在 debug 档资源耗尽、会长时间挂起；1 条单次墙钟断言（`千条搜索基线`）真实 p50 ≈ 77 ms、余量 2.6×，但 **20 次记录执行中 3 次失败**（273 / 339 / 362 ms，为 200 ms 预算的 1.37–1.81 倍；计数口径与逐条出处见 `docs/09-版本路线图.md` §1.3 与附录 B.4），**已确证为 flaky**；其中**两次**失败发生在**仅选中该 1 条**时（`41 filtered out`，机器输出）→ **与同 binary 兄弟测试的并发无关**。执行条件不受控（load 2.95–19），**足以确证 flaky、不足以给出失败率 —— 不得引用任何百分比**；触发因素是**瞬时停顿**（swap 换入换出 / 页错误 / 调度抖动），**与负载高低不相关**。**测试不能直接跑 `cargo test`**，须用「测试与质量门」给出的门禁命令；根因登记在 `docs/KNOWN-ISSUES.md` **BUG-4**
+- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **423 个用例**，门禁命令下 **422 条执行通过**（另 1 条标 `#[ignore]`，是 1 GiB KDF 重载荷用例，release 人工独占）
+- ℹ️ 门禁命令为 `cargo test --workspace --no-fail-fast`（**须在 `core/` 下执行**）。历史上曾有两条用例需要 `--skip`（1 GiB KDF 资源耗尽、`千条搜索基线` 单次墙钟断言 flaky），**BUG-4 已于 2026-09-27 修复，`--skip` 不再需要**；根因与修复见 `docs/KNOWN-ISSUES.md` **BUG-4**
 - ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零，实现并测试通过
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通
 - 🟡 `cf-audit`：密码强度评估（zxcvbn）与基础密码生成两个函数可用；Watchtower 检测未实现
@@ -113,7 +113,7 @@ Rust 工作区（`core/`）11 个 crate：
 - ⬜ **尚未实现**：1PUX 导入、数据导出（FR-8，故库文件是唯一数据载体）、Android 端 UI
 
 > **已有可用的构建产物**：macOS v0.1 纵切已交付，`./tools/build_macos_app.sh` 可构建出 `macos/build/Coffer.app`（构建命令与签名核查方法见 `macos/README.md`）。
-> 请不要用它存真实密码。**此限制在数据导出（FR-8）随 v0.2 交付后解除**——当前库文件是唯一数据载体，放进去的密码取不回来。
+> 请不要用它存真实密码。**此限制在数据导出（FR-8）随 v0.2.0 交付后解除**——当前库文件是唯一数据载体，放进去的密码取不回来。
 > 诚实说明：TOTP、CSV 导入、存储引擎已实现；1PUX 导入与数据导出（FR-8）还没有；"功能丰富"是目标而非现状。
 
 ---
@@ -128,11 +128,8 @@ cd core
 cargo build            # 编译整个 workspace
 cargo clippy --all-targets -- -D warnings   # 零警告（缺 -- -D warnings 时有警告也退出 0，不可验证）
 
-# 测试：必须带 --no-fail-fast 与两条 --skip，否则会首败即停（假绿）或长时间挂起
-# 被跳过的两条不属于常规门禁：1 条 1 GiB KDF 慢测 + 1 条单次墙钟 flaky 用例
-# 名字须逐字一致；写错时 libtest 不报错、只是静默不跳过。详见「测试与质量门」
-cargo test --workspace --no-fail-fast -- \
-  --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线
+# 测试：必须带 --no-fail-fast，否则首败即停（假绿）。BUG-4 修复后不再需要任何 --skip
+cargo test --workspace --no-fail-fast
 ```
 
 > 若通过 rustup 以 `--no-modify-path` 安装，新终端需先 `source "$HOME/.cargo/env"`。
@@ -147,9 +144,9 @@ cargo test --workspace --no-fail-fast -- \
 
 | 检查项 | 结果 |
 | --- | --- |
-| 测试门禁命令 | ✅ 须按此执行：`cargo test --workspace --no-fail-fast -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线`。即 **422 = 420 执行通过 + 2 条排除**（含 RFC 6238 标准测试向量）；**不存在「421 通过 / 1 失败」这一构成** —— 被排除的两条分属挂起与 flaky 两类不同问题，不可合并计数。被跳过的两条见下行，根因见 `docs/KNOWN-ISSUES.md` **BUG-4** |
-| 被跳过的 2 条 | ⚠️ ① `极端kdf参数建库记录与解锁往返` —— 1 GiB Argon2id，debug 下单条 >20 分钟、RSS ≈ 1 GB（资源耗尽类），**不是任何验收项的唯一证据**（它断言的是与 AC-01 同链路的建库 → 解锁往返 → 错密码 1002，只是把参数推到极端；该链路已由门禁内的常规参数用例覆盖）；② `千条搜索基线` —— 单次墙钟断言（1000 条 < 200 ms），真实 p50 ≈ 77 ms、余量 2.6×，但 **20 次记录执行中 3 次失败**（273 / 339 / 362 ms；计数口径与逐条出处见 `docs/09-版本路线图.md` §1.3 与附录 B.4）、**已确证为 flaky**；其中**两次**失败发生在**仅选中该 1 条**时（`41 filtered out`，机器输出）→ **与同 binary 兄弟测试的并发无关**，且同一 load（13.64）下出现一失败一通过 → **与负载无关**。**失败率不可导出，不得引用任何百分比**，**测试本身不可用** |
-| 跳过项的记账 | ⚠️ 跳过 ② 意味着 **FR-11.4 的验收证据不在门禁内**，由**独立性能作业**承担：**需求满足（实测 p50 ≈ 77 ms、余量 2.6×）；证据链不可用（测试 flaky）** —— 这不是性能降级，**也不得只记 ✅** |
+| 测试门禁命令 | ✅ `cargo test --workspace --no-fail-fast`（**须在 `core/` 下执行**）。2026-09-27 实测 **422 passed**（另有 3 ignored：1 条 1 GiB KDF 用例标 `#[ignore]`、release 人工独占，2 条既有 doctest）。`--no-fail-fast` 必需：否则首败即停，后续 crate 与全部 doctest 一次都不跑 → 假绿。**BUG-4 已修复，不再需要任何 `--skip`**（此前需跳过的两条：1 GiB KDF 资源耗尽、`千条搜索基线` 单次墙钟断言 flaky），根因见 `docs/KNOWN-ISSUES.md` **BUG-4** |
+| 门禁的两条前提 | ⚠️ ① `cargo` 可能不在 PATH 上（非交互 shell / 新终端 / 脚本）→ 退出码 **127**、命令**根本没跑**：先 `export PATH="$HOME/.cargo/bin:$PATH"`；② 接了管道时 `$?` 取的是管道最后一个命令的状态，`… 2>&1 \| tail -3` 恒为 0 → zsh 用 `${pipestatus[1]}`（1-indexed、小写），或先 `set -o pipefail`。两者叠加即**静默假绿** |
+| 门禁覆盖边界 | ⚠️ 门禁只覆盖 **Rust 侧**（`cargo test` / `cargo clippy`）与构建签名（`build_macos_app.sh` 只作 `swiftc -O` **编译**，编译 ≠ 测试；`codesign --verify --strict` 验的是签名与包结构）。**Swift / UI 侧行为没有自动门禁**（仓库无 CI），其 ✅ 证据在门禁之外 |
 | `cargo clippy --all-targets -- -D warnings` | ✅ **零警告** |
 | `cargo build` | ✅ 通过，无警告 |
 | 生产代码 `unsafe` / `unwrap()` / `expect()` | 🚫 编译期禁止（deny） |

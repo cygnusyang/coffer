@@ -1,4 +1,4 @@
-# Coffer Touch ID 解锁设计（v0.2 主件）
+# Coffer Touch ID 解锁设计（v0.2.0 主件）
 
 | 项 | 内容 |
 | --- | --- |
@@ -361,8 +361,8 @@ struct BiometricKeychain {
 
 | 功能 | 约束 | 出处 |
 | --- | --- | --- |
-| change_password（v0.2+） | 重封装模式：DEK 不变 → `wrapped_dek_bio` **无需变动**（bio 封装封的是 DEK，与 KEK 无关）；完全重加密模式（新 DEK）：必须同步用 K_bio 重封 bio → 重写 `biometric_wrap.wrapped_dek_b64`；且改密流程必须校验：若 bio 已启用而 Keychain 项已失效（BioStale），重加密后应清 header bio（避免封装一个「永不可达」的 DEK 副本——无安全危害但留脏数据） | D-6 推论 |
-| delete_vault（v0.2+） | 必须同步删除对应 Keychain 项（account=vault_uuid） | §3.3 |
+| change_password（v0.2.0+） | 重封装模式：DEK 不变 → `wrapped_dek_bio` **无需变动**（bio 封装封的是 DEK，与 KEK 无关）；完全重加密模式（新 DEK）：必须同步用 K_bio 重封 bio → 重写 `biometric_wrap.wrapped_dek_b64`；且改密流程必须校验：若 bio 已启用而 Keychain 项已失效（BioStale），重加密后应清 header bio（避免封装一个「永不可达」的 DEK 副本——无安全危害但留脏数据） | D-6 推论 |
+| delete_vault（v0.2.0+） | 必须同步删除对应 Keychain 项（account=vault_uuid） | §3.3 |
 | 导出/打包 `.lvvault` | header 内 `biometric_wrap`（密文）允许随包迁移，但 **K_bio 不迁移**（ThisDeviceOnly）→ 换机后 bio 通道自然失效，回退主密码，行为正确无需特判；可在导入时提示「生物识别解锁需在本机重新启用」 | D-3/D-4 推论 |
 
 ---
@@ -374,7 +374,7 @@ struct BiometricKeychain {
 | Q-1 | 沙盒 App 的 Keychain ACL 对「其他进程读取」的精确行为（拒绝 vs 弹允许框 vs errSecInteractionNotAllowed） | T-1 结论与 §5 回填 | T05-④ 真机实测；若存在允许框路径，评估在 ACL 中固化（`SecAccess` 旧 API 已弃用，可能需接受拒绝语义即可） |
 | Q-2 | `itemExists()` 仅查属性是否会触发认证弹窗 | LockView 按钮显隐的静默判定 | T03 实现时用 `kSecReturnAttributes` 验证；若仍触发，改为信任 `has_biometric_wrap()` + 首次 read 失败降级 |
 | Q-3 | `.biometryCurrentSet` 在「用户从未录入指纹但创建 item」时 macOS 的具体行为（创建成功/失败） | 无指纹设备的启用路径 | T05 验证；无论如何 UI 侧已被 canEvaluatePolicy 门禁挡住，属双保险 |
-| Q-4 | enable 时 1s Argon2id 重派生（D-6）是否影响体验 | 设置页开关延迟 | 可接受（一次性操作）；若反馈差，v0.3 可改「解锁态下用内存中……」——不可行，DEK 已 drop，维持现状 |
+| Q-4 | enable 时 1s Argon2id 重派生（D-6）是否影响体验 | 设置页开关延迟 | 可接受（一次性操作）；若反馈差，v0.3.0 可改「解锁态下用内存中……」——不可行，DEK 已 drop，维持现状 |
 | Q-5 | `LAContext.evaluatePolicy` 与 `kSecUseAuthenticationContext` 的弹窗时序在 macOS 14 的细节（两次弹窗 vs 合一） | UX | T05 实测；文档示例已按「提前 evaluate + 复用 context」写，若系统自动合并弹窗则更简 |
 | R-1 | cf-format `write_header` 原子替换对「启用态字段」的既有覆盖是否完备 | T01-⑥ | 现有原子写已覆盖，补启用态用例即可，风险低 |
 | R-2 | UniFFI `Vec<u8>` ↔ Swift `Data` 转换的拷贝语义（K_bio 在桥上被复制，Swift 侧副本不可清零） | 与 v0.1 明文跨桥同性质的已知局限（docs/07 §4.2），K_bio 是随机密钥非用户凭据，暴露窗口毫秒级 | 接受并记录；不做缓冲区体操 |
@@ -391,7 +391,7 @@ struct BiometricKeychain {
 | C-4 | docs/03 §1.3 示例中 `biometric_wrap.key_alias` 在 macOS 无语义（恒 null） | docs/03 §1.3 | 补一行字段说明「key_alias 仅 Android Keystore 使用；macOS 恒 null，定位由 service+account 承担」；`provider` 取值补充 `"touch_id"` |
 | C-5 | docs/03 §2.7 改主密码流程未提及 wrapped_dek_bio | docs/03 §2.7 | 补注（本文 §10 的约束）：重封装模式无需动 bio；完全重加密必须重封 bio；顺带 delete_vault 约束 |
 | C-6 | docs/03 §12 错误码表已有 4001/4002 语义行，但无 macOS 触发点说明 | docs/03 §12 | 补注：4001 由 Swift 侧 LAContext/Keychain 失败或 Rust available=false 触发；4002 仅由 Swift 侧 Keychain 失效触发（Rust 不产生 4002） |
-| C-7 | docs/07 §2.3「平台回调 v0.1 无 callback interface；PlatformHost 整体推后到 v0.2 生物识别时再定」——本设计证明 macOS 生物识别**不需要**回调 | docs/07 §2.3 | 在 docs/07 或本文状态：PlatformHost 回调仅在 Android 侧按需重启论证（D-01 同步收窄），macOS 维持零回调 |
+| C-7 | docs/07 §2.3「平台回调 v0.1 无 callback interface；PlatformHost 整体推后到 v0.2.0 生物识别时再定」——本设计证明 macOS 生物识别**不需要**回调 | docs/07 §2.3 | 在 docs/07 或本文状态：PlatformHost 回调仅在 Android 侧按需重启论证（D-01 同步收窄），macOS 维持零回调 |
 
 **docs/03 是否需要加 §2.x**：不加新节。§2.8 修订为双平台分述（C-1/C-2）即可，
 本文档（08）作为 macOS 实体设计被 §2.8 与 §10.4 引用。

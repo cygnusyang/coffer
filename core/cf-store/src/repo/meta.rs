@@ -21,6 +21,11 @@ pub const KEY_ITEM_COUNT: &str = "item_count";
 pub const KEY_RECORD_COUNT: &str = "record_count";
 /// meta 键：根 MAC（防回滚检测；v0.2 启用，C-4）。
 pub const KEY_ROOT_MAC: &str = "root_mac";
+/// meta 键：上次成功备份时间（Unix 秒；FR-8.5 备份提醒，docs/09 §2.2）。
+///
+/// 打点方为 cf-exporter 的 `export_backup` 成功路径（明文元数据，无需
+/// 解锁态）；缺行 = 从未备份过。
+pub const KEY_LAST_BACKUP_AT: &str = "last_backup_at";
 
 /// meta 表键值仓库。
 pub struct MetaRepo<'a> {
@@ -95,6 +100,16 @@ impl<'a> MetaRepo<'a> {
     pub fn set_vault_display_name(&self, name: &str) -> CfStoreResult<()> {
         self.set(KEY_VAULT_DISPLAY_NAME, name.as_bytes())
     }
+
+    /// 读取上次成功备份时间（Unix 秒）；从未备份过返回 `None`。
+    pub fn last_backup_at(&self) -> CfStoreResult<Option<i64>> {
+        self.get_i64(KEY_LAST_BACKUP_AT)
+    }
+
+    /// 写入上次成功备份时间（Unix 秒；由备份导出成功路径调用）。
+    pub fn set_last_backup_at(&self, unix_secs: i64) -> CfStoreResult<()> {
+        self.set_i64(KEY_LAST_BACKUP_AT, unix_secs)
+    }
 }
 
 #[cfg(test)]
@@ -148,5 +163,16 @@ mod tests {
         assert!(meta.vault_display_name().unwrap().is_none());
         meta.set_vault_display_name("我的密码库").unwrap();
         assert_eq!(meta.vault_display_name().unwrap().as_deref(), Some("我的密码库"));
+    }
+
+    /// 上次备份时间：缺行 = 从未备份，写入后可读回（FR-8.5）
+    #[test]
+    fn 上次备份时间往返() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        assert!(meta.last_backup_at().unwrap().is_none(), "新库从未备份");
+        meta.set_last_backup_at(1_700_000_000).unwrap();
+        meta.set_last_backup_at(1_700_000_100).unwrap(); // 二次备份覆盖
+        assert_eq!(meta.last_backup_at().unwrap(), Some(1_700_000_100));
     }
 }

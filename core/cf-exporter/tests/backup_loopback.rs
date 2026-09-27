@@ -647,3 +647,36 @@ fn 恢复产物通过_open_container() {
     remove_dir_all_quiet(&base);
     remove_dir_all_quiet(&target_base);
 }
+
+/// FR-8.5 备份提醒打点：导出成功后，源库 `meta.last_backup_at` 必须有值
+/// （Unix 秒，落在导出前后 1 秒窗口内）；失败导出不得打点。
+#[test]
+fn fr_8_5_export_stamps_last_backup_at() {
+    use cf_store::MetaRepo;
+
+    let base = temp_dir("fr_8_5_stamp");
+    let (vault_dir, _vault_uuid) = build_vault(&base);
+    let out_path = base.join("提醒.coffer");
+
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("系统时钟正常")
+            .as_secs() as i64
+    };
+    let before = now() - 1;
+    export_backup(&vault_dir, &out_path).expect("导出成功");
+    let after = now() + 1;
+
+    let conn = rusqlite::Connection::open(vault_dir.join("db.sqlite")).expect("打开源库成功");
+    let stamped = MetaRepo::new(&conn)
+        .last_backup_at()
+        .expect("读 meta 成功")
+        .expect("导出成功必须打点 last_backup_at");
+    assert!(
+        (before..=after).contains(&stamped),
+        "打点时间 {stamped} 应落在 [{before}, {after}]"
+    );
+
+    remove_dir_all_quiet(&base);
+}

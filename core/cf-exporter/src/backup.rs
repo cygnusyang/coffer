@@ -16,7 +16,9 @@
 //! - 打包前执行 `PRAGMA wal_checkpoint(TRUNCATE)` 合并 WAL 并排除
 //!   `-wal` / `-shm` 文件。checkpoint 失败（如会话并发 busy）**不视为
 //!   致命**（docs/09 §3.1 风险表）：WAL 未合并只意味着最新写入可能
-//!   不在备份里，不产生损坏。
+//!   不在备份里，不产生损坏；
+//! - 导出成功后给源库 `meta.last_backup_at` 打点（FR-8.5 备份提醒，
+//!   docs/09 §2.2），失败不致命（见 [`stamp_last_backup`]）。
 //!
 //! ## 校验边界（如实声明，见 crate 级文档）
 //!
@@ -40,6 +42,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cf_domain::CfError;
 use cf_format::header::{validate_header, Header, FORMAT_VERSION};
+use cf_store::repo::meta::MetaRepo;
+use cf_store::KEY_LAST_BACKUP_AT;
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
@@ -119,6 +123,10 @@ pub fn export_backup(vault_dir: &Path, out_path: &Path) -> Result<BackupExportRe
         .and_then(|()| finalize_and_verify(&tmp_path, out_path, files.len()));
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
+    } else {
+        // 导出成功 → 给源库 meta.last_backup_at 打点（FR-8.5，docs/09 §2.2）。
+        // 失败不致命（见 stamp_last_backup 文档），不影响导出结果。
+        stamp_last_backup(vault_dir);
     }
     result.map_err(export_err)
 }
@@ -132,9 +140,27 @@ fn export_err(e: CfError) -> CfError {
     }
 }
 
+/// 导出成功后给源库 `meta.last_backup_at` 打点（FR-8.5，docs/09 §2.2）。
+///
+/// 打点放在**导出成功路径**（本函数）而非会话编排层：`export_backup` 是
+/// CofferApp 级操作（锁定态可执行，TC-EXP-08），调用方（cf-ffi）不持有
+/// 解锁态 `ItemStore`；而 meta 表是明文元数据，短连接即可写——与
+/// [`checkpoint_wal`] 同一模式。任何失败静默忽略：打点缺失只导致备份
+/// 提醒时间戳滞后，备份本身已成功，不得让打点失败反过来否定导出。
+fn stamp_last_backup(vault_dir: &Path) {
+    let Ok(conn) = rusqlite::Connection::open(vault_dir.join(DB_FILE)) else {
+        return;
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(2));
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let _ = MetaRepo::new(&conn).set_i64(KEY_LAST_BACKUP_AT, now);
+}
+
 /// checkpoint WAL（TRUNCATE）。任何失败静默忽略——见模块文档「不致命」。
-fn checkpoint_wal(db_path: &Path) {
-    let Ok(conn) = rusqlite::Connection::open(db_path) else {
+fn checkpoint_wal(db_path: &Path) {    let Ok(conn) = rusqlite::Connection::open(db_path) else {
         return;
     };
     let _ = conn.busy_timeout(std::time::Duration::from_secs(2));

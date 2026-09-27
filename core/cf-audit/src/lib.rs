@@ -24,7 +24,9 @@
 //!
 //! - ✅ 密码强度评估（zxcvbn，FR-6.1）—— [`password_strength`]
 //! - ✅ 随机密码生成（passwords，FR-3，参数化：docs/07 §2.3 `PasswordGenOptions`）—— [`generate_password`]
-//! - ❌ 重复密码 / 弱 URL / 陈旧密码检测 —— 待实现（后续版本）
+//! - ✅ 密码短语生成（EFF 词表，FR-3.3，docs/09 §3.4）—— [`generate_passphrase`]
+//! - ✅ 重复密码 / 弱 URL 检测纯函数（FR-6.2 / FR-6.3，docs/09 §3.5）—— [`watchtower`]
+//! - ❌ 陈旧密码 / 泄露字典 / 无 2FA 检测 —— 不在本版（docs/09 §9）
 //!
 //! 参见 `README.md`「当前状态」与 `docs/04-系统设计.md` §10.1（阶段划分）。
 //!
@@ -36,6 +38,18 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
+
+mod passphrase;
+mod watchtower;
+
+pub use passphrase::{
+    generate_passphrase, PassphraseOptions, MAX_SEPARATOR_CHARS, MAX_WORD_COUNT,
+    MIN_SEPARATOR_CHARS, MIN_WORD_COUNT,
+};
+pub use watchtower::{
+    find_duplicate_groups, find_http_urls, find_weak_passwords, password_fingerprint,
+    PasswordFingerprint, WatchtowerReport, FINGERPRINT_KEY_LEN, WEAK_PASSWORD_SCORE_THRESHOLD,
+};
 
 /// 生成密码的最小长度（FR-3.2：长度 8–100）。
 pub const MIN_PASSWORD_LEN: usize = 8;

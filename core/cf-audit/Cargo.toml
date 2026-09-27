@@ -14,6 +14,15 @@ thiserror = { workspace = true }
 zxcvbn = { workspace = true }
 # FR-3 随机密码生成（passwords，CSPRNG 后端）
 passwords = { workspace = true }
+# FR-6.2 重复密码指纹（HMAC-SHA256，docs/03 §8 AUD-02 禁止明文比较）
+hmac = { workspace = true }
+sha2 = { workspace = true }
+# 指纹 b64 编码（与 cf-format 同版本；base64 0.22 编解码 API 稳定）
+base64 = "0.22"
+# FR-3.3 密码短语生成：OsRng（操作系统 CSPRNG，FR-3.5/NFR-SEC-06）
+#         0.8 与 docs/09 §3.4 选型一致；OsRng 需显式启用 getrandom 特性
+rand = { version = "0.8", features = ["getrandom"] }
 
-# 状态：强度评估 / 密码生成冒烟已实现（M1 阶段），
-#       重复密码 / 弱 URL / 陈旧密码检测待实现
+# 状态：强度评估 / 随机密码 / 密码短语（FR-3.3）/ 重复密码与弱 URL 纯函数
+#       （FR-6.2 / FR-6.3）已实现（v0.2，docs/09 §3.4 / §3.5）；
+#       陈旧密码 / 泄露字典 / 无 2FA 检测不在本版（docs/09 §9）

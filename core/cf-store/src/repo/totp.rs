@@ -298,6 +298,7 @@ impl TotpStore {
                 hist_key: SessionKey::new([0u8; 32]),
                 manifest_key: SessionKey::new([0u8; 32]),
                 attach_mac_key: SessionKey::new([0u8; 32]),
+                audit_key: SessionKey::new([0u8; 32]),
             },
         })
     }

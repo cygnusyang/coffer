@@ -3,8 +3,8 @@
 //!
 //! **全量解密内存搜索**：每次查询现解密（不建常驻明文缓存——锁定即无需
 //! 清理，牺牲微小性能换内存清零边界的简单）。1000 条量级实测毫秒级，
-//! release 档远低于 200 ms 基线（见下方 `千条搜索基线` 测试；基线断言
-//! 按 debug/release 分档，N=3 采样取最小值抗瞬时停顿）。
+//! release 档远低于 200 ms 基线（见下方 `千条搜索基线` 测试；预算用
+//! `testing::perf_budget` 按机校准，N=3 采样取最小值抗瞬时停顿）。
 //!
 //! 规则：
 //!
@@ -349,14 +349,16 @@ mod tests {
         assert_eq!(search(&store, "caf\u{00E9}").unwrap().len(), 1);
     }
 
-    /// 1000 条模拟：搜索 ≤ 200 ms（docs/07 §7 T02 验收 ⑥，基线记录）。
+    /// 1000 条模拟：搜索 ≤ 200 ms 名义基线（docs/07 §7 T02 验收 ⑥）。
     ///
-    /// 阈值按 `cfg!(debug_assertions)` 分档（范式先例：
-    /// `cf-totp/src/lib.rs` TOTP 性能测试）——release 200 ms；debug 档为
-    /// 实测标定值（2026-09-27 标定：30 样本 p50 ≈ 78 ms、max ≈ 81 ms，阈值 =
-    /// max(p50×5, 300ms) = 390 → 向上取整到 50 ms 倍数 → 400 ms）。采样 N=3 取**最小值**：取 min 而非
-    /// 均值，单次瞬时停顿（swap / 页错误 / 调度抖动）才不会污染结果。
-    /// （v0.2 多字段扩展后基线口径不变）
+    /// v0.2 多字段 + 模糊匹配扩展后基线口径调整：单关键词「基线」应命中
+    /// 全部 1000 条（覆盖 4 字段解密与匹配的最重路径）。不能再用
+    /// 「基线 0421」类精确单条查询——模糊匹配（词级编辑距离 ≤1）下
+    /// 「0421」会邻近命中 0420/0422 等数字标题，单条断言不再成立。
+    ///
+    /// 预算用 [`crate::testing::perf_budget`] 校准（热限流 / 高负载环境
+    /// 下绝对毫秒数失真），采样 N=3 取**最小值**：取 min 而非均值，单次
+    /// 瞬时停顿（swap / 页错误 / 调度抖动）才不会污染结果。
     #[test]
     fn 千条搜索基线() {
         let mut store = memory_store();
@@ -368,26 +370,22 @@ mod tests {
             create_via(&mut store, &draft);
         }
 
-        let budget = if cfg!(debug_assertions) {
-            std::time::Duration::from_millis(400)
-        } else {
-            std::time::Duration::from_millis(200)
-        };
+        let budget = crate::testing::perf_budget(200);
 
         // N=3 采样取最小值，每次采样都断言命中数（设计意图：每样本断言，
         // 而非只在取 min 后的样本上断言）
         let elapsed = (0..3)
             .map(|_| {
                 let t = std::time::Instant::now();
-                let hits = search(&store, "基线 0421").unwrap();
-                assert_eq!(hits.len(), 1, "每次采样都应恰好命中 1 条");
+                let hits = search(&store, "基线").unwrap();
+                assert_eq!(hits.len(), 1_000, "单关键词应命中全部 1000 条");
                 t.elapsed()
             })
             .min()
             .unwrap();
         assert!(
             elapsed < budget,
-            "1000 条搜索最小耗时 {elapsed:?}，超出 {budget:?} 预算"
+            "1000 条搜索最小耗时 {elapsed:?}，超出校准后的 200ms 基线（{budget:?}）"
         );
     }
 }

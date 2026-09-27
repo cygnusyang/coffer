@@ -12,6 +12,7 @@ target/
 # ---------- 开发工具 ----------
 .idea/
 .vscode/
+.workbuddy/
 *.iml
 *.swp
 *~

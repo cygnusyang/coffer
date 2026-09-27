@@ -1,6 +1,6 @@
 [package]
 name = "cf-exporter"
-description = "加密备份包、1PUX 兼容格式、明文 CSV 的导出。"
+description = "加密备份包（.coffer）与明文 CSV 的导出、校验与恢复。"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,23 @@ license.workspace = true
 cf-domain = { workspace = true }
 cf-format = { workspace = true }
 cf-crypto = { workspace = true }
-serde = { workspace = true }
+cf-store = { workspace = true }
+# 表头规范名 HEADER_* 跨 crate 引用，防止导入/导出 9 列映射漂移（docs/09 §3.1）
+cf-importer = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
+# WAL checkpoint（导出前合并）与备份校验时只读打开 db.sqlite
+rusqlite = { workspace = true }
+# 交换形态容器（docs/03 §1.4）：标准 ZIP + Deflate，MIT 许可（NFR-LEGAL-02）。
+# 关闭默认 features（AES-ZipCrypto/bzip2/lzma/zstd/time 等均不需要），只保留
+# deflate——压缩面越小攻击面越小。不使用 ZIP 自身加密（弱），内容本身已
+# 逐字段 AEAD 加密。
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
-# 状态：未实现（计划 M2 阶段）
+[dev-dependencies]
+# header.json 的 salt_b64 编解码（构造/读取测试夹具 header）
+base64 = "0.22"
+# 夹具 KEK 的 Zeroizing 包装（与生产密钥纪律一致）
+zeroize = { workspace = true }
+# base32 编码与 cf_totp::base32_decode 的往返一致性测试
+cf-totp = { workspace = true }
+uuid = { workspace = true }

@@ -1,0 +1,4 @@
+﻿Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes
+GitHub,https://github.com,octocat,s3cret!,otpauth://totp/GitHub:octocat?secret=JBSWY3DPEHPK3PXP&issuer=GitHub,true,false,dev;重要,Main account
+Bare,https://example.com,,,,,,,
+MinTitle,,,p@ss,,false,false,,

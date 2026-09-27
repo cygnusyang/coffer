@@ -69,6 +69,7 @@ logs/
 # 生成的，不含任何真实数据，且带 "NOT real 1Password data" 标记）
 !tests/fixtures/*.1pux
 !tests/fixtures/*.csv
+!tests/fixtures/csv/*.csv
 
 # ---------- 本地环境变量 ----------
 .env

@@ -1,0 +1,4 @@
+﻿Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes
+Same,https://a.example,a,p1,,false,false,,
+Same,https://b.example,b,p2,,false,false,,
+Same,,,c,p3,,false,false,,

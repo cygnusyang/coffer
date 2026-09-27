@@ -12,12 +12,12 @@ cf-store = { workspace = true }
 cf-format = { workspace = true }
 cf-crypto = { workspace = true }
 cf-totp = { workspace = true }
-# 建库门禁：zxcvbn 强度评估（FR-1.3 / docs/07 §2.2，score < 3 → WeakPassword）
+# 建库/换密门禁 + Watchtower 体检（FR-1.3、FR-6.2/6.3：strength 门禁、
+# HMAC 指纹 / 弱密码复检 / 弱 URL 纯函数，docs/09 §3.5 冻结契约）
 cf-audit = { workspace = true }
 # T04：VaultSession::import_csv 薄委托 cf-importer（T03 偏差记录预留的落点，
 # cf-ffi 由此获得导入能力而不必触碰 ItemStore 内部）
 cf-importer = { workspace = true }
-zxcvbn = { workspace = true }
 zeroize = { workspace = true }
 subtle = { workspace = true }
 # 解锁流：打开 db.sqlite / 生成条目 UUIDv7
@@ -27,12 +27,21 @@ uuid = { workspace = true }
 base64 = "0.22"
 # 搜索匹配归一化（docs/03 §3.3：NFC + 小写折叠，与解锁流密码归一化同构）
 unicode-normalization = { workspace = true }
+# FR-11.2 词级近似匹配（docs/09 §3.6 裁定：strsim 而非自写 Unicode 编辑距离；
+# MIT/Apache，直接声明版本避免动共享的 workspace 依赖表）
+strsim = "0.11"
 
 [dev-dependencies]
 cf-crypto = { workspace = true }
 cf-store = { workspace = true }
+# 验收用例（docs/10）构造 ItemDraft / TotpUpdate 等领域类型
+cf-domain = { workspace = true }
+# TC-CPW-11：换密 × 备份回环（export_backup / restore_backup）
+cf-exporter = { workspace = true }
 serde_json = { workspace = true }
 zeroize = { workspace = true }
+# history 快照密文落盘断言：与 cf-store 同版本序列化 CBOR 对拍
+ciborium = { workspace = true }
 
 # 状态：T02 已实现（真实解锁流 / VaultSession / idle 纯函数 / CRUD 与搜索编排 /
 #       错误统一 C-6）；CSV 导入编排（usecase/import_csv）待 T03 集成。

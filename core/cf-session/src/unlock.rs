@@ -69,10 +69,11 @@ use cf_domain::CfError;
 pub const VERIFIER_PLAINTEXT: &[u8] = b"coffer-verifier-v1";
 
 /// `wrapped_dek` 的 AAD 用途标签（docs/07 §2.2：`vault_uuid_bytes ‖ purpose`）。
-const AAD_PURPOSE_WRAPPED_DEK: &[u8] = b"wrapped_dek";
+/// change_password 重封装复用同一标签（docs/09 §3.2）。
+pub(crate) const AAD_PURPOSE_WRAPPED_DEK: &[u8] = b"wrapped_dek";
 
 /// `verifier` 的 AAD 用途标签（同上）。
-const AAD_PURPOSE_VERIFIER: &[u8] = b"verifier";
+pub(crate) const AAD_PURPOSE_VERIFIER: &[u8] = b"verifier";
 
 /// 工作目录中的数据库文件名（与 cf-format 容器布局一致）。
 const DB_FILE: &str = "db.sqlite";

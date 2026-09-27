@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <!-- Coffer app icon · foreground layer 2（低深度层） -->
+  <!-- 窄齿，opacity 62%。放入比 L1 低一档的深度组，系统的折射/景深效果会拉开前后层次 -->
+  <defs>
+    <linearGradient id="glass2" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.99"/>
+      <stop offset="0.6" stop-color="#eee9ff" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#d6c8ff" stop-opacity="0.74"/>
+    </linearGradient>
+  </defs>
+  <g transform="rotate(-45 50 50)">
+    <rect x="53" y="76" width="9.5" height="8.5" rx="3" fill="url(#glass2)" opacity="0.62"/>
+  </g>
+</svg>

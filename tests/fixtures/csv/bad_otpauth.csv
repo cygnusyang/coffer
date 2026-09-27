@@ -1,0 +1,5 @@
+﻿Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes
+GoodOtp,,alice,pw123,otpauth://totp/Ok:alice?secret=JBSWY3DPEHPK3PXP,false,false,
+BadOtpCharset,,bob,pw,otpauth://totp/Bad?secret=NOTBASE32!!,false,false,
+BadOtpShort,,carol,pw,otpauth://totp/Short?secret=AAAA,false,false,
+BadOtpDigits,,dave,pw,otpauth://totp/Digits?secret=JBSWY3DPEHPK3PXP&digits=5,false,false,

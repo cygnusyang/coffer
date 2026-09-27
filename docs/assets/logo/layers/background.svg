@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Coffer app icon · background layer -->
+  <!-- 满幅不透明，无圆角遮罩（系统负责遮罩） -->
+  <defs>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="150" y1="-115" x2="874" y2="1139">
+      <stop offset="0" stop-color="#57A0FF"/>
+      <stop offset="0.5" stop-color="#5F6CF8"/>
+      <stop offset="1" stop-color="#A13EF2"/>
+    </linearGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="246" cy="143" r="563">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+</svg>

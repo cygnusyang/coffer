@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coffer · 环形钥匙精修 v3 — Liquid Glass App Icon</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --ink: #1d1d1f;
+    --ink-2: #6e6e73;
+    --hairline: rgba(0, 0, 0, 0.08);
+    --accent: #4f5ef2;
+    --radius-card: 22px;
+  }
+  body.theme-dark {
+    --bg: #101014;
+    --card: #1a1a20;
+    --ink: #f5f5f7;
+    --ink-2: #98989f;
+    --hairline: rgba(255, 255, 255, 0.10);
+  }
+  body.theme-wallpaper {
+    --bg: linear-gradient(150deg, #1e2c6e 0%, #43287e 36%, #7e2f70 66%, #b0485f 100%);
+    --card: rgba(255, 255, 255, 0.06);
+    --ink: #ffffff;
+    --ink-2: rgba(255, 255, 255, 0.72);
+    --hairline: rgba(255, 255, 255, 0.14);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC", "Helvetica Neue", sans-serif;
+    line-height: 1.75;
+    transition: background 0.5s ease, color 0.5s ease;
+    padding-bottom: 120px;
+  }
+  body.theme-wallpaper { background: var(--bg); }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 40px; }
+
+  header { padding: 72px 0 40px; }
+  .eyebrow { font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 14px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+  .lede { margin-top: 14px; max-width: 660px; font-size: 16px; color: var(--ink-2); }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .panel {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .panel .divider { width: 1px; height: 18px; background: var(--hairline); margin: 0 4px; }
+  .panel button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--ink-2);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 15px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+  }
+  .panel button.on { background: var(--accent); color: #fff; }
+  .panel button:not(.on):hover { color: var(--ink); }
+
+  /* ---------- 主视觉区 ---------- */
+  .hero {
+    display: grid;
+    grid-template-columns: 460px 1fr;
+    gap: 40px;
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    padding: 46px 44px;
+    margin-bottom: 26px;
+    transition: background 0.5s ease, border-color 0.5s ease;
+  }
+  body.theme-wallpaper .hero { backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); }
+
+  .hero-stage { display: flex; align-items: center; justify-content: center; }
+
+  .icon {
+    position: relative;
+    width: 380px;
+    height: 380px;
+    border-radius: 23%;
+    corner-shape: superellipse(3.2);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+      0 2px 3px rgba(15, 18, 55, 0.22),
+      0 40px 72px -24px rgba(38, 30, 120, 0.52),
+      inset 0 2px 2px rgba(255, 255, 255, 0.55),
+      inset 0 -20px 44px rgba(18, 8, 70, 0.26);
+  }
+  .icon::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(152deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.10) 24%, rgba(255, 255, 255, 0) 48%);
+    pointer-events: none;
+  }
+  .icon::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 -2px 3px rgba(255, 255, 255, 0.22);
+    pointer-events: none;
+  }
+  .icon svg.glyph { width: 74%; height: 74%; position: relative; z-index: 2; }
+  .icon svg.guides {
+    position: absolute;
+    inset: 11%;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .icon.show-guides svg.guides { opacity: 1; }
+
+  .bg-orbit {
+    background:
+      radial-gradient(90% 70% at 24% 14%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 55%),
+      linear-gradient(150deg, #57a0ff 0%, #5f6cf8 50%, #a13ef2 100%);
+  }
+  .bg-orbit-dark {
+    background:
+      radial-gradient(90% 70% at 24% 14%, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0) 55%),
+      linear-gradient(160deg, #3a3f9e 0%, #2c2a86 50%, #45248c 100%);
+  }
+
+  .hero-side h2 { font-size: 21px; font-weight: 700; margin-bottom: 6px; }
+  .hero-side .sub { font-size: 13px; color: var(--ink-2); margin-bottom: 22px; }
+  .props { display: grid; gap: 10px; margin-bottom: 24px; }
+  .prop {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+  .prop b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .prop .mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--accent); white-space: nowrap; }
+  body.theme-wallpaper .prop .mono { color: #cdd4ff; }
+
+  .compare { display: flex; align-items: center; gap: 18px; padding-top: 20px; border-top: 1px solid var(--hairline); }
+  .compare .cmp { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .compare .cmp span { font-size: 11px; color: var(--ink-2); }
+  .compare .arrow { color: var(--ink-2); font-size: 18px; }
+
+  /* ---------- 图标基座（小尺寸共用） ---------- */
+  .mini {
+    border-radius: 23%;
+    corner-shape: superellipse(3.2);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-shadow: 0 6px 14px -6px rgba(38, 30, 120, 0.5);
+  }
+  .mini::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(152deg, rgba(255, 255, 255, 0.32) 0%, rgba(255, 255, 255, 0) 46%);
+  }
+  .mini svg { width: 72%; height: 72%; position: relative; }
+
+  /* ---------- 区块 ---------- */
+  section.block {
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    padding: 34px 38px;
+    margin-bottom: 26px;
+    transition: background 0.5s ease, border-color 0.5s ease;
+  }
+  body.theme-wallpaper section.block { backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); }
+  section.block h3 { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  section.block .blk-sub { font-size: 13px; color: var(--ink-2); margin-bottom: 24px; }
+
+  .ladder { display: flex; align-items: flex-end; justify-content: center; gap: 34px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .cell span { font-size: 11px; color: var(--ink-2); }
+
+  .appear { display: flex; justify-content: center; gap: 44px; }
+  .appear .cell p { font-size: 12px; color: var(--ink-2); max-width: 200px; text-align: center; line-height: 1.6; }
+
+  .layers {
+    font-size: 11.5px;
+    color: var(--ink-2);
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    line-height: 1.9;
+    background: rgba(120, 130, 255, 0.08);
+    border-radius: 10px;
+    padding: 12px 16px;
+  }
+  body.theme-dark .layers { background: rgba(120, 130, 255, 0.12); }
+
+  footer { margin-top: 8px; }
+  .next {
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    padding: 30px 34px;
+    transition: background 0.5s ease, border-color 0.5s ease;
+  }
+  .next h3 { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+  .next ol { margin-left: 20px; font-size: 14px; color: var(--ink-2); display: grid; gap: 8px; }
+  .next ol b { color: var(--ink); font-weight: 600; }
+  .cite { margin-top: 22px; font-size: 12px; color: var(--ink-2); }
+</style>
+</head>
+<body class="theme-light">
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Coffer · Direction 03 · Orbit Key · 精修 v3</div>
+    <h1>环形钥匙 · 比例重画</h1>
+    <p class="lede">v2 的钥匙四个毛病：环孔太小、柄短而粗、齿不成结构、整体占比偏小。v3 按真实钥匙的比例关系重建，数据在右侧。<strong>点大图旁的「比例辅助线」可看构造。</strong></p>
+  </header>
+
+  <!-- ============ 主视觉 ============ -->
+  <div class="hero">
+    <div class="hero-stage">
+      <div class="icon bg-orbit" id="heroIcon">
+        <svg class="glyph" viewBox="0 0 100 100" aria-label="环形钥匙图形">
+          <defs>
+            <linearGradient id="kg" x1="0" y1="0" x2="0.35" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.99"/>
+              <stop offset="0.6" stop-color="#eee9ff" stop-opacity="0.88"/>
+              <stop offset="1" stop-color="#d6c8ff" stop-opacity="0.74"/>
+            </linearGradient>
+            <filter id="ks" x="-40%" y="-40%" width="180%" height="180%">
+              <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#131058" flood-opacity="0.44"/>
+            </filter>
+          </defs>
+          <g id="keyWrap" filter="url(#ks)" transform="rotate(-45 50 50)">
+            <circle cx="50" cy="26" r="18" fill="none" stroke="url(#kg)" stroke-width="11.5"/>
+            <rect x="45.25" y="42" width="9.5" height="46" rx="4.75" fill="url(#kg)"/>
+            <rect x="53" y="64" width="12.5" height="9" rx="3" fill="url(#kg)"/>
+            <rect x="53" y="76" width="9.5" height="8.5" rx="3" fill="url(#kg)" opacity="0.62"/>
+          </g>
+        </svg>
+        <svg class="guides" viewBox="0 0 100 100" aria-hidden="true">
+          <g fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="0.55" stroke-dasharray="2.2 2.2">
+            <circle cx="50" cy="26" r="18"/>
+            <circle cx="50" cy="26" r="12.25"/>
+            <line x1="50" y1="5" x2="50" y2="92"/>
+            <rect x="45.25" y="42" width="9.5" height="46" rx="4.75"/>
+          </g>
+          <g fill="rgba(255,255,255,0.9)" font-size="4.6" font-family="Menlo, monospace">
+            <text x="72" y="27">R18</text>
+            <text x="64.5" y="13.5">r12.25</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+    <div class="hero-side">
+      <h2>比例关系（100 × 100 视图）</h2>
+      <p class="sub">钥匙的可读性来自四个数的平衡，其余都是装饰。</p>
+      <div class="props">
+        <div class="prop"><b>环外径</b><span class="mono">Ø36</span><span>柄宽的 3.8 倍——环是主角</span></div>
+        <div class="prop"><b>环孔</b><span class="mono">Ø24.5</span><span>占环外径 68%——v2 只有 48%，所以像实心圈</span></div>
+        <div class="prop"><b>柄长</b><span class="mono">46</span><span>略长于环直径，出头才有「钥匙」的动感</span></div>
+        <div class="prop"><b>齿</b><span class="mono">12.5 / 9.5 × 9</span><span>两齿一宽一窄贴柄末，v2 的齿浮在柄中部像补丁</span></div>
+        <div class="prop"><b>画布占比</b><span class="mono">≈81%</span><span>对角线展开后 v2 只有约 66%，缩在中间显小</span></div>
+      </div>
+      <div class="compare">
+        <div class="cmp">
+          <div class="mini bg-orbit" style="width:96px;height:96px;">
+            <svg viewBox="0 0 100 100"><g transform="rotate(45 50 50)"><use href="#oldkey"/></g></svg>
+          </div>
+          <span>v2</span>
+        </div>
+        <div class="arrow">→</div>
+        <div class="cmp">
+          <div class="mini bg-orbit" style="width:96px;height:96px;">
+            <svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg>
+          </div>
+          <span>v3</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 尺寸阶梯 ============ -->
+  <section class="block">
+    <h3>尺寸阶梯</h3>
+    <p class="blk-sub">Spotlight / Settings / 通知栏的实际渲染尺寸。32px 以下齿合并成一个凸起是预期行为，环孔仍在。</p>
+    <div class="ladder">
+      <div class="cell"><div class="mini bg-orbit" style="width:128px;height:128px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div><span>128</span></div>
+      <div class="cell"><div class="mini bg-orbit" style="width:84px;height:84px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div><span>84</span></div>
+      <div class="cell"><div class="mini bg-orbit" style="width:48px;height:48px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div><span>48</span></div>
+      <div class="cell"><div class="mini bg-orbit" style="width:32px;height:32px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div><span>32</span></div>
+      <div class="cell"><div class="mini bg-orbit" style="width:22px;height:22px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div><span>22</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 外观变体 ============ -->
+  <section class="block">
+    <h3>外观变体（HIG 要求核心图形跨外观一致）</h3>
+    <p class="blk-sub">dark 用同一把钥匙、压深背景；clear / tinted 由 Icon Composer 从同一源生成，先在 Composer 里核对不洗白。</p>
+    <div class="appear">
+      <div class="cell">
+        <div class="mini bg-orbit" style="width:160px;height:160px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div>
+        <span>default</span>
+        <p>蓝→紫对角渐变，白玻璃前景</p>
+      </div>
+      <div class="cell">
+        <div class="mini bg-orbit-dark" style="width:160px;height:160px;"><svg viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><use href="#newkey"/></g></svg></div>
+        <span>dark</span>
+        <p>同图形，背景压深两档，玻璃不变</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 分层与导出 ============ -->
+  <section class="block">
+    <h3>Icon Composer 分层说明</h3>
+    <div class="layers">
+      background layer : 线性渐变 #57A0FF → #5F6CF8 → #A13EF2（150°）+ 左上光晕，1024×1024 满幅不透明<br>
+      foreground L1    : 环 + 柄 + 宽齿（不透明，白色玻璃渐变填充）<br>
+      foreground L2    : 窄齿（opacity 62%，比 L1 低一档深度，系统折射会做出前后景深）<br>
+      禁止             : 自带圆角遮罩 / 自带投影 / 自带高光 —— 全部由系统 Liquid Glass 渲染
+    </div>
+  </section>
+
+  <footer>
+    <div class="next">
+      <h3>下一步</h3>
+      <ol>
+        <li><b>确认朝向与配色：</b>右下角可切朝向（当前默认柄指向右下）与页面背景；若要改主色给我色值或参考 App。</li>
+        <li><b>我导出分层 SVG：</b>背景层一张、前景 L1/L2 各一张，可直接拖进 Icon Composer。</li>
+        <li><b>Composer 里过四种外观：</b>default / dark / clear / tinted，核对小尺寸辨识度后导出 .icon。</li>
+      </ol>
+      <p class="cite">规范依据：Apple Human Interface Guidelines — App icons（2026-06-08 修订，Liquid Glass 章节）。</p>
+    </div>
+  </footer>
+
+</div>
+
+<div class="panel" role="toolbar" aria-label="控制面板">
+  <button class="on" data-rot="-45">柄向右下</button>
+  <button data-rot="45">柄向左下</button>
+  <button data-rot="0">竖直</button>
+  <div class="divider"></div>
+  <button id="guidesBtn">比例辅助线</button>
+  <div class="divider"></div>
+  <button class="on" data-theme="theme-light">浅色</button>
+  <button data-theme="theme-dark">深色</button>
+  <button data-theme="theme-wallpaper">壁纸</button>
+</div>
+
+<!-- 复用图形 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="newkey">
+      <circle cx="50" cy="26" r="18" fill="none" stroke="rgba(255,255,255,0.94)" stroke-width="11.5"/>
+      <rect x="45.25" y="42" width="9.5" height="46" rx="4.75" fill="rgba(255,255,255,0.94)"/>
+      <rect x="53" y="64" width="12.5" height="9" rx="3" fill="rgba(255,255,255,0.94)"/>
+      <rect x="53" y="76" width="9.5" height="8.5" rx="3" fill="rgba(255,255,255,0.62)"/>
+    </g>
+    <g id="oldkey">
+      <circle cx="50" cy="29" r="14.5" fill="none" stroke="rgba(255,255,255,0.93)" stroke-width="10.5"/>
+      <rect x="45" y="47" width="10" height="32" rx="5" fill="rgba(255,255,255,0.93)"/>
+      <rect x="50" y="61" width="14" height="9" rx="4.5" fill="rgba(255,255,255,0.93)"/>
+      <rect x="50" y="72" width="10" height="9" rx="4.5" fill="rgba(255,255,255,0.55)"/>
+    </g>
+  </defs>
+</svg>
+
+<script>
+  const heroKey = document.getElementById("keyWrap");
+  const heroIcon = document.getElementById("heroIcon");
+  const panel = document.querySelector(".panel");
+
+  panel.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+
+    if (btn.dataset.rot !== undefined) {
+      heroKey.setAttribute("transform", "rotate(" + btn.dataset.rot + " 50 50)");
+      panel.querySelectorAll("[data-rot]").forEach((b) => b.classList.toggle("on", b === btn));
+      return;
+    }
+    if (btn.id === "guidesBtn") {
+      heroIcon.classList.toggle("show-guides");
+      btn.classList.toggle("on");
+      return;
+    }
+    if (btn.dataset.theme) {
+      document.body.classList.remove("theme-light", "theme-dark", "theme-wallpaper");
+      document.body.classList.add(btn.dataset.theme);
+      panel.querySelectorAll("[data-theme]").forEach((b) => b.classList.toggle("on", b === btn));
+    }
+  });
+</script>
+</body>
+</html>

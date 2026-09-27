@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <!-- Coffer app icon · foreground layer 1（不透明层） -->
+  <!-- 环 + 柄 + 宽齿。透明背景；棱边高光与投影由 Icon Composer 的 Liquid Glass 渲染，请勿在此烘焙 -->
+  <defs>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.99"/>
+      <stop offset="0.6" stop-color="#eee9ff" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#d6c8ff" stop-opacity="0.74"/>
+    </linearGradient>
+  </defs>
+  <g transform="rotate(-45 50 50)" fill="url(#glass)">
+    <circle cx="50" cy="26" r="18" fill="none" stroke="url(#glass)" stroke-width="11.5"/>
+    <rect x="45.25" y="42" width="9.5" height="46" rx="4.75"/>
+    <rect x="53" y="64" width="12.5" height="9" rx="3"/>
+  </g>
+</svg>

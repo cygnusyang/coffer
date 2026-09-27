@@ -65,6 +65,9 @@ swiftc -O \
 # ---- 3/4 组装 bundle ----
 step "3/4 组装 Coffer.app bundle"
 cp "${SRC_DIR}/Info.plist" "${APP_DIR}/Contents/Info.plist"
+if [[ -f "${SRC_DIR}/Resources/Coffer.icns" ]]; then
+  cp "${SRC_DIR}/Resources/Coffer.icns" "${APP_DIR}/Contents/Resources/Coffer.icns"
+fi
 mkdir -p "${APP_DIR}/Contents/Resources"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 

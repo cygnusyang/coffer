@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>Coffer</string>
 	<key>CFBundleIconFile</key>
-	<string></string>
+	<string>Coffer</string>
 	<key>CFBundleIdentifier</key>
 	<string>app.coffer.Coffer</string>
 	<key>CFBundleInfoDictionaryVersion</key>

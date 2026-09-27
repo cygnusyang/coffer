@@ -81,6 +81,8 @@ struct BiometricKeychain {
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: vaultUUID,
             kSecValueData as String: key,
+            // 与 baseQuery 同步：走数据保护钥匙串（-34018 修复，见 baseQuery 注释）
+            kSecUseDataProtectionKeychain as String: true,
         ]
 
         if requireBiometry {
@@ -160,6 +162,12 @@ struct BiometricKeychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: vaultUUID,
+            // 数据保护钥匙串（iOS 语义，macOS 10.15+ 可选启用）：
+            // 沙盒 App 在文件型登录钥匙串上使用 biometryCurrentSet ACL 会报
+            // -34018（errSecMissingEntitlement，2026-09-27 真机实测）；
+            // DP 钥匙串原生支持 ThisDeviceOnly + biometryCurrentSet 组合，
+            // 且无需 keychain-access-groups entitlement。
+            kSecUseDataProtectionKeychain as String: true,
         ]
     }
 

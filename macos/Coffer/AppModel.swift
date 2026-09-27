@@ -181,7 +181,9 @@ final class AppModel: ObservableObject {
             // 首次解锁完成后（RootView），而非建库成功即刻。
             pendingBioOffer = isTouchIDSupported
         } catch {
-            lastErrorMessage = ErrorPresenter.text(error)
+            let errText = ErrorPresenter.text(error)
+            Self.logDiag(errText)
+            lastErrorMessage = errText
         }
     }
 
@@ -203,7 +205,26 @@ final class AppModel: ObservableObject {
             applyIdleTimeout()
             phase = .unlocked
         } catch {
-            lastErrorMessage = ErrorPresenter.text(error)
+            let errText = ErrorPresenter.text(error)
+            Self.logDiag(errText)
+            lastErrorMessage = errText
+        }
+    }
+
+    /// 诊断日志（永久保留）：错误原文追加到 ~/Library/Logs/Coffer-diag.log。
+    /// 只含错误文案（Rust 层已脱敏、无字段值），不含任何密钥材料。
+    private static func logDiag(_ text: String) {
+        let line = "\(Date()) \(text)\n"
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs")
+        let url = dir.appendingPathComponent("Coffer-diag.log")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let handle = FileHandle(forWritingAtPath: url.path) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
         }
     }
 
@@ -312,7 +333,9 @@ final class AppModel: ObservableObject {
         } catch {
             // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
             // FfiError（1002 / 4001 / 5999）各自语义化呈现
-            lastErrorMessage = ErrorPresenter.text(error)
+            let errText = ErrorPresenter.text(error)
+            Self.logDiag(errText)
+            lastErrorMessage = errText
             // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
             refreshTouchIDStatus()
         }
@@ -360,7 +383,9 @@ final class AppModel: ObservableObject {
             // header 保持原样（Rust 失败时不重写文件）。密码错 1002 与
             // Keychain 失败均经 ErrorPresenter 呈现（T04 验收③）。
             _ = try? BiometricKeychain().delete(vaultUUID: uuid)
-            lastErrorMessage = ErrorPresenter.text(error)
+            let errText = ErrorPresenter.text(error)
+            Self.logDiag(errText)
+            lastErrorMessage = errText
             refreshTouchIDStatus()
             return false
         }
@@ -385,7 +410,9 @@ final class AppModel: ObservableObject {
             try BiometricKeychain().delete(vaultUUID: uuid)
         } catch {
             // 删除失败属系统层异常：header 未动，功能未关，可重试
-            lastErrorMessage = ErrorPresenter.text(error)
+            let errText = ErrorPresenter.text(error)
+            Self.logDiag(errText)
+            lastErrorMessage = errText
             return false
         }
         // ② 后 header：原子重写 → 禁用态（幂等）
@@ -399,7 +426,9 @@ final class AppModel: ObservableObject {
         } catch {
             // header 写失败：非致命（docs/08 §8）——Keychain 已删，Touch ID
             // 解锁实际已不可用；header 残留密文无泄露面，可重试关闭
-            lastErrorMessage = ErrorPresenter.text(error)
+            let errText = ErrorPresenter.text(error)
+            Self.logDiag(errText)
+            lastErrorMessage = errText
             refreshTouchIDStatus()
             return false
         }

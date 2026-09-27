@@ -28,11 +28,10 @@ Core crates (cf-crypto/cf-totp/cf-store/cf-session) ≥80%; negative paths and b
 
 ## Definition of done
 
-Run the gate (**`cd core` first** — the repo root has no `Cargo.toml`. The **sole authority** for the gate commands and their preconditions is `docs/09-版本路线图.md` §1.2; this file does not restate the command block, it only names the two **silent-false-green** traps: (1) `cargo` may be missing from PATH (non-interactive shell / new terminal / script) → exit **127**, the command **never ran**; (2) after a pipe `$?` is the **last** command's status, so `… 2>&1 | tail -3` is always 0 → in zsh use `${pipestatus[1]}` for the real exit code):
+Run the gate (**`cd core` first** — the repo root has no `Cargo.toml`. The **sole authority** for the gate commands and their preconditions is `docs/09-版本开发计划.md` §4; this file does not restate the command block, it only names the two **silent-false-green** traps: (1) `cargo` may be missing from PATH (non-interactive shell / new terminal / script) → exit **127**, the command **never ran**; (2) after a pipe `$?` is the **last** command's status, so `… 2>&1 | tail -3` is always 0 → in zsh use `${pipestatus[1]}` for the real exit code):
 
 ```
-cargo test --workspace --no-fail-fast -- \
-  --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线
+cargo test --workspace --no-fail-fast
 ```
 
 `--no-fail-fast` removes the false green from stop-on-first-failure; the two `--skip` flags drop the

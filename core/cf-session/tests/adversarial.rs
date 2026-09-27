@@ -10,6 +10,7 @@
 //! 4. 搜索语义：emoji、NFC/NFD 混排（QA #3 修复后双向命中）、空白查询；
 //! 5. idle：时钟回拨、i64 边界、timeout=1；
 //! 6. KDF 参数：极小/极端参数建库 → header 记录 → 解锁往返；kdf 段缺失无兜底。
+//!    （极端档 1 GiB 用例已加 ignore 标注，release 串行独占执行，见对应测试 doc。）
 //!
 //! 原「已知问题 #1/#2/#3」（update 清空收藏 / 复活回收站条目 / 搜索无
 //! NFC 归一化）已随修复批（cf-totp parse_totp_uri 修复同批）**反转为
@@ -786,11 +787,15 @@ fn idle时钟回拨与i64边界() {
 
 // ================================================================ 6. KDF 参数
 
-/// 极端 KDF 参数建库：header 如实记录 → 解锁往返 → 错密码 1002。
-/// 极小档（m=8MiB, t=1）与极端档（m=1GiB, t=10）各建一库。
+/// 极小 KDF 参数（下限，m=8 MiB, t=1, p=1）建库：header 如实记录 →
+/// 解锁往返 → 错密码 1002。轻量用例，不依赖大内存，留在默认测试集。
+///
+/// ⚠️ 命名纪律：本用例与 `极端kdf参数建库记录与解锁往返` 只差第二个字。
+/// 未来如需 `--skip`，**必须用全名**——不要用 `kdf参数建库记录与解锁往返`
+/// 这类公共子串，否则会把两条用例一起命中（或漏掉目标）且 libtest 不报错。
 #[test]
-fn 极端kdf参数建库记录与解锁往返() {
-    let base = temp_dir("adv_kdf_extreme");
+fn 极小kdf参数建库记录与解锁往返() {
+    let base = temp_dir("adv_kdf_min");
 
     // 极小档（下限）
     let min_kdf = KdfParams::new(8 * 1024, 1, 1).unwrap();
@@ -801,7 +806,30 @@ fn 极端kdf参数建库记录与解锁往返() {
     assert_eq!(h["kdf"]["t_cost"], json!(1));
     assert_eq!(h["kdf"]["p_cost"], json!(1));
     assert_eq!(b64_decode(h["kdf"]["salt_b64"].as_str().unwrap()).len(), 32);
-    open_vault(&dir_min).unwrap().unlock(STRONG).unwrap();
+    let session = open_vault(&dir_min).unwrap();
+    session.unlock(STRONG).unwrap();
+    assert!(session.is_unlocked());
+    session.lock();
+    assert_eq!(session.unlock("wrong-password-x!").unwrap_err().code(), 1002);
+
+    drop(base);
+}
+
+/// 极端 KDF 参数（m=1 GiB, t=10）建库：header 如实记录 → 双向解锁。
+///
+/// **ignore 标注原因**：debug 档下 1 GiB Argon2id × 并发会把机器 swap 饿死
+/// （实测 swap used ≈ 19.9 G / 20.5 G，>20 min 无进展，登记于
+/// `docs/KNOWN-ISSUES.md` BUG-4）——这是资源耗尽，不是断言失败，故改为
+/// **release 串行独占**人工执行：
+/// `cargo test --release -p cf-session --test adversarial 极端kdf参数建库记录与解锁往返 -- --ignored --test-threads=1`
+/// （`--test-threads=1` 必须带，防止同 binary 兄弟测试并发放大内存压力。
+/// 2026-09-27 release 档实测：单测约 17 s，通过）。
+///
+/// ⚠️ 命名纪律见 `极小kdf参数建库记录与解锁往返`：`--skip` 必须用全名。
+#[ignore]
+#[test]
+fn 极端kdf参数建库记录与解锁往返() {
+    let base = temp_dir("adv_kdf_extreme");
 
     // 极端档（m=1GiB, t=10）：header 记录 + 双向解锁
     let big_kdf = KdfParams::new(1024 * 1024, 10, 1).unwrap();
@@ -817,6 +845,8 @@ fn 极端kdf参数建库记录与解锁往返() {
     assert!(session.is_unlocked());
     session.lock();
     assert_eq!(session.unlock("wrong-password-x!").unwrap_err().code(), 1002);
+
+    drop(base);
 }
 
 /// kdf 段整体缺失的库：open_vault 即报 Corrupted(1005)，

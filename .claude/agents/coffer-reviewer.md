@@ -29,5 +29,14 @@ tools: Read, Grep, Glob, Bash
 
 1. `git diff` / 读改动文件，先对照 CRITICAL 清单
 2. 核对实现与 `docs/03-详细设计.md` 章节的一致性（偏差要么修码要么升 coffer-architect 裁决）
-3. 跑 `cargo clippy --workspace --all-targets` 与 `cargo test --workspace`，失败即退回
+3. 跑门禁（**先 `cd core`** —— 仓库根没有 `Cargo.toml`，在根目录跑必然失败。
+   门禁命令与其前提的**唯一权威**是 `docs/09-版本路线图.md` §1.2，本文件不复述命令块，只点名两条会**静默假绿**的陷阱：
+   ① `cargo` 可能不在 PATH 上（非交互 shell / 新终端 / 脚本）→ 退出码 **127**、命令**根本没跑**；② 接了管道时 `$?` 取的是**管道最后一个命令**的状态，`… 2>&1 | tail -3` 恒为 0 → zsh 取真实退出码用 `${pipestatus[1]}`）：
+   - `cargo clippy --all-targets -- -D warnings`
+     （**缺 `-- -D warnings` 时即使有警告也退出 0**，这一步就没有验证力）
+   - `cargo test --workspace --no-fail-fast -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线`
+     `--no-fail-fast` 去掉「首败即停」造成的**假绿**（首个失败目标之后的 crate 与全部 doc-test 一次都不跑）；
+     两条 `--skip` 分别去掉 1 GiB KDF 资源耗尽用例与 flaky 墙钟断言。
+     ⚠️ **两个名字必须与源码逐字一致** —— 写错时 libtest **不报错、只是静默不跳过**。
+     口径与根因见 `docs/KNOWN-ISSUES.md` **BUG-4**。**失败即退回**。
 4. 输出结论用三档：**Approve / Warning（列 HIGH）/ Block（列 CRITICAL）**，每条附文件:行号

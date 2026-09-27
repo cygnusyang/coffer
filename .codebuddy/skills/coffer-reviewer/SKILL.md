@@ -30,5 +30,15 @@ Act as the code reviewer for Coffer. **Review only, do not modify** — when pro
 
 1. `git diff` / read changed files, first against the CRITICAL checklist.
 2. Verify implementation consistency with `docs/03-详细设计.md` sections (deviation: either fix code or escalate to coffer-architect for arbitration).
-3. Run `cargo clippy --workspace --all-targets` and `cargo test --workspace`; failure means reject.
+3. Run the gate (**`cd core` first** — the repo root has no `Cargo.toml`, so running from the root always fails.
+   The **sole authority** for the gate commands and their preconditions is `docs/09-版本路线图.md` §1.2; this file does not restate the command block, it only names the two **silent-false-green** traps:
+   (1) `cargo` may be missing from PATH (non-interactive shell / new terminal / script) → exit **127**, the command **never ran**; (2) after a pipe `$?` is the **last** command's status, so `… 2>&1 | tail -3` is always 0 → in zsh use `${pipestatus[1]}` for the real exit code):
+   - `cargo clippy --all-targets -- -D warnings`
+     (**without `-- -D warnings` clippy exits 0 even when it has warnings** — the step verifies nothing)
+   - `cargo test --workspace --no-fail-fast -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线`
+     `--no-fail-fast` removes the **false green** caused by stop-on-first-failure (every crate after the
+     first failing target, and all doc-tests, never run); the two `--skip` flags drop the 1 GiB KDF
+     resource-exhaustion case and the flaky wall-clock assertion.
+     ⚠️ **Both names must match the source verbatim** — a typo makes libtest **skip nothing, silently**.
+     Rationale and root cause: `docs/KNOWN-ISSUES.md` **BUG-4**. **Failure means reject.**
 4. Output conclusion in three tiers: **Approve / Warning (list HIGH) / Block (list CRITICAL)**, each with file:line.

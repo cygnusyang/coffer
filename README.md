@@ -29,24 +29,24 @@
 
 | 特性 | 说明 | 状态 |
 | --- | --- | --- |
-| **零网络可验证**（NFR-SEC-07） | 不是"不联网"，是**没有联网能力**。Android 不申请 `INTERNET` 权限；macOS 不授予 network entitlement；CI 自动检查依赖树中无网络 crate | 架构级承诺，发布后可验证 |
+| **零网络可验证**（NFR-SEC-07） | 不是"不联网"，是**没有联网能力**。Android 不申请 `INTERNET` 权限；macOS 不授予 network entitlement；依赖树中无网络 crate（检查命令见下文，**仓库尚无 CI，当前需手动执行**） | 架构级承诺，发布后可验证 |
 | **强加密** | Argon2id（RFC 9106）+ XChaCha20-Poly1305 信封加密，主密码只封装数据密钥，换密不重加密全库 | 核心原语已实现 |
-| **22 类条目** | Login、Credit Card、Identity、Passport、SSH Key 等 22 类模板 + 自定义字段 | 领域模型设计完成，待实现 |
+| **22 类条目** | Login、Credit Card、Identity、Passport、SSH Key 等 22 类模板 + 自定义字段（"22 类"的口径与来源见 `docs/03-详细设计.md` §4.1） | ✅ 已实现（`cf-domain`） |
 | **TOTP** | 内置验证码生成（RFC 6238），当前支持 SHA-1 | ✅ 已实现，全链路测试绿 |
-| **从 1PUX / CSV 迁移** | 1PUX / CSV 导入，字段映射逐项可核对、未知字段不静默丢弃 | 导入器未实现（M2） |
+| **从 1PUX / CSV 迁移** | 1PUX / CSV 导入，字段映射逐项可核对、未知字段不静默丢弃 | 🟡 CSV 导入已交付（`cf-importer`）；1PUX 待真实样本类别校准 |
 | **Passkey** | 完整能力进 v1.0 | 平台验证未完成 |
 | **离线安全检查** | 弱密码 / 重复密码 / 弱 URL / 陈旧密码检测 | 🟡 仅 zxcvbn 强度评估可用，检测项未实现 |
-| **原生而非 Electron** | Android = Kotlin + Compose；macOS = Swift + SwiftUI | 两端 UI 未开始 |
+| **原生而非 Electron** | Android = Kotlin + Compose；macOS = Swift + SwiftUI | 🟡 macOS 端 v0.1 已交付；Android 端未开始（M5） |
 | **开源 MIT** | 代码可审计、可验证 | ✅ |
 
-### 零网络如何验证（发布后适用）
+### 零网络如何验证（macOS 与依赖树现在即可核查；Android 待 APK 产出）
 
 ```bash
 # Android：反编译确认无 INTERNET 权限
 aapt dump permissions Coffer.apk
 
-# macOS：确认无 network entitlement
-codesign -d --entitlements - /Applications/Coffer.app
+# macOS：确认无 network entitlement（本地构建产物；装到 /Applications 后把路径换成 /Applications/Coffer.app）
+codesign -d --entitlements - macos/build/Coffer.app
 
 # 核心库：确认依赖树中无网络 crate
 cd core && cargo tree --prefix none \
@@ -94,24 +94,27 @@ Rust 工作区（`core/`）11 个 crate：
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
 | **M0 技术预研** | UniFFI 双向打通、Argon2id 最低端设备标定、真实 1PUX 样本校准、opvault 交叉验证、Passkey 平台验证 | 🟡 **部分完成** |
-| **M1 核心库** | Rust 核心完整可用：cf-crypto / cf-format / cf-domain / cf-store / cf-totp / cf-audit | 🔵 **进行中** |
-| **M2 导入器** | 1PUX 完整导入 + CSV 导入、预检报告、映射表校准 | ⬜ 未开始 |
-| **M3 macOS MVP** | 可日常使用的 macOS 端（**首版交付目标**） | ⬜ 未开始 |
+| **M1 核心库** | Rust 核心完整可用：cf-crypto / cf-format / cf-domain / cf-store / cf-totp / cf-audit | ✅ **完成** |
+| **M2 导入器** | 1PUX 完整导入 + CSV 导入、预检报告、映射表校准 | 🟡 **部分完成**（CSV 已交付；1PUX 待样本校准） |
+| **M3 macOS MVP** | 可日常使用的 macOS 端（**首版交付目标**） | ✅ **完成**（v0.1 纵切已交付） |
 | **M4 macOS 完整** | 附件、opvault 导入、1PUX 导出、Passkey | ⬜ 未开始 |
 | **M5 Android 端** | 第二交付目标 | ⬜ 未开始 |
 
-**当前进展（2026-09-25）**：
+**当前进展（2026-09-27）**：
 
-- ✅ `cargo build` 通过，`cargo test` **62 个用例全部通过**，`cargo clippy --all-targets` 零警告
+- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试共 **422 个用例**，门禁命令下**实际执行 420 条、全部通过**
+- ⚠️ 另 2 条**不纳入门禁**，且是**两类不同问题**：1 条 1 GiB KDF 用例在 debug 档资源耗尽、会长时间挂起；1 条单次墙钟断言（`千条搜索基线`）真实 p50 ≈ 77 ms、余量 2.6×，但 **20 次记录执行中 3 次失败**（273 / 339 / 362 ms，为 200 ms 预算的 1.37–1.81 倍；计数口径与逐条出处见 `docs/09-版本路线图.md` §1.3 与附录 B.4），**已确证为 flaky**；其中**两次**失败发生在**仅选中该 1 条**时（`41 filtered out`，机器输出）→ **与同 binary 兄弟测试的并发无关**。执行条件不受控（load 2.95–19），**足以确证 flaky、不足以给出失败率 —— 不得引用任何百分比**；触发因素是**瞬时停顿**（swap 换入换出 / 页错误 / 调度抖动），**与负载高低不相关**。**测试不能直接跑 `cargo test`**，须用「测试与质量门」给出的门禁命令；根因登记在 `docs/KNOWN-ISSUES.md` **BUG-4**
 - ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零，实现并测试通过
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通
 - 🟡 `cf-audit`：密码强度评估（zxcvbn）与基础密码生成两个函数可用；Watchtower 检测未实现
 - 🟡 Argon2id 参数：开发机摸底完成（见 `05-Argon2id参数标定.md`），**最低端设备待做**
-- ⬜ 6 个 crate 为纯占位（cf-format / cf-domain / cf-importer / cf-exporter / cf-ffi / cf-testkit，无任何可调用接口）；cf-store / cf-session 仅 TOTP 相关路径可用
-- ⬜ **导入器、完整存储引擎、两端 UI 均未实现**
+- ✅ `cf-format` / `cf-domain` / `cf-importer` / `cf-store` / `cf-session` / `cf-ffi` 均已实现并有测试覆盖（容器格式、领域模型、CSV 导入、SQLite 加密存储引擎、解锁与 CRUD/搜索编排、UniFFI 绑定）
+- ⬜ 仅 `cf-exporter`（数据导出，FR-8）与 `cf-testkit`（测试夹具）仍为无接口占位
+- ⬜ **尚未实现**：1PUX 导入、数据导出（FR-8，故库文件是唯一数据载体）、Android 端 UI
 
-> 现在拿不到能用的软件，没有任何可安装产物。请不要用它存真实密码。
-> 诚实说明：TOTP 已实现，但导入器还没有；"功能丰富"是目标而非现状。
+> **已有可用的构建产物**：macOS v0.1 纵切已交付，`./tools/build_macos_app.sh` 可构建出 `macos/build/Coffer.app`（构建命令与签名核查方法见 `macos/README.md`）。
+> 请不要用它存真实密码。**此限制在数据导出（FR-8）随 v0.2 交付后解除**——当前库文件是唯一数据载体，放进去的密码取不回来。
+> 诚实说明：TOTP、CSV 导入、存储引擎已实现；1PUX 导入与数据导出（FR-8）还没有；"功能丰富"是目标而非现状。
 
 ---
 
@@ -123,8 +126,13 @@ Rust 工作区（`core/`）11 个 crate：
 cd core
 
 cargo build            # 编译整个 workspace
-cargo test             # 62 个测试
-cargo clippy --all-targets   # 零警告
+cargo clippy --all-targets -- -D warnings   # 零警告（缺 -- -D warnings 时有警告也退出 0，不可验证）
+
+# 测试：必须带 --no-fail-fast 与两条 --skip，否则会首败即停（假绿）或长时间挂起
+# 被跳过的两条不属于常规门禁：1 条 1 GiB KDF 慢测 + 1 条单次墙钟 flaky 用例
+# 名字须逐字一致；写错时 libtest 不报错、只是静默不跳过。详见「测试与质量门」
+cargo test --workspace --no-fail-fast -- \
+  --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线
 ```
 
 > 若通过 rustup 以 `--no-modify-path` 安装，新终端需先 `source "$HOME/.cargo/env"`。
@@ -139,11 +147,13 @@ cargo clippy --all-targets   # 零警告
 
 | 检查项 | 结果 |
 | --- | --- |
-| `cargo test` | ✅ **62 个用例全部通过**（含 RFC 6238 标准测试向量） |
-| `cargo clippy --all-targets` | ✅ **零警告** |
+| 测试门禁命令 | ✅ 须按此执行：`cargo test --workspace --no-fail-fast -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线`。即 **422 = 420 执行通过 + 2 条排除**（含 RFC 6238 标准测试向量）；**不存在「421 通过 / 1 失败」这一构成** —— 被排除的两条分属挂起与 flaky 两类不同问题，不可合并计数。被跳过的两条见下行，根因见 `docs/KNOWN-ISSUES.md` **BUG-4** |
+| 被跳过的 2 条 | ⚠️ ① `极端kdf参数建库记录与解锁往返` —— 1 GiB Argon2id，debug 下单条 >20 分钟、RSS ≈ 1 GB（资源耗尽类），**不是任何验收项的唯一证据**（它断言的是与 AC-01 同链路的建库 → 解锁往返 → 错密码 1002，只是把参数推到极端；该链路已由门禁内的常规参数用例覆盖）；② `千条搜索基线` —— 单次墙钟断言（1000 条 < 200 ms），真实 p50 ≈ 77 ms、余量 2.6×，但 **20 次记录执行中 3 次失败**（273 / 339 / 362 ms；计数口径与逐条出处见 `docs/09-版本路线图.md` §1.3 与附录 B.4）、**已确证为 flaky**；其中**两次**失败发生在**仅选中该 1 条**时（`41 filtered out`，机器输出）→ **与同 binary 兄弟测试的并发无关**，且同一 load（13.64）下出现一失败一通过 → **与负载无关**。**失败率不可导出，不得引用任何百分比**，**测试本身不可用** |
+| 跳过项的记账 | ⚠️ 跳过 ② 意味着 **FR-11.4 的验收证据不在门禁内**，由**独立性能作业**承担：**需求满足（实测 p50 ≈ 77 ms、余量 2.6×）；证据链不可用（测试 flaky）** —— 这不是性能降级，**也不得只记 ✅** |
+| `cargo clippy --all-targets -- -D warnings` | ✅ **零警告** |
 | `cargo build` | ✅ 通过，无警告 |
 | 生产代码 `unsafe` / `unwrap()` / `expect()` | 🚫 编译期禁止（deny） |
-| 网络依赖 | 🚫 CI 自动检查依赖树，发现即失败 |
+| 网络依赖 | ⬜ **尚无 CI** —— 依赖树检查命令见上文「零网络如何验证」，当前需手动执行 |
 | 测试数据 | 只允许合成样本，真实数据禁止入库 |
 
 ---

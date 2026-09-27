@@ -7,8 +7,8 @@
 //! （[`TotpUpdate`]：Keep 保留既有加密行 / Replace 删旧插新 / Remove 删除），
 //! 因 FFI 不下发 secret，更新默认 Keep 以免编辑静默丢失 TOTP。
 //!
-//! update 前读取旧快照，为 v0.2 的 history 表预留接口；v0.1 **不写**
-//! history 表（docs/07 §2.2）。
+//! update 事务内、替换前对当前状态做快照写入 history 表（FR-2.9，
+//! 编排见 [`history`]；内容无变化不写，见其模块文档）。
 //!
 //! ## 条目类型覆盖（docs/07 §1.3）
 //!
@@ -65,7 +65,7 @@ pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, C
     Ok(item_uuid)
 }
 
-/// 更新条目：读旧快照（v0.2 history 预留）→ 校验 → 单事务整体替换。
+/// 更新条目：替换前快照写 history（FR-2.9）→ 校验 → 单事务整体替换。
 ///
 /// TOTP 语义（v0.2 裁定）：本入口为**默认保留**（[`TotpUpdate::Keep`]）——
 /// FFI 刻意不下发 secret，调用方无法重提交原密钥，默认删旧会静默
@@ -127,7 +127,6 @@ pub fn update_item_with_totp(
 
     store.with_tx(|repos| {
         // 旧快照：存在性检查 + 状态门禁 + 收藏态继承源
-        // （v0.2 history 预留；v0.1 读取后即弃，不落 history 表）
         let old = repos.items.get_row(item_id)?.ok_or(CfError::ItemNotFound)?;
         if old.state != ItemState::Active {
             let state_name = match old.state {
@@ -139,6 +138,10 @@ pub fn update_item_with_totp(
                 "条目处于{state_name}状态，不能编辑；请先恢复为活跃状态"
             )));
         }
+
+        // FR-2.9：替换前对当前状态做快照写入 history 表（同事务；
+        // 内容无变化不写，见 usecase::history::snapshot_before_update）
+        crate::usecase::history::snapshot_before_update(repos, item_id, now)?;
 
         repos.items.update_row(&ItemRow {
             uuid: item_id.to_owned(),

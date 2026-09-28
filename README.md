@@ -100,21 +100,21 @@ Rust 工作区（`core/`）11 个 crate：
 | **M4 macOS 完整** | 附件、opvault 导入、1PUX 导出、Passkey | ⬜ 未开始 |
 | **M5 Android 端** | 第二交付目标 | ⬜ 未开始 |
 
-**当前进展（2026-09-27）**：
+**当前进展（2026-09-28）**：
 
-- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **423 个用例**，门禁命令下 **422 条执行通过**（另 1 条标 `#[ignore]`，是 1 GiB KDF 重载荷用例，release 人工独占）
+- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **679 个用例**，门禁命令下 **671 条执行通过**（另 8 条标 `#[ignore]`：1 条 1 GiB KDF 重载荷用例 release 人工独占、fuzz/统计类用例按 CI 口径 `--include-ignored` 执行）
 - ℹ️ 门禁命令为 `cargo test --workspace --no-fail-fast`（**须在 `core/` 下执行**）。历史上曾有两条用例需要 `--skip`（1 GiB KDF 资源耗尽、`千条搜索基线` 单次墙钟断言 flaky），**BUG-4 已于 2026-09-27 修复，`--skip` 不再需要**；根因与修复见 `docs/KNOWN-ISSUES.md` **BUG-4**
-- ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零，实现并测试通过
+- ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零；**9 把派生子密钥**（v0.2 增 audit_key、root_mac_key）
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通
-- 🟡 `cf-audit`：密码强度评估（zxcvbn）与基础密码生成两个函数可用；Watchtower 检测未实现
+- ✅ `cf-audit`：密码强度评估（zxcvbn）、**密码短语**（EFF 大词表）、Watchtower 弱密码/弱 URL/重复检测编排、陈旧密码 + 泄露启发式 + 无 2FA 提示纯函数
 - 🟡 Argon2id 参数：开发机摸底完成（见 `05-Argon2id参数标定.md`），**最低端设备待做**
-- ✅ `cf-format` / `cf-domain` / `cf-importer` / `cf-store` / `cf-session` / `cf-ffi` 均已实现并有测试覆盖（容器格式、领域模型、CSV 导入、SQLite 加密存储引擎、解锁与 CRUD/搜索编排、UniFFI 绑定）
-- ⬜ 仅 `cf-exporter`（数据导出，FR-8）与 `cf-testkit`（测试夹具）仍为无接口占位
-- ⬜ **尚未实现**：1PUX 导入、数据导出（FR-8，故库文件是唯一数据载体）、Android 端 UI
+- ✅ `cf-format` / `cf-domain` / `cf-importer` / `cf-store` / `cf-session` / `cf-ffi` 均已实现并有测试覆盖；**v0.2 内核新增**：加密备份/恢复/校验、CSV 导出、改主密码、暴力退避、剪贴板五档配置、备份提醒、本地审计日志、root_mac 完整性校验（防行级删除/篡改）
+- ✅ `cf-exporter` 已交付（FR-8.1/8.6 加密备份 + FR-8.3 CSV 导出 + 备份打点）；**1PUX 导入内核已交付**（含 `files/` 附件、预检报告）；附件存储内核已交付
+- ⬜ **尚未实现**：1PUX 导入的真实样本验收（685 条样本待重导）、体检报告编排（FR-6.7）、FR-7.8 风险提示、附件/导出/改密的 Swift UI 接线、菜单栏/快捷键、Passkey、Android 端
 
 > **已有可用的构建产物**：macOS v0.1 纵切已交付，`./tools/build_macos_app.sh` 可构建出 `macos/build/Coffer.app`（构建命令与签名核查方法见 `macos/README.md`）。
-> 请不要用它存真实密码。**此限制在数据导出（FR-8）随 v0.2.0 交付后解除**——当前库文件是唯一数据载体，放进去的密码取不回来。
-> 诚实说明：TOTP、CSV 导入、存储引擎已实现；1PUX 导入与数据导出（FR-8）还没有；"功能丰富"是目标而非现状。
+> 数据出口已随 v0.2.0 内核交付（加密备份/CSV 导出/改主密码），「不要存真实密码」的早期限制**解除**；Swift UI 侧的导出/改密/备份接线完成后即可在 App 内操作，在此之前可用测试与 FFI 路径验证。
+> 诚实说明：Passkey、菜单栏、附件 UI、多库 UI 尚未实现；1PUX 导入已过合成样本验收，真实样本验收待补。
 
 ---
 

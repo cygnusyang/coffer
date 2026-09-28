@@ -75,6 +75,17 @@ extension FfiItemCategory {
     }
 }
 
+// MARK: - 附件区布局（FR-9.4，v0.4.0 MA-2）
+
+extension FfiItemCategory {
+    /// 详情页附件区是否置于字段区之上（FR-9.4 Document 条目最小形态：
+    /// 「条目即文档」——附件是主体内容；其余类别附件区挂 body 尾部，
+    /// 与 MB-2 右键复制菜单物理隔离，docs/15 §7 风险 8）。
+    var placesAttachmentSectionAboveFields: Bool {
+        self == .document
+    }
+}
+
 // MARK: - 列表行 Identifiable
 
 extension FfiItemSummary: Identifiable {

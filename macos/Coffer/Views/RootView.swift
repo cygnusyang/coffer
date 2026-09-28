@@ -24,6 +24,12 @@ struct RootView: View {
                     .environmentObject(model)
                     .interactiveDismissDisabled()
             }
+            // 库切换器 sheet（v0.4 FR-1.2，MB-1）：MainView 工具栏触发，
+            // 挂 RootView——锁定/建库等相变发生时随视图整体切换。
+            .sheet(isPresented: $model.showVaultSwitcher) {
+                VaultSwitcherView()
+                    .environmentObject(model)
+            }
     }
 
     @ViewBuilder

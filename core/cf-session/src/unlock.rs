@@ -228,6 +228,15 @@ pub fn create_vault_with_kdf(
 
 /// 打开库：读取 header（版本三态）并构造**锁定态**的 [`VaultSession`]。
 ///
+/// 开库成功后**顺带清理孤儿附件**（v0.4 M-2：`attachments/` 下未被 DB
+/// 行引用的旁路文件与 `.tmp-` 崩溃残留；关闭 v0.3 LOW-2 登记的口子）。
+/// 该清理以明文 schema 的引用集为准、无需密钥，一次性全目录扫描成本
+/// 可接受；失败不阻断开库（尽力而为，孤儿留待下次开库重试）。
+/// **单会话假设**（与 [`crate::usecase::cross_copy`] 同款）：若另一会话
+/// 正对同一库处于「文件已落、行未提交」的写入中，其 in-flight 附件可能
+/// 被误删——桌面单用户场景下不存在（open 无互斥；多会话并发写入若
+/// 未来放开，须改为定向清理）。
+///
 /// 解锁须另行调用 [`VaultSession::unlock`]（KDF 耗时 0.5–1.0 s，
 /// 由调用方决定时机）。
 ///
@@ -241,7 +250,9 @@ pub fn open_vault(vault_dir: &Path) -> SessionResult<VaultSession> {
     match cf_format::open_container(vault_dir) {
         Ok(cf_format::OpenOutcome::Current(header)) => {
             cf_format::verify_container_layout(vault_dir).map_err(layout_err)?;
-            VaultSession::new(vault_dir.to_path_buf(), header)
+            let session = VaultSession::new(vault_dir.to_path_buf(), header);
+            cleanup_orphans_best_effort(vault_dir);
+            session
         }
         Ok(cf_format::OpenOutcome::TooNew(v)) => Err(CfError::UnsupportedFormat(v)),
         Ok(cf_format::OpenOutcome::NeedsMigration { from, .. }) => {
@@ -417,4 +428,21 @@ pub(crate) fn format_err(e: cf_format::CfFormatError) -> CfError {
 /// 容器布局错误 → VaultNotFound（open_vault 路径，尚未接触密钥材料）
 fn layout_err(_e: cf_format::CfFormatError) -> CfError {
     CfError::VaultNotFound
+}
+
+/// 孤儿附件清理（open_vault 成功路径，见 [`open_vault`] 文档）：
+/// 自开只读明文连接供 [`cf_store::AttachmentRepo::cleanup_orphans`] 构建
+/// 引用集；失败静默（尽力而为纪律，与 cross_copy 的 Err 收尾一致——
+/// 开库不因清理失败被阻断，孤儿留待下次开库重试）。
+///
+/// 防御：db.sqlite 缺失时直接返回（`Connection::open` 会凭空创建空库
+/// 文件，产生无主副产物；布局校验已保证库存在，此处仅防时序边界）。
+fn cleanup_orphans_best_effort(vault_dir: &Path) {
+    let db_path = vault_dir.join(DB_FILE);
+    if !db_path.is_file() {
+        return;
+    }
+    if let Ok(conn) = Connection::open(&db_path) {
+        let _ = cf_store::AttachmentRepo::cleanup_orphans(vault_dir, &conn);
+    }
 }

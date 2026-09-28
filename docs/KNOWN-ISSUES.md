@@ -292,6 +292,98 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
+## BUG-8（✅ 已修复）：日志出口统一往 Clipboard.swift 引入 DiagLog 依赖——验收脚本编译清单未同步，run_clipboard_tier_tests.sh 编译失败
+
+**登记日期**：2026-09-29
+**发现环境**：v0.4.0 发版回归（任务 #8），`tools/run_clipboard_tier_tests.sh` 实跑
+**分级**：S3（测试基建）/ P2 / 来源版本 v0.4.0（`741c157` + `1f00650` 日志出口统一批引入） / 发现版本 v0.4.0（发版回归）
+**状态**：✅ 已修复（2026-09-29，回归批内闭环）
+**核销记录**：修复 = `tools/run_clipboard_tier_tests.sh` swiftc 文件清单补 `macos/Coffer/Support/DiagLog.swift`（回归批内修改，未占独立 commit 时随回归批入库）；复验 = 脚本重跑 **20/20 全绿**（基线 26 = 20 自动段 + 6 T8 真实库段；T8 段因 BUG-10 改 opt-in，转用户陪跑清单——见任务 #8 回归报告）
+**证据**：回归日志 `~/.claude/jobs/dc7a41d3/tmp/regress_clipboard.log`——`Clipboard.swift:142/152 error: cannot find 'DiagLog' in scope`，脚本 exit 1
+
+### 现象（预期/实际 分行写）
+
+- 预期：`run_clipboard_tier_tests.sh` 26/26 全绿（v0.3.0 基线，计数只增不减）。
+- 实际：swiftc 编译失败（`Clipboard.swift` 两处 `cannot find 'DiagLog' in scope`），脚本 exit 1，零用例执行。
+
+### 根因（已实证 / 待查）
+
+已实证：`741c157` / `1f00650`（#7 审查 LOW 项「日志出口统一」）给 `Clipboard.swift` 新增了 `DiagLog.append` 调用；App 构建不受影响（`build_macos_app.sh` 编 35 文件含 DiagLog.swift，门禁全绿），但 `run_clipboard_tier_tests.sh` 的 swiftc 清单（3 文件）未同步补 `DiagLog.swift` → 验收脚本与 App 构建的文件清单双轨漂移。**暴露的过程缺口**：Swift 侧改动只过了 cargo 门禁 + App 构建，未跑 Swift 验收脚本——脚本基线（26/26）不在任何自动门禁内，回退只能靠发版回归人工实跑（本次即由它兜住）。
+
+### 修复路径
+
+1. `run_clipboard_tier_tests.sh` swiftc 清单补 `Support/DiagLog.swift`；
+2. 重跑脚本至 26/26 全绿（本条核销判据）；
+3. 留档声明：Swift 验收脚本基线依赖 App 源文件闭包，源文件新增跨文件依赖（如 DiagLog）时须同步检查 `tools/` 下两套脚本的 swiftc 清单（顺带核 `run_1pux_real_sample_acceptance.sh`——本次实核未受影响，12/12 全绿）。
+
+### 复现与诊断
+
+修复前：`./tools/run_clipboard_tier_tests.sh` → swiftc 编译错误 exit 1；修复后同命令 → 20/20 全绿（T8 opt-in，见 BUG-10）。
+
+---
+
+## BUG-9（🟡 判据修正待回填 docs/15）：socket 清点判据命令 `lsof -i -p <pid>` 缺 `-a`——OR 语义下「空输出断言」结构性不可满足
+
+**登记日期**：2026-09-29
+**发现环境**：v0.4.0 发版回归（任务 #8）TC2-B 实跑，带阳性对照
+**分级**：S3（测试判据）/ P2 / 来源版本 docs/15 r1.1（0 socket 判据映射引入时） / 发现版本 v0.4.0（发版回归）
+**状态**：🟡 docs/16 已按正确口径落条（r1.6）；docs/15 §3.3.2 原文待 architect 同工单修正
+**核销记录**：docs/15 §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）
+**证据**：本轮实跑读数——`lsof -i -p <Coffer_pid>` 402 行、同命令对本地 python 监听进程 330 行（两读数均被系统级 socket 集主导，进程间不可区分）；改 `lsof -a -i -p` 后 Coffer 0 行、python 监听 2 行（LISTEN 条目命中）
+
+### 现象（预期/实际 分行写）
+
+- 预期：`lsof -i -p <pid>` 对零网络 App 输出为空（docs/15 §3.3.2 判据②）。
+- 实际：lsof 的 `-i` 与 `-p` 缺 `-a` 时是 **OR** 组合——输出 = 全系统 internet 文件 ∪ 该进程全部文件，恒非空；零网络 App 与持网进程读数同量级（402 vs 330），断言永不成立也无法区分。
+
+### 根因（已实证 / 待查）
+
+已实证：lsof 谓词组合语义（无 `-a` 即 OR）；判据起草时未带阳性对照实跑——本轮回归按「零命中与查询失败输出相同，唯一区分手段是阳性对照」纪律带上对照才暴露。**教训落条**：判据命令首次入册前必须在「应命中」与「应零命中」两个对象上各实跑一次。
+
+### 修复路径
+
+1. 判据命令定为 `lsof -a -i -p <pid>`（AND 语义）并保留阳性对照必配（已知持 socket 进程跑同命令须非空）；
+2. docs/16 r1.6 TC2-B / §1 判据② 已按此口径更新（本轮）；
+3. docs/15 §3.3.2 原文修正转 dev-architect（同工单），此条核销以其合入为准。
+
+### 复现与诊断
+
+对任意进程跑 `lsof -i -p <pid>`（无 `-a`）——有网环境下永不空；加 `-a` 后零网络进程输出 0 行、监听进程输出非空。
+
+---
+
+## BUG-10（🟡 处置中：T8 已改 opt-in，根因待查）：真实库回环段无人值守执行挂起——`listVaults` 于容器路径 `opendir` 阻塞
+
+**登记日期**：2026-09-29
+**发现环境**：v0.4.0 发版回归（任务 #8），`run_clipboard_tier_tests.sh` 无人值守实跑（两次复现）
+**分级**：S3（测试基建）/ P2 / 来源版本 早期（T8 默认指向容器路径的行为先于 docs/14 §5 禁令） / 发现版本 v0.4.0（发版回归）
+**状态**：🟡 T8 改显式 opt-in（回归批内已改脚本）；挂起根因待查
+**核销记录**：脚本修订即视为处置完成（T8 转用户陪跑/真机清单）；根因查清后可另行关闭
+**证据**：`~/.claude/jobs/dc7a41d3/tmp/regress_clipboard2.log` / `regress_clipboard3.log`（二进制零输出挂起）；`/usr/bin/sample` 栈——`main → listVaults(baseDir:) → uniffi…list_vaults → std fs read_dir → opendir → open$NOCANCEL` 单点阻塞（2 秒采样 1550 样本全在该栈）；同路径 shell `ls` 实测正常（阳性对照：`~/.cargo/bin` 与容器路径均秒回）
+
+### 现象（预期/实际 分行写）
+
+- 预期：T8 真实库回环（listVaults → 导出 → 校验 → 恢复 → 1004 负向，6 项断言）随脚本无人值守执行（2026-09-28 基线 26/26 曾两轮全绿）。
+- 实际：测试二进制于 T8 首个 FFI 调用 `listVaults(容器路径)` 的 `opendir` 上无限阻塞（两次复现，各 6 分钟以上无进展、CPU ≈ 0）；同路径 shell `ls` 正常；App 退出后复现不变。
+
+### 根因（已实证 / 待查）
+
+已实证：阻塞点为 FFI `list_vaults` 内 `read_dir` 的 `open()` 系统调用；阻塞特定于该测试二进制进程上下文（shell 同路径访问正常），与 App 是否运行无关。
+待查：容器目录对非 App 上下文 `opendir` 的挂起机制（TCC/沙盒扩展/文件系统层，dtruss 级诊断需关闭 SIP，本轮未做）。
+
+### 修复路径
+
+1. `run_clipboard_tier_tests.sh` T8 段改**显式 opt-in**：不再默认自动追加容器路径 `--vault-dir`，不传即 SKIP T8（本轮已改，注释留档三条理由——docs/14 §5 禁令、挂起复现、真实数据应显式授权）；
+2. 自动化回归口径：脚本其余段 20/20 全绿（T8 的 6 项断言不删除，opt-in 后仍可执行）；
+3. T8 真实库回环转**用户陪跑/真机清单**（涉真实数据 + 无人值守挂起），v0.4.0 发版附带清单移交；
+4. 根因诊断（dtruss / 新建非 App 上下文对照）留待后续，不阻塞发版。
+
+### 复现与诊断
+
+无人值守跑 `./tools/run_clipboard_tier_tests.sh`（修订前版本，容器目录存在即自动进 T8）→ 二进制挂起于 listVaults；`/usr/bin/sample <pid> 2` 可见单点 `opendir` 栈；修订后同命令 → SKIP T8，其余段全绿。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

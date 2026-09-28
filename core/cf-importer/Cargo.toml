@@ -30,5 +30,8 @@ keepass = { workspace = true, features = ["save_kdbx4"] }
 rusqlite = { workspace = true }
 # 1PUX 集成测试的临时 vault 目录（附件旁路文件落盘）
 tempfile = "3"
+# 属性测试（模糊测试基建）：任意字节下 CSV / 1PUX 解析不 panic。
+# 见 tests/proptest_fuzz.rs。仅测试构建，不进 normal 依赖树。
+proptest = { workspace = true }
 
 # 状态：CSV 导入已实现（docs/07 §7 T03）；1PUX / opvault / KDBX 推后 v0.2+

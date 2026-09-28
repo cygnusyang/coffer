@@ -440,3 +440,33 @@ fn 往返复制顺序调用不死锁不串数据() {
     assert_eq!(a.list_items(None).unwrap().len(), 2);
     assert_eq!(b.list_items(None).unwrap().len(), 1);
 }
+
+/// 审查 MEDIUM 补测：源条目为回收站态时，产物强制 Active
+/// （trashed_at 不在快照、无法忠实迁移，模块文档「产物形态」已声明）。
+#[test]
+fn 回收站态源条目复制产物为active() {
+    let base = temp_dir("trashed");
+    let (dir_a, a) = unlocked_vault(&base, "a");
+    let (_dir_b, b) = unlocked_vault(&base, "b");
+
+    let draft = rich_draft("回收站里的条目");
+    let src_id = a.create_item(&draft).unwrap();
+    a.delete_item(&src_id, false).unwrap(); // 软删 → Trashed
+    assert!(matches!(
+        a.get_item(&src_id).unwrap().unwrap().state,
+        cf_domain::item::ItemState::Trashed
+    ));
+
+    let new_id = copy_item(&a, &src_id, &b).unwrap();
+    let copied = b.get_item(&new_id).unwrap().unwrap();
+    assert!(
+        matches!(copied.state, cf_domain::item::ItemState::Active),
+        "回收站态源条目的副本应为 Active"
+    );
+    // 源条目回收站态不被复制动作影响
+    assert!(matches!(
+        a.get_item(&src_id).unwrap().unwrap().state,
+        cf_domain::item::ItemState::Trashed
+    ));
+    let _ = dir_a;
+}

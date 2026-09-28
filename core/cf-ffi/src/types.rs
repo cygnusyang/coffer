@@ -1028,6 +1028,8 @@ pub enum FfiAuditEvent {
     CsvExport,
     /// 修改主密码成功（FR-1.8）。
     PasswordChange,
+    /// 跨库复制成功（FR-2.10，源库与目标库各一条）。
+    ItemCopy,
 }
 
 impl From<cf_store::AuditEvent> for FfiAuditEvent {
@@ -1037,6 +1039,7 @@ impl From<cf_store::AuditEvent> for FfiAuditEvent {
             cf_store::AuditEvent::BackupRestore => Self::BackupRestore,
             cf_store::AuditEvent::CsvExport => Self::CsvExport,
             cf_store::AuditEvent::PasswordChange => Self::PasswordChange,
+            cf_store::AuditEvent::ItemCopy => Self::ItemCopy,
         }
     }
 }

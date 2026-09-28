@@ -42,6 +42,15 @@ final class AppModel: ObservableObject {
     /// 慢调用（建库 / 解锁 / 导入）进行中标记，用于禁用按钮。
     @Published private(set) var isBusy = false
 
+    // MARK: 主窗口 sheet 触发状态（@Published 提升到此：菜单栏「数据」
+    // 菜单与工具栏/横幅按钮需要跨视图触发同一 sheet，验收反馈补齐）。
+    /// 导入 CSV sheet（工具栏 + 菜单 ⌘I）。
+    @Published var showImport = false
+    /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
+    @Published var showExport = false
+    /// 统一设置 sheet（工具栏 + 菜单 ⌘,）。
+    @Published var showSettings = false
+
     /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
     ///
     /// 计时模式：只在收到 1002 时经 `backoffRemainingSecs` 旁路读**一次**

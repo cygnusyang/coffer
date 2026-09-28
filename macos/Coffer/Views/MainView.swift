@@ -7,13 +7,9 @@ struct MainView: View {
     private var model: AppModel
 
     @State private var newSheetCategory: FfiItemCategory?
-    @State private var showImport = false
-    /// 加密备份导出 sheet（FR-8.1/8.6，T-E）。
-    @State private var showExport = false
-    /// 统一设置 sheet（docs/09-v0.2实现方案.md §3.7，T06 设置页归位：
-    /// 自动锁定 / 剪贴板 / 备份提醒 / 安全 / 数据归位到 SettingsView，
-    /// 取代原 autoLockMenu + 安全设置入口）。
-    @State private var showSettings = false
+    // showImport / showExport / showSettings 提升到 AppModel（@Published）：
+    // 菜单栏「数据」菜单（⌘I / ⌘E / ⌘,）需要跨视图触发同一 sheet，
+    // @State 无法从 commands 访问（验收反馈：菜单里没有导入导出）。
 
     var body: some View {
         NavigationSplitView {
@@ -23,13 +19,10 @@ struct MainView: View {
         } detail: {
             detailPane
         }
-        // 备份提醒横幅（FR-8.5，T-G）：挂在 split view 顶部安全区，
-        // 不挤压三栏 content（safeAreaInset 标准做法）
-        .safeAreaInset(edge: .top) {
-            if model.showBackupBanner {
-                backupBanner
-            }
-        }
+        // 备份提醒横幅（FR-8.5，T-G）：挂在中栏（列表列）顶部——
+        // 不挂 NavigationSplitView 顶层：macOS 上 safeAreaInset(.top) 与
+        // 窗口工具栏同区，横幅文字与工具栏按钮重叠（验收发现，已修）。
+        // onAppear 的 safeAreaInset 见 middleColumn。
         .onAppear {
             model.reloadItems()
             if model.selectedItemID != nil {
@@ -57,7 +50,7 @@ struct MainView: View {
                 .font(.callout)
             Spacer()
             Button("立即备份") {
-                showExport = true
+                model.showExport = true
             }
             Button("暂不") {
                 model.dismissBackupBanner()
@@ -101,6 +94,12 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 300)
+        // 备份提醒横幅（FR-8.5）：中栏顶部，位于工具栏下方不重叠
+        .safeAreaInset(edge: .top) {
+            if model.showBackupBanner {
+                backupBanner
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 Menu {
@@ -116,19 +115,19 @@ struct MainView: View {
                 }
                 // 统一设置入口（docs/09-v0.2实现方案.md §3.7）
                 Button {
-                    showSettings = true
+                    model.showSettings = true
                 } label: {
                     Label("设置", systemImage: "gearshape")
                 }
                 Button {
-                    showImport = true
+                    model.showImport = true
                 } label: {
                     Label("导入 CSV", systemImage: "square.and.arrow.down")
                 }
                 // 加密备份导出入口（FR-8.1/8.6，T-E；底层契约锁定态可用，
                 // UI 入口置于解锁后主界面，TC-EXP-08）
                 Button {
-                    showExport = true
+                    model.showExport = true
                 } label: {
                     Label("导出", systemImage: "arrow.up.doc")
                 }
@@ -139,15 +138,15 @@ struct MainView: View {
                 }
             }
         }
-        .sheet(isPresented: $showImport) {
+        .sheet(isPresented: $model.showImport) {
             ImportView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showExport) {
+        .sheet(isPresented: $model.showExport) {
             ExportView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $model.showSettings) {
             SettingsView()
                 .environmentObject(model)
         }

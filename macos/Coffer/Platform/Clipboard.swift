@@ -17,7 +17,8 @@
 //      清除；延迟 totpDelaySecs(clearSecs:) 后复制 TOTP 验证码（copyPlain，
 //      FR-5.5 不清除）。交接语义：TOTP 落盘即改变 changeCount → 密码的
 //      pending 清除被守卫放弃（先交接后到点，延迟恒 < 清除档）；锁定
-//      （clearOnLock）取消 pending TOTP 复制；再次调用重置序列。
+//      （clearOnLock）取消 pending TOTP 复制；延迟窗口内用户写入剪贴板
+//      则写入路径守卫取消 TOTP 复制（绝不覆写用户内容）；再次调用重置序列。
 
 import AppKit
 
@@ -64,12 +65,13 @@ final class ClipboardManager {
         secs == 0 || clipboardClearTiers().contains(Int64(secs))
     }
 
-    /// changeCount 守卫（纯函数）：仅当剪贴板 changeCount 与我们写入时
-    /// 一致（用户没有复制过别的内容）才允许清除——绝不误清用户数据；
-    /// FR-5.6 的 TOTP 交接也依赖它（TOTP 落盘 → changeCount 变 → 密码
-    /// 的 pending 清除被放弃）。writtenChangeCount 哨兵 -1 的前置 guard
-    /// 在调用面（clearOnLock），此处对不一致一律拒绝。
-    nonisolated static func shouldClear(currentChangeCount: Int, writtenChangeCount: Int) -> Bool {
+    /// changeCount 守卫（纯函数）：剪贴板 changeCount 与我们写入时一致
+    /// （用户没有复制过别的内容）才为真。清除路径据此「绝不误清用户数据」；
+    /// FR-5.6 写入路径据此「绝不覆写用户内容」（TOTP 交接前复核）+「交接
+    /// 天然完成」（TOTP 落盘 → changeCount 变 → 密码的 pending 清除被
+    /// 放弃）。writtenChangeCount 哨兵 -1 的前置 guard 在调用面
+    /// （clearOnLock），此处对不一致一律拒绝。
+    nonisolated static func clipboardUnchanged(currentChangeCount: Int, writtenChangeCount: Int) -> Bool {
         currentChangeCount == writtenChangeCount
     }
 
@@ -112,6 +114,9 @@ final class ClipboardManager {
     ///   - 锁定（clearOnLock）→ 取消 pending TOTP 复制（密码副本仍按
     ///     既有 changeCount 守卫处置）；
     ///   - 再次调用本方法 → 取消旧序列，只保留最近一次（与定时清除同纪律）；
+    ///   - 延迟窗口内用户写入剪贴板（复制自己的内容，含 HK-4）→ 写入路径
+    ///     守卫（clipboardUnchanged）取消 TOTP 复制——验证码绝不覆写用户
+    ///     内容（M-1：与清除路径「绝不误清」同一守卫两侧对称）；
     ///   - TOTP 落盘 → changeCount 改变 → 密码的 pending 清除被守卫放弃
     ///     （延迟恒 < 清除档，交接先于到点，见 totpDelaySecs）。
     ///
@@ -135,6 +140,16 @@ final class ClipboardManager {
             guard let code = MainActor.assumeIsolated({ totpProvider() }),
                   !code.isEmpty else {
                 DiagLog.append("FR-5.6 TOTP 取码失败/为空，跳过验证码复制")
+                return
+            }
+            // 写入路径守卫（M-1 修复，与清除路径「绝不误清用户数据」对称）：
+            // 延迟窗口内用户复制了自己的内容（含 HK-4 ⌘U）→ changeCount
+            // 已变，取消 TOTP 复制——验证码绝不覆写用户内容。
+            guard Self.clipboardUnchanged(
+                currentChangeCount: NSPasteboard.general.changeCount,
+                writtenChangeCount: writtenChangeCount
+            ) else {
+                DiagLog.append("FR-5.6 TOTP 复制取消：延迟窗口内剪贴板已被用户写入顶掉（changeCount 守卫）")
                 return
             }
             self.copyPlain(code)
@@ -177,7 +192,7 @@ final class ClipboardManager {
         clearWorkItem = nil
         guard writtenChangeCount != -1 else { return }
         let pasteboard = NSPasteboard.general
-        if Self.shouldClear(currentChangeCount: pasteboard.changeCount,
+        if Self.clipboardUnchanged(currentChangeCount: pasteboard.changeCount,
                             writtenChangeCount: writtenChangeCount) {
             pasteboard.clearContents()
         }
@@ -201,8 +216,8 @@ final class ClipboardManager {
             let pasteboard = NSPasteboard.general
             // changeCount 不变 = 用户没有复制过别的内容，安全清空；
             // 变了 = 剪贴板已是用户自己的内容（或 FR-5.6 TOTP 已交接落盘），
-            // 绝不误清。守卫判定收敛到纯函数 shouldClear（独立可测）。
-            if Self.shouldClear(currentChangeCount: pasteboard.changeCount,
+            // 绝不误清。守卫判定收敛到纯函数 clipboardUnchanged（独立可测）。
+            if Self.clipboardUnchanged(currentChangeCount: pasteboard.changeCount,
                                 writtenChangeCount: written) {
                 pasteboard.clearContents()
             }

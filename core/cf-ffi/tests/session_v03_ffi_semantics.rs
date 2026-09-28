@@ -30,8 +30,8 @@ use cf_ffi::types::{
 
 /// 仓库根 tests/fixtures/sample_coverage.1pux（30 条合成样本，5 附件）。
 fn pux_fixture() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/sample_coverage.1pux");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample_coverage.1pux");
     assert!(
         path.exists(),
         "fixture 不存在：{}（需在仓库根 tests/fixtures 下准备 sample_coverage.1pux）",
@@ -62,10 +62,7 @@ fn temp_base(tag: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-v03-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-v03-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -177,7 +174,10 @@ fn pux导入跨ffi_附件密文落盘() {
 
     assert_eq!(result.imported_items, 30);
     assert_eq!(result.imported_items, precheck.importable_items);
-    assert_eq!(result.report, precheck, "导入返回 report 必须与预检一致（FR-7.4）");
+    assert_eq!(
+        result.report, precheck,
+        "导入返回 report 必须与预检一致（FR-7.4）"
+    );
 
     // 附件密文落盘：<vault_dir>/attachments/ 下应有 5 个密文文件
     let vault_dir = base.join(brief.uuid.to_string());
@@ -190,7 +190,11 @@ fn pux导入跨ffi_附件密文落盘() {
     assert_eq!(files.len(), 5, "5 个附件条目各落 1 个密文文件");
     for f in &files {
         let meta = f.metadata().unwrap();
-        assert!(meta.len() > 0, "附件密文文件不得为空：{}", f.path().display());
+        assert!(
+            meta.len() > 0,
+            "附件密文文件不得为空：{}",
+            f.path().display()
+        );
     }
 
     // 条目侧可见：30 条新建（条目 ID 全新 UUIDv7，非 1PUX 原 uuid）
@@ -222,7 +226,11 @@ fn pux重复导入全部新建() {
     assert_eq!(first.imported_items, 30);
     let second = session.import_1pux(pux).unwrap();
     assert_eq!(second.imported_items, 30, "二次导入应再次全量新建");
-    assert_eq!(session.list_items(None).unwrap().len(), 60, "条目总数应翻倍");
+    assert_eq!(
+        session.list_items(None).unwrap().len(),
+        60,
+        "条目总数应翻倍"
+    );
 }
 
 /// FR-7.8 删源建议（D-6 数据驱动）：fixture 30 条全部未知类别降级 →
@@ -240,7 +248,10 @@ fn pux删源建议数据驱动() {
         .import_1pux(pux_fixture().to_string_lossy().into_owned())
         .unwrap();
     let advice = result.deletion_advice;
-    assert!(!advice.can_delete, "30 条全部降级（结构信息丢失）→ 不可删源");
+    assert!(
+        !advice.can_delete,
+        "30 条全部降级（结构信息丢失）→ 不可删源"
+    );
     assert!(
         advice
             .blockers
@@ -252,9 +263,7 @@ fn pux删源建议数据驱动() {
     assert_eq!(advice.degraded_items.len(), 30, "每条降级条目逐条列出");
     assert_eq!(advice.degraded_items[0].key, "IT0001");
     assert!(
-        advice.degraded_items[0]
-            .reason
-            .contains("未识别类别 901"),
+        advice.degraded_items[0].reason.contains("未识别类别 901"),
         "降级原因应携带原始 categoryUuid"
     );
 }
@@ -344,10 +353,7 @@ fn 历史缺失条目返回1011() {
         1011
     );
     assert_eq!(
-        err_code(session.restore_history(
-            "no-such-item".to_owned(),
-            "no-such-history".to_owned()
-        )),
+        err_code(session.restore_history("no-such-item".to_owned(), "no-such-history".to_owned())),
         1011
     );
 }
@@ -392,11 +398,13 @@ fn 体检五类与汇总跨ffi() {
         "距今天数应超过 365 天阈值"
     );
     assert_eq!(report.leak_suspects.len(), 2, "p@ssw0rd 字典精确命中");
-    assert!(report
-        .leak_suspects
-        .iter()
-        .all(|f| f.rule == FfiLeakRule::DictionaryExact
-            && f.confidence == FfiLeakConfidence::High));
+    assert!(
+        report
+            .leak_suspects
+            .iter()
+            .all(|f| f.rule == FfiLeakRule::DictionaryExact
+                && f.confidence == FfiLeakConfidence::High)
+    );
     assert_eq!(report.missing_totp_items.len(), 0, "example.com 不在白名单");
 
     // 汇总与清单一一对应（total_findings = 各类计数之和）

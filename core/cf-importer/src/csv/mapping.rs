@@ -168,13 +168,15 @@ pub fn analyze_header(header: &[String]) -> Result<HeaderMap, CfError> {
         match canonical {
             Some(&c) => {
                 if idx.insert(c, i).is_some() {
-                    return Err(CfError::ImportFailed(format!(
-                        "表头存在重复列：{c}"
-                    )));
+                    return Err(CfError::ImportFailed(format!("表头存在重复列：{c}")));
                 }
             }
             None => {
-                let display = if name.is_empty() { "(空列名)" } else { raw.trim() };
+                let display = if name.is_empty() {
+                    "(空列名)"
+                } else {
+                    raw.trim()
+                };
                 unmapped.push((i, display.to_owned()));
             }
         }
@@ -212,9 +214,7 @@ pub fn map_row(header: &HeaderMap, row: &CsvRow) -> (ImportModel, RowMapSignals)
             .map(String::as_str)
     };
     let non_empty = |canonical: &str| -> Option<String> {
-        cell(canonical)
-            .filter(|v| !v.is_empty())
-            .map(str::to_owned)
+        cell(canonical).filter(|v| !v.is_empty()).map(str::to_owned)
     };
 
     // ---- Title（缺失 → 兜底，docs/07 §3.2） ----
@@ -249,8 +249,7 @@ pub fn map_row(header: &HeaderMap, row: &CsvRow) -> (ImportModel, RowMapSignals)
             Err(reason) => {
                 signals.bad_totp = true;
                 signals.bad_totp_reason = Some(reason);
-                notes_parts
-                    .push(format!("[One-time password 无法解析，已保留原始值] {raw}"));
+                notes_parts.push(format!("[One-time password 无法解析，已保留原始值] {raw}"));
             }
         }
     }
@@ -454,12 +453,10 @@ pub fn parse_otpauth(uri: &str) -> Result<OtpauthData, String> {
     }
     let digits = digits.unwrap_or(6);
     // Base32 解码委托 cf_totp（严格 RFC 4648），与 cf_totp::parse_totp_uri 同一实现
-    let secret_bytes =
-        cf_totp::base32_decode(&secret_b32).map_err(|e| e.to_string())?;
+    let secret_bytes = cf_totp::base32_decode(&secret_b32).map_err(|e| e.to_string())?;
 
     // 边界校验（secret ≥ 10 字节、digits ∈ {6,8}）委托 cf-totp 门面
-    cf_totp::TotpConfig::new(secret_bytes.clone(), period, digits)
-        .map_err(|e| e.to_string())?;
+    cf_totp::TotpConfig::new(secret_bytes.clone(), period, digits).map_err(|e| e.to_string())?;
 
     Ok(OtpauthData {
         secret: secret_bytes,
@@ -532,10 +529,7 @@ mod tests {
     /// 重复规范列 → 整文件拒绝
     #[test]
     fn 重复规范列拒绝() {
-        let header: Vec<String> = ["title", "Title"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
+        let header: Vec<String> = ["title", "Title"].iter().map(|s| (*s).to_owned()).collect();
         let err = analyze_header(&header).unwrap_err();
         assert!(matches!(err, CfError::ImportFailed(ref m) if m.contains("重复列")));
     }
@@ -608,8 +602,21 @@ mod tests {
     /// 缺失 Title → 兜底标题 + 信号
     #[test]
     fn 缺失标题兜底() {
-        let hm = header_map(&["Title", "Website", "Username", "Password", "One-time password", "Favorite status", "Archived status", "Tags", "Notes"]);
-        let (m, s) = map_row(&hm, &row(3, &["", "https://x.example", "a", "b", "", "", "", "", ""]));
+        let hm = header_map(&[
+            "Title",
+            "Website",
+            "Username",
+            "Password",
+            "One-time password",
+            "Favorite status",
+            "Archived status",
+            "Tags",
+            "Notes",
+        ]);
+        let (m, s) = map_row(
+            &hm,
+            &row(3, &["", "https://x.example", "a", "b", "", "", "", "", ""]),
+        );
         assert_eq!(m.title, FALLBACK_TITLE);
         assert!(s.no_title);
     }
@@ -617,10 +624,23 @@ mod tests {
     /// 公式前缀：Username/Notes 告警，Password 不告警，原值保留
     #[test]
     fn 公式前缀告警与原值保留() {
-        let hm = header_map(&["Title", "Website", "Username", "Password", "One-time password", "Favorite status", "Archived status", "Tags", "Notes"]);
+        let hm = header_map(&[
+            "Title",
+            "Website",
+            "Username",
+            "Password",
+            "One-time password",
+            "Favorite status",
+            "Archived status",
+            "Tags",
+            "Notes",
+        ]);
         let (m, s) = map_row(
             &hm,
-            &row(2, &["T", "", "=SUM(A1)", "=p=ss", "", "", "", "", "@cmd note"]),
+            &row(
+                2,
+                &["T", "", "=SUM(A1)", "=p=ss", "", "", "", "", "@cmd note"],
+            ),
         );
         assert_eq!(m.username.as_deref(), Some("=SUM(A1)"));
         assert_eq!(m.password.as_deref(), Some("=p=ss"));
@@ -632,18 +652,45 @@ mod tests {
     /// 未知列非空值并入 Notes + 多余单元格并入 Notes
     #[test]
     fn 未知列与多余单元格并入备注() {
-        let hm = header_map(&["Title", "Website", "Username", "Password", "One-time password", "Favorite status", "Archived status", "Tags", "Notes", "Secret Q"]);
+        let hm = header_map(&[
+            "Title",
+            "Website",
+            "Username",
+            "Password",
+            "One-time password",
+            "Favorite status",
+            "Archived status",
+            "Tags",
+            "Notes",
+            "Secret Q",
+        ]);
         let (m, _) = map_row(
             &hm,
-            &row(2, &["T", "", "", "", "", "", "", "", "base", "pet?", "extra"]),
+            &row(
+                2,
+                &["T", "", "", "", "", "", "", "", "base", "pet?", "extra"],
+            ),
         );
-        assert_eq!(m.notes, "base\n[未映射列 Secret Q] pet?\n[未映射列 第11列(无表头)] extra");
+        assert_eq!(
+            m.notes,
+            "base\n[未映射列 Secret Q] pet?\n[未映射列 第11列(无表头)] extra"
+        );
     }
 
     /// 全空行不产生 title 兜底信号（跳过逻辑在预检层，此处验证映射无害）
     #[test]
     fn 空行映射() {
-        let hm = header_map(&["Title", "Website", "Username", "Password", "One-time password", "Favorite status", "Archived status", "Tags", "Notes"]);
+        let hm = header_map(&[
+            "Title",
+            "Website",
+            "Username",
+            "Password",
+            "One-time password",
+            "Favorite status",
+            "Archived status",
+            "Tags",
+            "Notes",
+        ]);
         let (m, s) = map_row(&hm, &row(2, &[""; 9]));
         assert_eq!(m.title, FALLBACK_TITLE);
         assert!(m.url.is_none());
@@ -654,7 +701,17 @@ mod tests {
     /// Tags 逗号/分号混用、去空、trim
     #[test]
     fn 标签分隔与去空() {
-        let hm = header_map(&["Title", "Website", "Username", "Password", "One-time password", "Favorite status", "Archived status", "Tags", "Notes"]);
+        let hm = header_map(&[
+            "Title",
+            "Website",
+            "Username",
+            "Password",
+            "One-time password",
+            "Favorite status",
+            "Archived status",
+            "Tags",
+            "Notes",
+        ]);
         let (m, _) = map_row(&hm, &row(2, &["T", "", "", "", "", "", "", " a;;b ,c", ""]));
         assert_eq!(m.tags, vec!["a", "b", "c"]);
     }
@@ -662,7 +719,17 @@ mod tests {
     /// bool 非法值按 false 处理并产生信号
     #[test]
     fn bool非法值信号() {
-        let hm = header_map(&["Title", "Website", "Username", "Password", "One-time password", "Favorite status", "Archived status", "Tags", "Notes"]);
+        let hm = header_map(&[
+            "Title",
+            "Website",
+            "Username",
+            "Password",
+            "One-time password",
+            "Favorite status",
+            "Archived status",
+            "Tags",
+            "Notes",
+        ]);
         let (_, s) = map_row(&hm, &row(4, &["T", "", "", "", "", "yes", "TRUE", "", ""]));
         assert_eq!(s.invalid_bool_columns, vec![HEADER_FAVORITE]);
         // "TRUE" 合法（大小写不敏感）
@@ -694,10 +761,16 @@ mod tests {
     #[test]
     fn otpauth非法输入逐一拒绝() {
         assert!(parse_otpauth("otpauth://totp/x?secret=NOT!!BASE32").is_err());
-        assert!(parse_otpauth("otpauth://totp/x?secret=AAAA").is_err(), "4 字符 = 2.5 字节 < 80 bits");
+        assert!(
+            parse_otpauth("otpauth://totp/x?secret=AAAA").is_err(),
+            "4 字符 = 2.5 字节 < 80 bits"
+        );
         assert!(parse_otpauth("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=5").is_err());
         assert!(parse_otpauth("otpauth://totp/x").is_err(), "缺 secret");
-        assert!(parse_otpauth("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP").is_err(), "v0.1 仅 totp");
+        assert!(
+            parse_otpauth("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP").is_err(),
+            "v0.1 仅 totp"
+        );
         assert!(parse_otpauth("https://example.com").is_err());
         assert!(parse_otpauth("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=0").is_err());
     }

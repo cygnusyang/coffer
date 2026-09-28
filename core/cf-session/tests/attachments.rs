@@ -93,9 +93,7 @@ fn 附件回环逐字节一致且文件名往返() {
 
     let plain = b"ssh private key bytes \xe2\x9c\x93 \xf0\x9f\x94\x90".to_vec();
     let filename = "私钥 文件 ✅.md";
-    let info = session
-        .add_attachment(&item_id, filename, &plain)
-        .unwrap();
+    let info = session.add_attachment(&item_id, filename, &plain).unwrap();
 
     assert!(!info.uuid.is_empty());
     assert_eq!(info.item_uuid, item_id);
@@ -121,8 +119,12 @@ fn 同文件名不判重() {
     let session = unlocked_vault(&base, "重名库");
     let item_id = session.create_item(&minimal_draft("重名条目")).unwrap();
 
-    session.add_attachment(&item_id, "same.bin", b"first").unwrap();
-    session.add_attachment(&item_id, "same.bin", b"second").unwrap();
+    session
+        .add_attachment(&item_id, "same.bin", b"first")
+        .unwrap();
+    session
+        .add_attachment(&item_id, "same.bin", b"second")
+        .unwrap();
 
     let listed = session.list_attachments(&item_id).unwrap();
     assert_eq!(listed.len(), 2, "同文件名应各自成行，不判重");
@@ -159,7 +161,10 @@ fn 锁定态四方法全部拒绝() {
     let brief = create_vault_with_kdf(&base, "锁定附件库", STRONG, fast_kdf()).unwrap();
     let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
 
-    assert_eq!(session.list_attachments("no-item").unwrap_err().code(), 1001);
+    assert_eq!(
+        session.list_attachments("no-item").unwrap_err().code(),
+        1001
+    );
     assert_eq!(
         session
             .add_attachment("no-item", "x.bin", b"data")
@@ -168,7 +173,10 @@ fn 锁定态四方法全部拒绝() {
         1001
     );
     assert_eq!(session.read_attachment("no-uuid").unwrap_err().code(), 1001);
-    assert_eq!(session.remove_attachment("no-uuid").unwrap_err().code(), 1001);
+    assert_eq!(
+        session.remove_attachment("no-uuid").unwrap_err().code(),
+        1001
+    );
 }
 
 /// 测试要点 3（中）：条目不存在 add / list → 1011。
@@ -180,7 +188,11 @@ fn 条目不存在时添加与列出报条目不存在() {
     let err = session
         .add_attachment("00000000-0000-0000-0000-000000000000", "x.bin", b"d")
         .unwrap_err();
-    assert_eq!(err.code(), 1011, "条目不存在应报 ItemNotFound(1011)：{err:?}");
+    assert_eq!(
+        err.code(),
+        1011,
+        "条目不存在应报 ItemNotFound(1011)：{err:?}"
+    );
     let err = session
         .list_attachments("00000000-0000-0000-0000-000000000000")
         .unwrap_err();
@@ -247,8 +259,14 @@ fn 硬删条目级联删除附件旁路文件() {
 
     session.delete_item(&item_id, true).unwrap();
 
-    assert!(!attachments_dir(&session).join(&a.uuid).exists(), "附件 a 旁路文件应随硬删消失");
-    assert!(!attachments_dir(&session).join(&b.uuid).exists(), "附件 b 旁路文件应随硬删消失");
+    assert!(
+        !attachments_dir(&session).join(&a.uuid).exists(),
+        "附件 a 旁路文件应随硬删消失"
+    );
+    assert!(
+        !attachments_dir(&session).join(&b.uuid).exists(),
+        "附件 b 旁路文件应随硬删消失"
+    );
 
     // DB 行同样消失：新建同名条目不可达旧行，直接断言附件目录只剩空
     let leftovers: Vec<_> = fs::read_dir(attachments_dir(&session))
@@ -316,11 +334,13 @@ fn 回收站条目仍可添加附件() {
 fn 开库时清理孤儿附件且保留在引用文件() {
     let base = temp_dir("open_cleanup");
     let session = unlocked_vault(&base, "孤儿清理库");
-    let item_id = session
-        .create_item(&minimal_draft("孤儿清理条目"))
+    let item_id = session.create_item(&minimal_draft("孤儿清理条目")).unwrap();
+    let orphan = session
+        .add_attachment(&item_id, "orphan.bin", b"orphan")
         .unwrap();
-    let orphan = session.add_attachment(&item_id, "orphan.bin", b"orphan").unwrap();
-    let kept = session.add_attachment(&item_id, "kept.bin", b"kept").unwrap();
+    let kept = session
+        .add_attachment(&item_id, "kept.bin", b"kept")
+        .unwrap();
     let vault_dir = session.vault_dir().to_path_buf();
     let dir = attachments_dir(&session);
 

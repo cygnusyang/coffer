@@ -210,22 +210,23 @@ pub fn run_health_report(
         .into_iter()
         .map(|id| titled(&titles, id))
         .collect();
-    let stale_items: Vec<StaleFinding> = cf_audit::find_stale_passwords(&stale_entries, now, stale_days)
-        .into_iter()
-        .map(|id| {
-            let days_since_update = stale_entries
-                .iter()
-                .find(|(sid, _)| sid == &id)
-                .map_or(0, |(_, updated_at)| {
-                    now.saturating_sub(*updated_at) / SECS_PER_DAY
-                });
-            StaleFinding {
-                title: title_of(&titles, &id),
-                item_id: id,
-                days_since_update,
-            }
-        })
-        .collect();
+    let stale_items: Vec<StaleFinding> =
+        cf_audit::find_stale_passwords(&stale_entries, now, stale_days)
+            .into_iter()
+            .map(|id| {
+                let days_since_update = stale_entries
+                    .iter()
+                    .find(|(sid, _)| sid == &id)
+                    .map_or(0, |(_, updated_at)| {
+                        now.saturating_sub(*updated_at) / SECS_PER_DAY
+                    });
+                StaleFinding {
+                    title: title_of(&titles, &id),
+                    item_id: id,
+                    days_since_update,
+                }
+            })
+            .collect();
     let leak_suspects: Vec<LeakFinding> = cf_audit::find_common_passwords(&common_candidates)
         .into_iter()
         .map(|hit| LeakFinding {

@@ -59,7 +59,9 @@ pub use repo::meta::{
     MetaRepo, KEY_ITEM_COUNT, KEY_LAST_BACKUP_AT, KEY_RECORD_COUNT, KEY_ROOT_MAC,
     KEY_SCHEMA_VERSION,
 };
-pub use repo::totp::{TotpMeta, TotpRepo, TotpStore, COLUMN_TOTP_ACCOUNT, COLUMN_TOTP_ISSUER, COLUMN_TOTP_SECRET};
+pub use repo::totp::{
+    TotpMeta, TotpRepo, TotpStore, COLUMN_TOTP_ACCOUNT, COLUMN_TOTP_ISSUER, COLUMN_TOTP_SECRET,
+};
 pub use repo::Repos;
 
 /// 仓库集合门面（docs/07 §2.2 中 `UnlockedState.store` 的落地形态）。

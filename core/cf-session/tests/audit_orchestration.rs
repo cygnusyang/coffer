@@ -4,7 +4,7 @@
 //!
 //! 判据基准 = `docs/10-v0.2验收用例.md` §5；走真实建库 / 解锁 / 会话 API。
 
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cf_crypto::kdf::KdfParams;
@@ -87,7 +87,11 @@ fn weak_password_detected() {
     // 密码；此处直接经 create_item 构造等价状态（create 同样不设强度门禁，
     // 弱密码只能由 Watchtower 复检兜底——判据点一致）
     let weak_id = session
-        .create_item(&login_draft("弱密码条目", "123456", "https://weak.example.com"))
+        .create_item(&login_draft(
+            "弱密码条目",
+            "123456",
+            "https://weak.example.com",
+        ))
         .unwrap();
 
     let report = session.run_watchtower().unwrap();
@@ -115,7 +119,11 @@ fn report_end_to_end() {
         .create_item(&login_draft("弱密码", "123456", "https://weak.example.com"))
         .unwrap();
     let http = session
-        .create_item(&login_draft("弱URL", "portable-copper-drift-99!", "http://plain.example.com"))
+        .create_item(&login_draft(
+            "弱URL",
+            "portable-copper-drift-99!",
+            "http://plain.example.com",
+        ))
         .unwrap();
 
     let report = session.run_watchtower().unwrap();
@@ -125,12 +133,20 @@ fn report_end_to_end() {
         vec![vec![dup1.clone(), dup2.clone()]],
         "恰一组、两条同密码条目"
     );
-    assert_eq!(report.weak_password_items, vec![weak.clone()], "仅弱密码条目命中");
+    assert_eq!(
+        report.weak_password_items,
+        vec![weak.clone()],
+        "仅弱密码条目命中"
+    );
     assert_eq!(report.http_url_items, vec![http], "仅 http:// 条目命中");
     // 无误报：dup1/dup2 不进弱密码或弱 URL 清单；weak/http 不进重复组
     assert!(!report.weak_password_items.contains(&dup1));
     assert!(!report.http_url_items.contains(&dup2));
-    assert!(!report.duplicate_groups.iter().flatten().any(|id| id == &weak));
+    assert!(!report
+        .duplicate_groups
+        .iter()
+        .flatten()
+        .any(|id| id == &weak));
 }
 
 /// TC-WTW-09 空库：三清单全空，不 panic。

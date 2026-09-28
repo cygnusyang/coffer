@@ -12,16 +12,16 @@
 //!   依赖），故此处逐一定义镜像类型并显式双向转换——转换即映射表，
 //!   上游加字段时编译器会在此暴露遗漏。
 
+use cf_crypto::kdf::KdfParams;
+use cf_domain::category::ItemCategory as DomainItemCategory;
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::{ItemDraft, ItemState, ItemSummary};
 use cf_domain::totp_data::{TotpAlgo, TotpData, TotpUpdate};
-use cf_crypto::kdf::KdfParams;
+use cf_domain::vault::Vault as DomainVaultBrief;
 use cf_session::types::{
     FieldDetail, ItemDetails, SectionDetail, TotpCode, TotpDetail, UrlDetail, VaultInfo,
 };
-use cf_domain::vault::Vault as DomainVaultBrief;
 use cf_store::ItemListFilter as DomainItemListFilter;
-use cf_domain::category::ItemCategory as DomainItemCategory;
 
 use crate::error::FfiError;
 
@@ -585,11 +585,7 @@ impl From<ItemDetails> for FfiItemDetails {
             updated_at: i.updated_at,
             title: i.title.expose().to_owned(),
             urls: i.urls.into_iter().map(Into::into).collect(),
-            tags: i
-                .tags
-                .iter()
-                .map(|t| t.expose().to_owned())
-                .collect(),
+            tags: i.tags.iter().map(|t| t.expose().to_owned()).collect(),
             sections: i.sections.into_iter().map(Into::into).collect(),
             fields: i.fields.into_iter().map(Into::into).collect(),
             totp: i.totp.map(Into::into),
@@ -964,7 +960,6 @@ impl From<cf_exporter::BackupVerifyReport> for FfiBackupVerifyReport {
         }
     }
 }
-
 
 /// 疑似公式注入单元格（CSV 预检；原值保留仅告警，docs/07 §3.2）。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

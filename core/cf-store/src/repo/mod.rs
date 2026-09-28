@@ -107,7 +107,9 @@ pub(crate) fn field_aad(
     column: &str,
 ) -> Result<Vec<u8>, cf_domain::CfError> {
     let uuid_b = uuid_bytes(record_uuid)?;
-    Ok(cf_crypto::aead::build_table_field_aad(table, &uuid_b, column))
+    Ok(cf_crypto::aead::build_table_field_aad(
+        table, &uuid_b, column,
+    ))
 }
 
 /// 当前 Unix 秒。系统时钟早于 epoch 时返回错误（不猜测）。

@@ -17,8 +17,8 @@ use cf_domain::secret::SecretString;
 use rusqlite::Connection;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
-use crate::repo::url::require_item;
 use crate::repo::field_aad;
+use crate::repo::url::require_item;
 
 /// 列名常量（AAD 成分）。
 pub const COLUMN_SECTION_TITLE: &str = "enc_title";
@@ -190,12 +190,13 @@ impl<'a> FieldsRepo<'a> {
                 }
                 None => None,
             };
-            let designation_json: Option<String> = match &f.designation {
-                Some(d) => Some(serde_json::to_string(d).map_err(|_| {
-                    CfError::StorageError("designation serialize failed".into())
-                })?),
-                None => None,
-            };
+            let designation_json: Option<String> =
+                match &f.designation {
+                    Some(d) => Some(serde_json::to_string(d).map_err(|_| {
+                        CfError::StorageError("designation serialize failed".into())
+                    })?),
+                    None => None,
+                };
             self.conn
                 .execute(
                     "INSERT INTO fields
@@ -206,10 +207,9 @@ impl<'a> FieldsRepo<'a> {
                         f.uuid,
                         f.item_uuid,
                         f.section_uuid,
-                        serde_json::to_string(&f.field_type)
-                            .map_err(|_| CfError::StorageError(
-                                "field_type serialize failed".into()
-                            ))?,
+                        serde_json::to_string(&f.field_type).map_err(|_| CfError::StorageError(
+                            "field_type serialize failed".into()
+                        ))?,
                         designation_json,
                         enc_name,
                         enc_value,
@@ -341,7 +341,10 @@ mod tests {
         assert_eq!(got[0].value.as_ref().unwrap().expose(), "p@ssw0rd-明文");
         assert_eq!(got[0].field_type, FieldType::Concealed);
         assert_eq!(got[0].designation, Some(Designation::Password));
-        assert_eq!(got[1].designation, Some(Designation::Other("custom.x".into())));
+        assert_eq!(
+            got[1].designation,
+            Some(Designation::Other("custom.x".into()))
+        );
         assert!(got[1].value.is_none());
     }
 
@@ -376,8 +379,17 @@ mod tests {
             ("SELECT enc_name FROM fields WHERE uuid=?1", "字段名甲"),
             ("SELECT enc_value FROM fields WHERE uuid=?1", "机密值乙"),
         ] {
-            let blob: Vec<u8> = conn.query_row(sql, rusqlite::params![uuid::Uuid::from_bytes([1; 16]).to_string()], |r| r.get(0)).unwrap();
-            assert!(!windows_contains(&blob, col.as_bytes()), "{col} 明文不得落盘");
+            let blob: Vec<u8> = conn
+                .query_row(
+                    sql,
+                    rusqlite::params![uuid::Uuid::from_bytes([1; 16]).to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(
+                !windows_contains(&blob, col.as_bytes()),
+                "{col} 明文不得落盘"
+            );
         }
     }
 

@@ -56,7 +56,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 /// 端到端：30 条全导入成功、unknown_categories 全量、4 附件逐字节回环、
 /// 字段抽查（FR-7.1 / E-4 / docs/09 v0.3.0-T01）。
 #[test]
- fn 样本全量导入与附件逐字节回环() {
+fn 样本全量导入与附件逐字节回环() {
     let pux = fixture("sample_coverage.1pux");
     let mut h = harness();
 
@@ -65,16 +65,25 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
     assert_eq!(report.total_items, 30);
     assert_eq!(report.importable_items, 30, "样本无 Tombstone / 附件缺失");
     assert_eq!(report.attachment_count, 5);
-    assert_eq!(report.unknown_categories.len(), 30, "占位 categoryUuid 全部未识别");
+    assert_eq!(
+        report.unknown_categories.len(),
+        30,
+        "占位 categoryUuid 全部未识别"
+    );
     assert_eq!(report.trashed_count, 1);
     assert!(report.not_imported.is_empty());
     assert!(
-        report.warnings.iter().any(|w| w.contains("已降级导入为安全笔记")),
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("已降级导入为安全笔记")),
         "降级必须 surface 到预检警告（E-4 / D-6）"
     );
 
     // 导入
-    let result: PuxImportResult = import_1pux_with_options(&pux, &mut h.store, &h.vault_dir, &ImportOptions::default()).unwrap();
+    let result: PuxImportResult =
+        import_1pux_with_options(&pux, &mut h.store, &h.vault_dir, &ImportOptions::default())
+            .unwrap();
     assert_eq!(result.imported_items, 30);
 
     let repos = h.store.repos();
@@ -83,9 +92,21 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 
     // 全部 30 条应为 SecureNote（未知类别降级），1 条 trashed + 1 条 archived
     let all = repos.items.list(&ItemListFilter::default()).unwrap();
-    assert!(all.iter().all(|i| i.row.category == ItemCategory::SecureNote));
-    assert_eq!(all.iter().filter(|i| i.row.state == ItemState::Trashed).count(), 1);
-    assert_eq!(all.iter().filter(|i| i.row.state == ItemState::Archived).count(), 1);
+    assert!(all
+        .iter()
+        .all(|i| i.row.category == ItemCategory::SecureNote));
+    assert_eq!(
+        all.iter()
+            .filter(|i| i.row.state == ItemState::Trashed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        all.iter()
+            .filter(|i| i.row.state == ItemState::Archived)
+            .count(),
+        1
+    );
 
     // 字段抽查：SYNTH-Login（降级条目，username/password 并入 notes）
     let login = all
@@ -154,7 +175,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 /// 故障注入：带附件条目的事务在附件写入后失败 → 该条目回滚、
 /// 附件文件成孤儿 → 收尾 cleanup_orphans 清零（docs/09 接缝裁决）。
 #[test]
- fn 事务失败回滚且孤儿附件被清理() {
+fn 事务失败回滚且孤儿附件被清理() {
     let pux = fixture("sample_coverage.1pux");
     let mut h = harness();
 
@@ -164,7 +185,9 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
         &pux,
         &mut h.store,
         &h.vault_dir,
-        &ImportOptions { fail_after_rows: Some(6) },
+        &ImportOptions {
+            fail_after_rows: Some(6),
+        },
     )
     .unwrap_err();
     assert!(matches!(err, cf_domain::CfError::ImportFailed(ref m) if m.contains("注入")));
@@ -172,11 +195,25 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
     // 前 6 条已提交（每条目独立事务），第 7 条回滚
     let repos = h.store.repos();
     assert_eq!(repos.items.count(None).unwrap(), 6);
-    assert_eq!(repos.meta.item_count().unwrap(), 6, "meta 计数随失败事务回滚");
+    assert_eq!(
+        repos.meta.item_count().unwrap(),
+        6,
+        "meta 计数随失败事务回滚"
+    );
     // 第 1 条（SYNTH-Login）的附件已随其事务成功提交且文件在
     let all = repos.items.list(&ItemListFilter::default()).unwrap();
-    let login = all.iter().find(|i| i.title.expose() == "SYNTH-Login").unwrap();
-    assert_eq!(repos.attachments.list_for_item(&login.row.uuid).unwrap().len(), 1);
+    let login = all
+        .iter()
+        .find(|i| i.title.expose() == "SYNTH-Login")
+        .unwrap();
+    assert_eq!(
+        repos
+            .attachments
+            .list_for_item(&login.row.uuid)
+            .unwrap()
+            .len(),
+        1
+    );
 
     // 孤儿已被收尾清理：attachments 目录中不留未被 DB 行引用的文件
     let removed = AttachmentRepo::cleanup_orphans(&h.vault_dir, h.store.connection()).unwrap();
@@ -198,7 +235,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 /// 损坏输入：坏 ZIP / 缺 export.attributes / JSON 缺 accounts ——
 /// 报错且不落库（FR-7.1）。
 #[test]
- fn 损坏输入报错且不落库() {
+fn 损坏输入报错且不落库() {
     let h = harness();
 
     // 坏 ZIP
@@ -219,7 +256,9 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
         zip.finish().unwrap();
     }
     let err = precheck_1pux(&missing_attrs).unwrap_err();
-    assert!(matches!(err, cf_domain::CfError::ImportFailed(ref m) if m.contains("export.attributes")));
+    assert!(
+        matches!(err, cf_domain::CfError::ImportFailed(ref m) if m.contains("export.attributes"))
+    );
 
     // export.data 缺 accounts
     let no_accounts = h._tmp.path().join("no_accounts.1pux");
@@ -245,7 +284,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 /// 分隔符不硬编码）与小样本导入（categoryUuid 用 docs/03 §6.4.1 真实码：
 /// 001 Login / 004 Identity / 112 降级）。
 #[test]
- fn 官方形态b附件前缀枚举与真实类别码() {
+fn 官方形态b附件前缀枚举与真实类别码() {
     let pux_path = tmp_1pux();
     let mut h = harness();
 
@@ -285,10 +324,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
     assert_eq!(doc.row.category, ItemCategory::SecureNote);
 
     // 形态 B 附件：`files/DOCXYZ` 前缀枚举命中 `files/DOCXYZ___manual.pdf`
-    let plain = repos
-        .attachments
-        .list_for_item(&doc.row.uuid)
-        .unwrap();
+    let plain = repos.attachments.list_for_item(&doc.row.uuid).unwrap();
     assert_eq!(plain.len(), 1);
     assert_eq!(plain[0].filename, "manual.pdf");
     let content = repos
@@ -302,7 +338,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 /// 声明的解压大小很小、实际解压内容超过单附件 100 MiB 上限 → 导入报
 /// `ImportFailed` 且不落库（不得依赖 cf-store 落库前的第二道检查兜底）。
 #[test]
- fn 附件zip炸弹声明尺寸小实际解压超限被拒() {
+fn 附件zip炸弹声明尺寸小实际解压超限被拒() {
     let pux_path = bomb_1pux("attachment_bomb", 110 * 1024 * 1024, 0);
     tamper_central_dir_uncompressed_size(&pux_path, "files/BOMBDOC___bomb.bin", 16);
 
@@ -322,7 +358,7 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
 /// export.data zip bomb：central directory 声明很小、实际解压超过
 /// 64 MiB 上限 → 预检报 `ImportFailed`（读入阶段拦截，不进 JSON 解析）。
 #[test]
- fn 导出数据zip炸弹声明尺寸小实际解压超限被拒() {
+fn 导出数据zip炸弹声明尺寸小实际解压超限被拒() {
     let pux_path = bomb_1pux("data_bomb", 1, 65 * 1024 * 1024);
     tamper_central_dir_uncompressed_size(&pux_path, "export.data", 20);
 
@@ -419,7 +455,8 @@ fn tmp_1pux() -> PathBuf {
     let opts = zip::write::SimpleFileOptions::default();
     use std::io::Write as _;
     zip.start_file("export.attributes", opts).unwrap();
-    zip.write_all(br#"{"version": 3, "description": "test"}"#).unwrap();
+    zip.write_all(br#"{"version": 3, "description": "test"}"#)
+        .unwrap();
     let data = br#"{"accounts": [{"attrs": {"name": "T"}, "vaults": [
         {"attrs": {"uuid": "V", "name": "v", "type": "P"}, "items": [
             {"uuid": "S1", "categoryUuid": "001", "state": "active",

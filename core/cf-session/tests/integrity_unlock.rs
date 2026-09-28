@@ -68,7 +68,9 @@ fn tc_mac_06_正常解锁通过且基线自举() {
     le.copy_from_slice(&count_blob);
     assert_eq!(i64::from_le_bytes(le), 0, "空库自举 record_count = 0");
     let mac: Vec<u8> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'root_mac'", [], |r| r.get(0))
+        .query_row("SELECT value FROM meta WHERE key = 'root_mac'", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert!(!mac.is_empty(), "自举重建 root_mac");
     drop(conn);

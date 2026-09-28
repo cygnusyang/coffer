@@ -185,7 +185,11 @@ fn 孤立cr报错并提示老mac行尾() {
 #[test]
 fn 引号内孤立cr归一为lf() {
     let parsed = parse_csv(b"Title\n\"a\rb\"\n").unwrap();
-    assert_eq!(parsed.rows[0].cells, vec!["a\nb"], "引号内孤立 CR 归一为 LF");
+    assert_eq!(
+        parsed.rows[0].cells,
+        vec!["a\nb"],
+        "引号内孤立 CR 归一为 LF"
+    );
 }
 
 /// 空引号字段 `""` 与后续列正常切分
@@ -258,7 +262,10 @@ fn 同义列同时出现整文件拒绝() {
 #[test]
 fn 空文件与仅表头() {
     let err = analyze_csv(b"").unwrap_err();
-    assert!(matches!(err, cf_domain::CfError::ImportUnknownFormat), "空文件应报格式无法识别");
+    assert!(
+        matches!(err, cf_domain::CfError::ImportUnknownFormat),
+        "空文件应报格式无法识别"
+    );
 
     let analysis = analyze_csv(
         "Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes\n".as_bytes(),
@@ -343,7 +350,11 @@ fn 公式注入真实攻击向量原值保留且告警() {
         "=cmd|' /C calc'!A0",
         "原值保留：库内存的就是危险原串（导出侧防护的输入前提）"
     );
-    assert_eq!(value_of(&Designation::Password), "=p@ss", "Password 列原值保留且不告警");
+    assert_eq!(
+        value_of(&Designation::Password),
+        "=p@ss",
+        "Password 列原值保留且不告警"
+    );
     assert_eq!(value_of(&Designation::NotesPlain), "-1+SUM(A1)");
 }
 
@@ -374,9 +385,14 @@ fn 事务注入三种位置回滚零残留() {
                 notes: format!("note{i}"),
             })
             .collect();
-        let err =
-            import_models(&models, &mut st, &ImportOptions { fail_after_rows: Some(fail_at) })
-                .unwrap_err();
+        let err = import_models(
+            &models,
+            &mut st,
+            &ImportOptions {
+                fail_after_rows: Some(fail_at),
+            },
+        )
+        .unwrap_err();
         assert!(
             matches!(err, cf_domain::CfError::ImportFailed(ref m) if m.contains("注入")),
             "fail_at={fail_at} 应返回注入错误：{err:?}"
@@ -445,10 +461,21 @@ fn 事务内panic回滚() {
     set_hook(prev_hook);
 
     let repos = st.repos();
-    assert_eq!(repos.items.count(None).unwrap(), before, "panic unwind 后必须零残留");
-    assert_eq!(repos.meta.item_count().unwrap(), before, "item_count 必须随事务回滚");
+    assert_eq!(
+        repos.items.count(None).unwrap(),
+        before,
+        "panic unwind 后必须零残留"
+    );
+    assert_eq!(
+        repos.meta.item_count().unwrap(),
+        before,
+        "item_count 必须随事务回滚"
+    );
     // 连接在 unwind 后仍然可用
-    assert_eq!(repos.items.list(&ItemListFilter::default()).unwrap().len(), 1);
+    assert_eq!(
+        repos.items.list(&ItemListFilter::default()).unwrap().len(),
+        1
+    );
 }
 
 // ---------- 5. otpauth ----------
@@ -467,7 +494,10 @@ fn otpauth合法变体导入且totp可用() {
         "LowercaseSecret,,u,p,otpauth://totp/Ok:acct?secret=jbswy3dpehpk3pxp,false,false,,\n",
     );
     let analysis = analyze_csv(csv.as_bytes()).unwrap();
-    assert!(analysis.report.rows_with_bad_totp.is_empty(), "三条都应合法");
+    assert!(
+        analysis.report.rows_with_bad_totp.is_empty(),
+        "三条都应合法"
+    );
     assert_eq!(analysis.report.valid_rows, 3);
 
     let mut st = store();
@@ -476,7 +506,10 @@ fn otpauth合法变体导入且totp可用() {
     let all = repos.items.list(&ItemListFilter::default()).unwrap();
 
     // 变体 1：RFC 向量 —— 导入后用库内 secret 生成验证码，与标准向量一致
-    let rfc = all.iter().find(|i| i.title.expose() == "RfcVector").unwrap();
+    let rfc = all
+        .iter()
+        .find(|i| i.title.expose() == "RfcVector")
+        .unwrap();
     let totp_uuids = repos.totp.totp_uuids_for_item(&rfc.row.uuid).unwrap();
     assert_eq!(totp_uuids.len(), 1);
     let meta = repos.totp.totp_meta(&totp_uuids[0]).unwrap().unwrap();
@@ -490,14 +523,20 @@ fn otpauth合法变体导入且totp可用() {
     );
 
     // 变体 2：issuer / account percent 解码正确
-    let special = all.iter().find(|i| i.title.expose() == "SpecialIssuer").unwrap();
+    let special = all
+        .iter()
+        .find(|i| i.title.expose() == "SpecialIssuer")
+        .unwrap();
     let su = repos.totp.totp_uuids_for_item(&special.row.uuid).unwrap();
     let smeta = repos.totp.totp_meta(&su[0]).unwrap().unwrap();
     assert_eq!(smeta.issuer.as_deref(), Some("My Bank&Co="));
     assert_eq!(smeta.account.as_deref(), Some("alice/prod"));
 
     // 变体 3：小写 secret、默认 digits/period
-    let lower = all.iter().find(|i| i.title.expose() == "LowercaseSecret").unwrap();
+    let lower = all
+        .iter()
+        .find(|i| i.title.expose() == "LowercaseSecret")
+        .unwrap();
     let lu = repos.totp.totp_uuids_for_item(&lower.row.uuid).unwrap();
     let lmeta = repos.totp.totp_meta(&lu[0]).unwrap().unwrap();
     assert_eq!((lmeta.digits, lmeta.period), (6, 30), "缺省参数取默认值");
@@ -522,7 +561,10 @@ fn 坏secret拒绝行号准确() {
         vec![4, 5],
         "文件行号（表头为第 1 行）必须逐行准确"
     );
-    assert_eq!(analysis.report.valid_rows, 5, "坏 otpauth 的行仍导入（原值并入备注）");
+    assert_eq!(
+        analysis.report.valid_rows, 5,
+        "坏 otpauth 的行仍导入（原值并入备注）"
+    );
     // 坏行原始 URI 保留在 notes
     for title in ["Digit0", "Bang"] {
         let m = analysis
@@ -531,11 +573,15 @@ fn 坏secret拒绝行号准确() {
             .find(|m| m.title == title)
             .unwrap_or_else(|| panic!("模型缺失 {title}"));
         assert!(
-            m.notes.contains("[One-time password 无法解析，已保留原始值]"),
+            m.notes
+                .contains("[One-time password 无法解析，已保留原始值]"),
             "{title} 备注缺前缀：{}",
             m.notes
         );
-        assert!(m.notes.contains("otpauth://totp/"), "{title} 备注缺原始 URI");
+        assert!(
+            m.notes.contains("otpauth://totp/"),
+            "{title} 备注缺原始 URI"
+        );
     }
 }
 
@@ -565,7 +611,10 @@ fn 全fixture报告即所得() {
 
         let mut st = store();
         let result: CsvImportResult = import_csv(&fixture(name), &mut st).unwrap();
-        assert_eq!(result.imported_rows, report.valid_rows, "{name} 导入数应等于预检 valid_rows");
+        assert_eq!(
+            result.imported_rows, report.valid_rows,
+            "{name} 导入数应等于预检 valid_rows"
+        );
 
         let repos = st.repos();
         assert_eq!(
@@ -579,8 +628,12 @@ fn 全fixture报告即所得() {
             "{name} meta.item_count 应等于预检 valid_rows"
         );
         // 全空行跳过语义：skipped 行不落库
-        let expected_total_rows = report.valid_rows + u32::try_from(report.skipped_rows.len()).unwrap_or(u32::MAX);
-        assert_eq!(report.total_rows, expected_total_rows, "{name} total = valid + skipped");
+        let expected_total_rows =
+            report.valid_rows + u32::try_from(report.skipped_rows.len()).unwrap_or(u32::MAX);
+        assert_eq!(
+            report.total_rows, expected_total_rows,
+            "{name} total = valid + skipped"
+        );
     }
 
     // invalid_utf8：整体拒绝，库零影响
@@ -589,5 +642,9 @@ fn 全fixture报告即所得() {
     let before = st.repos().items.count(None).unwrap();
     assert!(precheck_csv(&fixture("invalid_utf8.csv")).is_err());
     assert!(import_csv(&fixture("invalid_utf8.csv"), &mut st).is_err());
-    assert_eq!(st.repos().items.count(None).unwrap(), before, "被拒文件不得影响既有数据");
+    assert_eq!(
+        st.repos().items.count(None).unwrap(),
+        before,
+        "被拒文件不得影响既有数据"
+    );
 }

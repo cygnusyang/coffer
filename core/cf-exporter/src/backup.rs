@@ -178,7 +178,8 @@ fn stamp_audit(vault_dir: &Path, event: AuditEvent, detail: Option<&str>) {
 }
 
 /// checkpoint WAL（TRUNCATE）。任何失败静默忽略——见模块文档「不致命」。
-fn checkpoint_wal(db_path: &Path) {    let Ok(conn) = rusqlite::Connection::open(db_path) else {
+fn checkpoint_wal(db_path: &Path) {
+    let Ok(conn) = rusqlite::Connection::open(db_path) else {
         return;
     };
     let _ = conn.busy_timeout(std::time::Duration::from_secs(2));

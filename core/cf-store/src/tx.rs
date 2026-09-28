@@ -46,7 +46,8 @@ mod tests {
     #[test]
     fn 成功路径提交写入() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);").unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);")
+            .unwrap();
 
         with_tx(&mut conn, |tx| {
             tx.execute("INSERT INTO t (v) VALUES (1)", []).store()?;
@@ -54,7 +55,9 @@ mod tests {
         })
         .unwrap();
 
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
     }
 
@@ -62,7 +65,8 @@ mod tests {
     #[test]
     fn 注入失败全部回滚() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);").unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);")
+            .unwrap();
 
         let result: CfStoreResult<()> = with_tx(&mut conn, |tx| {
             tx.execute("INSERT INTO t (v) VALUES (1)", []).store()?;
@@ -71,7 +75,9 @@ mod tests {
         });
 
         assert!(matches!(result, Err(CfError::Validation(_))));
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 0, "回滚后不得有残留行");
     }
 
@@ -93,7 +99,9 @@ mod tests {
         });
 
         assert!(matches!(result, Err(CfError::StorageError(_))));
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1, "只有事务外的原始行");
     }
 }

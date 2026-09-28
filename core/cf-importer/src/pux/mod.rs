@@ -121,7 +121,8 @@ fn write_all(
     let mut imported: u32 = 0;
     for (i, m) in models.iter().enumerate() {
         let inject_fail = options.fail_after_rows == Some(u32::try_from(i).unwrap_or(u32::MAX));
-        store.with_tx(|repos| write_pux_item(repos, m, i as i64, vault_dir, archive, inject_fail))?;
+        store
+            .with_tx(|repos| write_pux_item(repos, m, i as i64, vault_dir, archive, inject_fail))?;
         imported += 1;
     }
     Ok(imported)

@@ -71,7 +71,11 @@ impl PuxArchive {
         let attrs = self.read_entry_bytes("export.attributes", MAX_ATTRIBUTES_BYTES)?;
         let attrs_json: serde_json::Value = serde_json::from_slice(&attrs)
             .map_err(|_| CfError::ImportFailed("export.attributes 不是合法 JSON".into()))?;
-        if attrs_json.get("version").and_then(serde_json::Value::as_i64).is_none() {
+        if attrs_json
+            .get("version")
+            .and_then(serde_json::Value::as_i64)
+            .is_none()
+        {
             return Err(CfError::ImportFailed(
                 "export.attributes 缺少数字 version 字段".into(),
             ));
@@ -79,7 +83,9 @@ impl PuxArchive {
 
         let data = self.read_entry_bytes("export.data", MAX_EXPORT_DATA_BYTES)?;
         let model: PuxModel = serde_json::from_slice(&data).map_err(|e| {
-            CfError::ImportFailed(format!("export.data 解析失败（缺 accounts/attrs 或键非法）：{e}"))
+            CfError::ImportFailed(format!(
+                "export.data 解析失败（缺 accounts/attrs 或键非法）：{e}"
+            ))
         })?;
 
         let item_total: usize = model
@@ -130,9 +136,7 @@ impl PuxArchive {
     /// FR-7.6 不静默丢弃）。
     #[must_use]
     pub fn resolve_file_entry(&mut self, file: &super::model::PuxFileRef) -> Option<String> {
-        if !file.zip_entry_hint.is_empty()
-            && self.archive.by_name(&file.zip_entry_hint).is_ok()
-        {
+        if !file.zip_entry_hint.is_empty() && self.archive.by_name(&file.zip_entry_hint).is_ok() {
             return Some(file.zip_entry_hint.clone());
         }
         let Some(doc_id) = &file.document_id else {

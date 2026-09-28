@@ -307,7 +307,9 @@ mod tests {
         assert_ne!(blob, cbor, "快照明文不得出现在数据库中");
         assert_eq!(blob.len(), 24 + cbor.len() + 16);
         // 全库扫描：明文标题不出现
-        assert!(!blob.windows(cbor.len().min(blob.len())).any(|w| w == cbor.as_slice()));
+        assert!(!blob
+            .windows(cbor.len().min(blob.len()))
+            .any(|w| w == cbor.as_slice()));
     }
 
     /// 密文跨行搬运（同表不同 history 行）→ 解密失败（AAD 行级钉死）
@@ -350,7 +352,10 @@ mod tests {
 
         assert!(r.list(&b).unwrap().is_empty());
         assert_eq!(r.latest_version(&b).unwrap(), None);
-        assert!(r.snapshot(&uuid::Uuid::now_v7().to_string()).unwrap().is_none());
+        assert!(r
+            .snapshot(&uuid::Uuid::now_v7().to_string())
+            .unwrap()
+            .is_none());
     }
 
     /// 条目 uuid 非法 → Corrupted（AAD 需要 16 字节）

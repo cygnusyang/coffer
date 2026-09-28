@@ -156,7 +156,9 @@ fn snapshot_encrypted_aad_pinned() {
         .unwrap();
     assert_ne!(blob, cbor, "快照明文不得落盘");
     assert!(
-        !blob.windows(cbor.len().min(blob.len())).any(|w| w == cbor.as_slice()),
+        !blob
+            .windows(cbor.len().min(blob.len()))
+            .any(|w| w == cbor.as_slice()),
         "CBOR 字节序列不得以任何偏移出现在密文 BLOB 中"
     );
 
@@ -185,7 +187,10 @@ fn list_desc_order() {
     let mut snap = sample_snapshot(&item);
     for round in 1..=3u32 {
         snap.title = format!("版本 {round}");
-        repos.history.insert(&item, &snap, 1_000 + i64::from(round)).unwrap();
+        repos
+            .history
+            .insert(&item, &snap, 1_000 + i64::from(round))
+            .unwrap();
     }
 
     let metas = repos.history.list(&item).unwrap();
@@ -198,7 +203,10 @@ fn list_desc_order() {
     // 元组字段正确（uuid / item_uuid / created_at）
     for m in &metas {
         assert_eq!(m.item_uuid, item);
-        assert!(uuid::Uuid::parse_str(&m.uuid).is_ok(), "history 行 uuid 合法");
+        assert!(
+            uuid::Uuid::parse_str(&m.uuid).is_ok(),
+            "history 行 uuid 合法"
+        );
         assert!((1_001..=1_003).contains(&m.created_at));
     }
 }
@@ -217,7 +225,11 @@ fn hard_delete_cascades_history() {
         .unwrap();
     let before: i64 = store
         .connection()
-        .query_row("SELECT COUNT(*) FROM history WHERE item_uuid = ?1", rusqlite::params![item], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM history WHERE item_uuid = ?1",
+            rusqlite::params![item],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(before, 1, "前置：history 已有 1 行");
 
@@ -225,7 +237,11 @@ fn hard_delete_cascades_history() {
 
     let after: i64 = store
         .connection()
-        .query_row("SELECT COUNT(*) FROM history WHERE item_uuid = ?1", rusqlite::params![item], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM history WHERE item_uuid = ?1",
+            rusqlite::params![item],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(after, 0, "外键级联必须清空 history");
 }
@@ -240,7 +256,9 @@ fn snapshot_tx_atomic_with_items() {
 
     // 单事务：插 items 从表行 + 写快照，随后注入失败
     let err = store.with_tx(|repos| -> cf_store::CfStoreResult<()> {
-        repos.history.insert(&item, &sample_snapshot(&item), 2_000)?;
+        repos
+            .history
+            .insert(&item, &sample_snapshot(&item), 2_000)?;
         // 注入失败（可操作的显式错误，docs/03 §4.4）
         Err(cf_domain::CfError::Validation("injected failure".into()))
     });

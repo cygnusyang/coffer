@@ -31,10 +31,8 @@ fn temp_vault_dir() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "coffer-attach-test-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("coffer-attach-test-{}-{nanos}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -175,10 +173,8 @@ fn 落盘为密文且content_mac对齐密文() {
     use hmac::digest::KeyInit;
     use hmac::{Hmac, Mac as _};
     use sha2::Sha256;
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(
-        subkeys.attach_mac_key.as_bytes(),
-    )
-    .unwrap();
+    let mut mac =
+        <Hmac<Sha256> as KeyInit>::new_from_slice(subkeys.attach_mac_key.as_bytes()).unwrap();
     mac.update(&ciphertext);
     let expected = BASE64.encode(mac.finalize().into_bytes());
     assert_eq!(db_content_mac(&store, &meta.uuid), expected);
@@ -271,8 +267,7 @@ fn 超限拒绝且零残留() {
 
     let oversized = vec![0u8; MAX_ATTACHMENT_BYTES + 1];
     let filename = b"big.bin".to_vec();
-    let result = store
-        .with_tx(|repos| repos.attachments.add(&item, &filename, &oversized, &vault));
+    let result = store.with_tx(|repos| repos.attachments.add(&item, &filename, &oversized, &vault));
     assert!(
         matches!(result, Err(cf_domain::CfError::Validation(_))),
         "超限必须报 Validation"
@@ -284,8 +279,10 @@ fn 超限拒绝且零残留() {
         .unwrap();
     assert_eq!(rows, 0, "超限不得写行");
     let dir = vault.join("attachments");
-    assert!(!dir.exists() || fs::read_dir(&dir).unwrap().next().is_none(),
-        "超限不得写文件");
+    assert!(
+        !dir.exists() || fs::read_dir(&dir).unwrap().next().is_none(),
+        "超限不得写文件"
+    );
 
     fs::remove_dir_all(&vault).unwrap();
 }
@@ -347,10 +344,12 @@ fn cleanup_orphans清理孤儿与tmp残留() {
     // 手工放置 .tmp- 半截文件（模拟 rename 前崩溃）
     fs::write(vault.join("attachments").join(".tmp-deadbeef"), b"half").unwrap();
 
-    let removed =
-        cf_store::AttachmentRepo::cleanup_orphans(&vault, store.connection()).unwrap();
+    let removed = cf_store::AttachmentRepo::cleanup_orphans(&vault, store.connection()).unwrap();
     assert_eq!(removed, 2, "孤儿文件 + .tmp- 残留都应被清理");
-    assert!(vault.join("attachments").join(&keep.uuid).is_file(), "在行文件必须保留");
+    assert!(
+        vault.join("attachments").join(&keep.uuid).is_file(),
+        "在行文件必须保留"
+    );
     assert!(
         !vault.join("attachments").join(".tmp-deadbeef").exists(),
         ".tmp- 残留必须被清理"
@@ -374,7 +373,10 @@ fn 行在文件无报损坏() {
     let read = store.repos().attachments.read(&meta.uuid, &vault);
     assert!(matches!(read, Err(cf_domain::CfError::Corrupted(_))));
     let read_content = store.repos().attachments.read_content(&meta.uuid, &vault);
-    assert!(matches!(read_content, Err(cf_domain::CfError::Corrupted(_))));
+    assert!(matches!(
+        read_content,
+        Err(cf_domain::CfError::Corrupted(_))
+    ));
 
     fs::remove_dir_all(&vault).unwrap();
 }
@@ -404,10 +406,7 @@ fn 与备份打包路径坐标系一致() {
         file_path.starts_with("attachments/") && !file_path.contains('\\'),
         "file_path 必须是 attachments/ 前缀的正斜杠相对路径，实际：{file_path}"
     );
-    assert!(
-        !meta.uuid.contains('/'),
-        "file_path 不得包含绝对路径成分"
-    );
+    assert!(!meta.uuid.contains('/'), "file_path 不得包含绝对路径成分");
 
     // 相对路径在库根坐标系下命中真实文件
     assert!(vault.join(&file_path).is_file());
@@ -452,7 +451,12 @@ fn 条目隔离与缺失附件() {
     let list_a = store.repos().attachments.list_for_item(&a).unwrap();
     assert_eq!(list_a.len(), 2);
     assert!(list_a.iter().all(|m| m.item_uuid == a));
-    assert!(store.repos().attachments.list_for_item(&b).unwrap().is_empty());
+    assert!(store
+        .repos()
+        .attachments
+        .list_for_item(&b)
+        .unwrap()
+        .is_empty());
 
     let missing = store
         .repos()
@@ -461,11 +465,13 @@ fn 条目隔离与缺失附件() {
     assert!(matches!(missing, Err(cf_domain::CfError::Validation(_))));
 
     // remove 不存在的附件同样 Validation，且不动任何文件
-    let remove_missing = store
-        .with_tx(|repos| repos.attachments.remove(&m1.uuid, &vault));
+    let remove_missing = store.with_tx(|repos| repos.attachments.remove(&m1.uuid, &vault));
     assert!(remove_missing.is_ok(), "remove 已存在附件必须成功");
-    let remove_missing =
-        store.with_tx(|repos| repos.attachments.remove(&uuid::Uuid::now_v7().to_string(), &vault));
+    let remove_missing = store.with_tx(|repos| {
+        repos
+            .attachments
+            .remove(&uuid::Uuid::now_v7().to_string(), &vault)
+    });
     assert!(matches!(
         remove_missing,
         Err(cf_domain::CfError::Validation(_))

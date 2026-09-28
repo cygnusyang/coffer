@@ -149,12 +149,36 @@ impl KdfParams {
 /// 1Password 的 Secret Key，必须显著高于该下限
 /// （见 `docs/01-需求分析.md` NFR-SEC-03）。
 pub const PRESET_CANDIDATES: &[KdfParams] = &[
-    KdfParams { m_cost_kib: 64 * 1024,  t_cost: 3, p_cost: 4 },   // 64 MiB
-    KdfParams { m_cost_kib: 128 * 1024, t_cost: 3, p_cost: 4 },   // 128 MiB
-    KdfParams { m_cost_kib: 192 * 1024, t_cost: 3, p_cost: 4 },   // 192 MiB
-    KdfParams { m_cost_kib: 256 * 1024, t_cost: 3, p_cost: 4 },   // 256 MiB
-    KdfParams { m_cost_kib: 384 * 1024, t_cost: 3, p_cost: 4 },   // 384 MiB
-    KdfParams { m_cost_kib: 512 * 1024, t_cost: 3, p_cost: 4 },   // 512 MiB
+    KdfParams {
+        m_cost_kib: 64 * 1024,
+        t_cost: 3,
+        p_cost: 4,
+    }, // 64 MiB
+    KdfParams {
+        m_cost_kib: 128 * 1024,
+        t_cost: 3,
+        p_cost: 4,
+    }, // 128 MiB
+    KdfParams {
+        m_cost_kib: 192 * 1024,
+        t_cost: 3,
+        p_cost: 4,
+    }, // 192 MiB
+    KdfParams {
+        m_cost_kib: 256 * 1024,
+        t_cost: 3,
+        p_cost: 4,
+    }, // 256 MiB
+    KdfParams {
+        m_cost_kib: 384 * 1024,
+        t_cost: 3,
+        p_cost: 4,
+    }, // 384 MiB
+    KdfParams {
+        m_cost_kib: 512 * 1024,
+        t_cost: 3,
+        p_cost: 4,
+    }, // 512 MiB
 ];
 
 // ---------------------------------------------------------------- 归一化
@@ -269,8 +293,7 @@ pub fn measure_once(
 /// CSPRNG 之上，用弱随机源"兜底"比直接失败危险得多。
 pub fn random_salt() -> Result<[u8; SALT_LEN], CfCryptoError> {
     let mut salt = [0u8; SALT_LEN];
-    getrandom::fill(&mut salt)
-        .map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
+    getrandom::fill(&mut salt).map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
     Ok(salt)
 }
 
@@ -357,8 +380,8 @@ mod tests {
         let params = KdfParams::new(64 * 1024, 3, 4).expect("参数合法");
         let salt = test_salt();
 
-        let precomposed = "caf\u{00E9}-password";   // NFC
-        let decomposed = "cafe\u{0301}-password";   // NFD
+        let precomposed = "caf\u{00E9}-password"; // NFC
+        let decomposed = "cafe\u{0301}-password"; // NFD
 
         // 前提检查：两者在字节层面确实不同，否则本测试无意义
         assert_ne!(
@@ -448,12 +471,15 @@ mod tests {
     fn rfc5869_测试用例1() {
         // IKM = 0x0b × 22；salt = 0x00..0x0c；info = 0xf0..0xf9；L = 42
         let ikm = [0x0bu8; 22];
-        let salt = [0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c];
+        let salt = [
+            0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+        ];
         let info = [0xf0u8, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
 
         let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
         let mut okm = [0u8; 42];
-        hk.expand(&info, &mut okm).expect("42 字节在 HKDF-SHA256 输出上限内");
+        hk.expand(&info, &mut okm)
+            .expect("42 字节在 HKDF-SHA256 输出上限内");
 
         let expected = hex_vec(
             "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf\
@@ -471,7 +497,8 @@ mod tests {
 
         let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
         let mut okm = [0u8; 82];
-        hk.expand(&info, &mut okm).expect("82 字节在 HKDF-SHA256 输出上限内");
+        hk.expand(&info, &mut okm)
+            .expect("82 字节在 HKDF-SHA256 输出上限内");
 
         let expected = hex_vec(
             "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c\
@@ -488,7 +515,8 @@ mod tests {
 
         let hk = Hkdf::<Sha256>::new(None, &ikm);
         let mut okm = [0u8; 42];
-        hk.expand(b"", &mut okm).expect("42 字节在 HKDF-SHA256 输出上限内");
+        hk.expand(b"", &mut okm)
+            .expect("42 字节在 HKDF-SHA256 输出上限内");
 
         let expected = hex_vec(
             "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d\
@@ -508,8 +536,7 @@ mod tests {
         let vault_uuid = [0x11u8; 16];
 
         let key = derive_subkey(&dek, &vault_uuid, "cf/meta/v1").expect("派生成功");
-        let expected =
-            hex_vec("a68e12dc16778420b9d46ec6fa955b842f820ed1b00a660b3b2c28a6621cdd3d");
+        let expected = hex_vec("a68e12dc16778420b9d46ec6fa955b842f820ed1b00a660b3b2c28a6621cdd3d");
         assert_eq!(key.to_vec(), expected);
     }
 

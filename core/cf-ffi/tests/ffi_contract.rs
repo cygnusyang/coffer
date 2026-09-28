@@ -46,10 +46,7 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-qa-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-qa-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -60,11 +57,7 @@ fn setup_vault(base: &std::path::Path, name: &str) -> cf_domain::vault::Vault {
 }
 
 /// 打开并解锁一个库（返回会话 + 工作目录字符串）。
-fn unlocked_session(
-    app: &Arc<CofferApp>,
-    base: &std::path::Path,
-    uuid: &str,
-) -> Arc<VaultSession> {
+fn unlocked_session(app: &Arc<CofferApp>, base: &std::path::Path, uuid: &str) -> Arc<VaultSession> {
     let session = app
         .open_vault(base.to_string_lossy().into_owned(), uuid.to_owned())
         .unwrap();
@@ -172,7 +165,10 @@ fn open_vault_uuid文本归一_变体指向同一会话() {
     let upper = canonical.to_uppercase();
     let hyphenless: String = canonical.chars().filter(|c| *c != '-').collect();
     assert_ne!(upper, canonical, "变体测试前提：大写文本不同于规范文本");
-    assert_ne!(hyphenless, canonical, "变体测试前提：无连字符文本不同于规范文本");
+    assert_ne!(
+        hyphenless, canonical,
+        "变体测试前提：无连字符文本不同于规范文本"
+    );
 
     let a = app.open_vault(base_str.clone(), upper).unwrap();
     let b = app.open_vault(base_str.clone(), hyphenless).unwrap();
@@ -263,11 +259,17 @@ fn 不存在条目_none与1011区分() {
 
     // 写路径：1011
     assert_eq!(
-        session.delete_item("nope".to_owned(), false).unwrap_err().code(),
+        session
+            .delete_item("nope".to_owned(), false)
+            .unwrap_err()
+            .code(),
         1011
     );
     assert_eq!(
-        session.delete_item("nope".to_owned(), true).unwrap_err().code(),
+        session
+            .delete_item("nope".to_owned(), true)
+            .unwrap_err()
+            .code(),
         1011
     );
     assert_eq!(
@@ -288,7 +290,10 @@ fn 不存在条目_none与1011区分() {
             .code(),
         1011
     );
-    assert_eq!(session.totp_code("nope".to_owned()).unwrap_err().code(), 1011);
+    assert_eq!(
+        session.totp_code("nope".to_owned()).unwrap_err().code(),
+        1011
+    );
 
     // get_field_value：条目不存在 → 1011；条目在、字段不在 → Ok(None)
     assert_eq!(
@@ -321,8 +326,8 @@ fn 写库冲突busy跨ffi映射1009_释放后恢复() {
     let session = unlocked_session(&app, &base, &brief.uuid.to_string());
 
     // 外部裸连接持有写锁（模拟另一进程/另一会话写库）
-    let raw = rusqlite::Connection::open(base.join(brief.uuid.to_string()).join("db.sqlite"))
-        .unwrap();
+    let raw =
+        rusqlite::Connection::open(base.join(brief.uuid.to_string()).join("db.sqlite")).unwrap();
     raw.execute_batch("BEGIN EXCLUSIVE").unwrap();
 
     let err = session
@@ -393,7 +398,11 @@ fn 掩码泄漏面审计_列表搜索详情不含明文() {
         .iter()
         .find(|f| f.field_type == FfiFieldType::Text)
         .unwrap();
-    assert_eq!(username.value.as_deref(), Some("qa-user"), "非敏感字段正常下发");
+    assert_eq!(
+        username.value.as_deref(),
+        Some("qa-user"),
+        "非敏感字段正常下发"
+    );
 
     // TOTP 元数据只有 algo/digits（v0.1 已知边界：TotpData 无 issuer/account
     // 字段，入库存的元数据不带发行方），且绝无密钥
@@ -401,7 +410,10 @@ fn 掩码泄漏面审计_列表搜索详情不含明文() {
     assert_eq!(totp_meta.algo, "sha1");
     assert_eq!(totp_meta.digits, 6);
     assert_eq!(totp_meta.period, 30);
-    assert_eq!(totp_meta.issuer, None, "v0.1 TotpData 不落 issuer（已知边界）");
+    assert_eq!(
+        totp_meta.issuer, None,
+        "v0.1 TotpData 不落 issuer（已知边界）"
+    );
 
     // 明文只从两个按需口取
     let real = session
@@ -412,7 +424,10 @@ fn 掩码泄漏面审计_列表搜索详情不含明文() {
     assert_eq!(code.code.len(), 6);
     assert!(code.secs_remaining > 0 && code.secs_remaining <= 30);
     let code_dump = format!("{code:?}");
-    assert!(!code_dump.contains(TOTP_SECRET_B32), "totp_code 不得回带密钥");
+    assert!(
+        !code_dump.contains(TOTP_SECRET_B32),
+        "totp_code 不得回带密钥"
+    );
 }
 
 // ================================================== 4. import_csv 委托链
@@ -492,7 +507,9 @@ fn 导入错误形态_5001与200x不panic() {
     // 列数不足 / 非法表头 → 2001 / 2002 段，不 panic
     let bad = base.join("bad.csv");
     std::fs::write(&bad, b"Foo,Bar\n1,2\n").unwrap();
-    let err = session.import_csv(bad.to_string_lossy().into_owned()).unwrap_err();
+    let err = session
+        .import_csv(bad.to_string_lossy().into_owned())
+        .unwrap_err();
     assert!(
         err.code() == 2001 || err.code() == 2002,
         "坏格式应返回导入类错误，实际 {}",

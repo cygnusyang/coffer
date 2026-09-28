@@ -27,12 +27,7 @@ use rusqlite::Connection;
 fn temp_db(tag: &str) -> std::path::PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "coffer-qa-{}-{}-{}",
-        std::process::id(),
-        tag,
-        n
-    ));
+    let dir = std::env::temp_dir().join(format!("coffer-qa-{}-{}-{}", std::process::id(), tag, n));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("db.sqlite")
 }
@@ -63,7 +58,10 @@ fn seeded_store(db_path: &std::path::Path) -> (ItemStore, String, String) {
     let field_uuid = uuid::Uuid::now_v7().to_string();
     store
         .with_tx(|r| {
-            r.items.insert(&item_row(&item_uuid), &SecretString::from_exposed("绝密标题甲"))?;
+            r.items.insert(
+                &item_row(&item_uuid),
+                &SecretString::from_exposed("绝密标题甲"),
+            )?;
             r.fields.replace_fields_for_item(
                 &item_uuid,
                 &[FieldRow {
@@ -85,8 +83,8 @@ fn seeded_store(db_path: &std::path::Path) -> (ItemStore, String, String) {
 
 /// 把 WAL 合并回主文件（独立连接执行 checkpoint）。
 fn checkpoint(db_path: &std::path::Path) {
-    let _ = Connection::open(db_path)
-        .and_then(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"));
+    let _ =
+        Connection::open(db_path).and_then(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"));
 }
 
 // ------------------------------------------------ 1. 对抗性路径：畸形库文件
@@ -175,9 +173,7 @@ fn 高版本库打开返回不支持格式错误() {
 
     {
         let conn = Connection::open(&db).unwrap();
-        MetaRepo::new(&conn)
-            .set_i64(KEY_SCHEMA_VERSION, 2)
-            .unwrap();
+        MetaRepo::new(&conn).set_i64(KEY_SCHEMA_VERSION, 2).unwrap();
     }
 
     let conn = Connection::open(&db).unwrap();
@@ -219,19 +215,29 @@ fn 同明文两次写入密文不同() {
     let b = uuid::Uuid::now_v7().to_string();
     store
         .with_tx(|r| {
-            r.items.insert(&item_row(&a), &SecretString::from_exposed("相同标题"))?;
-            r.items.insert(&item_row(&b), &SecretString::from_exposed("相同标题"))?;
+            r.items
+                .insert(&item_row(&a), &SecretString::from_exposed("相同标题"))?;
+            r.items
+                .insert(&item_row(&b), &SecretString::from_exposed("相同标题"))?;
             Ok(())
         })
         .unwrap();
 
     let ca: Vec<u8> = store
         .connection()
-        .query_row("SELECT enc_title FROM items WHERE uuid=?1", rusqlite::params![a], |r| r.get(0))
+        .query_row(
+            "SELECT enc_title FROM items WHERE uuid=?1",
+            rusqlite::params![a],
+            |r| r.get(0),
+        )
         .unwrap();
     let cb: Vec<u8> = store
         .connection()
-        .query_row("SELECT enc_title FROM items WHERE uuid=?1", rusqlite::params![b], |r| r.get(0))
+        .query_row(
+            "SELECT enc_title FROM items WHERE uuid=?1",
+            rusqlite::params![b],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_ne!(ca, cb, "同明文密文相同 ⇒ nonce 复用，致命");
     assert_ne!(&ca[..24], &cb[..24], "nonce 段必须不同");
@@ -244,7 +250,8 @@ fn 同明文两次写入密文不同() {
 #[test]
 fn with_tx内panic后连接恢复可用() {
     let mut conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);").unwrap();
+    conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);")
+        .unwrap();
 
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let result: cf_store::CfStoreResult<()> = cf_store::tx::with_tx(&mut conn, |tx| {
@@ -255,8 +262,13 @@ fn with_tx内panic后连接恢复可用() {
     }));
     assert!(panicked.is_err(), "闭包应当 panic");
 
-    assert!(conn.is_autocommit(), "panic 后事务必须已回滚（autocommit 恢复）");
-    let n: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+    assert!(
+        conn.is_autocommit(),
+        "panic 后事务必须已回滚（autocommit 恢复）"
+    );
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(n, 0, "panic 不得留下已写入的行");
 
     // 连接仍然可用：再次写入成功
@@ -271,7 +283,8 @@ fn with_tx内panic后连接恢复可用() {
 #[test]
 fn 嵌套事务被拒绝而非死锁() {
     let mut conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);").unwrap();
+    conn.execute_batch("CREATE TABLE t (v INTEGER NOT NULL);")
+        .unwrap();
 
     let result: cf_store::CfStoreResult<()> = cf_store::tx::with_tx(&mut conn, |tx| {
         tx.execute_batch("BEGIN").store()?; // 嵌套 BEGIN
@@ -280,10 +293,7 @@ fn 嵌套事务被拒绝而非死锁() {
 
     match result {
         Err(CfError::StorageError(msg)) => {
-            assert!(
-                msg.contains("transaction"),
-                "错误信息应指向嵌套事务：{msg}"
-            );
+            assert!(msg.contains("transaction"), "错误信息应指向嵌套事务：{msg}");
         }
         other => panic!("期望 StorageError（嵌套事务拒绝），实际 {other:?}"),
     }
@@ -307,25 +317,36 @@ fn 多连接并发读写快照隔离() {
 
     let a = uuid::Uuid::now_v7().to_string();
     store
-        .with_tx(|r| r.items.insert(&item_row(&a), &SecretString::from_exposed("第一条")).map(|_| ()))
+        .with_tx(|r| {
+            r.items
+                .insert(&item_row(&a), &SecretString::from_exposed("第一条"))
+                .map(|_| ())
+        })
         .unwrap();
 
     let reader = Connection::open(&db).unwrap();
-    let n: i64 = reader.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+    let n: i64 = reader
+        .query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(n, 1, "独立连接必须读到已提交数据");
 
     // 未提交写入对读方不可见（WAL 快照隔离）
     let b = uuid::Uuid::now_v7().to_string();
     store
         .with_tx(|r| {
-            r.items.insert(&item_row(&b), &SecretString::from_exposed("第二条"))?;
-            let n2: i64 = reader.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+            r.items
+                .insert(&item_row(&b), &SecretString::from_exposed("第二条"))?;
+            let n2: i64 = reader
+                .query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(n2, 1, "未提交写入对其他连接不可见");
             Ok(())
         })
         .unwrap();
 
-    let n3: i64 = reader.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+    let n3: i64 = reader
+        .query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(n3, 2, "提交后读方必须看到新数据");
 }
 
@@ -365,9 +386,7 @@ fn 硬删级联清除全部从表() {
         }
     }
 
-    store
-        .with_tx(|r| r.items.delete_hard(&item_uuid))
-        .unwrap();
+    store.with_tx(|r| r.items.delete_hard(&item_uuid)).unwrap();
 
     let conn = store.connection();
     for (table, _) in children {
@@ -421,12 +440,20 @@ fn 裸连接外键默认开启且级联生效() {
 
     // 裸连接（不经 init）：bundled SQLite 默认 FK=ON
     let raw = Connection::open(&db).unwrap();
-    let fk_raw: i64 = raw.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
-    assert_eq!(fk_raw, 1, "bundled 编译默认开启 FK（-DSQLITE_DEFAULT_FOREIGN_KEYS=1）");
+    let fk_raw: i64 = raw
+        .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        fk_raw, 1,
+        "bundled 编译默认开启 FK（-DSQLITE_DEFAULT_FOREIGN_KEYS=1）"
+    );
 
     // 裸连接删除条目：级联同样生效
-    raw.execute("DELETE FROM items WHERE uuid=?1", rusqlite::params![item_uuid])
-        .unwrap();
+    raw.execute(
+        "DELETE FROM items WHERE uuid=?1",
+        rusqlite::params![item_uuid],
+    )
+    .unwrap();
     let orphan: i64 = raw
         .query_row(
             "SELECT COUNT(*) FROM fields WHERE item_uuid=?1",
@@ -441,7 +468,8 @@ fn 裸连接外键默认开启且级联生效() {
 #[test]
 fn totp兼容路径外键强制引用存在() {
     let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);").unwrap();
+    conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);")
+        .unwrap();
     let store = TotpStore::new(conn, SessionKey::new([0x55u8; 32])).unwrap();
 
     let result = store.insert_totp(
@@ -455,10 +483,9 @@ fn totp兼容路径外键强制引用存在() {
         None,
     );
     match result {
-        Err(CfError::StorageError(msg)) => assert!(
-            msg.contains("FOREIGN KEY"),
-            "应为外键约束错误：{msg}"
-        ),
+        Err(CfError::StorageError(msg)) => {
+            assert!(msg.contains("FOREIGN KEY"), "应为外键约束错误：{msg}")
+        }
         other => panic!("兼容路径 FK 应强制引用存在，实际 {other:?}"),
     }
 }
@@ -493,14 +520,19 @@ fn 绕过仓库直插导致计数漂移且不自愈() {
     let real = uuid::Uuid::now_v7().to_string();
     store
         .with_tx(|r| {
-            r.items.insert(&item_row(&real), &SecretString::from_exposed("正常条目"))?;
+            r.items
+                .insert(&item_row(&real), &SecretString::from_exposed("正常条目"))?;
             r.meta.add_item_count(1)?;
             Ok(())
         })
         .unwrap();
     let r = store.repos();
     assert_eq!(r.meta.item_count().unwrap(), 1);
-    assert_eq!(r.items.count(None).unwrap(), 2, "漂移被保留（既不放大也不自愈）");
+    assert_eq!(
+        r.items.count(None).unwrap(),
+        2,
+        "漂移被保留（既不放大也不自愈）"
+    );
 }
 
 // ------------------------------------------------ 5. 加密正确性：AAD 钉死的边界
@@ -520,9 +552,12 @@ fn totp密文同条目跨记录搬运解密失败() {
 
     store
         .with_tx(|r| {
-            r.items.insert(&item_row(&item_uuid), &SecretString::from_exposed("t"))?;
-            r.totp.insert_totp(&t1, &item_uuid, b"secret-AAAA", "sha1", 6, 30, None, None)?;
-            r.totp.insert_totp(&t2, &item_uuid, b"secret-BBBB", "sha1", 6, 30, None, None)?;
+            r.items
+                .insert(&item_row(&item_uuid), &SecretString::from_exposed("t"))?;
+            r.totp
+                .insert_totp(&t1, &item_uuid, b"secret-AAAA", "sha1", 6, 30, None, None)?;
+            r.totp
+                .insert_totp(&t2, &item_uuid, b"secret-BBBB", "sha1", 6, 30, None, None)?;
             Ok(())
         })
         .unwrap();
@@ -537,7 +572,10 @@ fn totp密文同条目跨记录搬运解密失败() {
         .unwrap();
 
     assert!(
-        matches!(store.repos().totp.totp_secret(&t2), Err(CfError::CryptoError)),
+        matches!(
+            store.repos().totp.totp_secret(&t2),
+            Err(CfError::CryptoError)
+        ),
         "AAD 钉死 totp 行 uuid ⇒ 同条目内跨记录搬运必须解密失败（O-1 修复，2026-09-23）"
     );
 }
@@ -553,7 +591,11 @@ fn 跨表密文重放解密失败() {
         // 再建第二个条目作为重放目标
         let item2 = uuid::Uuid::now_v7().to_string();
         store
-            .with_tx(|r| r.items.insert(&item_row(&item2), &SecretString::from_exposed("目标条目")).map(|_| ()))
+            .with_tx(|r| {
+                r.items
+                    .insert(&item_row(&item2), &SecretString::from_exposed("目标条目"))
+                    .map(|_| ())
+            })
             .unwrap();
         (store, item2, field_uuid)
     };
@@ -573,7 +615,11 @@ fn 跨表密文重放解密失败() {
         .with_tx(|r| {
             r.tags.replace_for_item(
                 &item2,
-                &[TagRow { uuid: field_uuid.clone(), item_uuid: item2.clone(), name: String::new() }],
+                &[TagRow {
+                    uuid: field_uuid.clone(),
+                    item_uuid: item2.clone(),
+                    name: String::new(),
+                }],
             )
         })
         .unwrap();
@@ -586,7 +632,10 @@ fn 跨表密文重放解密失败() {
         .unwrap();
 
     assert!(
-        matches!(store.repos().tags.read_for_item(&item2), Err(CfError::CryptoError)),
+        matches!(
+            store.repos().tags.read_for_item(&item2),
+            Err(CfError::CryptoError)
+        ),
         "AAD 带表名命名空间 ⇒ 跨表重放即使 uuid 文本相同也必须解密失败（O-1 修复，2026-09-23）"
     );
 }
@@ -611,7 +660,8 @@ fn 连续十次打开幂等() {
         assert_eq!(
             r.meta.get_i64(KEY_SCHEMA_VERSION).unwrap(),
             Some(1),
-            "第 {} 次：版本不变", i + 1
+            "第 {} 次：版本不变",
+            i + 1
         );
         drop(store);
     }
@@ -636,8 +686,12 @@ fn 并发打开同一库都能成功() {
         let c = Connection::open(&d2).unwrap();
         ItemStore::open(c, subkeys())
     });
-    h1.join().unwrap().unwrap_or_else(|e| panic!("并发 open 线程1 失败：{e}"));
-    h2.join().unwrap().unwrap_or_else(|e| panic!("并发 open 线程2 失败：{e}"));
+    h1.join()
+        .unwrap()
+        .unwrap_or_else(|e| panic!("并发 open 线程1 失败：{e}"));
+    h2.join()
+        .unwrap()
+        .unwrap_or_else(|e| panic!("并发 open 线程2 失败：{e}"));
 }
 
 /// schema_version 值被损坏成非 8 字节 BLOB：
@@ -658,7 +712,11 @@ fn 损坏的版本值init与verify均报损坏() {
     ));
 
     // init（即 ItemStore::open 路径）：损坏值 → Corrupted，绝不静默重写
-    conn.execute("UPDATE meta SET value=x'0102' WHERE key='schema_version'", []).unwrap();
+    conn.execute(
+        "UPDATE meta SET value=x'0102' WHERE key='schema_version'",
+        [],
+    )
+    .unwrap();
     match cf_store::schema::init(&mut conn) {
         Err(CfError::Corrupted(_)) => { /* O-2 修复后语义 */ }
         other => panic!("init 对损坏版本值必须报 Corrupted（O-2），实际 {other:?}"),
@@ -679,7 +737,9 @@ fn 损坏的版本值init与verify均报损坏() {
 fn 负数版本值报不支持格式错误() {
     let mut conn = Connection::open_in_memory().unwrap();
     cf_store::schema::init(&mut conn).unwrap();
-    MetaRepo::new(&conn).set_i64(KEY_SCHEMA_VERSION, -5).unwrap();
+    MetaRepo::new(&conn)
+        .set_i64(KEY_SCHEMA_VERSION, -5)
+        .unwrap();
 
     match cf_store::schema::init(&mut conn) {
         Err(CfError::UnsupportedFormat(65_535)) => { /* 记录现状：负数折叠为 u16::MAX */ }

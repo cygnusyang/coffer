@@ -238,7 +238,11 @@ mod tests {
         for _ in 0..20 {
             b.on_failure();
         }
-        assert_eq!(b.gate().unwrap_err().as_secs(), BACKOFF_CAP_SECS, "应封顶 60s");
+        assert_eq!(
+            b.gate().unwrap_err().as_secs(),
+            BACKOFF_CAP_SECS,
+            "应封顶 60s"
+        );
     }
 
     /// FR-12.5：成功解锁清零——门禁解除、计数重置（下次失败重新从 n=1 起算）

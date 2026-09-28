@@ -159,13 +159,25 @@ fn 连续错密码全部1002且可恢复() {
 fn 篡改kdf参数越界建open即拒() {
     let cases: [(&str, Value); 4] = [
         // m_cost 超上限（4 GiB < 5 GiB）—— 防 OOM 的主防线
-        ("m超大", json!({"m_cost_kib": 5 * 1024 * 1024, "t_cost": 1, "p_cost": 1})),
+        (
+            "m超大",
+            json!({"m_cost_kib": 5 * 1024 * 1024, "t_cost": 1, "p_cost": 1}),
+        ),
         // m_cost 低于下限 8 MiB
-        ("m过小", json!({"m_cost_kib": 4 * 1024, "t_cost": 1, "p_cost": 1})),
+        (
+            "m过小",
+            json!({"m_cost_kib": 4 * 1024, "t_cost": 1, "p_cost": 1}),
+        ),
         // t_cost 超上限 100
-        ("t越界", json!({"m_cost_kib": 8 * 1024, "t_cost": 101, "p_cost": 1})),
+        (
+            "t越界",
+            json!({"m_cost_kib": 8 * 1024, "t_cost": 101, "p_cost": 1}),
+        ),
         // p_cost 超上限 64
-        ("p越界", json!({"m_cost_kib": 8 * 1024, "t_cost": 1, "p_cost": 65})),
+        (
+            "p越界",
+            json!({"m_cost_kib": 8 * 1024, "t_cost": 1, "p_cost": 65}),
+        ),
     ];
     for (tag, kdf) in cases {
         let (base, dir, _s) = fresh("adv_kdf_oob");
@@ -394,11 +406,17 @@ fn lock后无密码缓存绕过() {
 
     session.lock();
     // 若 lock() 后仍残留凭据/会话，这里会错误成功
-    assert_eq!(session.unlock("not-the-password-9!").unwrap_err().code(), 1002);
+    assert_eq!(
+        session.unlock("not-the-password-9!").unwrap_err().code(),
+        1002
+    );
     assert!(!session.is_unlocked());
 
     session.unlock(STRONG).unwrap();
-    assert_eq!(session.get_item(&id).unwrap().unwrap().title.expose(), "缓存测试");
+    assert_eq!(
+        session.get_item(&id).unwrap().unwrap().title.expose(),
+        "缓存测试"
+    );
     drop(base);
 }
 
@@ -457,7 +475,10 @@ fn 千字段条目往返与整体替换() {
     assert_eq!(got.fields.len(), 1001);
     for f in &got.fields {
         let idx: usize = f.name.expose()[1..].parse().unwrap();
-        assert_eq!(f.value.as_ref().unwrap().expose(), format!("value-{idx:04}-密码🔑"));
+        assert_eq!(
+            f.value.as_ref().unwrap().expose(),
+            format!("value-{idx:04}-密码🔑")
+        );
         assert_eq!(f.position as usize, idx);
     }
 
@@ -469,7 +490,10 @@ fn 千字段条目往返与整体替换() {
 
     let got = session.get_item(&id).unwrap().unwrap();
     assert_eq!(got.fields.len(), 501);
-    assert_eq!(got.fields[0].value.as_ref().unwrap().expose(), "changed-user");
+    assert_eq!(
+        got.fields[0].value.as_ref().unwrap().expose(),
+        "changed-user"
+    );
     assert!(
         !got.fields.iter().any(|f| f.name.expose() == "f0600"),
         "被替换掉的字段不应残留"
@@ -555,7 +579,11 @@ fn 软删恢复硬删item_count全程一致() {
     session.unlock(STRONG).unwrap();
 
     let ids: Vec<String> = (0..3)
-        .map(|i| session.create_item(&login_draft(&format!("计数-{i}"))).unwrap())
+        .map(|i| {
+            session
+                .create_item(&login_draft(&format!("计数-{i}")))
+                .unwrap()
+        })
         .collect();
     let count = || session.unlock(STRONG).unwrap().item_count;
     let active = || {
@@ -581,7 +609,11 @@ fn 软删恢复硬删item_count全程一致() {
 
     // 软删：条目仍存在，item_count 不减
     session.delete_item(&ids[0], false).unwrap();
-    assert_eq!((count(), active(), trashed()), (3, 2, 1), "软删不减 item_count");
+    assert_eq!(
+        (count(), active(), trashed()),
+        (3, 2, 1),
+        "软删不减 item_count"
+    );
 
     // 重复软删（已在回收站再软删一次）应幂等成功
     session.delete_item(&ids[0], false).unwrap();
@@ -642,7 +674,9 @@ fn 更新条目保留收藏标记() {
     session.set_favorite(&id, true).unwrap();
     assert!(session.get_item(&id).unwrap().unwrap().is_favorite);
 
-    session.update_item(&id, &login_draft("收藏后编辑-改标题")).unwrap();
+    session
+        .update_item(&id, &login_draft("收藏后编辑-改标题"))
+        .unwrap();
     assert!(
         session.get_item(&id).unwrap().unwrap().is_favorite,
         "编辑内容不得清空收藏标记（QA #1 已修复）"
@@ -650,7 +684,9 @@ fn 更新条目保留收藏标记() {
 
     // 取消收藏后编辑同样保持「未收藏」，不被重置为其他值
     session.set_favorite(&id, false).unwrap();
-    session.update_item(&id, &login_draft("收藏后编辑-再改")).unwrap();
+    session
+        .update_item(&id, &login_draft("收藏后编辑-再改"))
+        .unwrap();
     assert!(!session.get_item(&id).unwrap().unwrap().is_favorite);
     drop(base);
 }
@@ -687,7 +723,9 @@ fn 更新回收站条目拒绝1012且保持trashed() {
     session.restore_item(&id).unwrap();
     // 恢复后先收藏、再归档路径：v0.1 无独立归档 API，Trashed 路径已覆盖门禁；
     // Active 条目正常更新不受影响（对照）
-    session.update_item(&id, &login_draft("回收站编辑-恢复后可改")).unwrap();
+    session
+        .update_item(&id, &login_draft("回收站编辑-恢复后可改"))
+        .unwrap();
     assert_eq!(
         session.get_item(&id).unwrap().unwrap().state,
         ItemState::Active
@@ -704,7 +742,9 @@ fn emoji标题搜索() {
     session.unlock(STRONG).unwrap();
 
     session.create_item(&login_draft("🔑 GitHub 钥匙")).unwrap();
-    session.create_item(&login_draft("👨‍👩‍👧‍👦 家庭账户 Apple")).unwrap();
+    session
+        .create_item(&login_draft("👨‍👩‍👧‍👦 家庭账户 Apple"))
+        .unwrap();
     session.create_item(&login_draft("银行储蓄")).unwrap();
 
     assert_eq!(session.search("github").unwrap().len(), 1);
@@ -725,7 +765,9 @@ fn 搜索nfc归一化双向命中() {
     session.unlock(STRONG).unwrap();
 
     // 两个「视觉相同」的标题：NFC（U+00E9）与 NFD（e + U+0301）
-    let nfc_id = session.create_item(&login_draft("café NFC 形式库")).unwrap();
+    let nfc_id = session
+        .create_item(&login_draft("café NFC 形式库"))
+        .unwrap();
     let nfd_id = session
         .create_item(&login_draft("cafe\u{0301} NFD 形式库"))
         .unwrap();
@@ -757,12 +799,18 @@ fn 空白与多空格查询() {
     let (base, _dir, session) = fresh("adv_search_ws");
     session.unlock(STRONG).unwrap();
 
-    session.create_item(&login_draft("GitHub 工作账号")).unwrap();
+    session
+        .create_item(&login_draft("GitHub 工作账号"))
+        .unwrap();
 
     assert!(session.search("").unwrap().is_empty());
     assert!(session.search("   ").unwrap().is_empty());
     assert!(session.search(" \t\n ").unwrap().is_empty());
-    assert_eq!(session.search("  github  ").unwrap().len(), 1, "首尾空白应被吞");
+    assert_eq!(
+        session.search("  github  ").unwrap().len(),
+        1,
+        "首尾空白应被吞"
+    );
     assert_eq!(
         session.search("github   工作").unwrap().len(),
         1,
@@ -830,7 +878,10 @@ fn 极小kdf参数建库记录与解锁往返() {
     session.unlock(STRONG).unwrap();
     assert!(session.is_unlocked());
     session.lock();
-    assert_eq!(session.unlock("wrong-password-x!").unwrap_err().code(), 1002);
+    assert_eq!(
+        session.unlock("wrong-password-x!").unwrap_err().code(),
+        1002
+    );
 
     drop(base);
 }
@@ -864,7 +915,10 @@ fn 极端kdf参数建库记录与解锁往返() {
     session.unlock(STRONG).unwrap();
     assert!(session.is_unlocked());
     session.lock();
-    assert_eq!(session.unlock("wrong-password-x!").unwrap_err().code(), 1002);
+    assert_eq!(
+        session.unlock("wrong-password-x!").unwrap_err().code(),
+        1002
+    );
 
     drop(base);
 }

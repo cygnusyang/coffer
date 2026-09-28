@@ -312,9 +312,10 @@ pub(crate) fn snapshot_content_eq(a: &ItemSnapshot, b: &ItemSnapshot) -> bool {
 
     // URL / 分区 / 字段：序列比较
     if a.urls.len() != b.urls.len()
-        || a.urls.iter().zip(b.urls.iter()).any(|(x, y)| {
-            x.label != y.label || x.url != y.url || x.is_primary != y.is_primary
-        })
+        || a.urls
+            .iter()
+            .zip(b.urls.iter())
+            .any(|(x, y)| x.label != y.label || x.url != y.url || x.is_primary != y.is_primary)
     {
         return false;
     }
@@ -453,7 +454,11 @@ mod tests {
 
         let conn = store.connection();
         let h_uuid: String = conn
-            .query_row("SELECT uuid FROM history ORDER BY version DESC LIMIT 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT uuid FROM history ORDER BY version DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
 
         // 当前条目状态序列化，断言密文 BLOB 不含其 CBOR 字节
@@ -469,17 +474,15 @@ mod tests {
             )
             .unwrap();
         assert_ne!(blob, cbor);
-        assert!(!blob.windows(cbor.len().min(blob.len())).any(|w| w == cbor.as_slice()));
+        assert!(!blob
+            .windows(cbor.len().min(blob.len()))
+            .any(|w| w == cbor.as_slice()));
 
         // 密文搬到另一行（伪造第二行）→ 解密失败
         conn.execute(
             "INSERT INTO history (uuid, item_uuid, version, created_at, enc_snapshot)
              VALUES (?1, ?2, 99, 0, (SELECT enc_snapshot FROM history WHERE uuid = ?3))",
-            rusqlite::params![
-                uuid::Uuid::now_v7().to_string(),
-                id,
-                h_uuid
-            ],
+            rusqlite::params![uuid::Uuid::now_v7().to_string(), id, h_uuid],
         )
         .unwrap();
         let forged: Vec<String> = conn
@@ -609,7 +612,11 @@ mod tests {
         // 校验 v2 快照内容确实是 B
         let v2 = {
             let repos = store.repos();
-            repos.history.snapshot(&entries[0].history_uuid).unwrap().unwrap()
+            repos
+                .history
+                .snapshot(&entries[0].history_uuid)
+                .unwrap()
+                .unwrap()
         };
         assert_eq!(v2.title, "状态B");
     }
@@ -625,20 +632,11 @@ mod tests {
             .connection()
             .execute("DROP TABLE history", [])
             .unwrap();
-        let err = super::super::items::update_item(
-            &mut store,
-            &id,
-            &login_draft("不应生效", "pw"),
-        );
+        let err = super::super::items::update_item(&mut store, &id, &login_draft("不应生效", "pw"));
         assert!(err.is_err(), "history 写入失败必须使 update 失败");
 
         // 主表未被部分提交：items 表读取不依赖 history 表，直接校验
-        let got = store
-            .repos()
-            .items
-            .get(&id)
-            .unwrap()
-            .expect("条目应仍在");
+        let got = store.repos().items.get(&id).unwrap().expect("条目应仍在");
         assert_eq!(got.title.expose(), "原子", "失败事务不得部分提交");
     }
 
@@ -669,7 +667,8 @@ mod tests {
     #[test]
     fn 回收站条目回滚被拒绝() {
         let mut store = memory_store();
-        let id = super::super::items::create_item(&mut store, &login_draft("回收站", "pw")).unwrap();
+        let id =
+            super::super::items::create_item(&mut store, &login_draft("回收站", "pw")).unwrap();
         super::super::items::update_item(&mut store, &id, &login_draft("二版", "pw")).unwrap();
         let v1 = list_history(&store, &id).unwrap()[0].history_uuid.clone();
 

@@ -91,7 +91,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let quick = args.iter().any(|a| a == "--quick");
     let json = args.iter().any(|a| a == "--json");
-    let repeats = if quick { QUICK_REPEATS } else { DEFAULT_REPEATS };
+    let repeats = if quick {
+        QUICK_REPEATS
+    } else {
+        DEFAULT_REPEATS
+    };
 
     let salt = [0x5Au8; SALT_LEN];
     // 用一个固定的、足够长的测试密码。这里只是测耗时，
@@ -162,7 +166,9 @@ fn print_markdown(results: &[Measurement]) {
     println!();
     println!("## Argon2id 标定结果");
     println!();
-    println!("| m_cost (MiB) | t_cost | p_cost | 平均耗时 (ms) | 最小 (ms) | 最大 (ms) | 落在目标区间 |");
+    println!(
+        "| m_cost (MiB) | t_cost | p_cost | 平均耗时 (ms) | 最小 (ms) | 最大 (ms) | 落在目标区间 |"
+    );
     println!("| --- | --- | --- | --- | --- | --- | --- |");
 
     for m in results {
@@ -174,7 +180,11 @@ fn print_markdown(results: &[Measurement]) {
             m.mean_ms(),
             m.min_ms(),
             m.max_ms(),
-            if m.in_target_range() { "✅ 是" } else { "—" }
+            if m.in_target_range() {
+                "✅ 是"
+            } else {
+                "—"
+            }
         );
     }
 
@@ -216,7 +226,9 @@ fn print_markdown(results: &[Measurement]) {
                             f.mean_ms()
                         );
                         println!("- 说明该设备性能不足。按 `docs/03-详细设计.md` §2.3 第 5 步：");
-                        println!("  接受该值并在文档中记录降级，或降低 t_cost / p_cost 后重新扫描。");
+                        println!(
+                            "  接受该值并在文档中记录降级，或降低 t_cost / p_cost 后重新扫描。"
+                        );
                     } else if s.mean_ms() < TARGET_MIN_MS {
                         println!(
                             "- 即使最大参数（{} MiB）也只有 {:.1} ms，**低于下限**。",

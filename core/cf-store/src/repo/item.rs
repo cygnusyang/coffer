@@ -437,7 +437,8 @@ mod tests {
         let (a, ta) = sample(1);
         let (b, _) = sample(2);
         repo.insert(&a, &ta).unwrap();
-        repo.insert(&b, &SecretString::from_exposed("别的条目")).unwrap();
+        repo.insert(&b, &SecretString::from_exposed("别的条目"))
+            .unwrap();
 
         conn.execute(
             "UPDATE items SET enc_title=(SELECT enc_title FROM items WHERE uuid=?1) WHERE uuid=?2",
@@ -479,21 +480,31 @@ mod tests {
 
         // 按状态过滤
         let archived = repo
-            .list(&ItemListFilter { state: Some(ItemState::Archived), ..Default::default() })
+            .list(&ItemListFilter {
+                state: Some(ItemState::Archived),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0].row.uuid, c.uuid);
 
         // 按类别过滤
         let notes = repo
-            .list(&ItemListFilter { category: Some(ItemCategory::SecureNote), ..Default::default() })
+            .list(&ItemListFilter {
+                category: Some(ItemCategory::SecureNote),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].row.uuid, b.uuid);
 
         // 分页
         let page = repo
-            .list(&ItemListFilter { limit: Some(2), offset: Some(1), ..Default::default() })
+            .list(&ItemListFilter {
+                limit: Some(2),
+                offset: Some(1),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(page.len(), 2);
         assert_eq!(page[0].row.uuid, b.uuid);
@@ -534,11 +545,23 @@ mod tests {
         let (mut row, title) = sample(1);
         row.uuid = missing.clone();
         assert!(matches!(repo.update_row(&row), Err(CfError::ItemNotFound)));
-        assert!(matches!(repo.update_title(&missing, &title), Err(CfError::ItemNotFound)));
-        assert!(matches!(repo.soft_delete(&missing, 0), Err(CfError::ItemNotFound)));
+        assert!(matches!(
+            repo.update_title(&missing, &title),
+            Err(CfError::ItemNotFound)
+        ));
+        assert!(matches!(
+            repo.soft_delete(&missing, 0),
+            Err(CfError::ItemNotFound)
+        ));
         assert!(matches!(repo.restore(&missing), Err(CfError::ItemNotFound)));
-        assert!(matches!(repo.set_favorite(&missing, true), Err(CfError::ItemNotFound)));
-        assert!(matches!(repo.delete_hard(&missing), Err(CfError::ItemNotFound)));
+        assert!(matches!(
+            repo.set_favorite(&missing, true),
+            Err(CfError::ItemNotFound)
+        ));
+        assert!(matches!(
+            repo.delete_hard(&missing),
+            Err(CfError::ItemNotFound)
+        ));
     }
 
     /// 硬删级联：从表行（此处以 totp 为例）随条目一起消失
@@ -558,7 +581,11 @@ mod tests {
 
         items.delete_hard(&row.uuid).unwrap();
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM totp WHERE item_uuid=?1", rusqlite::params![row.uuid], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM totp WHERE item_uuid=?1",
+                rusqlite::params![row.uuid],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 0, "外键级联必须清除从表");
     }
@@ -570,8 +597,11 @@ mod tests {
         let repo = ItemsRepo::new(&conn, &keys);
         let (row, title) = sample(1);
         repo.insert(&row, &title).unwrap();
-        conn.execute("UPDATE items SET state=9 WHERE uuid=?1", rusqlite::params![row.uuid])
-            .unwrap();
+        conn.execute(
+            "UPDATE items SET state=9 WHERE uuid=?1",
+            rusqlite::params![row.uuid],
+        )
+        .unwrap();
 
         assert!(matches!(repo.get(&row.uuid), Err(CfError::Corrupted(_))));
     }

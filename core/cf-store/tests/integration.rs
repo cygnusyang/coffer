@@ -21,12 +21,7 @@ use rusqlite::Connection;
 fn temp_db(tag: &str) -> std::path::PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "coffer-t01-{}-{}-{}",
-        std::process::id(),
-        tag,
-        n
-    ));
+    let dir = std::env::temp_dir().join(format!("coffer-t01-{}-{}-{}", std::process::id(), tag, n));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("db.sqlite")
 }
@@ -35,8 +30,8 @@ fn temp_db(tag: &str) -> std::path::PathBuf {
 fn db_files_bytes(db_path: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     // checkpoint(TRUNCATE) 需要独立连接执行；主连接由 ItemStore 持有。
     // 打开只读连接执行 checkpoint；失败（无 WAL）不视为错误。
-    let _ = Connection::open(db_path)
-        .and_then(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"));
+    let _ =
+        Connection::open(db_path).and_then(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"));
 
     let mut out = Vec::new();
     for suffix in ["", "-wal", "-shm"] {
@@ -117,7 +112,11 @@ fn seeded_store(db_path: &std::path::Path) -> ItemStore {
 
             r.tags.replace_for_item(
                 &item_uuid,
-                &[TagRow { uuid: tag_uuid, item_uuid: item_uuid.clone(), name: "机密标签".into() }],
+                &[TagRow {
+                    uuid: tag_uuid,
+                    item_uuid: item_uuid.clone(),
+                    name: "机密标签".into(),
+                }],
             )?;
 
             r.totp.insert_totp(
@@ -159,10 +158,16 @@ fn 端到端写入读回逐项相等() {
     let fields = r.fields.read_fields_for_item(&listed[0].row.uuid).unwrap();
     assert_eq!(fields.len(), 1);
     assert_eq!(fields[0].name.expose(), "登录密码");
-    assert_eq!(fields[0].value.as_ref().unwrap().expose(), "Tr0ub4dor&3-机密值");
+    assert_eq!(
+        fields[0].value.as_ref().unwrap().expose(),
+        "Tr0ub4dor&3-机密值"
+    );
 
     let urls = r.urls.read_for_item(&listed[0].row.uuid).unwrap();
-    assert_eq!(urls[0].url.expose(), "https://github.com/coffer-secret-path");
+    assert_eq!(
+        urls[0].url.expose(),
+        "https://github.com/coffer-secret-path"
+    );
     assert_eq!(urls[0].label.as_ref().unwrap().expose(), "主站");
 
     let tags = r.tags.read_for_item(&listed[0].row.uuid).unwrap();
@@ -263,8 +268,15 @@ fn 事务注入失败零残留() {
 
     let r = store.repos();
     assert_eq!(r.items.count(None).unwrap(), 1, "只应剩基线条目");
-    assert!(r.items.get_row(&ghost).unwrap().is_none(), "回滚后不得有残留");
-    assert_eq!(r.meta.item_count().unwrap(), 1, "item_count 增量必须随事务回滚");
+    assert!(
+        r.items.get_row(&ghost).unwrap().is_none(),
+        "回滚后不得有残留"
+    );
+    assert_eq!(
+        r.meta.item_count().unwrap(),
+        1,
+        "item_count 增量必须随事务回滚"
+    );
 }
 
 /// ① 重复打开幂等：第二次 open 不报错且数据完好
@@ -278,12 +290,12 @@ fn 重复打开幂等且数据完好() {
     let store2 = ItemStore::open(conn, subkeys()).unwrap(); // 幂等
     let r = store2.repos();
     assert_eq!(r.items.count(None).unwrap(), 1);
-    assert_eq!(r.meta.get_i64(cf_store::KEY_SCHEMA_VERSION).unwrap(), Some(1));
+    assert_eq!(
+        r.meta.get_i64(cf_store::KEY_SCHEMA_VERSION).unwrap(),
+        Some(1)
+    );
 
-    let listed = r
-        .items
-        .list(&cf_store::ItemListFilter::default())
-        .unwrap();
+    let listed = r.items.list(&cf_store::ItemListFilter::default()).unwrap();
     assert_eq!(listed[0].title.expose(), "绝密标题·GitHub");
 }
 
@@ -346,7 +358,8 @@ fn 条目全生命周期() {
     };
     store
         .with_tx(|r| {
-            r.items.insert(&row, &SecretString::from_exposed("银行卡"))?;
+            r.items
+                .insert(&row, &SecretString::from_exposed("银行卡"))?;
             r.meta.add_item_count(1)?;
             Ok(())
         })
@@ -359,7 +372,10 @@ fn 条目全生命周期() {
     assert_eq!(got.state, ItemState::Trashed);
     let trashed = r
         .items
-        .list(&cf_store::ItemListFilter { state: Some(ItemState::Trashed), ..Default::default() })
+        .list(&cf_store::ItemListFilter {
+            state: Some(ItemState::Trashed),
+            ..Default::default()
+        })
         .unwrap();
     assert_eq!(trashed.len(), 1);
 

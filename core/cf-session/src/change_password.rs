@@ -166,7 +166,9 @@ mod tests {
             .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
             .unwrap();
 
-        session.change_password(STRONG_PASSWORD, NEW_PASSWORD, None).unwrap();
+        session
+            .change_password(STRONG_PASSWORD, NEW_PASSWORD, None)
+            .unwrap();
         session.lock();
 
         // 旧密码失效（1002）、新密码生效
@@ -255,7 +257,10 @@ mod tests {
 
         // 旧密码仍可解锁（原子性）
         session.lock();
-        assert!(session.unlock(STRONG_PASSWORD).is_ok(), "失败换密不得破坏旧密码");
+        assert!(
+            session.unlock(STRONG_PASSWORD).is_ok(),
+            "失败换密不得破坏旧密码"
+        );
     }
 
     /// new_kdf 传入新档位 → header.kdf 更新且新密码解锁走新参数
@@ -294,7 +299,8 @@ mod tests {
     #[test]
     fn 非法kdf档位被拒绝() {
         let base = crate::tests_support::temp_dir("cp_bad_kdf");
-        let brief = create_vault_with_kdf(&base, "非法档位库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let brief =
+            create_vault_with_kdf(&base, "非法档位库", STRONG_PASSWORD, fast_kdf()).unwrap();
         let vault_dir = base.join(brief.uuid.to_string());
         let session = open_vault(&vault_dir).unwrap();
         session.unlock(STRONG_PASSWORD).unwrap();
@@ -333,6 +339,9 @@ mod tests {
 
         assert!(session.unlock(STRONG_PASSWORD).is_ok());
         session.lock();
-        assert!(session.unlock(NEW_PASSWORD).is_err(), "旧新密码已换回，NEW 应失效");
+        assert!(
+            session.unlock(NEW_PASSWORD).is_err(),
+            "旧新密码已换回，NEW 应失效"
+        );
     }
 }

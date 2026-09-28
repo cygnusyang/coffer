@@ -69,7 +69,11 @@ struct CopyPayload {
 /// 双方均须处于解锁态（错误码 1001）；源条目不存在 → 1011；
 /// 内容未通过 [`cf_domain::validate::validate_item`] → 5002（目标库
 /// 零写入）。锁纪律见模块文档（绝不同时持两个 state 锁）。
-pub fn copy_item(src: &VaultSession, src_item_id: &str, dst: &VaultSession) -> SessionResult<String> {
+pub fn copy_item(
+    src: &VaultSession,
+    src_item_id: &str,
+    dst: &VaultSession,
+) -> SessionResult<String> {
     // ---- 阶段一：src 侧一次性读出载荷，立即释放 src state 锁 ----
     let payload = {
         let guard = src.unlocked()?;
@@ -78,7 +82,9 @@ pub fn copy_item(src: &VaultSession, src_item_id: &str, dst: &VaultSession) -> S
         let snapshot = super::history::snapshot_current(&repos, src_item_id)?;
         let mut attachments = Vec::new();
         for meta in repos.attachments.list_for_item(src_item_id)? {
-            let content = repos.attachments.read_content(&meta.uuid, src.vault_dir())?;
+            let content = repos
+                .attachments
+                .read_content(&meta.uuid, src.vault_dir())?;
             attachments.push(AttachmentPayload {
                 filename: meta.filename.into_bytes(),
                 content,
@@ -141,10 +147,8 @@ pub fn copy_item(src: &VaultSession, src_item_id: &str, dst: &VaultSession) -> S
                 // 清理失败静默：不掩盖主错误；下次 open_vault 的孤儿
                 // 清理（unlock.rs，真调）仍可兜底（attachment.rs 模块
                 // 文档「孤儿容忍」）。
-                let _ = cf_store::AttachmentRepo::cleanup_orphans(
-                    &dst_dir,
-                    state.store.connection(),
-                );
+                let _ =
+                    cf_store::AttachmentRepo::cleanup_orphans(&dst_dir, state.store.connection());
                 Err(e)
             }
         }
@@ -154,10 +158,7 @@ pub fn copy_item(src: &VaultSession, src_item_id: &str, dst: &VaultSession) -> S
     // ---- 阶段三：审计（源库 / 目标库各一条；打点失败静默）----
     // 顺序化短持锁：写路径锁已释放，这里逐库短暂加锁追加，两库同会话
     // （同库复制）时也只是串行两次加锁，无死锁面。
-    audit_copy(
-        dst,
-        format!("src:{} item:{src_item_id}", src.vault_uuid()),
-    );
+    audit_copy(dst, format!("src:{} item:{src_item_id}", src.vault_uuid()));
     audit_copy(src, format!("dst:{} item:{new_uuid}", dst.vault_uuid()));
 
     Ok(new_uuid)
@@ -175,23 +176,24 @@ fn audit_copy(session: &VaultSession, detail: String) {
         return;
     };
     if let Ok(now) = crate::unix_now() {
-        let _ = state
-            .store
-            .repos()
-            .audit
-            .append(now, cf_store::AuditEvent::ItemCopy, Some(&detail));
+        let _ =
+            state
+                .store
+                .repos()
+                .audit
+                .append(now, cf_store::AuditEvent::ItemCopy, Some(&detail));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::unlock::{create_vault_with_kdf, open_vault};
     use cf_crypto::kdf::KdfParams;
     use cf_domain::category::ItemCategory;
     use cf_domain::field::{Designation, FieldType};
     use cf_domain::item::{FieldDraft, ItemDraft, SectionDraft, UrlDraft};
     use cf_domain::totp_data::{TotpAlgo, TotpData};
     use cf_domain::validate::MAX_TITLE_CHARS;
-    use crate::unlock::{create_vault_with_kdf, open_vault};
 
     use super::copy_item;
     use crate::vault::VaultSession;
@@ -469,9 +471,10 @@ mod tests {
             state
                 .store
                 .with_tx(|repos| {
-                    repos
-                        .items
-                        .update_title(&src_id, &cf_domain::secret::SecretString::from_exposed(overlong))
+                    repos.items.update_title(
+                        &src_id,
+                        &cf_domain::secret::SecretString::from_exposed(overlong),
+                    )
                 })
                 .unwrap();
         }
@@ -483,7 +486,13 @@ mod tests {
         assert_eq!(dst.list_items(None).unwrap().len(), 0);
         // 源条目零改动（原样保留超长标题）
         assert_eq!(
-            src.get_item(&src_id).unwrap().unwrap().title.expose().chars().count(),
+            src.get_item(&src_id)
+                .unwrap()
+                .unwrap()
+                .title
+                .expose()
+                .chars()
+                .count(),
             MAX_TITLE_CHARS + 1
         );
     }

@@ -161,7 +161,11 @@ mod tests {
             vec![vec![i1.clone(), i2.clone()]],
             "两条同强密码必须组成一个重复组"
         );
-        assert_eq!(report.weak_password_items, vec![i3.clone()], "仅弱密码条目命中");
+        assert_eq!(
+            report.weak_password_items,
+            vec![i3.clone()],
+            "仅弱密码条目命中"
+        );
         assert_eq!(report.http_url_items, vec![i2], "仅 http:// 条目命中");
     }
 
@@ -169,8 +173,14 @@ mod tests {
     #[test]
     fn 跨库密钥隔离() {
         let mut store = memory_store();
-        create(&mut store, &login_draft("库一", "same-password-42!", "https://a.com"));
-        create(&mut store, &login_draft("库二", "same-password-42!", "https://b.com"));
+        create(
+            &mut store,
+            &login_draft("库一", "same-password-42!", "https://a.com"),
+        );
+        create(
+            &mut store,
+            &login_draft("库二", "same-password-42!", "https://b.com"),
+        );
 
         // 同库内：同密码同 key → 报重复组
         let r1 = run_watchtower(&store, &SessionKey::new([0x01u8; 32])).unwrap();
@@ -191,6 +201,9 @@ mod tests {
         crate::usecase::items::delete_item(&mut store, &id, false).unwrap();
 
         let report = run_watchtower(&store, &audit_key()).unwrap();
-        assert!(report.weak_password_items.is_empty(), "回收站条目不出现在报告");
+        assert!(
+            report.weak_password_items.is_empty(),
+            "回收站条目不出现在报告"
+        );
     }
 }

@@ -281,11 +281,7 @@ impl VaultSession {
     /// `now_secs` 由平台注入（与空闲自动锁定同模式，可测试）。
     ///
     /// 门禁：需解锁态（1001）。
-    pub fn should_suggest_backup(
-        &self,
-        threshold_secs: i64,
-        now_secs: i64,
-    ) -> SessionResult<bool> {
+    pub fn should_suggest_backup(&self, threshold_secs: i64, now_secs: i64) -> SessionResult<bool> {
         Ok(reminder::should_suggest(
             self.last_backup_at()?,
             now_secs,
@@ -370,9 +366,7 @@ impl VaultSession {
     pub fn disable_biometric(&self) -> SessionResult<()> {
         let _guard = self.unlocked()?;
         let header = self.header_snapshot();
-        if let Some(new_header) =
-            unlock_bio::disable_biometric_impl(&self.vault_dir, &header)?
-        {
+        if let Some(new_header) = unlock_bio::disable_biometric_impl(&self.vault_dir, &header)? {
             *self.header_guard() = new_header;
         }
         Ok(())
@@ -470,7 +464,9 @@ impl VaultSession {
         };
         usecase::items::delete_item(&mut state.store, item_id, hard)?;
         // 事务已提交：逐个清理旁路文件（尽力而为，见上方法文档）
-        let dir = self.vault_dir.join(cf_store::repo::attachment::ATTACHMENTS_DIR);
+        let dir = self
+            .vault_dir
+            .join(cf_store::repo::attachment::ATTACHMENTS_DIR);
         for uuid in attachment_uuids {
             let _ = std::fs::remove_file(dir.join(uuid));
         }
@@ -642,17 +638,14 @@ impl VaultSession {
         let Some(totp_uuid) = repos.totp.totp_uuids_for_item(item_id)?.into_iter().next() else {
             return Ok(None);
         };
-        Ok(repos
-            .totp
-            .totp_meta(&totp_uuid)?
-            .map(|m| TotpDetail {
-                uuid: m.uuid,
-                algo: m.algo,
-                digits: m.digits,
-                period: m.period,
-                issuer: m.issuer,
-                account: m.account,
-            }))
+        Ok(repos.totp.totp_meta(&totp_uuid)?.map(|m| TotpDetail {
+            uuid: m.uuid,
+            algo: m.algo,
+            digits: m.digits,
+            period: m.period,
+            issuer: m.issuer,
+            account: m.account,
+        }))
     }
 
     // ----------------------------------------------------------- 导入
@@ -740,26 +733,25 @@ impl VaultSession {
             }
         };
         let header = self.header_snapshot();
-        let new_header =
-            match crate::change_password::change_password_impl(
-                &self.vault_dir,
-                &header,
-                old_password,
-                new_password,
-                new_kdf,
-            ) {
-                Ok(new_header) => new_header,
-                Err(e) => {
-                    // 仅旧密码校验失败（1002）计入退避；1010 / 5002 / 写
-                    // 失败等不是密码尝试，只释放预占
-                    if matches!(e, CfError::UnlockFailed) {
-                        self.backoff_guard().on_failure();
-                    } else {
-                        self.backoff_guard().release();
-                    }
-                    return Err(e);
+        let new_header = match crate::change_password::change_password_impl(
+            &self.vault_dir,
+            &header,
+            old_password,
+            new_password,
+            new_kdf,
+        ) {
+            Ok(new_header) => new_header,
+            Err(e) => {
+                // 仅旧密码校验失败（1002）计入退避；1010 / 5002 / 写
+                // 失败等不是密码尝试，只释放预占
+                if matches!(e, CfError::UnlockFailed) {
+                    self.backoff_guard().on_failure();
+                } else {
+                    self.backoff_guard().release();
                 }
-            };
+                return Err(e);
+            }
+        };
         // 旧密码校验通过（成功路径）：退避清零
         self.backoff_guard().on_success();
         // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
@@ -768,11 +760,11 @@ impl VaultSession {
         // 成功的改密，与 cf-exporter stamp_* 同纪律）。
         if let Some(state) = guard.as_ref() {
             if let Ok(now) = crate::unix_now() {
-                let _ = state
-                    .store
-                    .repos()
-                    .audit
-                    .append(now, cf_store::AuditEvent::PasswordChange, None);
+                let _ = state.store.repos().audit.append(
+                    now,
+                    cf_store::AuditEvent::PasswordChange,
+                    None,
+                );
             }
         }
         Ok(())
@@ -802,9 +794,7 @@ impl VaultSession {
 
     /// 运行 Watchtower 安全体检（FR-6.2 / FR-6.3）：重复密码（HMAC 指纹，
     /// `audit_key` 注入）+ 弱密码复检 + 弱 URL。锁定态 → 1001。
-    pub fn run_watchtower(
-        &self,
-    ) -> SessionResult<crate::usecase::audit::WatchtowerReport> {
+    pub fn run_watchtower(&self) -> SessionResult<crate::usecase::audit::WatchtowerReport> {
         let guard = self.unlocked()?;
         let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
         usecase::audit::run_watchtower(&state.store, &state.store.subkeys().audit_key)
@@ -906,8 +896,8 @@ fn vault_info(
 
 #[cfg(test)]
 mod tests {
-    use super::DEFAULT_CLIPBOARD_CLEAR_SECS;
     use super::VaultSession;
+    use super::DEFAULT_CLIPBOARD_CLEAR_SECS;
     use crate::unlock::{create_vault_with_kdf, open_vault};
     use cf_crypto::kdf::KdfParams;
 
@@ -1006,8 +996,7 @@ mod tests {
     #[test]
     fn 剪贴板清除时间默认三十秒() {
         let base = crate::tests_support::temp_dir("clip_default");
-        let brief =
-            create_vault_with_kdf(&base, "剪贴板库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let brief = create_vault_with_kdf(&base, "剪贴板库", STRONG_PASSWORD, fast_kdf()).unwrap();
         let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
         assert_eq!(session.clipboard_clear_secs(), DEFAULT_CLIPBOARD_CLEAR_SECS);
         assert_eq!(session.clipboard_clear_secs(), 30);
@@ -1067,19 +1056,29 @@ mod tests {
         // 打点「上次备份 = 1000」（模拟 exporter 成功路径的写入）
         let guard = session.unlocked().unwrap();
         let state = guard.as_ref().unwrap();
-        state
-            .store
-            .repos()
-            .meta
-            .set_last_backup_at(1_000)
-            .unwrap();
+        state.store.repos().meta.set_last_backup_at(1_000).unwrap();
         drop(guard);
 
-        assert!(session.should_suggest_backup(300, 1_300).unwrap(), "恰达阈值应提醒");
-        assert!(session.should_suggest_backup(300, 9_999).unwrap(), "超阈值应提醒");
-        assert!(!session.should_suggest_backup(300, 1_299).unwrap(), "阈值内不提醒");
-        assert!(!session.should_suggest_backup(0, 9_999_999).unwrap(), "0 视为禁用");
-        assert!(!session.should_suggest_backup(-1, 9_999_999).unwrap(), "负值视为禁用");
+        assert!(
+            session.should_suggest_backup(300, 1_300).unwrap(),
+            "恰达阈值应提醒"
+        );
+        assert!(
+            session.should_suggest_backup(300, 9_999).unwrap(),
+            "超阈值应提醒"
+        );
+        assert!(
+            !session.should_suggest_backup(300, 1_299).unwrap(),
+            "阈值内不提醒"
+        );
+        assert!(
+            !session.should_suggest_backup(0, 9_999_999).unwrap(),
+            "0 视为禁用"
+        );
+        assert!(
+            !session.should_suggest_backup(-1, 9_999_999).unwrap(),
+            "负值视为禁用"
+        );
     }
 
     /// FR-8.5 门禁：锁定态查询提醒状态拒绝（错误码 1001）
@@ -1106,8 +1105,7 @@ mod tests {
     /// 建库 → 开会话 → 注入 FakeClock（退避时钟可测试）。
     fn session_with_fake_clock(tag: &str) -> (VaultSession, Arc<FakeClock>) {
         let base = crate::tests_support::temp_dir(tag);
-        let brief =
-            create_vault_with_kdf(&base, "退避库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let brief = create_vault_with_kdf(&base, "退避库", STRONG_PASSWORD, fast_kdf()).unwrap();
         let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
         let clock = Arc::new(FakeClock::new());
         session.inject_backoff_clock(clock.clone());

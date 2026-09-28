@@ -792,7 +792,10 @@ fn tc_mac_09_restore_verify_direct_and_bootstrap() {
     {
         let conn = rusqlite::Connection::open(&restored_db).expect("打开恢复库成功");
         let deleted = conn
-            .execute("DELETE FROM meta WHERE key IN ('record_count','root_mac')", [])
+            .execute(
+                "DELETE FROM meta WHERE key IN ('record_count','root_mac')",
+                [],
+            )
             .expect("删两行成功");
         assert_eq!(deleted, 2, "应恰好删除两行");
     }
@@ -831,13 +834,17 @@ fn tc_mac_09_restore_verify_direct_and_bootstrap() {
 fn read_integrity_rows(db: &std::path::Path) -> Option<(i64, String)> {
     let conn = rusqlite::Connection::open(db).expect("打开 db 成功");
     let count_blob: Vec<u8> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'record_count'", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'record_count'",
+            [],
+            |r| r.get(0),
+        )
         .ok()?;
     let count = i64::from_le_bytes(count_blob.as_slice().try_into().ok()?);
     let mac_blob: Vec<u8> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'root_mac'", [], |r| r.get(0))
+        .query_row("SELECT value FROM meta WHERE key = 'root_mac'", [], |r| {
+            r.get(0)
+        })
         .ok()?;
     let mac = String::from_utf8(mac_blob).ok()?;
     Some((count, mac))

@@ -52,13 +52,21 @@ mod tests {
     #[test]
     fn 超过阈值应提醒() {
         assert!(should_suggest(Some(1_000), 1_000 + 3 * 86_400, 3 * 86_400));
-        assert!(should_suggest(Some(1_000), 1_000 + 3 * 86_400 + 1, 3 * 86_400));
+        assert!(should_suggest(
+            Some(1_000),
+            1_000 + 3 * 86_400 + 1,
+            3 * 86_400
+        ));
     }
 
     /// 阈值内 → 不提醒
     #[test]
     fn 阈值内不提醒() {
-        assert!(!should_suggest(Some(1_000), 1_000 + 3 * 86_400 - 1, 3 * 86_400));
+        assert!(!should_suggest(
+            Some(1_000),
+            1_000 + 3 * 86_400 - 1,
+            3 * 86_400
+        ));
         // 刚备份完（now == last）不提醒
         assert!(!should_suggest(Some(1_000), 1_000, 3 * 86_400));
     }

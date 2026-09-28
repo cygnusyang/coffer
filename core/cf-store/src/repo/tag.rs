@@ -10,8 +10,8 @@ use cf_domain::secret::SecretString;
 use rusqlite::Connection;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
-use crate::repo::url::require_item;
 use crate::repo::field_aad;
+use crate::repo::url::require_item;
 
 /// 列名常量（AAD 成分）。
 pub const COLUMN_TAG_NAME: &str = "enc_name";
@@ -152,18 +152,30 @@ mod tests {
         let (conn, keys) = setup();
         let repo = TagsRepo::new(&conn, &keys);
         item(&conn, "i-1");
-        repo.replace_for_item("i-1", &[tag(1, "i-1", "机密标签甲"), tag(2, "i-1", "另一个")])
-            .unwrap();
+        repo.replace_for_item(
+            "i-1",
+            &[tag(1, "i-1", "机密标签甲"), tag(2, "i-1", "另一个")],
+        )
+        .unwrap();
 
         let raw: Vec<u8> = conn
-            .query_row("SELECT enc_name FROM tags WHERE uuid=?1", rusqlite::params![uuid::Uuid::from_bytes([1; 16]).to_string()], |r| r.get(0))
+            .query_row(
+                "SELECT enc_name FROM tags WHERE uuid=?1",
+                rusqlite::params![uuid::Uuid::from_bytes([1; 16]).to_string()],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert!(!raw.windows("机密标签甲".len()).any(|w| w == "机密标签甲".as_bytes()));
+        assert!(!raw
+            .windows("机密标签甲".len())
+            .any(|w| w == "机密标签甲".as_bytes()));
 
         // 把标签 1 的密文搬到标签 2（不同 AAD）→ 解密失败
         conn.execute(
             "UPDATE tags SET enc_name=(SELECT enc_name FROM tags WHERE uuid=?1) WHERE uuid=?2",
-            rusqlite::params![uuid::Uuid::from_bytes([1; 16]).to_string(), uuid::Uuid::from_bytes([2; 16]).to_string()],
+            rusqlite::params![
+                uuid::Uuid::from_bytes([1; 16]).to_string(),
+                uuid::Uuid::from_bytes([2; 16]).to_string()
+            ],
         )
         .unwrap();
         assert!(matches!(
@@ -179,7 +191,8 @@ mod tests {
         let repo = TagsRepo::new(&conn, &keys);
         item(&conn, "i-1");
 
-        repo.replace_for_item("i-1", &[tag(1, "i-1", "旧")]).unwrap();
+        repo.replace_for_item("i-1", &[tag(1, "i-1", "旧")])
+            .unwrap();
         repo.replace_for_item("i-1", &[tag(2, "i-1", "新"), tag(3, "i-1", "再加")])
             .unwrap();
         assert_eq!(repo.read_for_item("i-1").unwrap().len(), 2);

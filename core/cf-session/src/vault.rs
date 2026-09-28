@@ -11,6 +11,7 @@
 //! ├── last_activity: AtomicI64                         ← 平台侧喂时间
 //! └── idle_timeout_secs: AtomicI64                     ← 0 / 负值 = 禁用自动锁定
 //!     clipboard_clear_secs: AtomicI64                  ← 0 = 从不清除（FR-14.2）
+//!     backoff: Mutex<UnlockBackoff>                    ← FR-12.5 退避（内存级）
 //! ```
 //!
 //! `lock()` 把 `state` 置为 `None` → `UnlockedState` 立即 drop →
@@ -38,6 +39,7 @@ use cf_domain::secret::SecretString;
 use cf_domain::totp_data::TotpUpdate;
 use cf_store::ItemListFilter;
 
+use crate::backoff::UnlockBackoff;
 use crate::idle;
 use crate::reminder;
 use crate::types::{ItemDetails, TotpCode, TotpDetail, VaultInfo};
@@ -97,6 +99,10 @@ pub struct VaultSession {
     /// 剪贴板自动清除时间（秒，FR-14.2）；0 = 从不清除。会话级配置，
     /// 与 `idle_timeout_secs` 同策略：跨 lock 存活，不随解锁态丢弃。
     clipboard_clear_secs: AtomicI64,
+    /// 解锁暴力退避计数器（FR-12.5）：内存级，重启即清零（接受限制）。
+    /// `unlock`（主密码路径）与 `enable_biometric`（经 `recover_dek` 验
+    /// 主密码，是密码 oracle）共享；`unlock_with_biometric` 不触碰。
+    backoff: Mutex<UnlockBackoff>,
 }
 
 impl VaultSession {
@@ -112,6 +118,7 @@ impl VaultSession {
             last_activity: AtomicI64::new(crate::unix_now().unwrap_or(0)),
             idle_timeout_secs: AtomicI64::new(DEFAULT_IDLE_TIMEOUT_SECS),
             clipboard_clear_secs: AtomicI64::new(DEFAULT_CLIPBOARD_CLEAR_SECS),
+            backoff: Mutex::new(UnlockBackoff::new()),
         })
     }
 
@@ -141,14 +148,31 @@ impl VaultSession {
     /// 打开存储。错误码 1002 三态合并见 [`crate::unlock`] 模块文档。
     ///
     /// 已解锁时幂等：直接返回当前信息，不重复执行 KDF。
+    ///
+    /// # 暴力退避（FR-12.5）
+    ///
+    /// 失败退避期内**直接拒绝且不执行 KDF**（兼防 KDF DoS），返回
+    /// [`CfError::UnlockFailed`]（1002，维持 FR-1.4 不可区分性）；剩余
+    /// 等待时间经 [`Self::backoff_remaining_secs`] 旁路获取。
     pub fn unlock(&self, password: &str) -> SessionResult<VaultInfo> {
+        if self.backoff_guard().gate().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
+
         let header = self.header_snapshot();
         let mut guard = self.state_guard();
         if let Some(state) = guard.as_ref() {
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
-        let store = crate::unlock::unlock_store(&self.vault_dir, &header, password)?;
+        let store = match crate::unlock::unlock_store(&self.vault_dir, &header, password) {
+            Ok(store) => store,
+            Err(e) => {
+                self.backoff_guard().on_failure();
+                return Err(e);
+            }
+        };
+        self.backoff_guard().on_success();
         let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
         self.last_activity
             .store(crate::unix_now().unwrap_or(0), Ordering::Release);
@@ -288,11 +312,33 @@ impl VaultSession {
     /// # 错误
     ///
     /// 1001 锁定态 / 1002 主密码错 / 5002 k_bio 长度 / 5001·1005 写失败。
+    ///
+    /// # 暴力退避（FR-12.5）
+    ///
+    /// 经 `recover_dek` 验主密码（密码 oracle），与 [`Self::unlock`]
+    /// **共享同一退避计数器**：门禁期内直接拒绝（1002，不跑 KDF）；
+    /// 主密码错（1002）计入失败，成功清零。k_bio 长度（5002）等参数
+    /// 错误不是密码尝试，不计入。
     pub fn enable_biometric(&self, password: &str, k_bio: &[u8]) -> SessionResult<()> {
+        if self.backoff_guard().gate().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
         let _guard = self.unlocked()?;
         let header = self.header_snapshot();
         let new_header =
-            unlock_bio::enable_biometric_impl(&self.vault_dir, &header, password, k_bio)?;
+            match unlock_bio::enable_biometric_impl(&self.vault_dir, &header, password, k_bio) {
+                Ok(new_header) => new_header,
+                Err(e) => {
+                    // 仅主密码校验失败（1002）计入退避；k_bio 长度（5002）
+                    // 等参数错误不是密码尝试，不计入
+                    if matches!(e, CfError::UnlockFailed) {
+                        self.backoff_guard().on_failure();
+                    }
+                    return Err(e);
+                }
+            };
+        // 主密码校验通过（成功路径）：退避清零
+        self.backoff_guard().on_success();
         // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
         *self.header_guard() = new_header;
         Ok(())
@@ -604,6 +650,18 @@ impl VaultSession {
         usecase::audit::run_watchtower(&state.store, &state.store.subkeys().audit_key)
     }
 
+    // ---------------------------------------------------- 暴力退避（FR-12.5）
+
+    /// 距退避门禁解除的剩余秒数（向上取整；无门禁返回 0）。
+    ///
+    /// 旁路通道：门禁期内的 `unlock` / `enable_biometric` 一律返回 1002
+    /// （维持 FR-1.4 不可区分性），UI 显示倒计时只经本方法获取。
+    /// 内存级计数，进程重启清零（设计裁决的接受限制）。
+    #[must_use]
+    pub fn backoff_remaining_secs(&self) -> u64 {
+        self.backoff_guard().remaining_secs()
+    }
+
     // ------------------------------------------------------- 内部工具
 
     /// 解锁态守卫：未解锁返回错误码 1001（不泄露其余状态）。
@@ -635,6 +693,20 @@ impl VaultSession {
     fn header_snapshot(&self) -> cf_format::Header {
         self.header_guard().clone()
     }
+
+    /// 退避计数器互斥锁守卫（poison 处理同 [`Self::state_guard`]）。
+    fn backoff_guard(&self) -> MutexGuard<'_, UnlockBackoff> {
+        self.backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// 注入测试时钟（仅测试可见）：替换退避计数器的时钟为 FakeClock，
+    /// 与 idle 判定的平台喂时同模式（时间注入，可测试）。
+    #[cfg(test)]
+    fn inject_backoff_clock(&self, clock: std::sync::Arc<dyn crate::backoff::MonotonicClock>) {
+        *self.backoff_guard() = UnlockBackoff::with_clock(clock);
+    }
 }
 
 /// 汇总解锁信息（item_count 来自 meta 表）。
@@ -654,6 +726,7 @@ fn vault_info(
 #[cfg(test)]
 mod tests {
     use super::DEFAULT_CLIPBOARD_CLEAR_SECS;
+    use super::VaultSession;
     use crate::unlock::{create_vault_with_kdf, open_vault};
     use cf_crypto::kdf::KdfParams;
 
@@ -840,5 +913,117 @@ mod tests {
         assert_eq!(err.code(), 1001);
         let err = session.should_suggest_backup(300, 1_000).unwrap_err();
         assert_eq!(err.code(), 1001);
+    }
+
+    // ------------------------------------------------ 暴力退避（FR-12.5）
+
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::backoff::{FakeClock, MonotonicClock};
+
+    /// 建库 → 开会话 → 注入 FakeClock（退避时钟可测试）。
+    fn session_with_fake_clock(tag: &str) -> (VaultSession, Arc<FakeClock>) {
+        let base = crate::tests_support::temp_dir(tag);
+        let brief =
+            create_vault_with_kdf(&base, "退避库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        let clock = Arc::new(FakeClock::new());
+        session.inject_backoff_clock(clock.clone());
+        (session, clock)
+    }
+
+    /// FR-12.5：门禁期内 unlock 直接拒绝（1002）且**不执行 KDF**——
+    /// 用正确密码仍被拒即证明 KDF 未跑（跑了就会成功）；剩余秒数经
+    /// 旁路可查，等待期满后正确密码解锁成功。
+    #[test]
+    fn 退避门禁期内解锁被拒且不执行kdf() {
+        let (session, clock) = session_with_fake_clock("backoff_gate");
+
+        // 连续 3 次错误密码 → 触发 1s 门禁
+        for _ in 0..3 {
+            let err = session.unlock("wrong-password-indeed!").unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+        assert!(!session.is_unlocked());
+        assert_eq!(session.backoff_remaining_secs(), 1, "第 3 次失败应延迟 1s");
+
+        // 门禁期内：**正确密码**同样被拒（证明 KDF 未执行），错误码仍 1002
+        let err = session.unlock(STRONG_PASSWORD).unwrap_err();
+        assert_eq!(err.code(), 1002, "门禁期内正确密码也必须被拒");
+        assert!(!session.is_unlocked());
+
+        // 等待期满：正确密码解锁成功，计数清零
+        clock.advance(Duration::from_secs(1));
+        assert_eq!(session.unlock(STRONG_PASSWORD).unwrap().item_count, 0);
+        assert_eq!(session.backoff_remaining_secs(), 0, "成功后计数应清零");
+    }
+
+    /// FR-12.5：enable_biometric 经 recover_dek 验主密码（密码 oracle），
+    /// 与 unlock 共享同一退避计数器——密码错误计入失败，触发门禁。
+    #[test]
+    fn bio启用路径与unlock共享退避计数器() {
+        let (session, _clock) = session_with_fake_clock("backoff_bio_shared");
+
+        // enable_biometric 需解锁态（1001 门禁）；连续 3 次错误主密码
+        // 均经 recover_dek 验证失败（1002）→ 计入共享计数器
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let k_bio = [0x11u8; 32];
+        for _ in 0..3 {
+            let err = session
+                .enable_biometric("wrong-password-indeed!", &k_bio)
+                .unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+        assert_eq!(
+            session.backoff_remaining_secs(),
+            1,
+            "bio 启用路径的密码失败应计入同一计数器"
+        );
+
+        // 门禁期内主密码 unlock 同样被拒（共享门禁，KDF 未执行）
+        session.lock();
+        let err = session.unlock(STRONG_PASSWORD).unwrap_err();
+        assert_eq!(err.code(), 1002);
+    }
+
+    /// FR-12.5：unlock_with_biometric 既不受门禁也不计数——门禁期内
+    /// bio 解锁照常成功，且成功不清退避计数（该路径完全不触碰计数器）。
+    #[test]
+    fn bio解锁不受退避门禁且不计数() {
+        let (session, _clock) = session_with_fake_clock("backoff_bio_exempt");
+
+        // 先启用 bio（成功路径会清零计数）
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let k_bio = [0x22u8; 32];
+        session.enable_biometric(STRONG_PASSWORD, &k_bio).unwrap();
+        session.lock();
+
+        // 3 次主密码错误 → 门禁激活
+        for _ in 0..3 {
+            session.unlock("wrong-password-indeed!").unwrap_err();
+        }
+        let remaining = session.backoff_remaining_secs();
+        assert!(remaining > 0);
+
+        // 门禁期内 bio 解锁照常成功（不受门禁）
+        session.lock();
+        assert!(session.unlock_with_biometric(&k_bio).is_ok());
+
+        // bio 解锁不触碰计数器：门禁剩余时间不变（不计数）
+        assert_eq!(
+            session.backoff_remaining_secs(),
+            remaining,
+            "unlock_with_biometric 不应影响退避计数"
+        );
+    }
+
+    /// 编译期断言：退避时钟为动态派发且跨线程可用（VaultSession 需 Send+Sync）。
+    #[test]
+    fn 退避时钟类型满足线程安全约束() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Arc<dyn MonotonicClock>>();
+        // FakeClock 内部 Mutex 保护，可跨线程
+        assert_send_sync::<Arc<FakeClock>>();
     }
 }

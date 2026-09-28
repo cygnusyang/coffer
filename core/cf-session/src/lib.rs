@@ -26,6 +26,8 @@
 //! - [`vault`]：`VaultSession`——持有 `Mutex<Option<UnlockedState>>`，
 //!   `lock()` 置 `None` 触发全链路 `ZeroizeOnDrop` 内存清零
 //! - [`idle`]：空闲超时判定的纯函数（时间由平台注入，可测试）
+//! - [`backoff`]：解锁暴力退避（FR-12.5）——内存级失败计数与指数延迟
+//!   门禁（n≥3 起 `min(2^(n-3), 60)` 秒），时钟注入可测试
 //! - [`change_password`]：修改主密码（FR-1.8，只重封装 header 的 DEK，
 //!   docs/09 §3.2 D-2）
 //! - [`usecase`]：条目 CRUD（四类完整 + 只读兜底）、搜索（多字段 + 词级
@@ -54,6 +56,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
 
+mod backoff;
 pub mod change_password;
 pub mod idle;
 pub mod reminder;

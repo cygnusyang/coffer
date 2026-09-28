@@ -43,7 +43,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cf_domain::CfError;
 use cf_format::header::{validate_header, Header, FORMAT_VERSION};
 use cf_store::repo::meta::MetaRepo;
-use cf_store::KEY_LAST_BACKUP_AT;
+use cf_store::{AuditEvent, AuditRepo, KEY_LAST_BACKUP_AT};
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
@@ -127,6 +127,8 @@ pub fn export_backup(vault_dir: &Path, out_path: &Path) -> Result<BackupExportRe
         // 导出成功 → 给源库 meta.last_backup_at 打点（FR-8.5，docs/09 §2.2）。
         // 失败不致命（见 stamp_last_backup 文档），不影响导出结果。
         stamp_last_backup(vault_dir);
+        // FR-12.6 本地审计：备份导出成功事件（同一静默纪律）。
+        stamp_audit(vault_dir, AuditEvent::BackupExport, None);
     }
     result.map_err(export_err)
 }
@@ -157,6 +159,22 @@ fn stamp_last_backup(vault_dir: &Path) {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let _ = MetaRepo::new(&conn).set_i64(KEY_LAST_BACKUP_AT, now);
+}
+
+/// 成功动作的审计打点（FR-12.6 本地审计日志，docs/09 §2 Could）。
+///
+/// 与 [`stamp_last_backup`] 同一模式：meta/audit 均为明文表，短连接即写；
+/// 任何失败静默忽略——审计记录缺失不否定已成功的动作本身。
+fn stamp_audit(vault_dir: &Path, event: AuditEvent, detail: Option<&str>) {
+    let Ok(conn) = rusqlite::Connection::open(vault_dir.join(DB_FILE)) else {
+        return;
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(2));
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let _ = AuditRepo::new(&conn).append(now, event, detail);
 }
 
 /// checkpoint WAL（TRUNCATE）。任何失败静默忽略——见模块文档「不致命」。
@@ -407,6 +425,9 @@ pub fn restore_backup(backup_path: &Path, target_base_dir: &Path) -> Result<Path
         let _ = fs::remove_dir_all(&target);
         return Err(e);
     }
+    // FR-12.6 本地审计：备份恢复成功事件（静默纪律同 stamp_last_backup——
+    // 打点失败不得否定已成功的恢复）。
+    stamp_audit(&target, AuditEvent::BackupRestore, None);
     Ok(target)
 }
 

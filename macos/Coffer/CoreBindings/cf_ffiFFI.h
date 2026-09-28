@@ -354,6 +354,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_display_name(uint64_t ptr, RustC
 void uniffi_cf_ffi_fn_method_vaultsession_enable_biometric(uint64_t ptr, RustBuffer password, RustBuffer k_bio, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_csv(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_PASSWORD
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_PASSWORD
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_generate_password(uint64_t ptr, RustBuffer opts, RustCallStatus *_Nonnull out_status
@@ -407,6 +412,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_parse_otpauth_uri(uint64_t ptr, 
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_recent_audit_events(uint64_t ptr, RustBuffer offset, RustBuffer limit, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_ITEM
@@ -886,6 +896,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_csv(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GENERATE_PASSWORD
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GENERATE_PASSWORD
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_generate_password(void
@@ -949,6 +965,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_parse_otpauth_uri(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events(void
     
 );
 #endif

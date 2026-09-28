@@ -604,7 +604,7 @@ impl VaultSession {
         new_password: &str,
         new_kdf: Option<cf_crypto::kdf::KdfParams>,
     ) -> SessionResult<()> {
-        let _guard = self.unlocked()?;
+        let guard = self.unlocked()?;
         let header = self.header_snapshot();
         let new_header = crate::change_password::change_password_impl(
             &self.vault_dir,
@@ -615,6 +615,17 @@ impl VaultSession {
         )?;
         // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
         *self.header_guard() = new_header;
+        // FR-12.6 本地审计：改主密码成功事件。打点失败静默（不否定已
+        // 成功的改密，与 cf-exporter stamp_* 同纪律）。
+        if let Some(state) = guard.as_ref() {
+            if let Ok(now) = crate::unix_now() {
+                let _ = state
+                    .store
+                    .repos()
+                    .audit
+                    .append(now, cf_store::AuditEvent::PasswordChange, None);
+            }
+        }
         Ok(())
     }
 
@@ -665,7 +676,7 @@ impl VaultSession {
     // ------------------------------------------------------- 内部工具
 
     /// 解锁态守卫：未解锁返回错误码 1001（不泄露其余状态）。
-    fn unlocked(&self) -> SessionResult<MutexGuard<'_, Option<UnlockedState>>> {
+    pub(crate) fn unlocked(&self) -> SessionResult<MutexGuard<'_, Option<UnlockedState>>> {
         let guard = self.state_guard();
         if guard.is_some() {
             Ok(guard)

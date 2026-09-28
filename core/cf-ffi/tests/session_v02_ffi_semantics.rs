@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cf_crypto::kdf::KdfParams;
 use cf_ffi::api::{CofferApp, VaultSession};
-use cf_ffi::types::FfiKdfParams;
+use cf_ffi::types::{FfiAuditEvent, FfiKdfParams};
 
 /// 提取错误码。
 fn err_code<T>(r: Result<T, cf_ffi::FfiError>) -> u16 {
@@ -232,4 +232,55 @@ fn 备份提醒门禁与判定() {
     assert!(session.should_suggest_backup(300, 1_000).unwrap(), "从未备份应提醒");
     assert!(!session.should_suggest_backup(0, 1_000).unwrap(), "0 视为禁用");
     assert!(!session.should_suggest_backup(-1, 1_000).unwrap(), "负值视为禁用");
+}
+
+/// CSV 导出（FR-8.3）+ 审计打点/查询回环（FR-12.6）：导出成功后
+/// recent_audit_events 可查到 CsvExport 事件（内核动作自动打点）。
+#[test]
+fn csv导出落审计且可查询() {
+    let base = temp_base("csvexp");
+    let brief = setup_vault(&base, "导出库");
+    let app = CofferApp::new();
+    let session = unlocked_session(&app, &base, &brief.uuid.to_string());
+
+    let out = base.join("export.csv");
+    let r = session
+        .export_csv(out.to_string_lossy().into_owned())
+        .unwrap();
+    assert_eq!(r.row_count, 0, "空库无数据行");
+    assert!(out.exists(), "CSV 文件应已写出");
+
+    let events = session.recent_audit_events(None, None).unwrap();
+    assert_eq!(events.len(), 1, "应恰好有 CSV 导出事件");
+    assert!(matches!(events[0].event, FfiAuditEvent::CsvExport));
+}
+
+/// 审计分页与锁定门禁（FR-12.6）：改密落 PasswordChange 事件（倒序在最前）；
+/// 锁定态查询/导出 → 1001。
+#[test]
+fn 审计分页与锁定门禁() {
+    let base = temp_base("audit");
+    let brief = setup_vault(&base, "审计库");
+    let app = CofferApp::new();
+    let session = unlocked_session(&app, &base, &brief.uuid.to_string());
+
+    session
+        .change_password(STRONG_PASSWORD.to_owned(), NEW_PASSWORD.to_owned(), None)
+        .unwrap();
+
+    let events = session.recent_audit_events(None, None).unwrap();
+    assert_eq!(events.len(), 1, "应恰好有改密事件");
+    assert!(matches!(events[0].event, FfiAuditEvent::PasswordChange));
+
+    // 分页：limit=0 → 空；offset 越界 → 空
+    assert!(session.recent_audit_events(None, Some(0)).unwrap().is_empty());
+    assert!(session.recent_audit_events(Some(9), None).unwrap().is_empty());
+
+    // 锁定态 → 1001
+    session.lock();
+    assert_eq!(err_code(session.recent_audit_events(None, None)), 1001);
+    assert_eq!(
+        err_code(session.export_csv(base.join("x.csv").to_string_lossy().into_owned())),
+        1001
+    );
 }

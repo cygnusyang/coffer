@@ -8,8 +8,10 @@ struct MainView: View {
 
     @State private var newSheetCategory: FfiItemCategory?
     @State private var showImport = false
-    /// 安全设置 sheet（docs/08 §7.5：Touch ID 设置节入口）。
-    @State private var showSecuritySettings = false
+    /// 统一设置 sheet（docs/09-v0.2实现方案.md §3.7，T06 设置页归位：
+    /// 自动锁定 / 剪贴板 / 备份提醒 / 安全 / 数据归位到 SettingsView，
+    /// 取代原 autoLockMenu + 安全设置入口）。
+    @State private var showSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -77,14 +79,11 @@ struct MainView: View {
                 } label: {
                     Label("新建", systemImage: "plus")
                 }
-                autoLockMenu
-                // 安全设置入口：无 Touch ID 设备整体隐藏（docs/08 §7.5 降级）
-                if model.isTouchIDSupported {
-                    Button {
-                        showSecuritySettings = true
-                    } label: {
-                        Label("安全设置", systemImage: "lock.shield")
-                    }
+                // 统一设置入口（docs/09-v0.2实现方案.md §3.7）
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("设置", systemImage: "gearshape")
                 }
                 Button {
                     showImport = true
@@ -102,22 +101,10 @@ struct MainView: View {
             ImportView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showSecuritySettings) {
-            SecuritySettingsView()
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
                 .environmentObject(model)
         }
-    }
-
-    /// 自动锁定超时档位（1 / 5 / 15 / 30 分钟、从不）。
-    private var autoLockMenu: some View {
-        Picker(selection: $model.autoLockMinutes) {
-            ForEach(AppModel.autoLockOptions, id: \.self) { minutes in
-                Text(minutes == 0 ? "从不" : "\(minutes) 分钟").tag(minutes)
-            }
-        } label: {
-            Label("自动锁定", systemImage: "timer")
-        }
-        .pickerStyle(.menu)
     }
 
     // MARK: - 详情

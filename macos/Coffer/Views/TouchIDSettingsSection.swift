@@ -1,4 +1,8 @@
-// SecuritySettingsView.swift —— 安全设置页（docs/08 §7.5）。
+// TouchIDSettingsSection.swift —— 统一设置页中的 Touch ID 节
+//（docs/09-v0.2实现方案.md §3.7，T06 设置页归位）。
+//
+// 由原 SecuritySettingsView（docs/08 §7.5）整体抽出为独立 Section，公共行为
+// 不变：三态渲染、内联主密码确认、enable/disable 流程与反馈分支全部沿用。
 //
 // Touch ID 三态渲染（docs/08 §9 T04 验收②，状态由 TouchIDStatus.resolve 判定）：
 //   - disabled：「启用 Touch ID 解锁」→ 内联主密码确认（D-6：enable 需主密码
@@ -12,8 +16,8 @@
 //   - 密码错 1002：FfiError 文案经 ErrorPresenter 弹窗呈现，确认行保留可重试
 //   - Keychain 失败：unexpected OSStatus 文案弹窗，header 未动（D-9 顺序保证）
 //
-// 降级（docs/08 §8 第一行 / §7.5）：isTouchIDSupported=false 时入口整体隐藏
-// （MainView 不挂接），本视图自身也渲染不可用说明兜底。
+// 降级（docs/08 §8 第一行 / §7.5）：isTouchIDSupported=false 时渲染不可用
+// 说明兜底（原工具栏入口按此隐藏；统一设置页常驻可达，故兜底分支保留）。
 //
 // 呈现细节：主密码确认采用**内联展开**而非嵌套 sheet——错误弹窗（alert）在
 // macOS 上无法叠在已呈现的 sheet 之上，内联行让 1002 / Keychain 失败的反馈
@@ -21,13 +25,11 @@
 
 import SwiftUI
 
-struct SecuritySettingsView: View {
+/// 统一设置页「安全」节：Touch ID 三态（docs/08 §7.5，T06 从原
+/// SecuritySettingsView 原样迁入）。
+struct TouchIDSettingsSection: View {
     @EnvironmentObject
     private var model: AppModel
-
-    /// 关闭本 sheet（BUG-3：此前无任何关闭控件，失败后用户被困页面内）。
-    @Environment(\.dismiss)
-    private var dismiss
 
     /// 主密码确认行的展开状态（nil = 收起；启用与重新启用共用同一流程）。
     @State private var showPasswordPrompt = false
@@ -39,29 +41,19 @@ struct SecuritySettingsView: View {
     @State private var isEnabling = false
 
     var body: some View {
-        Form {
+        Group {
             if model.isTouchIDSupported {
                 touchIDSection
             } else {
-                // 兜底分支：正常路径下入口已隐藏，直接打开本视图时给出说明
-                Section("Touch ID 解锁") {
+                // 兜底分支：无 Touch ID 设备直接打开设置页时给出说明。
+                // header 用「安全」而非原「Touch ID 解锁」：对齐统一设置页的
+                // 节结构命名（本节位于「④ 安全」下），有意变更非笔误。
+                Section("安全") {
                     Label("当前设备不支持生物识别解锁。", systemImage: "touchid")
                         .foregroundStyle(.secondary)
                 }
             }
-
-            // BUG-3：显式退出口——无论启用/停用成功或失败都必须能离开本页
-            Section {
-                HStack {
-                    Spacer()
-                    Button("完成") { dismiss() }
-                        .buttonStyle(.borderedProminent)
-                    Spacer()
-                }
-            }
         }
-        .formStyle(.grouped)
-        .frame(width: 460, height: 340)
         .onAppear { model.refreshTouchIDStatus() }
         .ffiErrorAlert($model.lastErrorMessage)
         .confirmationDialog(

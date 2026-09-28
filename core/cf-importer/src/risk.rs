@@ -382,14 +382,16 @@ mod tests {
     /// 字段后本测试应改为拦截断言（与 CSV 非法 bool 同待遇）。
     #[test]
     fn pux坏otpauth并入notes不拦截缺口声明() {
-        let mut report = PuxPrecheckReport::default();
-        // 非空导入（避开空导入保守分支），正常条目 1 条
-        report.total_items = 1;
-        report.importable_items = 1;
-        // 模拟坏 otpauth 场景在报告上的唯一痕迹：warnings 文本
-        report.warnings.push(
-            "条目 0197xxxx：otpauth 解析失败，原值已并入 notes（TOTP 结构丢失）".into(),
-        );
+        // 非空导入（避开空导入保守分支），正常条目 1 条；
+        // 坏 otpauth 场景在报告上的唯一痕迹是 warnings 文本
+        let report = PuxPrecheckReport {
+            total_items: 1,
+            importable_items: 1,
+            warnings: vec![
+                "条目 0197xxxx：otpauth 解析失败，原值已并入 notes（TOTP 结构丢失）".into(),
+            ],
+            ..Default::default()
+        };
         let advice = advise_pux_source_deletion(&report);
         assert!(advice.can_delete, "缺口声明：warnings 文本不参与拦截");
         assert!(advice.degraded_items.is_empty());

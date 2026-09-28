@@ -25,7 +25,13 @@
 //! - **部分失败**：目标库全部写入收口在单个 `with_tx` 内
 //!   all-or-nothing；任一 `Err` 路径收尾调
 //!   [`cf_store::AttachmentRepo::cleanup_orphans`] 清理回滚孤儿
-//!   （v0.3 LOW-2 登记的非导入路径清理时机，见 attachment.rs 模块注释）；
+//!   （v0.3 LOW-2 登记的非导入路径清理时机，见 attachment.rs 模块注释）。
+//!   ⚠️ **单会话假设**（v0.4 审查 MEDIUM 登记）：cleanup_orphans 是
+//!   全目录扫描式清理，以本连接 DB 引用集为准——若同库目录被另一个
+//!   `open_vault` 会话并发写入附件（当前 open 无互斥防护），其
+//!   「文件已落、行未提交」的附件可能被误删。桌面单用户场景下该
+//!   并发不存在；多会话并发写入若未来放开，须改为定向清理（tx 内
+//!   收集本次写入的附件文件名，Err 时仅删这些）；
 //! - **历史**：只复制当前版本，目标库 history 为空（判据 ⑥）；
 //! - **审计**：源库 / 目标库各打一条
 //!   [`cf_store::AuditEvent::ItemCopy`]，detail 只含库 uuid 与条目

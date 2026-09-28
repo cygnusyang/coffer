@@ -97,6 +97,13 @@ passwords = "3.1.18"
 #           仅用于读取（导入方向），不承担 KDBX 写入（导出见 cf-exporter）。
 keepass = "0.13.25"
 
+# [已确认] proptest 1.x —— 属性测试（模糊测试基建，docs/09 §2 v1.0.0 卡片）。
+#          仅 dev-dependencies 使用（cf-format / cf-importer），不进任何
+#          normal 依赖树，NFR-SEC-07 零网络检查（tools/check_no_network.sh
+#          `cargo tree -e normal`）不受影响。本机无 nightly / cargo-fuzz，
+#          故以属性测试承担「任意字节不 panic + 有效输入往返不变」判据。
+proptest = "1"
+
 # ---------- 序列化 ----------
 # [待校准] 1PUX 解析需要 JSON；内部快照用 CBOR
 serde = { version = "1", features = ["derive"] }

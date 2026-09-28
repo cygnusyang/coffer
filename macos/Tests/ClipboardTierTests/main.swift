@@ -222,6 +222,62 @@ if let originalClipboard {
     print("CLEANUP  剪贴板已清空（原为空）")
 }
 
+// MARK: - T9：改主密码闭环（TC-UI-11 内核判据，临时库，不触碰真实库）
+
+// 真实库的旧密码只有用户知道，测试进程绝不请求；改密判据（旧失效/新生效/
+// 全库可解密/中途原子性）全部可在密码已知的临时库上等价验证——经 Swift
+// 绑定层调用（顺带回归绑定生成产物），内核面另有 TC-CPW-01~12 Rust 自动化。
+do {
+    let app = CofferApp()
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("coffer-cpw-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let oldPass = "Old-Pass-1!"
+    let newPass = "New-Pass-2@x"
+    let brief = try app.createVault(baseDir: tmp.path, name: "验收临时库", password: oldPass)
+    let session = try app.openVault(baseDir: tmp.path, vaultUuid: brief.vaultUuid)
+    _ = try session.unlock(password: oldPass)
+
+    // 弱新密码 → 1010，且 header 未动（旧密码仍可解锁）
+    do {
+        try session.changePassword(oldPassword: oldPass, newPassword: "123456", newKdf: nil)
+        check("TC-CPW-03", "弱新密码应 1010 拒绝", false, "竟然成功？")
+    } catch let e as FfiError {
+        if case let .Coffer(code, _) = e, code == 1010 {
+            check("TC-CPW-03", "弱新密码 → 1010（先于任何文件操作）", true)
+        } else { check("TC-CPW-03", "弱新密码 → 1010", false, "\(e)") }
+    }
+    session.lock()
+    _ = try session.unlock(password: oldPass)
+    check("TC-CPW-03", "1010 拒绝后旧密码仍可解锁（header 未动）", true)
+
+    // 正确改密 → 旧密码失效 / 新密码生效（TC-CPW-01/02）
+    try session.changePassword(oldPassword: oldPass, newPassword: newPass, newKdf: nil)
+    session.lock()
+    do {
+        _ = try session.unlock(password: oldPass)
+        check("TC-CPW-01", "改密后旧密码必失败（1002）", false, "旧密码竟然解锁成功")
+    } catch let e as FfiError {
+        if case let .Coffer(code, _) = e, code == 1002 {
+            check("TC-CPW-01", "改密后旧密码必失败（1002）", true)
+        } else { check("TC-CPW-01", "改密后旧密码必失败", false, "\(e)") }
+    }
+    _ = try session.unlock(password: newPass)
+    check("TC-CPW-02", "改密后新密码解锁成功、全库可解密", true)
+
+    // 改密 × 备份回环（TC-CPW-10）：改密后的库导出可校验、可恢复
+    let exportPath = tmp.appendingPathComponent("cpw.coffer").path
+    let export = try app.exportBackup(vaultDir: tmp.appendingPathComponent(brief.vaultUuid).path,
+                                      outPath: exportPath)
+    check("TC-CPW-10", "改密后导出自检通过", export.verified)
+    try app.verifyBackup(backupPath: exportPath)
+    check("TC-CPW-10", "改密后备份包结构校验通过", true)
+} catch {
+    check("TC-CPW", "改密闭环异常", false, "\(error)")
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

@@ -16,6 +16,11 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 # UUIDv7：导入固定「全部新建」策略的条目 / 字段 / TOTP 行 ID（docs/07 §3.3）
 uuid = { workspace = true }
+# 1PUX 交换容器（docs/03 §1.4 同款选择）：标准 ZIP + Deflate，MIT 许可
+# （NFR-LEGAL-02）。版本与 feature 照抄 cf-exporter：关闭默认 features
+# （AES-ZipCrypto/bzip2/lzma/zstd/time 均不需要），只保留 deflate——
+# 压缩面越小攻击面越小。1PUX 导出未加密，解析全程无密钥。
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 # KeePass KDBX 冒烟验证：读取方向为主（cf-exporter 的写入另行选择方案）。
@@ -23,5 +28,7 @@ uuid = { workspace = true }
 keepass = { workspace = true, features = ["save_kdbx4"] }
 # 集成测试用内存 SQLite（构造 ItemStore 门面）
 rusqlite = { workspace = true }
+# 1PUX 集成测试的临时 vault 目录（附件旁路文件落盘）
+tempfile = "3"
 
 # 状态：CSV 导入已实现（docs/07 §7 T03）；1PUX / opvault / KDBX 推后 v0.2+

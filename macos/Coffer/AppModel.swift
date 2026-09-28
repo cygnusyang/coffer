@@ -409,6 +409,16 @@ final class AppModel: ObservableObject {
             let brief = try await Task.detached(priority: .userInitiated) {
                 try factory.createVault(baseDir: dir, name: name, password: password)
             }.value
+            // H-1（#7 审查）：v0.4 MB-1 把建库入口从 noVault 相暴露到解锁相
+            // （切换器「新建密码库…」），解锁态建库若不锁前会话，旧库 Rust
+            // 会话保持解锁留在 factory——单活跃不变量被破坏，且 items/
+            // currentDetails 明文残留、clearOnLock 不触发。镜像
+            // RestoreBackupView.handoffToRestoredVault 先例：openSession 前
+            // 锁当前会话（lock 幂等清 UI 明文状态 + 剪贴板）；noVault 相
+            // （bootstrap 后无会话）guard 跳过，v0.1 首建路径零变化。
+            if session != nil {
+                lock()
+            }
             openSession(brief)
             // 建库成功 → 首次解锁后提供可选「启用 Touch ID」步骤（docs/08 §4.1）。
             // 仅 Touch ID 设备置位；无 Touch ID 机器不置位，v0.1 流程零变化。

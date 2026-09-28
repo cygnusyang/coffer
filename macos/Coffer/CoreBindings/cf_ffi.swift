@@ -1037,6 +1037,16 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func autoLockIfExpired(nowSecs: Int64)  -> Bool
     
     /**
+     * 当前暴力退避门禁剩余秒数（FR-12.5；`0` = 无退避）。
+     *
+     * 同步只读旁路通道：门禁期内 `unlock` / `enable_biometric` /
+     * `change_password` 一律返回 1002（维持 FR-1.4 不可区分性），UI 的
+     * 倒计时显示只经本方法获取等待时间。与内核语义一致：内存级计数，
+     * 进程重启清零（设计裁决的接受限制）。
+     */
+    func backoffRemainingSecs()  -> UInt64
+    
+    /**
      * 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，
      * 不重加密全库；bio 封装不受影响）。
      *
@@ -1353,6 +1363,23 @@ open func autoLockIfExpired(nowSecs: Int64) -> Bool  {
     uniffi_cf_ffi_fn_method_vaultsession_auto_lock_if_expired(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(nowSecs),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 当前暴力退避门禁剩余秒数（FR-12.5；`0` = 无退避）。
+     *
+     * 同步只读旁路通道：门禁期内 `unlock` / `enable_biometric` /
+     * `change_password` 一律返回 1002（维持 FR-1.4 不可区分性），UI 的
+     * 倒计时显示只经本方法获取等待时间。与内核语义一致：内存级计数，
+     * 进程重启清零（设计裁决的接受限制）。
+     */
+open func backoffRemainingSecs() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_backoff_remaining_secs(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -4421,6 +4448,10 @@ public enum FfiAuditEvent: Equatable, Hashable {
      * 修改主密码成功（FR-1.8）。
      */
     case passwordChange
+    /**
+     * 跨库复制成功（FR-2.10，源库与目标库各一条）。
+     */
+    case itemCopy
 
 
 
@@ -4450,6 +4481,8 @@ public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
         
         case 4: return .passwordChange
         
+        case 5: return .itemCopy
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -4472,6 +4505,10 @@ public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
         
         case .passwordChange:
             writeInt(&buf, Int32(4))
+        
+        
+        case .itemCopy:
+            writeInt(&buf, Int32(5))
         
         }
     }
@@ -6063,6 +6100,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired() != 4111) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_backoff_remaining_secs() != 10977) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_change_password() != 62977) {

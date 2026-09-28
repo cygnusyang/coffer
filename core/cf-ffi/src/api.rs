@@ -571,6 +571,35 @@ impl VaultSession {
             self.inner.should_suggest_backup(threshold_secs, now_secs)
         }))
     }
+
+    // ------------------------------------------------- 导出与审计查询
+
+    /// CSV 明文导出（FR-8.3；锁定态 → 1001）。
+    ///
+    /// **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
+    /// 取得用户显式确认（UI 明示「导出文件为明文，包含全部密码」）才可
+    /// 调用本方法——内核不提供也不应绕过该门禁（D-11 默认关闭）。
+    pub fn export_csv(&self, out_path: String) -> Result<FfiCsvExportResult, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.export_csv(Path::new(&out_path))
+        }))
+        .map(Into::into)
+    }
+
+    /// 本地审计日志只读分页查询（FR-12.6；锁定态 → 1001）。
+    ///
+    /// 按时间倒序；`offset` / `limit` 语义与条目过滤一致（`None` 偏移
+    /// 视为 0、`None` 上限不限量）。事件只由内核动作打点，本方法只读。
+    pub fn recent_audit_events(
+        &self,
+        offset: Option<i64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<FfiAuditEntry>, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.recent_audit_events(offset, limit)
+        }))
+        .map(|entries| entries.into_iter().map(Into::into).collect())
+    }
 }
 
 /// 剪贴板自动清除的定时档位（FR-14.2）：`[10, 30, 60, 120]` 秒。

@@ -994,3 +994,73 @@ impl From<cf_importer::CsvImportResult> for FfiCsvImportResult {
         }
     }
 }
+
+// ---------------------------------------------- CSV 导出（FR-8.3，v0.2.0-T06）
+
+/// CSV 明文导出结果（`cf_exporter::CsvExportResult` 映射）。
+#[derive(uniffi::Record)]
+pub struct FfiCsvExportResult {
+    /// 实际写入的数据行数（不含表头）。
+    pub row_count: u64,
+    /// 因处于回收站而跳过的条目数。
+    pub skipped_trashed: u64,
+}
+
+impl From<cf_exporter::CsvExportResult> for FfiCsvExportResult {
+    fn from(r: cf_exporter::CsvExportResult) -> Self {
+        Self {
+            row_count: r.row_count as u64,
+            skipped_trashed: r.skipped_trashed as u64,
+        }
+    }
+}
+
+// -------------------------------------------- 审计日志查询（FR-12.6，v0.2.0-T06）
+
+/// 审计事件类型（`cf_store::AuditEvent` 映射；只读——写入仅由内核动作打点）。
+#[derive(uniffi::Enum)]
+pub enum FfiAuditEvent {
+    /// 加密备份导出成功（FR-8.1）。
+    BackupExport,
+    /// 备份恢复完成（FR-8.1 回环）。
+    BackupRestore,
+    /// CSV 明文导出成功（FR-8.3）。
+    CsvExport,
+    /// 修改主密码成功（FR-1.8）。
+    PasswordChange,
+}
+
+impl From<cf_store::AuditEvent> for FfiAuditEvent {
+    fn from(e: cf_store::AuditEvent) -> Self {
+        match e {
+            cf_store::AuditEvent::BackupExport => Self::BackupExport,
+            cf_store::AuditEvent::BackupRestore => Self::BackupRestore,
+            cf_store::AuditEvent::CsvExport => Self::CsvExport,
+            cf_store::AuditEvent::PasswordChange => Self::PasswordChange,
+        }
+    }
+}
+
+/// 审计日志条目（`cf_store::AuditEntry` 映射，按时间倒序分页）。
+#[derive(uniffi::Record)]
+pub struct FfiAuditEntry {
+    /// 行 id（自增）。
+    pub id: i64,
+    /// 事件时间（Unix 秒）。
+    pub ts: i64,
+    /// 事件类型。
+    pub event: FfiAuditEvent,
+    /// 非敏感上下文（如条目 UUID）；无则 `None`。
+    pub detail: Option<String>,
+}
+
+impl From<cf_store::AuditEntry> for FfiAuditEntry {
+    fn from(e: cf_store::AuditEntry) -> Self {
+        Self {
+            id: e.id,
+            ts: e.ts,
+            event: e.event.into(),
+            detail: e.detail,
+        }
+    }
+}

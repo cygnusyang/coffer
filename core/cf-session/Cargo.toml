@@ -30,14 +30,15 @@ unicode-normalization = { workspace = true }
 # FR-11.2 词级近似匹配（docs/09 §3.6 裁定：strsim 而非自写 Unicode 编辑距离；
 # MIT/Apache，直接声明版本避免动共享的 workspace 依赖表）
 strsim = "0.11"
+# FR-8.3 CSV 导出薄委托（export_gate，与 cf-importer 导入委托同模式；
+# cf-exporter 不依赖 cf-session，无循环）
+cf-exporter = { workspace = true }
 
 [dev-dependencies]
 cf-crypto = { workspace = true }
 cf-store = { workspace = true }
 # 验收用例（docs/10）构造 ItemDraft / TotpUpdate 等领域类型
 cf-domain = { workspace = true }
-# TC-CPW-11：换密 × 备份回环（export_backup / restore_backup）
-cf-exporter = { workspace = true }
 serde_json = { workspace = true }
 zeroize = { workspace = true }
 # history 快照密文落盘断言：与 cf-store 同版本序列化 CBOR 对拍

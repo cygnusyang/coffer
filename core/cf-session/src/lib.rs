@@ -57,6 +57,7 @@
 #![warn(missing_docs)]
 
 mod backoff;
+mod export_gate;
 pub mod change_password;
 pub mod idle;
 pub mod reminder;

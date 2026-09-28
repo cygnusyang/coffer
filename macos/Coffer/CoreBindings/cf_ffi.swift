@@ -1095,6 +1095,15 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func enableBiometric(password: String, kBio: Data) throws 
     
     /**
+     * CSV 明文导出（FR-8.3；锁定态 → 1001）。
+     *
+     * **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
+     * 取得用户显式确认（UI 明示「导出文件为明文，包含全部密码」）才可
+     * 调用本方法——内核不提供也不应绕过该门禁（D-11 默认关闭）。
+     */
+    func exportCsv(outPath: String) throws  -> FfiCsvExportResult
+    
+    /**
      * 生成随机密码（CSPRNG，参数见 [`FfiPasswordGenOptions`]）。
      */
     func generatePassword(opts: FfiPasswordGenOptions) throws  -> String
@@ -1156,6 +1165,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * CSV 预检（只读、可反复调用；1Password 9 列，docs/07 §3）。
      */
     func precheckCsv(path: String) throws  -> FfiCsvPrecheckReport
+    
+    /**
+     * 本地审计日志只读分页查询（FR-12.6；锁定态 → 1001）。
+     *
+     * 按时间倒序；`offset` / `limit` 语义与条目过滤一致（`None` 偏移
+     * 视为 0、`None` 上限不限量）。事件只由内核动作打点，本方法只读。
+     */
+    func recentAuditEvents(offset: Int64?, limit: Int64?) throws  -> [FfiAuditEntry]
     
     /**
      * 从回收站恢复条目。
@@ -1452,6 +1469,23 @@ open func enableBiometric(password: String, kBio: Data)throws   {try rustCallWit
 }
     
     /**
+     * CSV 明文导出（FR-8.3；锁定态 → 1001）。
+     *
+     * **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
+     * 取得用户显式确认（UI 明示「导出文件为明文，包含全部密码」）才可
+     * 调用本方法——内核不提供也不应绕过该门禁（D-11 默认关闭）。
+     */
+open func exportCsv(outPath: String)throws  -> FfiCsvExportResult  {
+    return try  FfiConverterTypeFfiCsvExportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_export_csv(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(outPath),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 生成随机密码（CSPRNG，参数见 [`FfiPasswordGenOptions`]）。
      */
 open func generatePassword(opts: FfiPasswordGenOptions)throws  -> String  {
@@ -1594,6 +1628,23 @@ open func precheckCsv(path: String)throws  -> FfiCsvPrecheckReport  {
     uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 本地审计日志只读分页查询（FR-12.6；锁定态 → 1001）。
+     *
+     * 按时间倒序；`offset` / `limit` 语义与条目过滤一致（`None` 偏移
+     * 视为 0、`None` 上限不限量）。事件只由内核动作打点，本方法只读。
+     */
+open func recentAuditEvents(offset: Int64?, limit: Int64?)throws  -> [FfiAuditEntry]  {
+    return try  FfiConverterSequenceTypeFfiAuditEntry.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_recent_audit_events(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionInt64.lower(offset),
+        FfiConverterOptionInt64.lower(limit),uniffiCallStatus
     )
 })
 }
@@ -1884,6 +1935,95 @@ public func FfiConverterTypeVaultSession_lower(_ value: VaultSession) -> UInt64 
 
 
 /**
+ * 审计日志条目（`cf_store::AuditEntry` 映射，按时间倒序分页）。
+ */
+public struct FfiAuditEntry: Equatable, Hashable {
+    /**
+     * 行 id（自增）。
+     */
+    public var id: Int64
+    /**
+     * 事件时间（Unix 秒）。
+     */
+    public var ts: Int64
+    /**
+     * 事件类型。
+     */
+    public var event: FfiAuditEvent
+    /**
+     * 非敏感上下文（如条目 UUID）；无则 `None`。
+     */
+    public var detail: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 行 id（自增）。
+         */id: Int64, 
+        /**
+         * 事件时间（Unix 秒）。
+         */ts: Int64, 
+        /**
+         * 事件类型。
+         */event: FfiAuditEvent, 
+        /**
+         * 非敏感上下文（如条目 UUID）；无则 `None`。
+         */detail: String?) {
+        self.id = id
+        self.ts = ts
+        self.event = event
+        self.detail = detail
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiAuditEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAuditEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAuditEntry {
+        return
+            try FfiAuditEntry(
+                id: FfiConverterInt64.read(from: &buf), 
+                ts: FfiConverterInt64.read(from: &buf), 
+                event: FfiConverterTypeFfiAuditEvent.read(from: &buf), 
+                detail: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAuditEntry, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.ts, into: &buf)
+        FfiConverterTypeFfiAuditEvent.write(value.event, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAuditEntry_lift(_ buf: RustBuffer) throws -> FfiAuditEntry {
+    return try FfiConverterTypeFfiAuditEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAuditEntry_lower(_ value: FfiAuditEntry) -> RustBuffer {
+    return FfiConverterTypeFfiAuditEntry.lower(value)
+}
+
+
+/**
  * 加密备份导出结果（FR-8.1，docs/09 §3.1 冻结契约镜像）。
  */
 public struct FfiBackupExportResult: Equatable, Hashable {
@@ -2048,6 +2188,75 @@ public func FfiConverterTypeFfiBackupVerifyReport_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeFfiBackupVerifyReport_lower(_ value: FfiBackupVerifyReport) -> RustBuffer {
     return FfiConverterTypeFfiBackupVerifyReport.lower(value)
+}
+
+
+/**
+ * CSV 明文导出结果（`cf_exporter::CsvExportResult` 映射）。
+ */
+public struct FfiCsvExportResult: Equatable, Hashable {
+    /**
+     * 实际写入的数据行数（不含表头）。
+     */
+    public var rowCount: UInt64
+    /**
+     * 因处于回收站而跳过的条目数。
+     */
+    public var skippedTrashed: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 实际写入的数据行数（不含表头）。
+         */rowCount: UInt64, 
+        /**
+         * 因处于回收站而跳过的条目数。
+         */skippedTrashed: UInt64) {
+        self.rowCount = rowCount
+        self.skippedTrashed = skippedTrashed
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiCsvExportResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCsvExportResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCsvExportResult {
+        return
+            try FfiCsvExportResult(
+                rowCount: FfiConverterUInt64.read(from: &buf), 
+                skippedTrashed: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCsvExportResult, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.rowCount, into: &buf)
+        FfiConverterUInt64.write(value.skippedTrashed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCsvExportResult_lift(_ buf: RustBuffer) throws -> FfiCsvExportResult {
+    return try FfiConverterTypeFfiCsvExportResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCsvExportResult_lower(_ value: FfiCsvExportResult) -> RustBuffer {
+    return FfiConverterTypeFfiCsvExportResult.lower(value)
 }
 
 
@@ -4191,6 +4400,101 @@ public func FfiConverterTypeFfiVaultInfo_lower(_ value: FfiVaultInfo) -> RustBuf
 
 
 /**
+ * 审计事件类型（`cf_store::AuditEvent` 映射；只读——写入仅由内核动作打点）。
+ */
+
+public enum FfiAuditEvent: Equatable, Hashable {
+    
+    /**
+     * 加密备份导出成功（FR-8.1）。
+     */
+    case backupExport
+    /**
+     * 备份恢复完成（FR-8.1 回环）。
+     */
+    case backupRestore
+    /**
+     * CSV 明文导出成功（FR-8.3）。
+     */
+    case csvExport
+    /**
+     * 修改主密码成功（FR-1.8）。
+     */
+    case passwordChange
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiAuditEvent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
+    typealias SwiftType = FfiAuditEvent
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAuditEvent {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .backupExport
+        
+        case 2: return .backupRestore
+        
+        case 3: return .csvExport
+        
+        case 4: return .passwordChange
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiAuditEvent, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .backupExport:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .backupRestore:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .csvExport:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .passwordChange:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAuditEvent_lift(_ buf: RustBuffer) throws -> FfiAuditEvent {
+    return try FfiConverterTypeFfiAuditEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAuditEvent_lower(_ value: FfiAuditEvent) -> RustBuffer {
+    return FfiConverterTypeFfiAuditEvent.lower(value)
+}
+
+
+
+/**
  * 字段语义标识镜像（docs/03 §4.2）。
  */
 
@@ -5419,6 +5723,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiAuditEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiAuditEntry]
+
+    public static func write(_ value: [FfiAuditEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiAuditEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiAuditEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiAuditEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiAuditEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiFieldDetail: FfiConverterRustBuffer {
     typealias SwiftType = [FfiFieldDetail]
 
@@ -5757,6 +6086,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric() != 41906) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_generate_password() != 13850) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5788,6 +6120,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv() != 64030) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events() != 53755) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_item() != 32382) {

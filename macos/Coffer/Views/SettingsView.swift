@@ -6,7 +6,7 @@
 //   ② 剪贴板：自动清除档位（T06 / FR-14.2）
 //   ③ 备份提醒：提醒间隔档位（FR-8.5；评估逻辑 T-G 接入）
 //   ④ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
-//     + 「修改主密码…」入口（sheet 占位，T-D 接入）
+//     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
 //   ⑤ 数据：「从备份恢复…」「审计日志…」占位（T-H / T-I 接入）
 //   ⑥ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
 //
@@ -25,7 +25,7 @@ struct SettingsView: View {
     @Environment(\.dismiss)
     private var dismiss
 
-    /// 「修改主密码」sheet（占位，T-D 替换为完整改密流程）。
+    /// 「修改主密码」sheet（T-D：ChangePasswordView 完整改密流程）。
     @State private var showChangePassword = false
     /// 「从备份恢复」sheet（占位，T-H 接入加密备份恢复流程）。
     @State private var showRestore = false
@@ -48,8 +48,10 @@ struct SettingsView: View {
         // 宽度固定、高度自适应（节内容随 Touch ID 内联确认行等动态展开）
         .frame(width: 480)
         .sheet(isPresented: $showChangePassword) {
-            // 占位视图：T-D 替换为修改主密码流程（旧密码重验证 + 新密码 zxcvbn 门禁）
-            placeholderSheet(title: "修改主密码", taskTag: "T-D")
+            // 修改主密码流程（FR-1.8 / TC-UI-11，T-D）：
+            // 旧密码重验证 + 新密码 zxcvbn 门禁 + header 重封装（D-2）
+            ChangePasswordView()
+                .environmentObject(model)
         }
         .sheet(isPresented: $showRestore) {
             // 占位视图：T-H 替换为加密备份恢复流程（FR-8.1）
@@ -134,7 +136,7 @@ struct SettingsView: View {
             } label: {
                 Label("修改主密码…", systemImage: "key")
             }
-            // T-D 接入前弹出占位 sheet（见 body 末尾 placeholderSheet）
+            // T-D：弹出 ChangePasswordView（见 body 的 showChangePassword sheet）
         } footer: {
             Text("修改主密码只重新封装密码库头部，不重新加密全部条目。")
         }

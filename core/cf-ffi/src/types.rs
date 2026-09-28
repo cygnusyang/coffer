@@ -845,6 +845,40 @@ impl TryFrom<FfiPasswordGenOptions> for cf_audit::PasswordGenOptions {
     }
 }
 
+/// 密码短语生成参数（FR-3.3，docs/15 §3.3.4；镜像
+/// `cf_audit::PassphraseOptions`，usize 不跨 FFI → wordCount 用 u32）。
+///
+/// 门禁（越界 → 码 1012，内核校验）：词数 3..=10；分隔符 1..=3 个
+/// 可打印字符。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiPassphraseOptions {
+    /// 词数（3..=10）。
+    pub word_count: u32,
+    /// 词间分隔符（1..=3 个可打印字符）。
+    pub separator: String,
+    /// 词首大写（Title Case）。
+    pub capitalize: bool,
+    /// 末尾追加随机数字 0–9。
+    pub number_suffix: bool,
+}
+
+impl TryFrom<FfiPassphraseOptions> for cf_audit::PassphraseOptions {
+    type Error = FfiError;
+
+    fn try_from(o: FfiPassphraseOptions) -> Result<Self, FfiError> {
+        Ok(Self {
+            word_count: usize::try_from(o.word_count).map_err(|_| {
+                FfiError::from(cf_domain::CfError::InvalidArgument(
+                    "passphrase word count out of range".into(),
+                ))
+            })?,
+            separator: o.separator,
+            capitalize: o.capitalize,
+            number_suffix: o.number_suffix,
+        })
+    }
+}
+
 /// 密码强度评估结果（docs/07 §2.3 `StrengthEstimate`）。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FfiStrengthEstimate {
@@ -1450,6 +1484,36 @@ impl From<cf_session::usecase::health::HealthReport> for FfiHealthReport {
             leak_suspects: r.leak_suspects.into_iter().map(Into::into).collect(),
             missing_totp_items: r.missing_totp_items.into_iter().map(Into::into).collect(),
             summary: r.summary.into(),
+        }
+    }
+}
+
+// ---------------------------------------------- 附件（FR-9.3 / 9.4，v0.4）
+
+/// 附件元数据（docs/15 §3.1.2 冻结契约；镜像
+/// `cf_session::AttachmentInfo`，时间戳恒 i64 Unix 秒）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiAttachmentMeta {
+    /// 附件行 UUID（旁路文件名同名）。
+    pub attachment_uuid: String,
+    /// 所属条目 UUID。
+    pub item_uuid: String,
+    /// 文件名（解密后明文）。
+    pub filename: String,
+    /// 明文长度（字节；usize 不跨 FFI → i64）。
+    pub size_bytes: i64,
+    /// 创建时间（Unix 秒）。
+    pub created_at: i64,
+}
+
+impl From<cf_session::AttachmentInfo> for FfiAttachmentMeta {
+    fn from(info: cf_session::AttachmentInfo) -> Self {
+        Self {
+            attachment_uuid: info.uuid,
+            item_uuid: info.item_uuid,
+            filename: info.filename,
+            size_bytes: info.size_bytes,
+            created_at: info.created_at,
         }
     }
 }

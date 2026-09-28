@@ -99,9 +99,10 @@ pub struct VaultSession {
     /// 剪贴板自动清除时间（秒，FR-14.2）；0 = 从不清除。会话级配置，
     /// 与 `idle_timeout_secs` 同策略：跨 lock 存活，不随解锁态丢弃。
     clipboard_clear_secs: AtomicI64,
-    /// 解锁暴力退避计数器（FR-12.5）：内存级，重启即清零（接受限制）。
-    /// `unlock`（主密码路径）与 `enable_biometric`（经 `recover_dek` 验
-    /// 主密码，是密码 oracle）共享；`unlock_with_biometric` 不触碰。
+    /// 解锁退避计数器（FR-12.5）：内存级，重启即清零（接受限制）。
+    /// `unlock`（主密码路径）与 `enable_biometric` / `change_password`
+    /// （均经 `recover_dek` 验主密码，是密码 oracle）共享；`unlock_with_biometric`
+    /// 不触碰。门禁判定与 KDF 经 `try_acquire` 同临界区预占（MEDIUM-2）。
     backoff: Mutex<UnlockBackoff>,
 }
 
@@ -114,7 +115,8 @@ impl VaultSession {
             display_name: header.display_name.clone(),
             vault_dir,
             vault_uuid,
-            header: Mutex::new(header),            state: Mutex::new(None),
+            header: Mutex::new(header),
+            state: Mutex::new(None),
             last_activity: AtomicI64::new(crate::unix_now().unwrap_or(0)),
             idle_timeout_secs: AtomicI64::new(DEFAULT_IDLE_TIMEOUT_SECS),
             clipboard_clear_secs: AtomicI64::new(DEFAULT_CLIPBOARD_CLEAR_SECS),
@@ -154,14 +156,20 @@ impl VaultSession {
     /// 失败退避期内**直接拒绝且不执行 KDF**（兼防 KDF DoS），返回
     /// [`CfError::UnlockFailed`]（1002，维持 FR-1.4 不可区分性）；剩余
     /// 等待时间经 [`Self::backoff_remaining_secs`] 旁路获取。
+    ///
+    /// 门禁判定与 KDF 在途预占同一临界区（`try_acquire`）：KDF 秒级执行
+    /// 期间并发的第二次 `unlock` 被拒（1002），消除「gate 与 on_failure
+    /// 非同一临界区」的并行猜测窗口。
     pub fn unlock(&self, password: &str) -> SessionResult<VaultInfo> {
-        if self.backoff_guard().gate().is_err() {
+        if self.backoff_guard().try_acquire().is_err() {
             return Err(CfError::UnlockFailed);
         }
 
         let header = self.header_snapshot();
         let mut guard = self.state_guard();
         if let Some(state) = guard.as_ref() {
+            // 幂等路径：未做密码验证，只释放预占（不动计数与门禁）
+            self.backoff_guard().release();
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
@@ -318,21 +326,31 @@ impl VaultSession {
     /// 经 `recover_dek` 验主密码（密码 oracle），与 [`Self::unlock`]
     /// **共享同一退避计数器**：门禁期内直接拒绝（1002，不跑 KDF）；
     /// 主密码错（1002）计入失败，成功清零。k_bio 长度（5002）等参数
-    /// 错误不是密码尝试，不计入。
+    /// 错误不是密码尝试，不计入。门禁判定与 KDF 同临界区预占
+    /// （`try_acquire`，语义同 [`Self::unlock`]）。
     pub fn enable_biometric(&self, password: &str, k_bio: &[u8]) -> SessionResult<()> {
-        if self.backoff_guard().gate().is_err() {
+        if self.backoff_guard().try_acquire().is_err() {
             return Err(CfError::UnlockFailed);
         }
-        let _guard = self.unlocked()?;
+        let _guard = match self.unlocked() {
+            Ok(guard) => guard,
+            Err(e) => {
+                // 锁定态（1001）不是密码尝试，只释放预占
+                self.backoff_guard().release();
+                return Err(e);
+            }
+        };
         let header = self.header_snapshot();
         let new_header =
             match unlock_bio::enable_biometric_impl(&self.vault_dir, &header, password, k_bio) {
                 Ok(new_header) => new_header,
                 Err(e) => {
                     // 仅主密码校验失败（1002）计入退避；k_bio 长度（5002）
-                    // 等参数错误不是密码尝试，不计入
+                    // 等参数错误不是密码尝试，只释放预占
                     if matches!(e, CfError::UnlockFailed) {
                         self.backoff_guard().on_failure();
+                    } else {
+                        self.backoff_guard().release();
                     }
                     return Err(e);
                 }
@@ -598,21 +616,56 @@ impl VaultSession {
     ///
     /// 1001 锁定态 / 1002 旧密码错 / 1010 新密码弱 / 5002 new_kdf 越界 /
     /// 1007 密钥操作失败 / 5001·1005 写失败（磁盘 header 保持原样）。
+    ///
+    /// # 暴力退避（FR-12.5）
+    ///
+    /// 经 `recover_dek` 验旧密码（密码 oracle，虽需解锁态 1001 才可达，
+    /// 同会话连续错旧密码仍是免费猜测通道，须计入），与 [`Self::unlock`]
+    /// / [`Self::enable_biometric`] **共享同一退避计数器**：门禁期内直接
+    /// 拒绝（1002）；旧密码错（1002）计入失败，成功清零。弱新密码
+    /// （1010）、new_kdf 越界（5002）、写失败等非密码错误不计入，只释放
+    /// 预占。门禁判定与 KDF 同临界区预占（`try_acquire`，语义同
+    /// [`Self::unlock`]）。
     pub fn change_password(
         &self,
         old_password: &str,
         new_password: &str,
         new_kdf: Option<cf_crypto::kdf::KdfParams>,
     ) -> SessionResult<()> {
-        let guard = self.unlocked()?;
+        if self.backoff_guard().try_acquire().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
+        let guard = match self.unlocked() {
+            Ok(guard) => guard,
+            Err(e) => {
+                // 锁定态（1001）不是密码尝试，只释放预占
+                self.backoff_guard().release();
+                return Err(e);
+            }
+        };
         let header = self.header_snapshot();
-        let new_header = crate::change_password::change_password_impl(
-            &self.vault_dir,
-            &header,
-            old_password,
-            new_password,
-            new_kdf,
-        )?;
+        let new_header =
+            match crate::change_password::change_password_impl(
+                &self.vault_dir,
+                &header,
+                old_password,
+                new_password,
+                new_kdf,
+            ) {
+                Ok(new_header) => new_header,
+                Err(e) => {
+                    // 仅旧密码校验失败（1002）计入退避；1010 / 5002 / 写
+                    // 失败等不是密码尝试，只释放预占
+                    if matches!(e, CfError::UnlockFailed) {
+                        self.backoff_guard().on_failure();
+                    } else {
+                        self.backoff_guard().release();
+                    }
+                    return Err(e);
+                }
+            };
+        // 旧密码校验通过（成功路径）：退避清零
+        self.backoff_guard().on_success();
         // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
         *self.header_guard() = new_header;
         // FR-12.6 本地审计：改主密码成功事件。打点失败静默（不否定已
@@ -665,9 +718,9 @@ impl VaultSession {
 
     /// 距退避门禁解除的剩余秒数（向上取整；无门禁返回 0）。
     ///
-    /// 旁路通道：门禁期内的 `unlock` / `enable_biometric` 一律返回 1002
-    /// （维持 FR-1.4 不可区分性），UI 显示倒计时只经本方法获取。
-    /// 内存级计数，进程重启清零（设计裁决的接受限制）。
+    /// 旁路通道：门禁期内的 `unlock` / `enable_biometric` / `change_password`
+    /// 一律返回 1002（维持 FR-1.4 不可区分性），UI 显示倒计时只经本方法
+    /// 获取。内存级计数，进程重启清零（设计裁决的接受限制）。
     #[must_use]
     pub fn backoff_remaining_secs(&self) -> u64 {
         self.backoff_guard().remaining_secs()
@@ -1036,5 +1089,123 @@ mod tests {
         assert_send_sync::<Arc<dyn MonotonicClock>>();
         // FakeClock 内部 Mutex 保护，可跨线程
         assert_send_sync::<Arc<FakeClock>>();
+    }
+
+    /// 换密用的新强密码（zxcvbn score ≥ 3，可过强度门禁）。
+    const CHANGE_TO_PASSWORD: &str = "quartz-lantern-vault-meridian-93#";
+
+    /// MEDIUM-1：change_password 经 recover_dek 验旧密码（密码 oracle），
+    /// 连续错旧密码 ≥3 次触发退避门禁——门禁期内正确旧密码也被拒（1002），
+    /// 期满后改密成功且计数清零。
+    #[test]
+    fn 改密错旧密码触发退避门禁() {
+        let (session, clock) = session_with_fake_clock("backoff_change_pw");
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        // 连续 3 次错旧密码（新密码合法，失败来自旧密码校验）→ 1002 ×3
+        for _ in 0..3 {
+            let err = session
+                .change_password("wrong-password-indeed!", CHANGE_TO_PASSWORD, None)
+                .unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+        assert_eq!(
+            session.backoff_remaining_secs(),
+            1,
+            "第 3 次错旧密码应延迟 1s"
+        );
+
+        // 门禁期内：正确旧密码同样被拒（1002），不执行 KDF
+        let err = session
+            .change_password(STRONG_PASSWORD, CHANGE_TO_PASSWORD, None)
+            .unwrap_err();
+        assert_eq!(err.code(), 1002, "门禁期内改密必须被拒");
+
+        // 期满后改密成功，计数清零，新密码生效
+        clock.advance(Duration::from_secs(1));
+        session
+            .change_password(STRONG_PASSWORD, CHANGE_TO_PASSWORD, None)
+            .unwrap();
+        assert_eq!(session.backoff_remaining_secs(), 0, "改密成功后计数应清零");
+        session.lock();
+        assert!(session.unlock(CHANGE_TO_PASSWORD).is_ok(), "新密码应生效");
+    }
+
+    /// MEDIUM-1：改密成功清零计数——2 次错旧密码（未达阈值）后成功改密，
+    /// 后续 1 次错旧密码重新从 n=1 起算、不触发门禁。
+    #[test]
+    fn 改密成功后退避计数清零() {
+        let (session, _clock) = session_with_fake_clock("backoff_change_pw_reset");
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        for _ in 0..2 {
+            let err = session
+                .change_password("wrong-password-indeed!", CHANGE_TO_PASSWORD, None)
+                .unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+        session
+            .change_password(STRONG_PASSWORD, CHANGE_TO_PASSWORD, None)
+            .unwrap();
+        assert_eq!(session.backoff_remaining_secs(), 0, "成功后计数应清零");
+
+        // 重新计数：1 次错旧密码不触发门禁
+        let err = session
+            .change_password("wrong-password-indeed!", CHANGE_TO_PASSWORD, None)
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert_eq!(session.backoff_remaining_secs(), 0, "n=1 不应触发门禁");
+    }
+
+    /// MEDIUM-1 接线：非密码错误不计入——弱新密码（1010）连续多次不触发
+    /// 门禁（与 enable_biometric 的 5002 参数错同款语义）。
+    #[test]
+    fn 改密弱新密码不计入退避() {
+        let (session, _clock) = session_with_fake_clock("backoff_change_pw_weak");
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        for _ in 0..5 {
+            let err = session
+                .change_password(STRONG_PASSWORD, "123456", None)
+                .unwrap_err();
+            assert_eq!(err.code(), 1010);
+        }
+        assert_eq!(
+            session.backoff_remaining_secs(),
+            0,
+            "弱密码错误不应计入退避"
+        );
+    }
+
+    /// MEDIUM-2 串行接线验证：预占（in_flight）在 unlock / change_password
+    /// 的所有退出路径都被释放——若任一路径泄漏预占，后续调用将被拒（1002）。
+    /// 并发窗口内「第二调用被拒」的内核语义由 backoff 单元测试
+    /// `预占期间再次获取被拒` 确定性覆盖（真实并发 KDF 时序不可靠，
+    /// 不做时序断言）。
+    #[test]
+    fn 预占在所有退出路径释放() {
+        let (session, _clock) = session_with_fake_clock("backoff_in_flight");
+
+        // unlock 失败路径（on_failure）释放：随后解锁成功（若泄漏将 1002）
+        session.unlock("wrong-password-indeed!").unwrap_err();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        // unlock 幂等路径（release）释放：已解锁再 unlock 仍 Ok
+        session.unlock("idempotent-call-does-not-matter").unwrap();
+
+        // change_password 非密码错误路径（release）释放：弱新密码 1010
+        session
+            .change_password(STRONG_PASSWORD, "123456", None)
+            .unwrap_err();
+        // change_password 失败路径（on_failure）+ 成功路径（on_success）释放
+        session
+            .change_password("wrong-password-indeed!", CHANGE_TO_PASSWORD, None)
+            .unwrap_err();
+        session
+            .change_password(STRONG_PASSWORD, CHANGE_TO_PASSWORD, None)
+            .unwrap();
+
+        // 收尾：若任一路径泄漏预占，此解锁将 1002
+        session.lock();
+        session.unlock(CHANGE_TO_PASSWORD).unwrap();
     }
 }

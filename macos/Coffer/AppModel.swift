@@ -118,11 +118,45 @@ final class AppModel: ObservableObject {
         default: return autoLockOptions.contains(stored) ? stored : 5
         }
     }
-    /// 可选档位：1 / 5 / 15 / 30 分钟、从不。
-    nonisolated static let autoLockOptions: [Int] = [1, 5, 15, 30, 0]
+    /// 可选档位：1 / 5 / 15 / 30 / 60 分钟、从不（FR-14.1 六档）。
+    nonisolated static let autoLockOptions: [Int] = [1, 5, 15, 30, 60, 0]
     nonisolated static let autoLockDefaultsKey = "autoLockMinutes"
     /// 自动锁定平台驱动（锁屏 / 休眠 / 屏保立即锁定 + 空闲喂入）。
     private var lockMonitor: AutoLockMonitor?
+
+    // MARK: 备份提醒配置（FR-8.5 / T06 设置页归位；评估逻辑 T-G 接入）
+
+    /// 备份提醒间隔天数（FR-8.5 四档：0 = 禁用 / 7 / 14 / 30，默认 30）。
+    /// 哨兵语义注意（三者互不相同，勿混淆）：
+    ///   - autoLockMinutes：运行态 0 = 从不，落盘 -1 = 从不；
+    ///   - clipboardClearSecs：0 = 从不（落盘同值）；
+    ///   - backupReminderDays：0 = 禁用提醒（落盘同值）。
+    /// didSet 仅落盘；「距上次备份是否超期 → 触发提醒」的评估逻辑由
+    /// T-G 接入（本属性先作为设置项数据源）。
+    @Published var backupReminderDays: Int = AppModel.loadBackupReminderDays() {
+        didSet {
+            // 防御校验（与 clipboardClearSecs 同纪律）：非法值宁可不生效，
+            // 也不落脏数据破坏「UserDefaults / 设置页」两处一致。
+            guard Self.backupReminderOptions.contains(backupReminderDays) else { return }
+            guard oldValue != backupReminderDays else { return }
+            UserDefaults.standard.set(backupReminderDays,
+                                      forKey: Self.backupReminderDefaultsKey)
+        }
+    }
+
+    /// 从 UserDefaults 读档位（nonisolated，供属性默认值使用）。
+    /// 用 object(forKey:) 区分「未配置」与「显式 0（禁用）」——integer(forKey:)
+    /// 对键不存在也返回 0，而 0 是合法档位，必须区分（同 ClipboardManager 纪律）。
+    nonisolated private static func loadBackupReminderDays() -> Int {
+        guard let stored = UserDefaults.standard.object(forKey: backupReminderDefaultsKey) as? Int
+        else { return defaultBackupReminderDays }
+        return backupReminderOptions.contains(stored) ? stored : defaultBackupReminderDays
+    }
+    /// 可选档位：禁用 / 7 / 14 / 30 天。
+    nonisolated static let backupReminderOptions: [Int] = [0, 7, 14, 30]
+    /// 默认档位：30 天（FR-8.5）。
+    nonisolated static let defaultBackupReminderDays = 30
+    nonisolated static let backupReminderDefaultsKey = "backupReminderDays"
 
     // MARK: - FFI 对象
 

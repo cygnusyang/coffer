@@ -7,8 +7,11 @@
 //! - [`history`]：条目历史版本编排（列表 / 回滚，FR-2.9）
 //! - [`audit`]：Watchtower 安全体检编排（重复密码 / 弱密码 / 弱 URL，
 //!   FR-6.2 / FR-6.3）
+//! - [`health`]：五类体检报告编排（FR-6.7：6.2 重复 / 6.3 弱 URL /
+//!   6.4 陈旧 / 6.5 泄露启发式 / 6.6 无 2FA，单次遍历解密取数）
 
 pub mod audit;
+pub mod health;
 pub mod history;
 pub mod items;
 pub mod search;

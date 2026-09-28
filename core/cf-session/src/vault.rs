@@ -714,6 +714,27 @@ impl VaultSession {
         usecase::audit::run_watchtower(&state.store, &state.store.subkeys().audit_key)
     }
 
+    /// 运行五类体检报告（FR-6.7）：重复密码 / 弱 URL / 陈旧密码 /
+    /// 泄露启发式 / 无 2FA。单次遍历解密取数；报告只携带 item_id /
+    /// 标题 / 非敏感元数据，不含密码明文（见 usecase::health 模块文档）。
+    ///
+    /// `now_secs` 由调用方注入（Unix 秒，与空闲自动锁定同模式，可测试）；
+    /// 陈旧密码阈值取 [`cf_audit::DEFAULT_STALE_DAYS`]（365，docs/03 §8
+    /// AUD-04 默认值）。锁定态 → 1001。
+    pub fn health_report(
+        &self,
+        now_secs: i64,
+    ) -> SessionResult<crate::usecase::health::HealthReport> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        usecase::health::run_health_report(
+            &state.store,
+            &state.store.subkeys().audit_key,
+            now_secs,
+            cf_audit::DEFAULT_STALE_DAYS,
+        )
+    }
+
     // ---------------------------------------------------- 暴力退避（FR-12.5）
 
     /// 距退避门禁解除的剩余秒数（向上取整；无门禁返回 0）。

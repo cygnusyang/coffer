@@ -138,8 +138,9 @@ pub fn copy_item(src: &VaultSession, src_item_id: &str, dst: &VaultSession) -> S
             Err(e) => {
                 // FR-2.10 收尾：附件先文件后行，事务回滚后旁路文件成为
                 // 孤儿，统一清理（v0.3 LOW-2 非导入路径的清理时机）。
-                // 清理失败静默：不掩盖主错误；下次解锁的 unlock 级
-                // 清理仍可兜底（attachment.rs 模块文档「孤儿容忍」）。
+                // 清理失败静默：不掩盖主错误；下次 open_vault 的孤儿
+                // 清理（unlock.rs，真调）仍可兜底（attachment.rs 模块
+                // 文档「孤儿容忍」）。
                 let _ = cf_store::AttachmentRepo::cleanup_orphans(
                     &dst_dir,
                     state.store.connection(),

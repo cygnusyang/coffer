@@ -79,3 +79,7 @@ logs/
 
 # 真实 1PUX 样本：仅本地 M2 开发用，绝不入库
 .local-samples/
+
+# ---------- 本地 Agent/助手目录（按需不入库） ----------
+.claude/
+.codebuddy/

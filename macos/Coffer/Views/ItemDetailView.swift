@@ -26,12 +26,23 @@ struct ItemDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                // FR-9.4 Document 条目（最小形态）：附件是主体内容，
+                // 附件区置于字段区之上（判定见 ItemTemplates 扩展）。
+                if details.category.placesAttachmentSectionAboveFields {
+                    attachmentSection
+                }
                 fieldSection
                 if !details.urls.isEmpty { urlSection }
                 if !details.tags.isEmpty { tagSection }
                 if let totp = details.totp { totpSection(totp) }
                 if !isTrashed { historySection }
                 metaSection
+                // MA-2 挂载点约定（docs/15 §7 风险 8）：非 Document 条目的
+                // 附件区在 body 尾部，与 MB-2 的右键复制菜单（context menu
+                // 头部）物理隔离，避免同文件串行接驳冲突。
+                if !details.category.placesAttachmentSectionAboveFields {
+                    attachmentSection
+                }
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -142,6 +153,14 @@ struct ItemDetailView: View {
             Text("一次性密码（TOTP）").font(.headline)
             TotpCodeView(itemId: details.uuid, detail: totp)
         }
+    }
+
+    // MARK: - 附件（FR-9.3 / 9.4，v0.4.0 MA-2）
+
+    /// 附件区（自持状态，经 environmentObject 只读访问 session；docs/15
+    /// §6.1 S2 切片：零 AppModel 改动）。
+    private var attachmentSection: some View {
+        AttachmentSection(itemId: details.uuid)
     }
 
     // MARK: - 历史版本（FR-2.9）

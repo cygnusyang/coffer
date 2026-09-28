@@ -393,7 +393,7 @@ struct CrossCopySheet: View {
                 if success {
                     continuation.resume()
                 } else {
-                    NSLog("Coffer CrossCopy evaluatePolicy 失败: \(String(describing: error))")
+                    DiagLog.append("Coffer CrossCopy evaluatePolicy 失败: \(String(describing: error))")
                     continuation.resume(throwing: TouchIDError.unavailable)
                 }
             }

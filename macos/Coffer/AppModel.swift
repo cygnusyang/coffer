@@ -42,6 +42,17 @@ final class AppModel: ObservableObject {
     /// 慢调用（建库 / 解锁 / 导入）进行中标记，用于禁用按钮。
     @Published private(set) var isBusy = false
 
+    /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
+    ///
+    /// 计时模式：只在收到 1002 时经 `backoffRemainingSecs` 旁路读**一次**
+    /// 剩余秒数，换算成本地截止 Date（LockView 用 TimelineView 本地倒数），
+    /// 不轮询 FFI。1002 一码两义（普通密码错 / 门禁期拒绝），区分即靠该
+    /// 旁路：剩余 > 0 才是门禁期。门禁期内强试 unlock 返回 1002 但不计数、
+    /// 不延长门禁（core/cf-session/src/backoff.rs `try_acquire` 门禁优先），
+    /// 倒计时不被强试推迟。内存级：计数器在 Rust 会话内，App 重启归零
+    /// （docs/09 冻结裁决，设计接受）。
+    @Published private(set) var lockBackoffDeadline: Date?
+
     /// 建库成功后的可选「启用 Touch ID」步骤标记（docs/08 §4.1 建库可选启用）。
     /// 建库成功时置位（仅 Touch ID 设备）；用户在首次解锁后的引导 sheet 中
     /// 完成或跳过后清除。无 Touch ID 设备恒 false——v0.1 建库流程零变化
@@ -267,6 +278,9 @@ final class AppModel: ObservableObject {
             // 每次开会话都要把 UserDefaults 持久值重放过去；try? 理由同
             // didSet 注释（锁定态即可调用，失败无安全影响）。
             try? opened.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
+            // 新会话退避计数从 0 起算（FR-12.5 内存级）：清掉旧会话可能
+            // 残留的倒计时截止时刻（如恢复备份替换会话的边缘路径）。
+            lockBackoffDeadline = nil
             phase = .locked
             refreshTouchIDStatus()
         } catch {
@@ -319,12 +333,42 @@ final class AppModel: ObservableObject {
             vaultName = info.displayName
             applyIdleTimeout()
             phase = .unlocked
+            // 解锁成功清零退避（Rust on_success），倒计时随之撤销（FR-12.5）
+            lockBackoffDeadline = nil
             // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
             evaluateBackupReminder()
         } catch {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
             lastErrorMessage = errText
+            // FR-12.5：1002 后刷新倒计时——第 3 次失败起门禁激活（剩余 > 0，
+            // 记截止时刻）；前 2 次普通密码错（剩余 == 0）置 nil 不显示倒数
+            if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
+                refreshBackoffDeadline()
+            }
+        }
+    }
+
+    /// 解锁失败退避（FR-12.5）门禁剩余秒数（旁路读一次）。
+    ///
+    /// Swift 绑定 `backoffRemainingSecs()` 为非抛掷纯读（UInt64，0 =
+    /// 无门禁；> 0 = 剩余秒数向上取整）——无 `try?` 场景。会话缺失按
+    /// 无门禁处理（倒计时无意义）。
+    private func refreshBackoffDeadline() {
+        guard let session else {
+            lockBackoffDeadline = nil
+            return
+        }
+        let secs = session.backoffRemainingSecs()
+        lockBackoffDeadline = secs > 0 ? Date().addingTimeInterval(TimeInterval(secs)) : nil
+    }
+
+    /// 倒计时归零清除（FR-12.5）：LockView 的 TimelineView 倒数到 0 时经
+    /// Task 派发调用（避免视图更新周期内直接改 @Published）；按截止时刻
+    /// 复核，过期才清——按钮恢复可用、计时条卸载。
+    func clearBackoffIfExpired() {
+        if let deadline = lockBackoffDeadline, deadline <= Date() {
+            lockBackoffDeadline = nil
         }
     }
 
@@ -339,6 +383,10 @@ final class AppModel: ObservableObject {
         currentDetails = nil
         selectedItemID = nil
         searchText = ""
+        // 退避倒计时兜底清 nil（FR-12.5）：lock 只能从解锁态进入，而成功
+        // 解锁已在 Rust 侧清零计数，此处是状态一致性兜底（新开会话计数
+        // 必从 0 起算，不应残留旧会话的倒计时）。
+        lockBackoffDeadline = nil
         phase = session != nil ? .locked : .noVault
         refreshTouchIDStatus()
     }
@@ -430,6 +478,8 @@ final class AppModel: ObservableObject {
             vaultName = info.displayName
             applyIdleTimeout()
             phase = .unlocked
+            // 解锁成功清零退避倒计时（FR-12.5，与主密码解锁同收尾）
+            lockBackoffDeadline = nil
             // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
             evaluateBackupReminder()
         } catch {
@@ -438,6 +488,14 @@ final class AppModel: ObservableObject {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
             lastErrorMessage = errText
+            // FR-12.5 兜底：unlockWithBiometric 完全豁免退避（不门禁也不
+            // 计数，见 vault.rs「bio解锁不受退避门禁且不计数」单测），本
+            // 路径 1002 只会是 K_bio 不匹配 / 篡改（AEAD open 失败），正常
+            // 读不到门禁剩余秒数；判定保留为防御——错误码与 unlock 共用，
+            // enable 主密码错计入同一计数器（共享 oracle 语义）。
+            if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
+                refreshBackoffDeadline()
+            }
             // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
             refreshTouchIDStatus()
         }

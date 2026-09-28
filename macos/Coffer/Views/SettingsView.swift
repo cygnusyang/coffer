@@ -7,7 +7,7 @@
 //   ③ 备份提醒：提醒间隔档位（FR-8.5；评估逻辑 T-G 接入）
 //   ④ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
-//   ⑤ 数据：「从备份恢复…」「审计日志…」占位（T-H / T-I 接入）
+//   ⑤ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」占位（T-I 接入）
 //   ⑥ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
@@ -27,7 +27,7 @@ struct SettingsView: View {
 
     /// 「修改主密码」sheet（T-D：ChangePasswordView 完整改密流程）。
     @State private var showChangePassword = false
-    /// 「从备份恢复」sheet（占位，T-H 接入加密备份恢复流程）。
+    /// 「从备份恢复」sheet（T-H：RestoreBackupView 加密备份恢复流程，FR-8.1）。
     @State private var showRestore = false
     /// 「审计日志」sheet（占位，T-I 接入 FR-12.6 审计日志查看）。
     @State private var showAuditLog = false
@@ -54,8 +54,10 @@ struct SettingsView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $showRestore) {
-            // 占位视图：T-H 替换为加密备份恢复流程（FR-8.1）
-            placeholderSheet(title: "从备份恢复", taskTag: "T-H")
+            // 从备份恢复流程（FR-8.1 回环，T-H）：校验 → 确认 → 恢复 →
+            // openSession 引导解锁（phase = .locked 时本 sheet 树随 MainView 拆除）
+            RestoreBackupView()
+                .environmentObject(model)
         }
         .sheet(isPresented: $showAuditLog) {
             // 占位视图：T-I 替换为审计日志查看（FR-12.6）
@@ -151,7 +153,7 @@ struct SettingsView: View {
             } label: {
                 Label("从备份恢复…", systemImage: "arrow.counterclockwise")
             }
-            // T-H 接入前弹出占位 sheet
+            // T-H：弹出 RestoreBackupView（见 body 的 showRestore sheet）
 
             Button {
                 showAuditLog = true
@@ -177,7 +179,7 @@ struct SettingsView: View {
 
     // MARK: - 占位 sheet
 
-    /// T-D / T-H / T-I 接入前的占位 sheet 内容。
+    /// T-I 接入前的占位 sheet 内容。
     private func placeholderSheet(title: String, taskTag: String) -> some View {
         VStack(spacing: 10) {
             Text(title).font(.headline)

@@ -680,3 +680,72 @@ fn fr_8_5_export_stamps_last_backup_at() {
 
     remove_dir_all_quiet(&base);
 }
+
+// ------------------------------------------------ 第二批验收（docs/10 §11.4）
+
+/// 统计指定库 audit_local 表中某事件的条数（TC-AUD-02 专用探针）。
+fn count_audit_events(db: &std::path::Path, event: cf_store::AuditEvent) -> usize {
+    let conn = rusqlite::Connection::open(db).expect("打开 db 成功");
+    cf_store::AuditRepo::new(&conn)
+        .list_desc(None, None)
+        .expect("读审计表成功")
+        .into_iter()
+        .filter(|e| e.event == event)
+        .count()
+}
+
+/// TC-AUD-02 ③④（docs/10 §11.4）：`export_backup` / `restore_backup`
+/// 成功路径各恰落 1 条审计事件（`backup_export` / `backup_restore`，
+/// FR-12.6）；失败导出不打点（负路径）。
+///
+/// 注：打点发生在 ZIP 生成**之后**（backup.rs 成功路径尾部），故备份包
+/// 内的 db 不含本次 backup_export 行——恢复库的 backup_restore 恰为 1 条
+/// 的断言同时钉住该时序。
+#[test]
+fn tc_aud_02_export_and_restore_stamp_audit_events() {
+    use cf_store::AuditEvent;
+
+    let base = temp_dir("tc_aud_02");
+    let (vault_dir, _uuid) = build_vault(&base);
+    let src_db = vault_dir.join("db.sqlite");
+    let out_path = base.join("audit.coffer");
+
+    // 前置：夹具库无 backup_export 事件
+    assert_eq!(count_audit_events(&src_db, AuditEvent::BackupExport), 0);
+
+    // 负路径：失败导出（目标父目录不存在 → 2003）不得打点
+    let err = export_backup(&vault_dir, &base.join("no_such_dir").join("b.coffer"))
+        .expect_err("失败导出必须报错");
+    assert_eq!(err.code(), 2003, "ExportFailed，实际 {err:?}");
+    assert_eq!(
+        count_audit_events(&src_db, AuditEvent::BackupExport),
+        0,
+        "失败导出不得落审计事件"
+    );
+
+    // 成功导出 → 源库恰 1 条 backup_export
+    export_backup(&vault_dir, &out_path).expect("导出成功");
+    assert_eq!(
+        count_audit_events(&src_db, AuditEvent::BackupExport),
+        1,
+        "导出成功应恰落 1 条 backup_export"
+    );
+
+    // 成功恢复 → 恢复库恰 1 条 backup_restore（源库的 0 条随包恢复）
+    let target_base = temp_dir("tc_aud_02_target");
+    let restored = restore_backup(&out_path, &target_base).expect("恢复成功");
+    let restored_db = restored.join("db.sqlite");
+    assert_eq!(
+        count_audit_events(&restored_db, AuditEvent::BackupRestore),
+        1,
+        "恢复成功应恰落 1 条 backup_restore"
+    );
+    assert_eq!(
+        count_audit_events(&restored_db, AuditEvent::BackupExport),
+        0,
+        "打点在打包之后：备份包内不含本次导出事件"
+    );
+
+    remove_dir_all_quiet(&base);
+    remove_dir_all_quiet(&target_base);
+}

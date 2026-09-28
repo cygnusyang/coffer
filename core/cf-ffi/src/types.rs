@@ -1067,3 +1067,389 @@ impl From<cf_store::AuditEntry> for FfiAuditEntry {
         }
     }
 }
+
+// ---------------------------------------------- 1PUX 导入（FR-7，v0.3.0-T05）
+
+/// 类别分布单项（`PuxPrecheckReport.category_distribution` 的展开形态，
+/// UniFFI 不支持元组Vec）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiCategoryCount {
+    /// 类别名（降级条目按 secure_note 计入）。
+    pub category: String,
+    /// 该类别条目数。
+    pub count: u32,
+}
+
+impl From<(String, u32)> for FfiCategoryCount {
+    fn from((category, count): (String, u32)) -> Self {
+        Self { category, count }
+    }
+}
+
+/// 未识别类别单项（E-4：降级条目计入导入成功，但预检必须 surface）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiUnknownCategory {
+    /// 1PUX 原始条目 uuid。
+    pub item_uuid: String,
+    /// 原始 categoryUuid。
+    pub category_uuid: String,
+}
+
+impl From<(String, String)> for FfiUnknownCategory {
+    fn from((item_uuid, category_uuid): (String, String)) -> Self {
+        Self {
+            item_uuid,
+            category_uuid,
+        }
+    }
+}
+
+/// 一条未导入项（FR-7.6 逐条列出，不静默丢弃）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiNotImportedItem {
+    /// 1PUX 原始条目 uuid。
+    pub uuid: String,
+    /// 标题（缺失时为兜底标题）。
+    pub title: String,
+    /// 未导入原因（人类可读）。
+    pub reason: String,
+}
+
+impl From<cf_importer::NotImportedItem> for FfiNotImportedItem {
+    fn from(i: cf_importer::NotImportedItem) -> Self {
+        Self {
+            uuid: i.uuid,
+            title: i.title,
+            reason: i.reason,
+        }
+    }
+}
+
+/// 1PUX 预检报告（FR-7.4~7.7，`docs/09` v0.3.0 冻结字段镜像）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiPuxPrecheckReport {
+    /// 条目总数（全部 vault 合计，含 Tombstone / 附件缺失等未导入项）。
+    pub total_items: u32,
+    /// 可导入条目数（含未知类别降级——计入导入成功，E-4）。
+    pub importable_items: u32,
+    /// 按类别分布（降级条目按 secure_note 计入）。
+    pub category_distribution: Vec<FfiCategoryCount>,
+    /// 附件总数。
+    pub attachment_count: u32,
+    /// 未识别类别清单。
+    pub unknown_categories: Vec<FfiUnknownCategory>,
+    /// 回收站条目数（state=trashed）。
+    pub trashed_count: u32,
+    /// 丢弃的密码历史条目总数（FR-2.9 语义不同构）。
+    pub password_history_dropped: u32,
+    /// 未识别的类型化 value 顶层 key（去重排序；值已保留不丢）。
+    pub unmapped_value_types: Vec<String>,
+    /// 出现 ≥ 2 次的 documentId（官方形态；导入全部保留）。
+    pub duplicate_document_ids: Vec<String>,
+    /// 未导入项逐条清单（FR-7.6 不静默丢弃）。
+    pub not_imported: Vec<FfiNotImportedItem>,
+    /// 告警文本（降级、未知状态、坏 otpauth、重复 documentId 等）。
+    pub warnings: Vec<String>,
+}
+
+impl From<cf_importer::PuxPrecheckReport> for FfiPuxPrecheckReport {
+    fn from(r: cf_importer::PuxPrecheckReport) -> Self {
+        Self {
+            total_items: r.total_items,
+            importable_items: r.importable_items,
+            category_distribution: r
+                .category_distribution
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            attachment_count: r.attachment_count,
+            unknown_categories: r.unknown_categories.into_iter().map(Into::into).collect(),
+            trashed_count: r.trashed_count,
+            password_history_dropped: r.password_history_dropped,
+            unmapped_value_types: r.unmapped_value_types,
+            duplicate_document_ids: r.duplicate_document_ids,
+            not_imported: r.not_imported.into_iter().map(Into::into).collect(),
+            warnings: r.warnings,
+        }
+    }
+}
+
+/// 已导入但降级的条目（D-6 删源建议的条目级明细）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiDegradedItem {
+    /// 条目 uuid 或 CSV 行号。
+    pub key: String,
+    /// 降级原因（人类可读）。
+    pub reason: String,
+}
+
+impl From<(String, String)> for FfiDegradedItem {
+    fn from((key, reason): (String, String)) -> Self {
+        Self { key, reason }
+    }
+}
+
+/// 源文件删除建议（FR-7.8，D-6 数据驱动裁决镜像）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiSourceDeletionAdvice {
+    /// 当且仅当本次导入零信息损失时为 true（可提示删除源文件）。
+    pub can_delete: bool,
+    /// 阻止删除的原因（人类可读，逐条，供结果页直接展示）。
+    pub blockers: Vec<String>,
+    /// 已导入但降级的条目。
+    pub degraded_items: Vec<FfiDegradedItem>,
+}
+
+impl From<cf_importer::SourceDeletionAdvice> for FfiSourceDeletionAdvice {
+    fn from(a: cf_importer::SourceDeletionAdvice) -> Self {
+        Self {
+            can_delete: a.can_delete,
+            blockers: a.blockers,
+            degraded_items: a.degraded_items.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// 1PUX 导入结果（FR-7.7 导入结果页素材）。
+///
+/// `deletion_advice` 由 [`cf_importer::advise_pux_source_deletion`] 对
+/// 本次导入的报告即时组装（D-6：传入预检报告而非导入结果，见其模块
+/// 文档「为什么只接收预检报告」）——Swift 侧无需再调建议函数。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiPuxImportResult {
+    /// 实际导入（新建）的条目数。
+    pub imported_items: u32,
+    /// 预检报告（与本次导入同管线产出，FR-7.4 所见即所得）。
+    pub report: FfiPuxPrecheckReport,
+    /// FR-7.8 删源建议（数据驱动，D-6）。
+    pub deletion_advice: FfiSourceDeletionAdvice,
+}
+
+impl From<cf_importer::PuxImportResult> for FfiPuxImportResult {
+    fn from(r: cf_importer::PuxImportResult) -> Self {
+        let deletion_advice = cf_importer::advise_pux_source_deletion(&r.report).into();
+        Self {
+            imported_items: r.imported_items,
+            report: r.report.into(),
+            deletion_advice,
+        }
+    }
+}
+
+// ---------------------------------------------- 条目历史（FR-2.9，v0.3.0-T05）
+
+/// 历史版本条目（元数据镜像；快照明文不跨 FFI，回滚是唯一消费路径）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiHistoryEntry {
+    /// 历史行 UUID。
+    pub history_uuid: String,
+    /// 版本号（条目内自增，1 起）。
+    pub version: i64,
+    /// 快照写入时间（Unix 秒）。
+    pub created_at: i64,
+}
+
+impl From<cf_session::HistoryEntry> for FfiHistoryEntry {
+    fn from(e: cf_session::HistoryEntry) -> Self {
+        Self {
+            history_uuid: e.history_uuid,
+            version: e.version,
+            created_at: e.created_at,
+        }
+    }
+}
+
+// ---------------------------------------------- 体检报告（FR-6.7，v0.3.0-T05）
+
+/// 泄露启发式命中规则（FR-6.5 / AUD-05 镜像）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiLeakRule {
+    /// 明文精确命中内置字典。
+    DictionaryExact,
+    /// 常见 leet 替换归一后命中字典。
+    LeetNormalized,
+    /// 8 位纯数字生日形态（YYYYMMDD）。
+    BirthdayPattern,
+    /// 包含键盘行序列（qwerty 等）。
+    KeyboardSequence,
+}
+
+impl From<cf_audit::CommonPasswordRule> for FfiLeakRule {
+    fn from(r: cf_audit::CommonPasswordRule) -> Self {
+        match r {
+            cf_audit::CommonPasswordRule::DictionaryExact => Self::DictionaryExact,
+            cf_audit::CommonPasswordRule::LeetNormalized => Self::LeetNormalized,
+            cf_audit::CommonPasswordRule::BirthdayPattern => Self::BirthdayPattern,
+            cf_audit::CommonPasswordRule::KeyboardSequence => Self::KeyboardSequence,
+        }
+    }
+}
+
+/// 启发式置信度（漏报优先：只报有明确形态依据的项）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiLeakConfidence {
+    /// 低置信度（形态启发，仅提示）。
+    Low,
+    /// 中置信度（leet 归一后命中字典）。
+    Medium,
+    /// 高置信度（明文精确命中字典）。
+    High,
+}
+
+impl From<cf_audit::Confidence> for FfiLeakConfidence {
+    fn from(c: cf_audit::Confidence) -> Self {
+        match c {
+            cf_audit::Confidence::Low => Self::Low,
+            cf_audit::Confidence::Medium => Self::Medium,
+            cf_audit::Confidence::High => Self::High,
+        }
+    }
+}
+
+/// 单条体检 finding 的通用载荷：条目 + 解密标题（非敏感，展示用）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiItemFinding {
+    /// 条目 ID。
+    pub item_id: String,
+    /// 解密标题。
+    pub title: String,
+}
+
+impl From<cf_session::usecase::health::ItemFinding> for FfiItemFinding {
+    fn from(f: cf_session::usecase::health::ItemFinding) -> Self {
+        Self {
+            item_id: f.item_id,
+            title: f.title,
+        }
+    }
+}
+
+/// 重复密码组 finding（FR-6.2）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiDuplicateGroupFinding {
+    /// 共享同一密码指纹的条目 ID（≥2）。
+    pub item_ids: Vec<String>,
+    /// 与 `item_ids` 一一对应的解密标题。
+    pub titles: Vec<String>,
+}
+
+impl From<cf_session::usecase::health::DuplicateGroupFinding> for FfiDuplicateGroupFinding {
+    fn from(g: cf_session::usecase::health::DuplicateGroupFinding) -> Self {
+        Self {
+            item_ids: g.item_ids,
+            titles: g.titles,
+        }
+    }
+}
+
+/// 陈旧密码 finding（FR-6.4）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiStaleFinding {
+    /// 条目 ID。
+    pub item_id: String,
+    /// 解密标题。
+    pub title: String,
+    /// 距上次修改的整天数（非敏感元数据，UI 展示用）。
+    pub days_since_update: i64,
+}
+
+impl From<cf_session::usecase::health::StaleFinding> for FfiStaleFinding {
+    fn from(f: cf_session::usecase::health::StaleFinding) -> Self {
+        Self {
+            item_id: f.item_id,
+            title: f.title,
+            days_since_update: f.days_since_update,
+        }
+    }
+}
+
+/// 泄露启发式 finding（FR-6.5，Should 非门禁；不覆盖真实泄露事件）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiLeakFinding {
+    /// 条目 ID。
+    pub item_id: String,
+    /// 解密标题。
+    pub title: String,
+    /// 命中规则。
+    pub rule: FfiLeakRule,
+    /// 置信度。
+    pub confidence: FfiLeakConfidence,
+}
+
+impl From<cf_session::usecase::health::LeakFinding> for FfiLeakFinding {
+    fn from(f: cf_session::usecase::health::LeakFinding) -> Self {
+        Self {
+            item_id: f.item_id,
+            title: f.title,
+            rule: f.rule.into(),
+            confidence: f.confidence.into(),
+        }
+    }
+}
+
+/// 五类体检汇总统计（与 [`FfiHealthReport`] 各清单一一对应）。
+///
+/// usize → u32 饱和转换（`u32::try_from().unwrap_or(u32::MAX)`）：计数
+/// 达 2^32 属不可达规模，不为此引入错误分支。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiHealthSummary {
+    /// 重复密码组数（FR-6.2，按组计）。
+    pub duplicate_group_count: u32,
+    /// 弱 URL 条目数（FR-6.3）。
+    pub weak_url_count: u32,
+    /// 陈旧密码条目数（FR-6.4）。
+    pub stale_count: u32,
+    /// 泄露启发式命中条目数（FR-6.5）。
+    pub leak_suspect_count: u32,
+    /// 无 2FA 提示条目数（FR-6.6）。
+    pub missing_totp_count: u32,
+    /// 各类计数的总和（重复组按组计）。
+    pub total_findings: u32,
+}
+
+impl From<cf_session::usecase::health::HealthSummary> for FfiHealthSummary {
+    fn from(s: cf_session::usecase::health::HealthSummary) -> Self {
+        let saturate = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Self {
+            duplicate_group_count: saturate(s.duplicate_group_count),
+            weak_url_count: saturate(s.weak_url_count),
+            stale_count: saturate(s.stale_count),
+            leak_suspect_count: saturate(s.leak_suspect_count),
+            missing_totp_count: saturate(s.missing_totp_count),
+            total_findings: saturate(s.total_findings),
+        }
+    }
+}
+
+/// 五类体检报告（FR-6.7，覆盖 FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 镜像）。
+///
+/// 明文纪律：报告不携带密码明文与隐藏字段值（cf-session usecase::health
+/// 模块文档），本镜像不引入任何新字段。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiHealthReport {
+    /// 共享同一密码指纹的分组（≥2 才报，FR-6.2）。
+    pub duplicate_groups: Vec<FfiDuplicateGroupFinding>,
+    /// 任一 URL 以 `http://` 开头的条目（FR-6.3）。
+    pub http_url_items: Vec<FfiItemFinding>,
+    /// 陈旧密码条目（FR-6.4）。
+    pub stale_items: Vec<FfiStaleFinding>,
+    /// 泄露启发式命中条目（FR-6.5，每条目至多一条）。
+    pub leak_suspects: Vec<FfiLeakFinding>,
+    /// 白名单域名且未配置 TOTP 的条目（FR-6.6）。
+    pub missing_totp_items: Vec<FfiItemFinding>,
+    /// 汇总统计。
+    pub summary: FfiHealthSummary,
+}
+
+impl From<cf_session::usecase::health::HealthReport> for FfiHealthReport {
+    fn from(r: cf_session::usecase::health::HealthReport) -> Self {
+        Self {
+            duplicate_groups: r.duplicate_groups.into_iter().map(Into::into).collect(),
+            http_url_items: r.http_url_items.into_iter().map(Into::into).collect(),
+            stale_items: r.stale_items.into_iter().map(Into::into).collect(),
+            leak_suspects: r.leak_suspects.into_iter().map(Into::into).collect(),
+            missing_totp_items: r.missing_totp_items.into_iter().map(Into::into).collect(),
+            summary: r.summary.into(),
+        }
+    }
+}

@@ -28,6 +28,11 @@ struct CofferMainApp: App {
                 Button("导入 CSV…") { model.showImport = true }
                     .keyboardShortcut("i", modifiers: .command)
                     .disabled(model.phase != .unlocked)
+                // 1PUX 导入（v0.3.0-T05 FR-7.1）：import1pux 有 1001 门禁
+                // （需解锁态），与 CSV 同纪律禁用于锁定态
+                Button("导入 1Password (.1pux)…") { model.showImportPux = true }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+                    .disabled(model.phase != .unlocked)
                 Button("导出…") { model.showExport = true }
                     .keyboardShortcut("e", modifiers: .command)
                     .disabled(model.phase != .unlocked)

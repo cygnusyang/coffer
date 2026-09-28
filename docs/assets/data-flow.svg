@@ -1,0 +1,228 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1250" height="1290" viewBox="0 0 1250 1290" role="img" aria-labelledby="title desc">
+<title id="title">Coffer 主要业务数据流</title>
+<desc id="desc">六条主流程在核心模块间的流转路径与关键转换点：解锁、条目读、条目写、TOTP、CSV 导入、锁定清零。</desc>
+<defs>
+<marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker>
+</defs>
+<rect width="1250" height="1290" rx="20" fill="#f8fafc"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+<text x="40" y="49" font-size="28" fill="#0f172a" font-weight="700">Coffer 数据流 · 六条主流程</text>
+<text x="40" y="78" font-size="16" fill="#64748b">处理顺序自左向右 · ⬅ 色块与 crate 依赖图一致：蓝 = 基础设施层 · 橙 = 应用服务层 · 绿 = 绑定层 · 白 = 平台 UI / 结果</text>
+
+<!-- ============ 流 A 解锁 ============ -->
+<text x="40" y="130" font-size="18" fill="#0f172a" font-weight="700">流 A · 建库 / 解锁（create_vault / open_vault）</text>
+<g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arr2)">
+<path d="M 233 200 L 251 200"/><path d="M 428 200 L 446 200"/><path d="M 623 200 L 641 200"/><path d="M 818 200 L 836 200"/><path d="M 1013 200 L 1031 200"/>
+</g>
+<!-- A1 -->
+<rect x="60" y="150" width="173" height="100" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="75" y="174" font-size="15" fill="#0f172a" font-weight="700">UI（Swift）</text>
+<text x="75" y="196" font-size="12" fill="#475569">LockView / VaultSetupView</text>
+<text x="75" y="214" font-size="12" fill="#475569">主密码提交</text>
+<text x="75" y="232" font-size="12" fill="#94a3b8">不含密码学代码</text>
+<!-- A2 -->
+<rect x="255" y="150" width="173" height="100" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+<text x="270" y="174" font-size="15" fill="#0f172a" font-weight="700">cf-ffi</text>
+<text x="270" y="196" font-size="12" fill="#065f46">open_vault / create_vault</text>
+<text x="270" y="214" font-size="12" fill="#065f46">session_call：panic 兜底</text>
+<text x="270" y="232" font-size="12" fill="#065f46">错误码 → UI 本地化</text>
+<!-- A3 -->
+<rect x="450" y="150" width="173" height="100" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+<text x="465" y="174" font-size="15" fill="#0f172a" font-weight="700">cf-session</text>
+<text x="465" y="196" font-size="12" fill="#92400e">解锁编排</text>
+<text x="465" y="214" font-size="12" fill="#92400e">Unicode NFC 归一化</text>
+<text x="465" y="232" font-size="12" fill="#92400e">（跨端一致的前提）</text>
+<!-- A4 -->
+<rect x="645" y="150" width="173" height="100" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="660" y="174" font-size="15" fill="#0f172a" font-weight="700">cf-format</text>
+<text x="660" y="196" font-size="12" fill="#1e40af">读 header.json：</text>
+<text x="660" y="214" font-size="12" fill="#1e40af">KDF 参数 · salt</text>
+<text x="660" y="232" font-size="12" fill="#1e40af">wrapped_dek · verifier</text>
+<!-- A5 关键转换点 -->
+<rect x="840" y="150" width="173" height="100" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<rect x="939" y="140" width="74" height="20" rx="6" fill="#f59e0b"/>
+<text x="976" y="154" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
+<text x="855" y="174" font-size="15" fill="#0f172a" font-weight="700">cf-crypto</text>
+<text x="855" y="192" font-size="12" fill="#1e40af">Argon2id → KEK</text>
+<text x="855" y="208" font-size="12" fill="#1e40af">AEAD 解封 → DEK</text>
+<text x="855" y="224" font-size="12" fill="#1e40af">verifier 常量时间比对</text>
+<text x="855" y="240" font-size="12" fill="#1e40af">HKDF → SubKeys</text>
+<!-- A6 -->
+<rect x="1035" y="150" width="173" height="100" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="1050" y="174" font-size="15" fill="#0f172a" font-weight="700">cf-store</text>
+<text x="1050" y="196" font-size="12" fill="#1e40af">ItemStore::open</text>
+<text x="1050" y="214" font-size="12" fill="#1e40af">持连接 + SubKeys</text>
+<text x="1050" y="232" font-size="12" fill="#1e40af">SQLite 打开</text>
+<text x="60" y="282" font-size="13" fill="#334155">· 密钥链（三级信封加密）：主密码 → KEK → DEK → SubKeys（item_key / field_key）；明文主密码用后即清（ZeroizeOnDrop）</text>
+<text x="60" y="304" font-size="13" fill="#334155">· 解锁失败统一报错，不区分「密码错误」与「数据损坏」（docs/03 §2.6 verifier 设计）· KDF 参数从 header 读，改参数不废库</text>
+
+<!-- ============ 流 B 读路径 ============ -->
+<text x="40" y="346" font-size="18" fill="#0f172a" font-weight="700">流 B · 条目读路径（get_item / search / get_field_value）</text>
+<g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arr2)">
+<path d="M 233 408 L 251 408"/><path d="M 428 408 L 446 408"/><path d="M 623 408 L 641 408"/><path d="M 818 408 L 836 408"/><path d="M 1013 408 L 1031 408"/>
+</g>
+<rect x="60" y="360" width="173" height="96" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="75" y="384" font-size="15" fill="#0f172a" font-weight="700">UI（Swift）</text>
+<text x="75" y="406" font-size="12" fill="#475569">列表 / 详情 / 搜索框</text>
+<text x="75" y="424" font-size="12" fill="#475569">get_item(item_id)</text>
+<rect x="255" y="360" width="173" height="96" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+<text x="270" y="384" font-size="15" fill="#0f172a" font-weight="700">cf-ffi</text>
+<text x="270" y="406" font-size="12" fill="#065f46">Concealed 字段只回掩码</text>
+<text x="270" y="424" font-size="12" fill="#065f46">真实值仅 get_field_value</text>
+<text x="270" y="440" font-size="12" fill="#065f46">/ totp_code 随取随走</text>
+<rect x="450" y="360" width="173" height="96" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+<text x="465" y="384" font-size="15" fill="#0f172a" font-weight="700">cf-session</text>
+<text x="465" y="406" font-size="12" fill="#92400e">usecase 编排</text>
+<text x="465" y="424" font-size="12" fill="#92400e">权限门禁：未解锁时</text>
+<text x="465" y="440" font-size="12" fill="#92400e">拒绝一切数据访问</text>
+<rect x="645" y="360" width="173" height="96" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="660" y="384" font-size="15" fill="#0f172a" font-weight="700">cf-store</text>
+<text x="660" y="406" font-size="12" fill="#1e40af">repo 读 enc_* 密文列</text>
+<text x="660" y="424" font-size="12" fill="#1e40af">items / fields / urls / tags</text>
+<text x="660" y="440" font-size="12" fill="#1e40af">/ meta / totp 六仓库</text>
+<rect x="840" y="360" width="173" height="96" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<rect x="939" y="350" width="74" height="20" rx="6" fill="#f59e0b"/>
+<text x="976" y="364" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
+<text x="855" y="384" font-size="15" fill="#0f172a" font-weight="700">cf-crypto</text>
+<text x="855" y="406" font-size="12" fill="#1e40af">aead::open 字段级解密</text>
+<text x="855" y="424" font-size="12" fill="#1e40af">AAD = field_aad(表, UUID,</text>
+<text x="855" y="440" font-size="12" fill="#1e40af">列名)：密文与位置绑定，防挪列</text>
+<rect x="1035" y="360" width="173" height="96" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="1050" y="384" font-size="15" fill="#0f172a" font-weight="700">明文仅存会话内存</text>
+<text x="1050" y="406" font-size="12" fill="#475569">→ FfiItemDetails</text>
+<text x="1050" y="424" font-size="12" fill="#475569">→ UI 渲染</text>
+<text x="1050" y="442" font-size="12" fill="#94a3b8">不落盘、不跨 FFI 缓存</text>
+
+<!-- ============ 流 C 写路径 ============ -->
+<text x="40" y="526" font-size="18" fill="#0f172a" font-weight="700">流 C · 条目写路径（create_item / update_item / delete_item）</text>
+<g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arr2)">
+<path d="M 233 588 L 251 588"/><path d="M 428 588 L 446 588"/><path d="M 623 588 L 641 588"/><path d="M 818 588 L 836 588"/><path d="M 1013 588 L 1031 588"/>
+</g>
+<rect x="60" y="540" width="173" height="96" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="75" y="564" font-size="15" fill="#0f172a" font-weight="700">UI（Swift）</text>
+<text x="75" y="586" font-size="12" fill="#475569">ItemEditView 编辑草稿</text>
+<text x="75" y="604" font-size="12" fill="#475569">FfiItemDraft 提交</text>
+<rect x="255" y="540" width="173" height="96" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+<text x="270" y="564" font-size="15" fill="#0f172a" font-weight="700">cf-ffi</text>
+<text x="270" y="586" font-size="12" fill="#065f46">FfiItemDraft → 领域类型</text>
+<text x="270" y="604" font-size="12" fill="#065f46">types 双向转换</text>
+<rect x="450" y="540" width="173" height="96" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+<text x="465" y="564" font-size="15" fill="#0f172a" font-weight="700">cf-session + cf-domain</text>
+<text x="465" y="586" font-size="12" fill="#92400e">usecase 编排</text>
+<text x="465" y="604" font-size="12" fill="#92400e">domain 校验：字段类型 ·</text>
+<text x="465" y="620" font-size="12" fill="#92400e">designation · 必填规则</text>
+<rect x="645" y="540" width="173" height="96" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<rect x="744" y="530" width="74" height="20" rx="6" fill="#f59e0b"/>
+<text x="781" y="544" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
+<text x="660" y="564" font-size="15" fill="#0f172a" font-weight="700">cf-crypto</text>
+<text x="660" y="586" font-size="12" fill="#1e40af">aead::seal 字段级加密</text>
+<text x="660" y="604" font-size="12" fill="#1e40af">item_key / field_key + AAD</text>
+<text x="660" y="620" font-size="12" fill="#1e40af">逐列独立密文</text>
+<rect x="840" y="540" width="173" height="96" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="855" y="564" font-size="15" fill="#0f172a" font-weight="700">cf-store</text>
+<text x="855" y="586" font-size="12" fill="#1e40af">with_tx 单事务落库</text>
+<text x="855" y="604" font-size="12" fill="#1e40af">失败自动回滚（NFR-REL-01）</text>
+<rect x="1035" y="540" width="173" height="96" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="1050" y="564" font-size="15" fill="#0f172a" font-weight="700">SQLite（11 张表）</text>
+<text x="1050" y="586" font-size="12" fill="#475569">敏感列只有密文</text>
+<text x="1050" y="604" font-size="12" fill="#475569">enc_title / enc_value / …</text>
+<text x="60" y="664" font-size="13" fill="#334155">· 删除走软删（回收站）→ restore 可恢复；hard 删除才物理移除 · 历史版本由 cf-store 快照管理（CBOR）</text>
+
+<!-- ============ 流 D TOTP ============ -->
+<text x="40" y="706" font-size="18" fill="#0f172a" font-weight="700">流 D · TOTP 验证码（totp_code）</text>
+<g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arr2)">
+<path d="M 233 764 L 251 764"/><path d="M 428 764 L 446 764"/><path d="M 623 764 L 641 764"/><path d="M 818 764 L 836 764"/><path d="M 1013 764 L 1031 764"/>
+</g>
+<rect x="60" y="720" width="173" height="88" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="75" y="744" font-size="15" fill="#0f172a" font-weight="700">UI（Swift）</text>
+<text x="75" y="766" font-size="12" fill="#475569">TotpCodeView 倒计时刷新</text>
+<rect x="255" y="720" width="173" height="88" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+<text x="270" y="744" font-size="15" fill="#0f172a" font-weight="700">cf-ffi</text>
+<text x="270" y="766" font-size="12" fill="#065f46">totp_code(item_id)</text>
+<text x="270" y="784" font-size="12" fill="#065f46">secret 不出会话层</text>
+<rect x="450" y="720" width="173" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+<text x="465" y="744" font-size="15" fill="#0f172a" font-weight="700">cf-session</text>
+<text x="465" y="766" font-size="12" fill="#92400e">门禁 · SHA-256/512</text>
+<text x="465" y="784" font-size="12" fill="#92400e">显式拒绝（只支持 SHA-1）</text>
+<rect x="645" y="720" width="173" height="88" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="660" y="744" font-size="15" fill="#0f172a" font-weight="700">cf-store</text>
+<text x="660" y="766" font-size="12" fill="#1e40af">totp 仓库解密</text>
+<text x="660" y="784" font-size="12" fill="#1e40af">enc_secret（field_key）</text>
+<rect x="840" y="720" width="173" height="88" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<rect x="939" y="710" width="74" height="20" rx="6" fill="#f59e0b"/>
+<text x="976" y="724" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
+<text x="855" y="744" font-size="15" fill="#0f172a" font-weight="700">cf-totp</text>
+<text x="855" y="766" font-size="12" fill="#1e40af">RFC 6238 生成（80-bit 下限）</text>
+<text x="855" y="784" font-size="12" fill="#1e40af">verify 容忍 ±1 时间窗口</text>
+<rect x="1035" y="720" width="173" height="88" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="1050" y="744" font-size="15" fill="#0f172a" font-weight="700">6 / 8 位口令</text>
+<text x="1050" y="766" font-size="12" fill="#475569">→ UI 展示 / 剪贴板注入</text>
+
+<!-- ============ 流 E CSV 导入 ============ -->
+<text x="40" y="876" font-size="18" fill="#0f172a" font-weight="700">流 E · CSV 导入（import_csv）</text>
+<g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arr2)">
+<path d="M 233 942 L 251 942"/><path d="M 428 942 L 446 942"/><path d="M 623 942 L 641 942"/><path d="M 818 942 L 836 942"/><path d="M 1013 942 L 1031 942"/>
+</g>
+<rect x="60" y="890" width="173" height="104" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="75" y="914" font-size="15" fill="#0f172a" font-weight="700">UI（Swift）</text>
+<text x="75" y="936" font-size="12" fill="#475569">ImportView 选择 CSV</text>
+<text x="75" y="954" font-size="12" fill="#475569">先预检 → 用户确认 → 导入</text>
+<rect x="255" y="890" width="173" height="104" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<rect x="354" y="880" width="74" height="20" rx="6" fill="#f59e0b"/>
+<text x="391" y="894" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
+<text x="270" y="914" font-size="15" fill="#0f172a" font-weight="700">cf-importer</text>
+<text x="270" y="936" font-size="12" fill="#1e40af">RFC 4180 自写解析器</text>
+<text x="270" y="954" font-size="12" fill="#1e40af">DoS 上限：50 MB / 10k 行</text>
+<text x="270" y="970" font-size="12" fill="#1e40af">/ 64 KiB 字段 / 64 列</text>
+<rect x="450" y="890" width="173" height="104" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="465" y="914" font-size="15" fill="#0f172a" font-weight="700">预检报告</text>
+<text x="465" y="936" font-size="12" fill="#1e40af">未知列不静默丢弃</text>
+<text x="465" y="954" font-size="12" fill="#1e40af">公式注入告警（不改原值）</text>
+<text x="465" y="970" font-size="12" fill="#1e40af">坏 otpauth 并入 Notes</text>
+<rect x="645" y="890" width="173" height="104" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="660" y="914" font-size="15" fill="#0f172a" font-weight="700">字段映射</text>
+<text x="660" y="936" font-size="12" fill="#1e40af">9 列映射 + 分类码映射</text>
+<text x="660" y="954" font-size="12" fill="#1e40af">→ ImportModel 中间表示</text>
+<rect x="840" y="890" width="173" height="104" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<text x="855" y="914" font-size="15" fill="#0f172a" font-weight="700">cf-store</text>
+<text x="855" y="936" font-size="12" fill="#1e40af">with_tx 单事务落库</text>
+<text x="855" y="954" font-size="12" fill="#1e40af">任一行硬错误整体回滚</text>
+<text x="855" y="970" font-size="12" fill="#1e40af">零残留（NFR-REL-04）</text>
+<rect x="1035" y="890" width="173" height="104" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="1050" y="914" font-size="15" fill="#0f172a" font-weight="700">v0.1 策略</text>
+<text x="1050" y="936" font-size="12" fill="#475569">全部新建（UUIDv7）</text>
+<text x="1050" y="954" font-size="12" fill="#475569">重名仅预检提示</text>
+<text x="1050" y="970" font-size="12" fill="#94a3b8">仅 UTF-8（BOM 剥离）</text>
+
+<!-- ============ 流 F 锁定 ============ -->
+<text x="40" y="1056" font-size="18" fill="#0f172a" font-weight="700">流 F · 锁定与内存清零（lock / 自动锁定）</text>
+<g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arr2)">
+<path d="M 233 1114 L 251 1114"/><path d="M 428 1114 L 446 1114"/><path d="M 623 1114 L 641 1114"/>
+</g>
+<rect x="60" y="1070" width="173" height="88" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="75" y="1094" font-size="15" fill="#0f172a" font-weight="700">平台定时器</text>
+<text x="75" y="1116" font-size="12" fill="#475569">Swift：AutoLockMonitor</text>
+<text x="75" y="1134" font-size="12" fill="#475569">时间由平台侧注入</text>
+<rect x="255" y="1070" width="173" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+<text x="270" y="1094" font-size="15" fill="#0f172a" font-weight="700">cf-session</text>
+<text x="270" y="1116" font-size="12" fill="#92400e">idle 纯函数判定</text>
+<text x="270" y="1134" font-size="12" fill="#92400e">auto_lock_if_expired</text>
+<rect x="450" y="1070" width="173" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+<text x="465" y="1094" font-size="15" fill="#0f172a" font-weight="700">VaultSession.lock()</text>
+<text x="465" y="1116" font-size="12" fill="#92400e">UnlockedState 置 None</text>
+<text x="465" y="1134" font-size="12" fill="#92400e">也可用户手动 lock()</text>
+<rect x="645" y="1070" width="173" height="88" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+<rect x="744" y="1060" width="74" height="20" rx="6" fill="#f59e0b"/>
+<text x="781" y="1074" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
+<text x="660" y="1094" font-size="15" fill="#0f172a" font-weight="700">全链路 ZeroizeOnDrop</text>
+<text x="660" y="1116" font-size="12" fill="#1e40af">SubKeys · 明文缓冲</text>
+<text x="660" y="1134" font-size="12" fill="#1e40af">drop 即清零，不可被编译器优化掉</text>
+<text x="1035" y="1100" font-size="12" fill="#94a3b8">cf-ffi：lock() 后所有</text>
+<text x="1035" y="1118" font-size="12" fill="#94a3b8">数据接口返回「未解锁」</text>
+<text x="1035" y="1136" font-size="12" fill="#94a3b8">错误码</text>
+
+<!-- 底注 -->
+<text x="40" y="1210" font-size="14" fill="#64748b">贯穿约束：DEK / SubKeys 永不跨 FFI（会话门禁与加解密全部在 Rust 侧强制）· 两端 UI 不含任何密码学代码 · 全程无网络代码路径（NFR-SEC-07）。</text>
+<text x="40" y="1236" font-size="14" fill="#94a3b8">1PUX / opvault 导入与 cf-exporter 数据导出（FR-8）尚未实现——当前库文件是唯一数据载体。流程图依据 cf-session / cf-ffi / cf-store / cf-importer 源码与 docs/03、docs/07 绘制（2026-09-28）。</text>
+</g>
+</svg>

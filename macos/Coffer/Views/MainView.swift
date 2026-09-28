@@ -43,22 +43,32 @@ struct MainView: View {
     /// evaluateBackupReminder）基于 Rust 新打点的 last_backup_at 重算，
     /// 横幅自动消失；「暂不」本会话隐藏，下次解锁重评估。
     private var backupBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-            Text("距上次备份已超过 \(model.backupReminderDays) 天，建议备份以防数据丢失")
+        // 浮动卡片样式（右下角悬浮）：材质底 + 圆角 + 阴影，与列表内容
+        // 视觉分层；固定宽度防文案换行错乱。
+        VStack(alignment: .leading, spacing: 10) {
+            Label("距上次备份已超过 \(model.backupReminderDays) 天，建议备份以防数据丢失",
+                  systemImage: "exclamationmark.triangle")
                 .font(.callout)
-            Spacer()
-            Button("立即备份") {
-                model.showExport = true
-            }
-            Button("暂不") {
-                model.dismissBackupBanner()
+                .foregroundStyle(.orange)
+            HStack(spacing: 10) {
+                Spacer()
+                Button("暂不") {
+                    model.dismissBackupBanner()
+                }
+                Button("立即备份") {
+                    model.showExport = true
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.yellow.opacity(0.15))
+        .padding(14)
+        .frame(width: 380)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.yellow.opacity(0.4), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
     }
 
     // MARK: - 侧栏
@@ -94,11 +104,13 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 300)
-        // 备份提醒横幅（FR-8.5）：挂中栏**底部**（用户裁定：顶部遮挡
-        // 列表内容挡视线；底部不挡条目区，按钮仍随手可及）
-        .safeAreaInset(edge: .bottom) {
+        // 备份提醒横幅（FR-8.5）：右下角浮动卡片（用户裁定两轮迭代：
+        // 顶部挡工具栏/列表 → 底部仍占位 → 定稿悬浮于右下角最上层，
+        // 不挤占任何内容区布局）
+        .overlay(alignment: .bottomTrailing) {
             if model.showBackupBanner {
                 backupBanner
+                    .padding(12)
             }
         }
         .toolbar {

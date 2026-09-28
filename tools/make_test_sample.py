@@ -266,9 +266,12 @@ def main():
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("export.attributes", json.dumps(attrs, ensure_ascii=False, indent=2))
         z.writestr("export.data", json.dumps(data, ensure_ascii=False))
-        for i in range(1, len(main_items) + 1):
-            if i % 5 == 0:
-                z.writestr(f"files/doc{i}.pdf", b"%PDF-1.4 synthetic placeholder")
+        # 附件条目 = build_item(i+1, has_file=(i%5==0))，即 1 基 idx 满足
+        # (idx-1)%5==0：doc1/6/11/16/21（BUG-6 修复：原 1 基 i%5==0 写出
+        # doc5/10/15/20，与 JSON 引用 off-by-one 错位，附件永远无法解析）
+        for idx in range(1, len(main_items) + 1):
+            if (idx - 1) % 5 == 0:
+                z.writestr(f"files/doc{idx}.pdf", b"%PDF-1.4 synthetic placeholder")
 
     total = sum(len(v["items"]) for v in vault_objs)
     print(f"已生成合成样本：{out}")

@@ -164,6 +164,66 @@ impl CofferApp {
         session_call(AssertUnwindSafe(cf_session::new_biometric_unwrap_key))
             .map(|key| key.as_bytes().to_vec())
     }
+
+    // ---------------------------------------------------- 备份（FR-8.1）
+
+    /// 导出加密备份（FR-8.1，docs/09 §3.1）：工作目录打包为 `.coffer`
+    /// （ZIP 交换形态），成功后自动执行结构校验并给源库
+    /// `meta.last_backup_at` 打点（FR-8.5）。
+    ///
+    /// **锁定态可执行**（TC-EXP-08）——全程不接触密钥，属 CofferApp 级
+    /// 操作。导出的是完整库（非明文但可被爆破），UI 二次确认由 Swift
+    /// 侧负责（docs/09 §5 FFI 备注）。
+    ///
+    /// # 错误
+    ///
+    /// 源目录不是合法库目录 → 1012；打包 / 落盘失败 → 2003
+    /// （docs/09 §4 错误表）。
+    pub fn export_backup(
+        &self,
+        vault_dir: String,
+        out_path: String,
+    ) -> Result<FfiBackupExportResult, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_exporter::export_backup(Path::new(&vault_dir), Path::new(&out_path))
+        }))
+        .map(Into::into)
+    }
+
+    /// 备份结构校验（FR-8.6，无需密码）：ZIP 可解 → `header.json` 合法 →
+    /// `db.sqlite` schema 可验证。锁定态可执行。
+    ///
+    /// # 错误
+    ///
+    /// 非 ZIP / 缺关键文件（无法认定是 Coffer 备份）→ 2001；
+    /// header 畸形 → 1005；格式版本过新 → 1006。
+    pub fn verify_backup(&self, backup_path: String) -> Result<FfiBackupVerifyReport, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_exporter::verify_backup(Path::new(&backup_path))
+        }))
+        .map(Into::into)
+    }
+
+    /// 恢复备份（FR-8.1 回环）：解包到
+    /// `<target_base_dir>/<vault_uuid>/`，返回恢复产物目录路径。
+    ///
+    /// **锁定态可执行**；包内路径经 zip-slip 防护。恢复后走常规
+    /// `open_vault` + `unlock`（主密码校验在解锁侧，FR-1.4）。
+    ///
+    /// # 错误
+    ///
+    /// 非 Coffer 包 → 2001；目标已存在同名库目录 → 1004；条目路径
+    /// 非法 / 恢复产物自检失败 → 1005。
+    pub fn restore_backup(
+        &self,
+        backup_path: String,
+        target_base_dir: String,
+    ) -> Result<String, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_exporter::restore_backup(Path::new(&backup_path), Path::new(&target_base_dir))
+        }))
+        .map(|dir| dir.to_string_lossy().into_owned())
+    }
 }
 
 /// 密码强度评估实现（zxcvbn + feedback 文案；工厂与会话两处共用）。
@@ -441,6 +501,105 @@ impl VaultSession {
         }))
         .map(Into::into)
     }
+
+    // ------------------------------------------------------- 账户安全
+
+    /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，
+    /// 不重加密全库；bio 封装不受影响）。
+    ///
+    /// 门禁：需解锁态（锁定 → 1001）。流程：新密码 zxcvbn 门禁
+    /// （< 3 → 1010，先于任何文件操作）→ 旧密码重验证（错 → 1002，
+    /// header 未动）→ 新盐 + 新 KEK → 重封装 → `write_header` 原子重写。
+    /// 任何失败磁盘 header 保持原样，旧密码仍可解锁。
+    ///
+    /// `new_kdf` 可选传入新 Argon2id 档位顺带升级（越界 → 5002）；
+    /// `None` 沿用当前 header.kdf 参数。
+    pub fn change_password(
+        &self,
+        old_password: String,
+        new_password: String,
+        new_kdf: Option<FfiKdfParams>,
+    ) -> Result<(), FfiError> {
+        let new_kdf = match new_kdf {
+            Some(k) => Some(k.to_domain()?),
+            None => None,
+        };
+        session_call(AssertUnwindSafe(|| {
+            self.inner
+                .change_password(&old_password, &new_password, new_kdf)
+        }))
+    }
+
+    // -------------------------------------------- 剪贴板清除（FR-14.2）
+
+    /// 设置剪贴板自动清除时间（FR-14.2）。
+    ///
+    /// 合法档位：10 / 30 / 60 / 120 秒，或 `0`（「从不」，与自动锁定
+    /// 「从不」档语义一致）。非法值（含负数）→ 5002 且原配置不变。
+    /// 会话级元配置：无解锁门禁、跨 `lock()` 存活（清除定时器由平台侧
+    /// 执行）；档位列表经 [`clipboard_clear_tiers`](crate::clipboard_clear_tiers) 到 Swift 侧做
+    /// UI 选择器。
+    pub fn set_clipboard_clear_secs(&self, secs: i64) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.set_clipboard_clear_secs(secs)))
+    }
+
+    /// 当前剪贴板自动清除时间（秒）；`0` 表示从不清除。
+    pub fn clipboard_clear_secs(&self) -> i64 {
+        self.inner.clipboard_clear_secs()
+    }
+
+    // --------------------------------------------------- 备份提醒（FR-8.5）
+
+    /// 上次成功备份时间（Unix 秒；从未备份返回 `None`，FR-8.5）。
+    ///
+    /// 打点方为 [`CofferApp::export_backup`] 成功路径（写源库
+    /// `meta.last_backup_at`），本方法只读。门禁：需解锁态（1001）。
+    pub fn last_backup_at(&self) -> Result<Option<i64>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.last_backup_at()))
+    }
+
+    /// 是否应提醒备份（FR-8.5，docs/09 §2.2）：从未备份，或距上次成功
+    /// 备份 `>= threshold_secs` 秒 → 应提醒；`threshold_secs <= 0` 视为
+    /// 禁用（永不提醒）。`now_secs` 由平台注入（与自动锁定同模式）。
+    /// 门禁：需解锁态（1001）。
+    pub fn should_suggest_backup(
+        &self,
+        threshold_secs: i64,
+        now_secs: i64,
+    ) -> Result<bool, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.should_suggest_backup(threshold_secs, now_secs)
+        }))
+    }
+}
+
+/// 剪贴板自动清除的定时档位（FR-14.2）：`[10, 30, 60, 120]` 秒。
+///
+/// Swift 侧 UI 选择器数据源；「从不」档不入本表，以 `0` 表示
+/// （见 [`validate_clipboard_clear_secs`](crate::validate_clipboard_clear_secs)）。
+#[uniffi::export]
+pub fn clipboard_clear_tiers() -> Vec<i64> {
+    cf_session::vault::CLIPBOARD_CLEAR_TIERS_SECS.to_vec()
+}
+
+/// 剪贴板自动清除的默认档位（FR-14.2）：30 秒
+/// （与 macOS 现行固定 30s 行为向后兼容）。
+#[uniffi::export]
+pub fn default_clipboard_clear_secs() -> i64 {
+    cf_session::vault::DEFAULT_CLIPBOARD_CLEAR_SECS
+}
+
+/// 校验剪贴板自动清除档位（FR-14.2，Swift 选择器侧预校验）。
+///
+/// 合法值：10 / 30 / 60 / 120 秒，或 `0`（「从不」）；其余值（含负数）
+/// → 5002。与 [`VaultSession::set_clipboard_clear_secs`] 同一校验实现。
+///
+/// # Errors
+///
+/// 非档位值 → `FfiError`（5002 InvalidArgument）。
+#[uniffi::export]
+pub fn validate_clipboard_clear_secs(secs: i64) -> Result<(), FfiError> {
+    session_call(AssertUnwindSafe(|| cf_session::vault::validate_clipboard_clear_secs(secs)))
 }
 
 #[cfg(test)]

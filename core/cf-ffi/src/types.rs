@@ -15,6 +15,7 @@
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::{ItemDraft, ItemState, ItemSummary};
 use cf_domain::totp_data::{TotpAlgo, TotpData, TotpUpdate};
+use cf_crypto::kdf::KdfParams;
 use cf_session::types::{
     FieldDetail, ItemDetails, SectionDetail, TotpCode, TotpDetail, UrlDetail, VaultInfo,
 };
@@ -853,7 +854,82 @@ pub struct FfiStrengthEstimate {
     pub warnings: Vec<String>,
 }
 
-// ============================================================ 导入
+// ============================================================ 导出与备份
+
+/// Argon2id KDF 档位（FR-1.8 改密可选升级，docs/09 §3.2）。
+///
+/// 与 header `kdf` 节同构；合法性（`m_cost_kib >= 8 MiB` 等）由
+/// `cf_crypto::kdf::KdfParams::new` 在 `to_domain` 时校验，越界 → 5002。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct FfiKdfParams {
+    /// 内存成本（KiB）
+    pub m_cost_kib: u32,
+    /// 时间成本（迭代次数）
+    pub t_cost: u32,
+    /// 并行度
+    pub p_cost: u32,
+}
+
+impl FfiKdfParams {
+    /// → 领域 [`cf_crypto::kdf::KdfParams`]（越界 → 5002）。
+    ///
+    /// # Errors
+    ///
+    /// 参数超出 cf-crypto 允许范围 → `FfiError`（5002 InvalidArgument）。
+    pub fn to_domain(&self) -> Result<KdfParams, FfiError> {
+        KdfParams::new(self.m_cost_kib, self.t_cost, self.p_cost).map_err(|_| {
+            FfiError::from(cf_domain::CfError::InvalidArgument(
+                "kdf params out of range".into(),
+            ))
+        })
+    }
+}
+
+/// 加密备份导出结果（FR-8.1，docs/09 §3.1 冻结契约镜像）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiBackupExportResult {
+    /// 备份文件路径
+    pub file_path: String,
+    /// 打包的文件数（不含目录条目）
+    pub file_count: u64,
+    /// 备份文件字节数
+    pub size_bytes: u64,
+    /// 导出后自动执行了一次结构校验（FR-8.6）且通过
+    pub verified: bool,
+}
+
+impl From<cf_exporter::BackupExportResult> for FfiBackupExportResult {
+    fn from(r: cf_exporter::BackupExportResult) -> Self {
+        Self {
+            file_path: r.file_path.to_string_lossy().into_owned(),
+            file_count: u64::try_from(r.file_count).unwrap_or(u64::MAX),
+            size_bytes: r.size_bytes,
+            verified: r.verified,
+        }
+    }
+}
+
+/// 备份结构校验报告（FR-8.6，docs/09 §3.1 冻结契约镜像）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiBackupVerifyReport {
+    /// 包内 `header.json` 声明的库 UUID
+    pub vault_uuid: String,
+    /// 包内声明的容器格式版本（恒为当前支持版本）
+    pub format_version: u16,
+    /// 包内文件条目数（不含目录条目）
+    pub file_count: u64,
+}
+
+impl From<cf_exporter::BackupVerifyReport> for FfiBackupVerifyReport {
+    fn from(r: cf_exporter::BackupVerifyReport) -> Self {
+        Self {
+            vault_uuid: r.vault_uuid,
+            format_version: r.format_version,
+            file_count: u64::try_from(r.file_count).unwrap_or(u64::MAX),
+        }
+    }
+}
+
 
 /// 疑似公式注入单元格（CSV 预检；原值保留仅告警，docs/07 §3.2）。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

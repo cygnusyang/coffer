@@ -13,6 +13,11 @@
 //      的敏感内容。清除时长只作用于定时路径，不影响锁定兜底。
 //   6. TOTP 验证码复制不走本类定时清除（FR-5.5 例外，TotpCodeView 用
 //      copyPlain），本类改动不影响该例外路径。
+//   7. FR-5.6 序列复制（copyPasswordThenTotp，v0.4）：密码照走本类定时
+//      清除；延迟 totpDelaySecs(clearSecs:) 后复制 TOTP 验证码（copyPlain，
+//      FR-5.5 不清除）。交接语义：TOTP 落盘即改变 changeCount → 密码的
+//      pending 清除被守卫放弃（先交接后到点，延迟恒 < 清除档）；锁定
+//      （clearOnLock）取消 pending TOTP 复制；再次调用重置序列。
 
 import AppKit
 
@@ -22,12 +27,19 @@ final class ClipboardManager {
     /// UserDefaults key（与 AppModel.clipboardClearSecs 共用，FR-14.2）。
     static let clearSecsDefaultsKey = "clipboard_clear_secs"
 
+    /// FR-5.6 TOTP 取码延迟默认值（秒）：30 s 及以上清除档下密码清除前
+    /// 完成交接、TOTP 30 s 周期内剩余有效期 ≥ 22 s。已裁定 8 s 默认
+    ///（2026-09-29），非用户可配置（docs/15 §3.3.3）。
+    private static let defaultTotpDelaySecs: TimeInterval = 8
+
     /// 明文在剪贴板的存活时间（秒）。0 = 从不清除（FR-14.2 档位之一）。
     /// 初始值从 UserDefaults 读取；无值或非法 → 回退 Rust 侧默认
     /// （defaultClipboardClearSecs，当前 30，勿在 Swift 侧硬编码）。
     private(set) var clearAfterSeconds: TimeInterval
 
     private var clearWorkItem: DispatchWorkItem?
+    /// FR-5.6：pending 的 TOTP 延迟取码任务（nil = 无序列进行中）。
+    private var totpWorkItem: DispatchWorkItem?
     private var writtenChangeCount: Int = -1
 
     private init() {
@@ -52,6 +64,26 @@ final class ClipboardManager {
         secs == 0 || clipboardClearTiers().contains(Int64(secs))
     }
 
+    /// changeCount 守卫（纯函数）：仅当剪贴板 changeCount 与我们写入时
+    /// 一致（用户没有复制过别的内容）才允许清除——绝不误清用户数据；
+    /// FR-5.6 的 TOTP 交接也依赖它（TOTP 落盘 → changeCount 变 → 密码
+    /// 的 pending 清除被放弃）。writtenChangeCount 哨兵 -1 的前置 guard
+    /// 在调用面（clearOnLock），此处对不一致一律拒绝。
+    nonisolated static func shouldClear(currentChangeCount: Int, writtenChangeCount: Int) -> Bool {
+        currentChangeCount == writtenChangeCount
+    }
+
+    /// FR-5.6 TOTP 取码延迟（纯函数）：延迟必须落在密码清除到点**之前**
+    /// ——TOTP 先落盘改变 changeCount，密码的 pending 清除才被守卫放弃。
+    ///   - 10 s 档：min(8, 10/2) = 5 s；
+    ///   - 30 s 及以上：min(8, clear/2) = 8 s（默认值）；
+    ///   - 0（从不）：恒 8 s（无清除到点可交接，仅固定延迟取 fresh code；
+    ///     密码副本由 TOTP 落盘顶掉，此后按 FR-5.5 不清除）。
+    nonisolated static func totpDelaySecs(clearSecs: TimeInterval) -> TimeInterval {
+        guard clearSecs > 0 else { return Self.defaultTotpDelaySecs }
+        return min(Self.defaultTotpDelaySecs, clearSecs / 2)
+    }
+
     /// 复制文本到剪贴板并按当前档位安排自动清除。
     /// - Parameter value: 明文（密码 / TOTP 验证码 / 其他敏感字段值）
     func copyWithAutoClear(_ value: String) {
@@ -70,6 +102,48 @@ final class ClipboardManager {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
+    }
+
+    /// FR-5.6 序列复制：复制密码（走现有自动清除定时器）→ 延迟
+    /// totpDelaySecs(clearSecs:) 后复制 TOTP 验证码（走 copyPlain，
+    /// FR-5.5 不安排清除）。取码延迟执行（TOTP 30 s 周期内 fresh code）。
+    ///
+    /// 延迟期间的取消/交接条件：
+    ///   - 锁定（clearOnLock）→ 取消 pending TOTP 复制（密码副本仍按
+    ///     既有 changeCount 守卫处置）；
+    ///   - 再次调用本方法 → 取消旧序列，只保留最近一次（与定时清除同纪律）；
+    ///   - TOTP 落盘 → changeCount 改变 → 密码的 pending 清除被守卫放弃
+    ///     （延迟恒 < 清除档，交接先于到点，见 totpDelaySecs）。
+    ///
+    /// - Parameter totpProvider: 取码回调，主队列延迟执行（本类保证只在
+    ///   主队列触发）；返回 nil/空 = 取码失败，跳过 TOTP 复制（诊断日志
+    ///   留痕，不打扰用户）。回调体内访问 @MainActor 的 AppModel 时由
+    ///   调用面以 MainActor.assumeIsolated 包裹。
+    func copyPasswordThenTotp(password: String, totpProvider: @escaping () -> String?) {
+        guard !password.isEmpty else { return }
+        // ① 密码先行：armed 自动清除 + changeCount 记录（既有纪律原样，
+        //    与 FR-5.5 例外路径共存：密码副本 armed、TOTP 副本不 armed）
+        copyWithAutoClear(password)
+        // ② 重置旧序列（只保留最近一次）
+        totpWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.totpWorkItem = nil
+            // 本工作项经 DispatchQueue.main.asyncAfter 派发，恒在主队列
+            // 执行；totpProvider 闭包体内或需访问 @MainActor 状态，故经
+            // assumeIsolated 进入（off-main 属违约，trap 快败优于静默错序）
+            guard let code = MainActor.assumeIsolated({ totpProvider() }),
+                  !code.isEmpty else {
+                DiagLog.append("FR-5.6 TOTP 取码失败/为空，跳过验证码复制")
+                return
+            }
+            self.copyPlain(code)
+        }
+        totpWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.totpDelaySecs(clearSecs: clearAfterSeconds),
+            execute: work
+        )
     }
 
     /// 运行时改档（AppModel.clipboardClearSecs.didSet 调用，FR-14.2）：
@@ -95,11 +169,16 @@ final class ClipboardManager {
     /// 用户在此期间已复制自己的内容则不动剪贴板，与定时清除同一条纪律：
     /// 绝不误清用户数据（changeCount 守卫）。
     func clearOnLock() {
+        // FR-5.6：锁定即取消 pending TOTP 序列复制（会话已锁，验证码不该
+        // 再落剪贴板）；密码副本按下方既有守卫处置。
+        totpWorkItem?.cancel()
+        totpWorkItem = nil
         clearWorkItem?.cancel()
         clearWorkItem = nil
         guard writtenChangeCount != -1 else { return }
         let pasteboard = NSPasteboard.general
-        if pasteboard.changeCount == writtenChangeCount {
+        if Self.shouldClear(currentChangeCount: pasteboard.changeCount,
+                            writtenChangeCount: writtenChangeCount) {
             pasteboard.clearContents()
         }
         writtenChangeCount = -1
@@ -121,8 +200,10 @@ final class ClipboardManager {
             guard let self else { return }
             let pasteboard = NSPasteboard.general
             // changeCount 不变 = 用户没有复制过别的内容，安全清空；
-            // 变了 = 剪贴板已是用户自己的内容，绝不误清。
-            if pasteboard.changeCount == written {
+            // 变了 = 剪贴板已是用户自己的内容（或 FR-5.6 TOTP 已交接落盘），
+            // 绝不误清。守卫判定收敛到纯函数 shouldClear（独立可测）。
+            if Self.shouldClear(currentChangeCount: pasteboard.changeCount,
+                                writtenChangeCount: written) {
                 pasteboard.clearContents()
             }
             self.writtenChangeCount = -1
@@ -133,5 +214,11 @@ final class ClipboardManager {
             deadline: .now() + clearAfterSeconds,
             execute: work
         )
+    }
+
+    deinit {
+        // 契约兜底（FR-5.6 取消条件之一）：单例常态下不会走到
+        totpWorkItem?.cancel()
+        clearWorkItem?.cancel()
     }
 }

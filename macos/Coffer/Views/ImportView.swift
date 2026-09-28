@@ -24,11 +24,24 @@ struct ImportView: View {
     @State private var step: Step = .pickFile
     @State private var errorMessage: String?
 
+    /// 导入事务执行中（关闭按钮此时禁用，防丢结果页）。
+    private var isImporting: Bool {
+        if case .importing = step { return true }
+        return false
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("导入 CSV（1Password 9 列）").font(.headline)
                 Spacer()
+                // 显式关闭出口（全步骤可见）：macOS sheet 点外部不关闭、
+                // 无按钮时 Esc 无效——必须提供退出（BUG-6 修复）。
+                // 导入执行中禁用（单事务后台进行，中途关 sheet 会丢失
+                // 结果页；事务本身 all-or-nothing，无数据风险）。
+                Button("关闭") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isImporting)
             }
             .padding()
 

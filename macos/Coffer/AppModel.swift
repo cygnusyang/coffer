@@ -77,6 +77,37 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: 剪贴板清除配置（T06 / FR-14.2）
+
+    /// 剪贴板自动清除秒数（FR-14.2 五档：10 / 30 / 60 / 120 / 0=从不）。
+    /// 注意哨兵语义与 autoLockMinutes 相反：这里 0 = 从不（不落 -1）。
+    /// didSet：① UserDefaults 落盘 ② 同步 ClipboardManager 定时器
+    /// ③ 回放到 Rust 会话（try? 原因：该调用锁定态也可用，失败仅意味
+    /// Rust 侧镜像值未更新——Swift 侧定时器（实际执行者，C-5）已生效，
+    /// 且新值在写入前已经两侧档位校验，失败属理论路径，无安全影响）。
+    @Published var clipboardClearSecs: Int = AppModel.loadClipboardClearSecs() {
+        didSet {
+            // 防御校验（P3）：当前无调用方可写非法值，但一旦有未来路径
+            // 写入非法值，会导致 UserDefaults / ClipboardManager / Rust
+            // 会话三处状态互相不一致——宁可不生效也不落脏数据。
+            guard ClipboardManager.isValidClearSecs(clipboardClearSecs) else { return }
+            guard oldValue != clipboardClearSecs else { return }
+            UserDefaults.standard.set(clipboardClearSecs,
+                                      forKey: Self.clipboardClearDefaultsKey)
+            ClipboardManager.shared.updateClearInterval(secs: clipboardClearSecs)
+            if let session {
+                try? session.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
+            }
+        }
+    }
+
+    /// 从 UserDefaults 读档位（nonisolated，供属性默认值使用）。
+    /// 校验与回退规则在 ClipboardManager.loadStoredClearSecs（两侧共用一处）。
+    nonisolated private static func loadClipboardClearSecs() -> Int {
+        ClipboardManager.loadStoredClearSecs()
+    }
+    nonisolated static let clipboardClearDefaultsKey = ClipboardManager.clearSecsDefaultsKey
+
     /// 从 UserDefaults 读已保存档位（nonisolated，供属性默认值使用）。
     nonisolated private static func loadAutoLockMinutes() -> Int {
         let stored = UserDefaults.standard.integer(forKey: "autoLockMinutes")
@@ -152,6 +183,10 @@ final class AppModel: ObservableObject {
             vaultName = brief.displayName
             vaultUUID = brief.vaultUuid
             applyIdleTimeout()
+            // 回放剪贴板清除档位到 Rust 会话（FR-14.2）：Rust 侧无持久化，
+            // 每次开会话都要把 UserDefaults 持久值重放过去；try? 理由同
+            // didSet 注释（锁定态即可调用，失败无安全影响）。
+            try? opened.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
             phase = .locked
             refreshTouchIDStatus()
         } catch {

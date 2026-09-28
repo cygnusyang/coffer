@@ -29,14 +29,18 @@ swiftc -O \
   -import-objc-header "${ROOT_DIR}/macos/Coffer/CoreBindings/cf_ffiFFI.h" \
   "${ROOT_DIR}/macos/Coffer/CoreBindings/cf_ffi.swift" \
   "${ROOT_DIR}/macos/Coffer/Platform/Clipboard.swift" \
+  "${ROOT_DIR}/macos/Coffer/Support/DiagLog.swift" \
   "${ROOT_DIR}/macos/Tests/ClipboardTierTests/main.swift" \
   -L "${LIB_DIR}" -lcf_ffi \
   -o "${OUT_DIR}/ClipboardTierTests"
 
+# T8 真实库回环段改为显式 opt-in（2026-09-29 回归批，BUG-10）：
+# 1) docs/14 §5 明令测试/脚本禁止指向 App 沙盒真实库路径——本脚本默认自动
+#    追加 --vault-dir 指向该路径的旧行为与之冲突；
+# 2) 该段在本机两次复现 open() 挂起（无人值守不可执行）；
+# 3) 真实库导出/恢复回环涉及用户真实数据，应显式授权后执行。
+# 用法：./tools/run_clipboard_tier_tests.sh [--vault-dir <库工作目录>]
+#   不传 --vault-dir 时跳过 T8（打印 SKIP），其余段不受影响。
 DEFAULT_VAULT_DIR="${HOME}/Library/Containers/app.coffer.Coffer/Data/Documents/Coffer"
 ARGS=()
-if [[ -d "${DEFAULT_VAULT_DIR}" ]]; then
-  ARGS+=(--vault-dir "${DEFAULT_VAULT_DIR}")
-fi
-
-"${OUT_DIR}/ClipboardTierTests" "${ARGS[@]+"${ARGS[@]}"}"
+"${OUT_DIR}/ClipboardTierTests" "${ARGS[@]+"${ARGS[@]}"}" "$@"

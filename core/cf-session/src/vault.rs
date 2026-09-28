@@ -444,10 +444,36 @@ impl VaultSession {
 
     /// 删除条目：`hard = false` 移入回收站（软删），`hard = true`
     /// 连同从表（fields / urls / tags / totp 等）级联硬删。
+    ///
+    /// 硬删级联附件（v0.4.0 既有缺口修复，docs/15 §3.1.3）：schema 的
+    /// `ON DELETE CASCADE` 只级联 DB 行，`attachments/<uuid>` 旁路文件
+    /// 由本层编排清理——事务前 `list_for_item` 收集附件 uuid，事务成功
+    /// 返回后逐个 unlink。缺失容忍（文件不存在跳过）；删除失败不回滚
+    /// DB 行（条目删除已成事实，报错只会误导），孤儿由 unlock 时
+    /// `cleanup_orphans` 语义兜底——与 attachment.rs「先删行后删文件」
+    /// 纪律一致。软删 / 恢复不动附件（回收站恢复后附件仍可用）。
     pub fn delete_item(&self, item_id: &str, hard: bool) -> SessionResult<()> {
         let mut guard = self.unlocked()?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
-        usecase::items::delete_item(&mut state.store, item_id, hard)
+        let attachment_uuids = if hard {
+            state
+                .store
+                .repos()
+                .attachments
+                .list_for_item(item_id)?
+                .into_iter()
+                .map(|m| m.uuid)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        usecase::items::delete_item(&mut state.store, item_id, hard)?;
+        // 事务已提交：逐个清理旁路文件（尽力而为，见上方法文档）
+        let dir = self.vault_dir.join(cf_store::repo::attachment::ATTACHMENTS_DIR);
+        for uuid in attachment_uuids {
+            let _ = std::fs::remove_file(dir.join(uuid));
+        }
+        Ok(())
     }
 
     /// 从回收站恢复条目。
@@ -491,6 +517,55 @@ impl VaultSession {
         let guard = self.unlocked()?;
         let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
         usecase::items::get_field_value(&state.store, item_id, field_id)
+    }
+
+    // ------------------------------------------------ 附件（FR-9.3 / 9.4）
+
+    /// 列出条目附件（created_at 升序，FR-9.3）。锁定 → 1001；条目不存在
+    /// → 1011。语义详见 [`usecase::attachments`]。
+    pub fn list_attachments(
+        &self,
+        item_id: &str,
+    ) -> SessionResult<Vec<usecase::attachments::AttachmentInfo>> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        usecase::attachments::list_attachments(&state.store, item_id)
+    }
+
+    /// 添加附件（FR-9.1）：`filename` 为 UTF-8 明文，`content` 为明文
+    /// 内容（≤ 100 MiB，超限 → 1012 门面预检快失败）。只校验条目存在
+    /// （1011），不限制条目状态（docs/15 §3.1.2 边界声明）。锁定 → 1001。
+    pub fn add_attachment(
+        &self,
+        item_id: &str,
+        filename: &str,
+        content: &[u8],
+    ) -> SessionResult<usecase::attachments::AttachmentInfo> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::attachments::add_attachment(
+            &mut state.store,
+            &self.vault_dir,
+            item_id,
+            filename,
+            content,
+        )
+    }
+
+    /// 读附件明文内容（FR-9.2，一次一个、即用即弃；D-3 整块返回）。
+    /// 行不存在 → 1012；行在文件无 / 密文损坏 → 1005。锁定 → 1001。
+    pub fn read_attachment(&self, attachment_uuid: &str) -> SessionResult<Vec<u8>> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        usecase::attachments::read_attachment(&state.store, &self.vault_dir, attachment_uuid)
+    }
+
+    /// 删除附件（FR-9.2）：先删行（事务）后删文件；旁路文件已不存在
+    /// 视为删除成功。行不存在 → 1012。锁定 → 1001。
+    pub fn remove_attachment(&self, attachment_uuid: &str) -> SessionResult<()> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::attachments::remove_attachment(&mut state.store, &self.vault_dir, attachment_uuid)
     }
 
     // ---------------------------------------------------------- 搜索

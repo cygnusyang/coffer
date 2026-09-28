@@ -33,8 +33,9 @@
 //! cf-session 的任何新 API）；cf-session 侧后续可直接包一层薄委托。
 //!
 //! 支持格式：
-//! - CSV —— **本任务实现**（1Password 9 列）
-//! - 1PUX（JSON）—— v0.2+
+//! - CSV —— 已实现（1Password 9 列，docs/07 §7 T03）
+//! - 1PUX（ZIP + 明文 JSON，含 `files/` 附件）—— **v0.3.0 已实现**
+//!   （[`pux`] 模块，FR-7.1 / FR-7.4~7.7，docs/09 v0.3.0-T01）
 //! - opvault —— 未定
 //! - KeePass KDBX —— 读取链路冒烟已验证（见下方测试），实现推后
 //!
@@ -59,9 +60,14 @@ use cf_store::{ItemRow, ItemStore, Repos};
 
 pub mod csv;
 pub mod precheck;
+pub mod pux;
 
 pub use csv::mapping::{ImportModel, OtpauthData};
 pub use precheck::{analyze_csv, read_and_analyze, CsvAnalysis, CsvPrecheckReport};
+pub use pux::{
+    import_1pux, import_1pux_with_options, precheck_1pux, NotImportedItem, PuxAnalysis,
+    PuxFieldModel, PuxFileRef, PuxImportResult, PuxItemModel, PuxPrecheckReport,
+};
 
 /// CSV 导入结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,7 +273,7 @@ fn write_model(repos: &Repos<'_>, model: &ImportModel, position: i64) -> Result<
 }
 
 /// 当前 Unix 秒。系统时钟早于 epoch 时返回错误（不猜测）。
-fn unix_now() -> Result<i64, CfError> {
+pub(crate) fn unix_now() -> Result<i64, CfError> {
     use std::time::{SystemTime, UNIX_EPOCH};
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)

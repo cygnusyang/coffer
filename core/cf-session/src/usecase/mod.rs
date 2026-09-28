@@ -9,8 +9,11 @@
 //!   FR-6.2 / FR-6.3）
 //! - [`health`]：五类体检报告编排（FR-6.7：6.2 重复 / 6.3 弱 URL /
 //!   6.4 陈旧 / 6.5 泄露启发式 / 6.6 无 2FA，单次遍历解密取数）
+//! - [`cross_copy`]：跨库复制条目编排（FR-2.10，v0.4.0：快照 → 校验 →
+//!   目标库单事务写入 + 附件重密封，顺序化持锁防死锁）
 
 pub mod audit;
+pub mod cross_copy;
 pub mod health;
 pub mod history;
 pub mod items;

@@ -203,6 +203,11 @@ object VaultSession:
   # 导入
   precheck_csv(path)                            -> CsvPrecheckReport
   import_csv(path)                              -> CsvImportResult
+  precheck_1pux(path)                           -> PuxPrecheckReport        # v0.3.0-T05，无解锁门禁
+  import_1pux(path)                             -> PuxImportResult          # 含 deletion_advice（D-6 组装于 From）
+  list_history(item_id)                         -> [HistoryEntry]           # 仅元数据，快照明文不跨 FFI
+  restore_history(item_id, history_uuid)        -> ()                       # Trashed/Archived → 1012
+  health_report(now_secs)                       -> HealthReport             # now_secs 由 Swift 注入真实时钟
 ```
 
 跨 FFI 数据类型（`types.rs`）：`VaultBrief`、`VaultInfo`、`ItemSummary`、`ItemDetails`、`ItemDraft`/`FieldDraft`/`UrlDraft`（包装 `cf-domain` Draft，敏感值用 `String`）、`ItemFilter {state, category}`、`TotpCode`、`TotpDraft`、`PasswordGenOptions`、`StrengthEstimate`、`CsvPrecheckReport`、`CsvImportResult`、`FfiError`。时间戳统一 **i64 Unix 秒**（规避 UniFFI u64 ↔ Swift UInt 与 Kotlin 无符号坑，docs/02 §5）。

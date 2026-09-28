@@ -597,6 +597,26 @@ impl VaultSession {
         cf_importer::import_csv(path, &mut state.store)
     }
 
+    /// 1PUX 导入（v0.3.0-T05，FR-7.1 含 `files/` 附件）：每条目单事务，
+    /// 任一条目失败回滚该条、已成功条目保留；附件密文落
+    /// `<vault_dir>/attachments/`（vault_dir 与解锁保险库的宿主目录一致，
+    /// cf-importer 的附件仓库纪律不变）。返回值携带与本次导入同管线
+    /// 产出的预检报告（FR-7.4 所见即所得）；FR-7.8 删源建议由调用方对
+    /// 报告调 [`cf_importer::advise_pux_source_deletion`] 组装（D-6
+    /// 数据驱动，纯函数不进门面）。
+    ///
+    /// 薄委托 [`cf_importer::import_1pux`]，与 [`VaultSession::import_csv`]
+    /// 同落点理由：导入编排归 cf-session，DEK / SubKeys 不跨 FFI。
+    ///
+    /// # 错误
+    ///
+    /// 锁定态 → 1001；解析失败 → 2001；写入失败 → 2002（docs/03 §12）。
+    pub fn import_1pux(&self, path: &Path) -> SessionResult<cf_importer::PuxImportResult> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        cf_importer::import_1pux(path, &mut state.store, &self.vault_dir)
+    }
+
     // ------------------------------------------------------- 账户安全
 
     /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，

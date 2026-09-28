@@ -1139,6 +1139,25 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func hasBiometricWrap()  -> Bool
     
     /**
+     * 五类体检报告（FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 编排）：需解锁态
+     * （1001）。`now_secs` 由调用方注入（Unix 秒，与空闲自动锁定同
+     * 模式，可测试）；陈旧密码阈值取内核默认（365 天，AUD-04）。
+     *
+     * 报告只携带 item_id / 标题 / 非敏感元数据，不含密码明文。
+     */
+    func healthReport(nowSecs: Int64) throws  -> FfiHealthReport
+    
+    /**
+     * 1PUX 导入（FR-7.1 含 `files/` 附件；锁定态 → 码 1001）。
+     *
+     * 每条目单事务，任一条目失败回滚该条、已成功条目保留；附件密文落
+     * `<vault_dir>/attachments/`。返回值内的 `deletion_advice` 是对本次
+     * 导入报告即时组装的 FR-7.8 删源建议（D-6 数据驱动），Swift 侧
+     * 无需再调建议函数。
+     */
+    func import1pux(path: String) throws  -> FfiPuxImportResult
+    
+    /**
      * CSV 导入（单事务 all-or-nothing；锁定态 → 码 1001）。
      */
     func importCsv(path: String) throws  -> FfiCsvImportResult
@@ -1157,6 +1176,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func lastBackupAt() throws  -> Int64?
     
     /**
+     * 条目历史版本列表（FR-2.9，version 倒序）：需解锁态（1001）。
+     *
+     * 快照明文不跨 FFI，仅返回 history_uuid / version / created_at
+     * 元数据（docs/09 §3.3 风险 ②）。条目不存在 → 码 1011。
+     */
+    func listHistory(itemId: String) throws  -> [FfiHistoryEntry]
+    
+    /**
      * 列出条目（updated_at 倒序）；`filter` 传 `None` 为默认全量。
      */
     func listItems(filter: FfiItemFilter?) throws  -> [FfiItemSummary]
@@ -1172,6 +1199,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func parseOtpauthUri(uri: String) throws  -> FfiTotpDraft
     
     /**
+     * 1PUX 预检（FR-7.4~7.7）：纯文件只读，可反复调用。
+     *
+     * **无解锁门禁**（锁定态可预检）——与 CSV 预检同语义：预检不接触
+     * 密钥材料，供导入向导在解锁前展示报告。
+     */
+    func precheck1pux(path: String) throws  -> FfiPuxPrecheckReport
+    
+    /**
      * CSV 预检（只读、可反复调用；1Password 9 列，docs/07 §3）。
      */
     func precheckCsv(path: String) throws  -> FfiCsvPrecheckReport
@@ -1183,6 +1218,13 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 视为 0、`None` 上限不限量）。事件只由内核动作打点，本方法只读。
      */
     func recentAuditEvents(offset: Int64?, limit: Int64?) throws  -> [FfiAuditEntry]
+    
+    /**
+     * 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
+     * 一次修改（可再回滚）。需解锁态（1001）；条目 / 历史行不存在 →
+     * 1011；Trashed / Archived 条目被状态门禁拒绝 → 1012（内核行为）。
+     */
+    func restoreHistory(itemId: String, historyUuid: String) throws 
     
     /**
      * 从回收站恢复条目。
@@ -1570,6 +1612,41 @@ open func hasBiometricWrap() -> Bool  {
 }
     
     /**
+     * 五类体检报告（FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 编排）：需解锁态
+     * （1001）。`now_secs` 由调用方注入（Unix 秒，与空闲自动锁定同
+     * 模式，可测试）；陈旧密码阈值取内核默认（365 天，AUD-04）。
+     *
+     * 报告只携带 item_id / 标题 / 非敏感元数据，不含密码明文。
+     */
+open func healthReport(nowSecs: Int64)throws  -> FfiHealthReport  {
+    return try  FfiConverterTypeFfiHealthReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_health_report(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(nowSecs),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 1PUX 导入（FR-7.1 含 `files/` 附件；锁定态 → 码 1001）。
+     *
+     * 每条目单事务，任一条目失败回滚该条、已成功条目保留；附件密文落
+     * `<vault_dir>/attachments/`。返回值内的 `deletion_advice` 是对本次
+     * 导入报告即时组装的 FR-7.8 删源建议（D-6 数据驱动），Swift 侧
+     * 无需再调建议函数。
+     */
+open func import1pux(path: String)throws  -> FfiPuxImportResult  {
+    return try  FfiConverterTypeFfiPuxImportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_import_1pux(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * CSV 导入（单事务 all-or-nothing；锁定态 → 码 1001）。
      */
 open func importCsv(path: String)throws  -> FfiCsvImportResult  {
@@ -1605,6 +1682,22 @@ open func lastBackupAt()throws  -> Int64?  {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_last_backup_at(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 条目历史版本列表（FR-2.9，version 倒序）：需解锁态（1001）。
+     *
+     * 快照明文不跨 FFI，仅返回 history_uuid / version / created_at
+     * 元数据（docs/09 §3.3 风险 ②）。条目不存在 → 码 1011。
+     */
+open func listHistory(itemId: String)throws  -> [FfiHistoryEntry]  {
+    return try  FfiConverterSequenceTypeFfiHistoryEntry.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_list_history(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),uniffiCallStatus
     )
 })
 }
@@ -1647,6 +1740,22 @@ open func parseOtpauthUri(uri: String)throws  -> FfiTotpDraft  {
 }
     
     /**
+     * 1PUX 预检（FR-7.4~7.7）：纯文件只读，可反复调用。
+     *
+     * **无解锁门禁**（锁定态可预检）——与 CSV 预检同语义：预检不接触
+     * 密钥材料，供导入向导在解锁前展示报告。
+     */
+open func precheck1pux(path: String)throws  -> FfiPuxPrecheckReport  {
+    return try  FfiConverterTypeFfiPuxPrecheckReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_precheck_1pux(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * CSV 预检（只读、可反复调用；1Password 9 列，docs/07 §3）。
      */
 open func precheckCsv(path: String)throws  -> FfiCsvPrecheckReport  {
@@ -1674,6 +1783,21 @@ open func recentAuditEvents(offset: Int64?, limit: Int64?)throws  -> [FfiAuditEn
         FfiConverterOptionInt64.lower(limit),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
+     * 一次修改（可再回滚）。需解锁态（1001）；条目 / 历史行不存在 →
+     * 1011；Trashed / Archived 条目被状态门禁拒绝 → 1012（内核行为）。
+     */
+open func restoreHistory(itemId: String, historyUuid: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_restore_history(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),
+        FfiConverterString.lower(historyUuid),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -2219,6 +2343,76 @@ public func FfiConverterTypeFfiBackupVerifyReport_lower(_ value: FfiBackupVerify
 
 
 /**
+ * 类别分布单项（`PuxPrecheckReport.category_distribution` 的展开形态，
+ * UniFFI 不支持元组Vec）。
+ */
+public struct FfiCategoryCount: Equatable, Hashable {
+    /**
+     * 类别名（降级条目按 secure_note 计入）。
+     */
+    public var category: String
+    /**
+     * 该类别条目数。
+     */
+    public var count: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 类别名（降级条目按 secure_note 计入）。
+         */category: String, 
+        /**
+         * 该类别条目数。
+         */count: UInt32) {
+        self.category = category
+        self.count = count
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiCategoryCount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCategoryCount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCategoryCount {
+        return
+            try FfiCategoryCount(
+                category: FfiConverterString.read(from: &buf), 
+                count: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCategoryCount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.category, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCategoryCount_lift(_ buf: RustBuffer) throws -> FfiCategoryCount {
+    return try FfiConverterTypeFfiCategoryCount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCategoryCount_lower(_ value: FfiCategoryCount) -> RustBuffer {
+    return FfiConverterTypeFfiCategoryCount.lower(value)
+}
+
+
+/**
  * CSV 明文导出结果（`cf_exporter::CsvExportResult` 映射）。
  */
 public struct FfiCsvExportResult: Equatable, Hashable {
@@ -2472,6 +2666,144 @@ public func FfiConverterTypeFfiCsvPrecheckReport_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeFfiCsvPrecheckReport_lower(_ value: FfiCsvPrecheckReport) -> RustBuffer {
     return FfiConverterTypeFfiCsvPrecheckReport.lower(value)
+}
+
+
+/**
+ * 已导入但降级的条目（D-6 删源建议的条目级明细）。
+ */
+public struct FfiDegradedItem: Equatable, Hashable {
+    /**
+     * 条目 uuid 或 CSV 行号。
+     */
+    public var key: String
+    /**
+     * 降级原因（人类可读）。
+     */
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目 uuid 或 CSV 行号。
+         */key: String, 
+        /**
+         * 降级原因（人类可读）。
+         */reason: String) {
+        self.key = key
+        self.reason = reason
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDegradedItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDegradedItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDegradedItem {
+        return
+            try FfiDegradedItem(
+                key: FfiConverterString.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDegradedItem, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDegradedItem_lift(_ buf: RustBuffer) throws -> FfiDegradedItem {
+    return try FfiConverterTypeFfiDegradedItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDegradedItem_lower(_ value: FfiDegradedItem) -> RustBuffer {
+    return FfiConverterTypeFfiDegradedItem.lower(value)
+}
+
+
+/**
+ * 重复密码组 finding（FR-6.2）。
+ */
+public struct FfiDuplicateGroupFinding: Equatable, Hashable {
+    /**
+     * 共享同一密码指纹的条目 ID（≥2）。
+     */
+    public var itemIds: [String]
+    /**
+     * 与 `item_ids` 一一对应的解密标题。
+     */
+    public var titles: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 共享同一密码指纹的条目 ID（≥2）。
+         */itemIds: [String], 
+        /**
+         * 与 `item_ids` 一一对应的解密标题。
+         */titles: [String]) {
+        self.itemIds = itemIds
+        self.titles = titles
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDuplicateGroupFinding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDuplicateGroupFinding: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDuplicateGroupFinding {
+        return
+            try FfiDuplicateGroupFinding(
+                itemIds: FfiConverterSequenceString.read(from: &buf), 
+                titles: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDuplicateGroupFinding, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.itemIds, into: &buf)
+        FfiConverterSequenceString.write(value.titles, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDuplicateGroupFinding_lift(_ buf: RustBuffer) throws -> FfiDuplicateGroupFinding {
+    return try FfiConverterTypeFfiDuplicateGroupFinding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDuplicateGroupFinding_lower(_ value: FfiDuplicateGroupFinding) -> RustBuffer {
+    return FfiConverterTypeFfiDuplicateGroupFinding.lower(value)
 }
 
 
@@ -2772,6 +3104,309 @@ public func FfiConverterTypeFfiFormulaCell_lift(_ buf: RustBuffer) throws -> Ffi
 #endif
 public func FfiConverterTypeFfiFormulaCell_lower(_ value: FfiFormulaCell) -> RustBuffer {
     return FfiConverterTypeFfiFormulaCell.lower(value)
+}
+
+
+/**
+ * 五类体检报告（FR-6.7，覆盖 FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 镜像）。
+ *
+ * 明文纪律：报告不携带密码明文与隐藏字段值（cf-session usecase::health
+ * 模块文档），本镜像不引入任何新字段。
+ */
+public struct FfiHealthReport: Equatable, Hashable {
+    /**
+     * 共享同一密码指纹的分组（≥2 才报，FR-6.2）。
+     */
+    public var duplicateGroups: [FfiDuplicateGroupFinding]
+    /**
+     * 任一 URL 以 `http://` 开头的条目（FR-6.3）。
+     */
+    public var httpUrlItems: [FfiItemFinding]
+    /**
+     * 陈旧密码条目（FR-6.4）。
+     */
+    public var staleItems: [FfiStaleFinding]
+    /**
+     * 泄露启发式命中条目（FR-6.5，每条目至多一条）。
+     */
+    public var leakSuspects: [FfiLeakFinding]
+    /**
+     * 白名单域名且未配置 TOTP 的条目（FR-6.6）。
+     */
+    public var missingTotpItems: [FfiItemFinding]
+    /**
+     * 汇总统计。
+     */
+    public var summary: FfiHealthSummary
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 共享同一密码指纹的分组（≥2 才报，FR-6.2）。
+         */duplicateGroups: [FfiDuplicateGroupFinding], 
+        /**
+         * 任一 URL 以 `http://` 开头的条目（FR-6.3）。
+         */httpUrlItems: [FfiItemFinding], 
+        /**
+         * 陈旧密码条目（FR-6.4）。
+         */staleItems: [FfiStaleFinding], 
+        /**
+         * 泄露启发式命中条目（FR-6.5，每条目至多一条）。
+         */leakSuspects: [FfiLeakFinding], 
+        /**
+         * 白名单域名且未配置 TOTP 的条目（FR-6.6）。
+         */missingTotpItems: [FfiItemFinding], 
+        /**
+         * 汇总统计。
+         */summary: FfiHealthSummary) {
+        self.duplicateGroups = duplicateGroups
+        self.httpUrlItems = httpUrlItems
+        self.staleItems = staleItems
+        self.leakSuspects = leakSuspects
+        self.missingTotpItems = missingTotpItems
+        self.summary = summary
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiHealthReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiHealthReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHealthReport {
+        return
+            try FfiHealthReport(
+                duplicateGroups: FfiConverterSequenceTypeFfiDuplicateGroupFinding.read(from: &buf), 
+                httpUrlItems: FfiConverterSequenceTypeFfiItemFinding.read(from: &buf), 
+                staleItems: FfiConverterSequenceTypeFfiStaleFinding.read(from: &buf), 
+                leakSuspects: FfiConverterSequenceTypeFfiLeakFinding.read(from: &buf), 
+                missingTotpItems: FfiConverterSequenceTypeFfiItemFinding.read(from: &buf), 
+                summary: FfiConverterTypeFfiHealthSummary.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiHealthReport, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiDuplicateGroupFinding.write(value.duplicateGroups, into: &buf)
+        FfiConverterSequenceTypeFfiItemFinding.write(value.httpUrlItems, into: &buf)
+        FfiConverterSequenceTypeFfiStaleFinding.write(value.staleItems, into: &buf)
+        FfiConverterSequenceTypeFfiLeakFinding.write(value.leakSuspects, into: &buf)
+        FfiConverterSequenceTypeFfiItemFinding.write(value.missingTotpItems, into: &buf)
+        FfiConverterTypeFfiHealthSummary.write(value.summary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHealthReport_lift(_ buf: RustBuffer) throws -> FfiHealthReport {
+    return try FfiConverterTypeFfiHealthReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHealthReport_lower(_ value: FfiHealthReport) -> RustBuffer {
+    return FfiConverterTypeFfiHealthReport.lower(value)
+}
+
+
+/**
+ * 五类体检汇总统计（与 [`FfiHealthReport`] 各清单一一对应）。
+ *
+ * usize → u32 饱和转换（`u32::try_from().unwrap_or(u32::MAX)`）：计数
+ * 达 2^32 属不可达规模，不为此引入错误分支。
+ */
+public struct FfiHealthSummary: Equatable, Hashable {
+    /**
+     * 重复密码组数（FR-6.2，按组计）。
+     */
+    public var duplicateGroupCount: UInt32
+    /**
+     * 弱 URL 条目数（FR-6.3）。
+     */
+    public var weakUrlCount: UInt32
+    /**
+     * 陈旧密码条目数（FR-6.4）。
+     */
+    public var staleCount: UInt32
+    /**
+     * 泄露启发式命中条目数（FR-6.5）。
+     */
+    public var leakSuspectCount: UInt32
+    /**
+     * 无 2FA 提示条目数（FR-6.6）。
+     */
+    public var missingTotpCount: UInt32
+    /**
+     * 各类计数的总和（重复组按组计）。
+     */
+    public var totalFindings: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 重复密码组数（FR-6.2，按组计）。
+         */duplicateGroupCount: UInt32, 
+        /**
+         * 弱 URL 条目数（FR-6.3）。
+         */weakUrlCount: UInt32, 
+        /**
+         * 陈旧密码条目数（FR-6.4）。
+         */staleCount: UInt32, 
+        /**
+         * 泄露启发式命中条目数（FR-6.5）。
+         */leakSuspectCount: UInt32, 
+        /**
+         * 无 2FA 提示条目数（FR-6.6）。
+         */missingTotpCount: UInt32, 
+        /**
+         * 各类计数的总和（重复组按组计）。
+         */totalFindings: UInt32) {
+        self.duplicateGroupCount = duplicateGroupCount
+        self.weakUrlCount = weakUrlCount
+        self.staleCount = staleCount
+        self.leakSuspectCount = leakSuspectCount
+        self.missingTotpCount = missingTotpCount
+        self.totalFindings = totalFindings
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiHealthSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiHealthSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHealthSummary {
+        return
+            try FfiHealthSummary(
+                duplicateGroupCount: FfiConverterUInt32.read(from: &buf), 
+                weakUrlCount: FfiConverterUInt32.read(from: &buf), 
+                staleCount: FfiConverterUInt32.read(from: &buf), 
+                leakSuspectCount: FfiConverterUInt32.read(from: &buf), 
+                missingTotpCount: FfiConverterUInt32.read(from: &buf), 
+                totalFindings: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiHealthSummary, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.duplicateGroupCount, into: &buf)
+        FfiConverterUInt32.write(value.weakUrlCount, into: &buf)
+        FfiConverterUInt32.write(value.staleCount, into: &buf)
+        FfiConverterUInt32.write(value.leakSuspectCount, into: &buf)
+        FfiConverterUInt32.write(value.missingTotpCount, into: &buf)
+        FfiConverterUInt32.write(value.totalFindings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHealthSummary_lift(_ buf: RustBuffer) throws -> FfiHealthSummary {
+    return try FfiConverterTypeFfiHealthSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHealthSummary_lower(_ value: FfiHealthSummary) -> RustBuffer {
+    return FfiConverterTypeFfiHealthSummary.lower(value)
+}
+
+
+/**
+ * 历史版本条目（元数据镜像；快照明文不跨 FFI，回滚是唯一消费路径）。
+ */
+public struct FfiHistoryEntry: Equatable, Hashable {
+    /**
+     * 历史行 UUID。
+     */
+    public var historyUuid: String
+    /**
+     * 版本号（条目内自增，1 起）。
+     */
+    public var version: Int64
+    /**
+     * 快照写入时间（Unix 秒）。
+     */
+    public var createdAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 历史行 UUID。
+         */historyUuid: String, 
+        /**
+         * 版本号（条目内自增，1 起）。
+         */version: Int64, 
+        /**
+         * 快照写入时间（Unix 秒）。
+         */createdAt: Int64) {
+        self.historyUuid = historyUuid
+        self.version = version
+        self.createdAt = createdAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiHistoryEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiHistoryEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistoryEntry {
+        return
+            try FfiHistoryEntry(
+                historyUuid: FfiConverterString.read(from: &buf), 
+                version: FfiConverterInt64.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiHistoryEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.historyUuid, into: &buf)
+        FfiConverterInt64.write(value.version, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHistoryEntry_lift(_ buf: RustBuffer) throws -> FfiHistoryEntry {
+    return try FfiConverterTypeFfiHistoryEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHistoryEntry_lower(_ value: FfiHistoryEntry) -> RustBuffer {
+    return FfiConverterTypeFfiHistoryEntry.lower(value)
 }
 
 
@@ -3165,6 +3800,75 @@ public func FfiConverterTypeFfiItemFilter_lower(_ value: FfiItemFilter) -> RustB
 
 
 /**
+ * 单条体检 finding 的通用载荷：条目 + 解密标题（非敏感，展示用）。
+ */
+public struct FfiItemFinding: Equatable, Hashable {
+    /**
+     * 条目 ID。
+     */
+    public var itemId: String
+    /**
+     * 解密标题。
+     */
+    public var title: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目 ID。
+         */itemId: String, 
+        /**
+         * 解密标题。
+         */title: String) {
+        self.itemId = itemId
+        self.title = title
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiItemFinding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiItemFinding: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiItemFinding {
+        return
+            try FfiItemFinding(
+                itemId: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiItemFinding, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.itemId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiItemFinding_lift(_ buf: RustBuffer) throws -> FfiItemFinding {
+    return try FfiConverterTypeFfiItemFinding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiItemFinding_lower(_ value: FfiItemFinding) -> RustBuffer {
+    return FfiConverterTypeFfiItemFinding.lower(value)
+}
+
+
+/**
  * 条目摘要（列表 / 搜索结果）。
  */
 public struct FfiItemSummary: Equatable, Hashable {
@@ -3356,6 +4060,174 @@ public func FfiConverterTypeFfiKdfParams_lower(_ value: FfiKdfParams) -> RustBuf
 
 
 /**
+ * 泄露启发式 finding（FR-6.5，Should 非门禁；不覆盖真实泄露事件）。
+ */
+public struct FfiLeakFinding: Equatable, Hashable {
+    /**
+     * 条目 ID。
+     */
+    public var itemId: String
+    /**
+     * 解密标题。
+     */
+    public var title: String
+    /**
+     * 命中规则。
+     */
+    public var rule: FfiLeakRule
+    /**
+     * 置信度。
+     */
+    public var confidence: FfiLeakConfidence
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目 ID。
+         */itemId: String, 
+        /**
+         * 解密标题。
+         */title: String, 
+        /**
+         * 命中规则。
+         */rule: FfiLeakRule, 
+        /**
+         * 置信度。
+         */confidence: FfiLeakConfidence) {
+        self.itemId = itemId
+        self.title = title
+        self.rule = rule
+        self.confidence = confidence
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLeakFinding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLeakFinding: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeakFinding {
+        return
+            try FfiLeakFinding(
+                itemId: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                rule: FfiConverterTypeFfiLeakRule.read(from: &buf), 
+                confidence: FfiConverterTypeFfiLeakConfidence.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLeakFinding, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.itemId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypeFfiLeakRule.write(value.rule, into: &buf)
+        FfiConverterTypeFfiLeakConfidence.write(value.confidence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeakFinding_lift(_ buf: RustBuffer) throws -> FfiLeakFinding {
+    return try FfiConverterTypeFfiLeakFinding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeakFinding_lower(_ value: FfiLeakFinding) -> RustBuffer {
+    return FfiConverterTypeFfiLeakFinding.lower(value)
+}
+
+
+/**
+ * 一条未导入项（FR-7.6 逐条列出，不静默丢弃）。
+ */
+public struct FfiNotImportedItem: Equatable, Hashable {
+    /**
+     * 1PUX 原始条目 uuid。
+     */
+    public var uuid: String
+    /**
+     * 标题（缺失时为兜底标题）。
+     */
+    public var title: String
+    /**
+     * 未导入原因（人类可读）。
+     */
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 1PUX 原始条目 uuid。
+         */uuid: String, 
+        /**
+         * 标题（缺失时为兜底标题）。
+         */title: String, 
+        /**
+         * 未导入原因（人类可读）。
+         */reason: String) {
+        self.uuid = uuid
+        self.title = title
+        self.reason = reason
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiNotImportedItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNotImportedItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNotImportedItem {
+        return
+            try FfiNotImportedItem(
+                uuid: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiNotImportedItem, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.uuid, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNotImportedItem_lift(_ buf: RustBuffer) throws -> FfiNotImportedItem {
+    return try FfiConverterTypeFfiNotImportedItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNotImportedItem_lower(_ value: FfiNotImportedItem) -> RustBuffer {
+    return FfiConverterTypeFfiNotImportedItem.lower(value)
+}
+
+
+/**
  * 密码生成器参数（docs/07 §2.3 `PasswordGenOptions`）。
  */
 public struct FfiPasswordGenOptions: Equatable, Hashable {
@@ -3461,6 +4333,248 @@ public func FfiConverterTypeFfiPasswordGenOptions_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeFfiPasswordGenOptions_lower(_ value: FfiPasswordGenOptions) -> RustBuffer {
     return FfiConverterTypeFfiPasswordGenOptions.lower(value)
+}
+
+
+/**
+ * 1PUX 导入结果（FR-7.7 导入结果页素材）。
+ *
+ * `deletion_advice` 由 [`cf_importer::advise_pux_source_deletion`] 对
+ * 本次导入的报告即时组装（D-6：传入预检报告而非导入结果，见其模块
+ * 文档「为什么只接收预检报告」）——Swift 侧无需再调建议函数。
+ */
+public struct FfiPuxImportResult: Equatable, Hashable {
+    /**
+     * 实际导入（新建）的条目数。
+     */
+    public var importedItems: UInt32
+    /**
+     * 预检报告（与本次导入同管线产出，FR-7.4 所见即所得）。
+     */
+    public var report: FfiPuxPrecheckReport
+    /**
+     * FR-7.8 删源建议（数据驱动，D-6）。
+     */
+    public var deletionAdvice: FfiSourceDeletionAdvice
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 实际导入（新建）的条目数。
+         */importedItems: UInt32, 
+        /**
+         * 预检报告（与本次导入同管线产出，FR-7.4 所见即所得）。
+         */report: FfiPuxPrecheckReport, 
+        /**
+         * FR-7.8 删源建议（数据驱动，D-6）。
+         */deletionAdvice: FfiSourceDeletionAdvice) {
+        self.importedItems = importedItems
+        self.report = report
+        self.deletionAdvice = deletionAdvice
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPuxImportResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPuxImportResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPuxImportResult {
+        return
+            try FfiPuxImportResult(
+                importedItems: FfiConverterUInt32.read(from: &buf), 
+                report: FfiConverterTypeFfiPuxPrecheckReport.read(from: &buf), 
+                deletionAdvice: FfiConverterTypeFfiSourceDeletionAdvice.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPuxImportResult, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.importedItems, into: &buf)
+        FfiConverterTypeFfiPuxPrecheckReport.write(value.report, into: &buf)
+        FfiConverterTypeFfiSourceDeletionAdvice.write(value.deletionAdvice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxImportResult_lift(_ buf: RustBuffer) throws -> FfiPuxImportResult {
+    return try FfiConverterTypeFfiPuxImportResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxImportResult_lower(_ value: FfiPuxImportResult) -> RustBuffer {
+    return FfiConverterTypeFfiPuxImportResult.lower(value)
+}
+
+
+/**
+ * 1PUX 预检报告（FR-7.4~7.7，`docs/09` v0.3.0 冻结字段镜像）。
+ */
+public struct FfiPuxPrecheckReport: Equatable, Hashable {
+    /**
+     * 条目总数（全部 vault 合计，含 Tombstone / 附件缺失等未导入项）。
+     */
+    public var totalItems: UInt32
+    /**
+     * 可导入条目数（含未知类别降级——计入导入成功，E-4）。
+     */
+    public var importableItems: UInt32
+    /**
+     * 按类别分布（降级条目按 secure_note 计入）。
+     */
+    public var categoryDistribution: [FfiCategoryCount]
+    /**
+     * 附件总数。
+     */
+    public var attachmentCount: UInt32
+    /**
+     * 未识别类别清单。
+     */
+    public var unknownCategories: [FfiUnknownCategory]
+    /**
+     * 回收站条目数（state=trashed）。
+     */
+    public var trashedCount: UInt32
+    /**
+     * 丢弃的密码历史条目总数（FR-2.9 语义不同构）。
+     */
+    public var passwordHistoryDropped: UInt32
+    /**
+     * 未识别的类型化 value 顶层 key（去重排序；值已保留不丢）。
+     */
+    public var unmappedValueTypes: [String]
+    /**
+     * 出现 ≥ 2 次的 documentId（官方形态；导入全部保留）。
+     */
+    public var duplicateDocumentIds: [String]
+    /**
+     * 未导入项逐条清单（FR-7.6 不静默丢弃）。
+     */
+    public var notImported: [FfiNotImportedItem]
+    /**
+     * 告警文本（降级、未知状态、坏 otpauth、重复 documentId 等）。
+     */
+    public var warnings: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目总数（全部 vault 合计，含 Tombstone / 附件缺失等未导入项）。
+         */totalItems: UInt32, 
+        /**
+         * 可导入条目数（含未知类别降级——计入导入成功，E-4）。
+         */importableItems: UInt32, 
+        /**
+         * 按类别分布（降级条目按 secure_note 计入）。
+         */categoryDistribution: [FfiCategoryCount], 
+        /**
+         * 附件总数。
+         */attachmentCount: UInt32, 
+        /**
+         * 未识别类别清单。
+         */unknownCategories: [FfiUnknownCategory], 
+        /**
+         * 回收站条目数（state=trashed）。
+         */trashedCount: UInt32, 
+        /**
+         * 丢弃的密码历史条目总数（FR-2.9 语义不同构）。
+         */passwordHistoryDropped: UInt32, 
+        /**
+         * 未识别的类型化 value 顶层 key（去重排序；值已保留不丢）。
+         */unmappedValueTypes: [String], 
+        /**
+         * 出现 ≥ 2 次的 documentId（官方形态；导入全部保留）。
+         */duplicateDocumentIds: [String], 
+        /**
+         * 未导入项逐条清单（FR-7.6 不静默丢弃）。
+         */notImported: [FfiNotImportedItem], 
+        /**
+         * 告警文本（降级、未知状态、坏 otpauth、重复 documentId 等）。
+         */warnings: [String]) {
+        self.totalItems = totalItems
+        self.importableItems = importableItems
+        self.categoryDistribution = categoryDistribution
+        self.attachmentCount = attachmentCount
+        self.unknownCategories = unknownCategories
+        self.trashedCount = trashedCount
+        self.passwordHistoryDropped = passwordHistoryDropped
+        self.unmappedValueTypes = unmappedValueTypes
+        self.duplicateDocumentIds = duplicateDocumentIds
+        self.notImported = notImported
+        self.warnings = warnings
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPuxPrecheckReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPuxPrecheckReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPuxPrecheckReport {
+        return
+            try FfiPuxPrecheckReport(
+                totalItems: FfiConverterUInt32.read(from: &buf), 
+                importableItems: FfiConverterUInt32.read(from: &buf), 
+                categoryDistribution: FfiConverterSequenceTypeFfiCategoryCount.read(from: &buf), 
+                attachmentCount: FfiConverterUInt32.read(from: &buf), 
+                unknownCategories: FfiConverterSequenceTypeFfiUnknownCategory.read(from: &buf), 
+                trashedCount: FfiConverterUInt32.read(from: &buf), 
+                passwordHistoryDropped: FfiConverterUInt32.read(from: &buf), 
+                unmappedValueTypes: FfiConverterSequenceString.read(from: &buf), 
+                duplicateDocumentIds: FfiConverterSequenceString.read(from: &buf), 
+                notImported: FfiConverterSequenceTypeFfiNotImportedItem.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPuxPrecheckReport, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.totalItems, into: &buf)
+        FfiConverterUInt32.write(value.importableItems, into: &buf)
+        FfiConverterSequenceTypeFfiCategoryCount.write(value.categoryDistribution, into: &buf)
+        FfiConverterUInt32.write(value.attachmentCount, into: &buf)
+        FfiConverterSequenceTypeFfiUnknownCategory.write(value.unknownCategories, into: &buf)
+        FfiConverterUInt32.write(value.trashedCount, into: &buf)
+        FfiConverterUInt32.write(value.passwordHistoryDropped, into: &buf)
+        FfiConverterSequenceString.write(value.unmappedValueTypes, into: &buf)
+        FfiConverterSequenceString.write(value.duplicateDocumentIds, into: &buf)
+        FfiConverterSequenceTypeFfiNotImportedItem.write(value.notImported, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxPrecheckReport_lift(_ buf: RustBuffer) throws -> FfiPuxPrecheckReport {
+    return try FfiConverterTypeFfiPuxPrecheckReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxPrecheckReport_lower(_ value: FfiPuxPrecheckReport) -> RustBuffer {
+    return FfiConverterTypeFfiPuxPrecheckReport.lower(value)
 }
 
 
@@ -3609,6 +4723,164 @@ public func FfiConverterTypeFfiSectionDraft_lift(_ buf: RustBuffer) throws -> Ff
 #endif
 public func FfiConverterTypeFfiSectionDraft_lower(_ value: FfiSectionDraft) -> RustBuffer {
     return FfiConverterTypeFfiSectionDraft.lower(value)
+}
+
+
+/**
+ * 源文件删除建议（FR-7.8，D-6 数据驱动裁决镜像）。
+ */
+public struct FfiSourceDeletionAdvice: Equatable, Hashable {
+    /**
+     * 当且仅当本次导入零信息损失时为 true（可提示删除源文件）。
+     */
+    public var canDelete: Bool
+    /**
+     * 阻止删除的原因（人类可读，逐条，供结果页直接展示）。
+     */
+    public var blockers: [String]
+    /**
+     * 已导入但降级的条目。
+     */
+    public var degradedItems: [FfiDegradedItem]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 当且仅当本次导入零信息损失时为 true（可提示删除源文件）。
+         */canDelete: Bool, 
+        /**
+         * 阻止删除的原因（人类可读，逐条，供结果页直接展示）。
+         */blockers: [String], 
+        /**
+         * 已导入但降级的条目。
+         */degradedItems: [FfiDegradedItem]) {
+        self.canDelete = canDelete
+        self.blockers = blockers
+        self.degradedItems = degradedItems
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSourceDeletionAdvice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSourceDeletionAdvice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSourceDeletionAdvice {
+        return
+            try FfiSourceDeletionAdvice(
+                canDelete: FfiConverterBool.read(from: &buf), 
+                blockers: FfiConverterSequenceString.read(from: &buf), 
+                degradedItems: FfiConverterSequenceTypeFfiDegradedItem.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSourceDeletionAdvice, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.canDelete, into: &buf)
+        FfiConverterSequenceString.write(value.blockers, into: &buf)
+        FfiConverterSequenceTypeFfiDegradedItem.write(value.degradedItems, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSourceDeletionAdvice_lift(_ buf: RustBuffer) throws -> FfiSourceDeletionAdvice {
+    return try FfiConverterTypeFfiSourceDeletionAdvice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSourceDeletionAdvice_lower(_ value: FfiSourceDeletionAdvice) -> RustBuffer {
+    return FfiConverterTypeFfiSourceDeletionAdvice.lower(value)
+}
+
+
+/**
+ * 陈旧密码 finding（FR-6.4）。
+ */
+public struct FfiStaleFinding: Equatable, Hashable {
+    /**
+     * 条目 ID。
+     */
+    public var itemId: String
+    /**
+     * 解密标题。
+     */
+    public var title: String
+    /**
+     * 距上次修改的整天数（非敏感元数据，UI 展示用）。
+     */
+    public var daysSinceUpdate: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目 ID。
+         */itemId: String, 
+        /**
+         * 解密标题。
+         */title: String, 
+        /**
+         * 距上次修改的整天数（非敏感元数据，UI 展示用）。
+         */daysSinceUpdate: Int64) {
+        self.itemId = itemId
+        self.title = title
+        self.daysSinceUpdate = daysSinceUpdate
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiStaleFinding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiStaleFinding: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiStaleFinding {
+        return
+            try FfiStaleFinding(
+                itemId: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                daysSinceUpdate: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiStaleFinding, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.itemId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterInt64.write(value.daysSinceUpdate, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiStaleFinding_lift(_ buf: RustBuffer) throws -> FfiStaleFinding {
+    return try FfiConverterTypeFfiStaleFinding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiStaleFinding_lower(_ value: FfiStaleFinding) -> RustBuffer {
+    return FfiConverterTypeFfiStaleFinding.lower(value)
 }
 
 
@@ -4057,6 +5329,75 @@ public func FfiConverterTypeFfiTotpMeta_lift(_ buf: RustBuffer) throws -> FfiTot
 #endif
 public func FfiConverterTypeFfiTotpMeta_lower(_ value: FfiTotpMeta) -> RustBuffer {
     return FfiConverterTypeFfiTotpMeta.lower(value)
+}
+
+
+/**
+ * 未识别类别单项（E-4：降级条目计入导入成功，但预检必须 surface）。
+ */
+public struct FfiUnknownCategory: Equatable, Hashable {
+    /**
+     * 1PUX 原始条目 uuid。
+     */
+    public var itemUuid: String
+    /**
+     * 原始 categoryUuid。
+     */
+    public var categoryUuid: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 1PUX 原始条目 uuid。
+         */itemUuid: String, 
+        /**
+         * 原始 categoryUuid。
+         */categoryUuid: String) {
+        self.itemUuid = itemUuid
+        self.categoryUuid = categoryUuid
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUnknownCategory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUnknownCategory: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUnknownCategory {
+        return
+            try FfiUnknownCategory(
+                itemUuid: FfiConverterString.read(from: &buf), 
+                categoryUuid: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUnknownCategory, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.itemUuid, into: &buf)
+        FfiConverterString.write(value.categoryUuid, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUnknownCategory_lift(_ buf: RustBuffer) throws -> FfiUnknownCategory {
+    return try FfiConverterTypeFfiUnknownCategory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUnknownCategory_lower(_ value: FfiUnknownCategory) -> RustBuffer {
+    return FfiConverterTypeFfiUnknownCategory.lower(value)
 }
 
 
@@ -5321,6 +6662,186 @@ public func FfiConverterTypeFfiItemState_lower(_ value: FfiItemState) -> RustBuf
 
 
 /**
+ * 启发式置信度（漏报优先：只报有明确形态依据的项）。
+ */
+
+public enum FfiLeakConfidence: Equatable, Hashable {
+    
+    /**
+     * 低置信度（形态启发，仅提示）。
+     */
+    case low
+    /**
+     * 中置信度（leet 归一后命中字典）。
+     */
+    case medium
+    /**
+     * 高置信度（明文精确命中字典）。
+     */
+    case high
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiLeakConfidence: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLeakConfidence: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLeakConfidence
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeakConfidence {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .low
+        
+        case 2: return .medium
+        
+        case 3: return .high
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiLeakConfidence, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .low:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .medium:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .high:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeakConfidence_lift(_ buf: RustBuffer) throws -> FfiLeakConfidence {
+    return try FfiConverterTypeFfiLeakConfidence.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeakConfidence_lower(_ value: FfiLeakConfidence) -> RustBuffer {
+    return FfiConverterTypeFfiLeakConfidence.lower(value)
+}
+
+
+
+/**
+ * 泄露启发式命中规则（FR-6.5 / AUD-05 镜像）。
+ */
+
+public enum FfiLeakRule: Equatable, Hashable {
+    
+    /**
+     * 明文精确命中内置字典。
+     */
+    case dictionaryExact
+    /**
+     * 常见 leet 替换归一后命中字典。
+     */
+    case leetNormalized
+    /**
+     * 8 位纯数字生日形态（YYYYMMDD）。
+     */
+    case birthdayPattern
+    /**
+     * 包含键盘行序列（qwerty 等）。
+     */
+    case keyboardSequence
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiLeakRule: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLeakRule: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLeakRule
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeakRule {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .dictionaryExact
+        
+        case 2: return .leetNormalized
+        
+        case 3: return .birthdayPattern
+        
+        case 4: return .keyboardSequence
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiLeakRule, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .dictionaryExact:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .leetNormalized:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .birthdayPattern:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .keyboardSequence:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeakRule_lift(_ buf: RustBuffer) throws -> FfiLeakRule {
+    return try FfiConverterTypeFfiLeakRule.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeakRule_lower(_ value: FfiLeakRule) -> RustBuffer {
+    return FfiConverterTypeFfiLeakRule.lower(value)
+}
+
+
+
+/**
  * TOTP 更新三态（**更新路径专用**，`updateItemWithTotp` 参数）。
  *
  * 背景：FFI 刻意不下发 TOTP secret（安全设计），编辑条目时调用方
@@ -5785,6 +7306,81 @@ fileprivate struct FfiConverterSequenceTypeFfiAuditEntry: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiCategoryCount: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiCategoryCount]
+
+    public static func write(_ value: [FfiCategoryCount], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiCategoryCount.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiCategoryCount] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiCategoryCount]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiCategoryCount.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiDegradedItem: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiDegradedItem]
+
+    public static func write(_ value: [FfiDegradedItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiDegradedItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiDegradedItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiDegradedItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiDegradedItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiDuplicateGroupFinding: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiDuplicateGroupFinding]
+
+    public static func write(_ value: [FfiDuplicateGroupFinding], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiDuplicateGroupFinding.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiDuplicateGroupFinding] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiDuplicateGroupFinding]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiDuplicateGroupFinding.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiFieldDetail: FfiConverterRustBuffer {
     typealias SwiftType = [FfiFieldDetail]
 
@@ -5860,6 +7456,56 @@ fileprivate struct FfiConverterSequenceTypeFfiFormulaCell: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiHistoryEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiHistoryEntry]
+
+    public static func write(_ value: [FfiHistoryEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiHistoryEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiHistoryEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiHistoryEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiHistoryEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiItemFinding: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiItemFinding]
+
+    public static func write(_ value: [FfiItemFinding], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiItemFinding.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiItemFinding] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiItemFinding]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiItemFinding.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiItemSummary: FfiConverterRustBuffer {
     typealias SwiftType = [FfiItemSummary]
 
@@ -5877,6 +7523,56 @@ fileprivate struct FfiConverterSequenceTypeFfiItemSummary: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiItemSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiLeakFinding: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiLeakFinding]
+
+    public static func write(_ value: [FfiLeakFinding], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiLeakFinding.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiLeakFinding] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiLeakFinding]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiLeakFinding.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiNotImportedItem: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiNotImportedItem]
+
+    public static func write(_ value: [FfiNotImportedItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiNotImportedItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiNotImportedItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiNotImportedItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiNotImportedItem.read(from: &buf))
         }
         return seq
     }
@@ -5927,6 +7623,56 @@ fileprivate struct FfiConverterSequenceTypeFfiSectionDraft: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiSectionDraft.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiStaleFinding: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiStaleFinding]
+
+    public static func write(_ value: [FfiStaleFinding], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiStaleFinding.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiStaleFinding] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiStaleFinding]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiStaleFinding.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiUnknownCategory: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiUnknownCategory]
+
+    public static func write(_ value: [FfiUnknownCategory], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiUnknownCategory.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiUnknownCategory] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiUnknownCategory]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiUnknownCategory.read(from: &buf))
         }
         return seq
     }
@@ -6141,6 +7887,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap() != 31384) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_health_report() != 32920) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_import_1pux() != 42000) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_csv() != 58011) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6148,6 +7900,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_last_backup_at() != 21279) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_list_history() != 41294) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_list_items() != 48491) {
@@ -6159,10 +7914,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_parse_otpauth_uri() != 10841) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_1pux() != 48374) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv() != 64030) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events() != 53755) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_restore_history() != 48287) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_item() != 32382) {

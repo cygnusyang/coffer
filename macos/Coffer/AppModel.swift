@@ -46,6 +46,8 @@ final class AppModel: ObservableObject {
     // 菜单与工具栏/横幅按钮需要跨视图触发同一 sheet，验收反馈补齐）。
     /// 导入 CSV sheet（工具栏 + 菜单 ⌘I）。
     @Published var showImport = false
+    /// 导入 1PUX sheet（工具栏「导入」菜单 + 菜单 ⌘⇧I，v0.3.0-T05 FR-7.1）。
+    @Published var showImportPux = false
     /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
     @Published var showExport = false
     /// 统一设置 sheet（工具栏 + 菜单 ⌘,）。

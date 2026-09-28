@@ -502,6 +502,66 @@ impl VaultSession {
         .map(Into::into)
     }
 
+    /// 1PUX 预检（FR-7.4~7.7）：纯文件只读，可反复调用。
+    ///
+    /// **无解锁门禁**（锁定态可预检）——与 CSV 预检同语义：预检不接触
+    /// 密钥材料，供导入向导在解锁前展示报告。
+    pub fn precheck_1pux(&self, path: String) -> Result<FfiPuxPrecheckReport, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_importer::precheck_1pux(Path::new(&path))
+        }))
+        .map(Into::into)
+    }
+
+    /// 1PUX 导入（FR-7.1 含 `files/` 附件；锁定态 → 码 1001）。
+    ///
+    /// 每条目单事务，任一条目失败回滚该条、已成功条目保留；附件密文落
+    /// `<vault_dir>/attachments/`。返回值内的 `deletion_advice` 是对本次
+    /// 导入报告即时组装的 FR-7.8 删源建议（D-6 数据驱动），Swift 侧
+    /// 无需再调建议函数。
+    pub fn import_1pux(&self, path: String) -> Result<FfiPuxImportResult, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.import_1pux(Path::new(&path))
+        }))
+        .map(Into::into)
+    }
+
+    // ---------------------------------------------------- 历史（FR-2.9）
+
+    /// 条目历史版本列表（FR-2.9，version 倒序）：需解锁态（1001）。
+    ///
+    /// 快照明文不跨 FFI，仅返回 history_uuid / version / created_at
+    /// 元数据（docs/09 §3.3 风险 ②）。条目不存在 → 码 1011。
+    pub fn list_history(&self, item_id: String) -> Result<Vec<FfiHistoryEntry>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.list_history(&item_id)))
+            .map(|entries| entries.into_iter().map(Into::into).collect())
+    }
+
+    /// 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
+    /// 一次修改（可再回滚）。需解锁态（1001）；条目 / 历史行不存在 →
+    /// 1011；Trashed / Archived 条目被状态门禁拒绝 → 1012（内核行为）。
+    pub fn restore_history(
+        &self,
+        item_id: String,
+        history_uuid: String,
+    ) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.restore_history(&item_id, &history_uuid)
+        }))
+    }
+
+    // ------------------------------------------------- 体检（FR-6.7）
+
+    /// 五类体检报告（FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 编排）：需解锁态
+    /// （1001）。`now_secs` 由调用方注入（Unix 秒，与空闲自动锁定同
+    /// 模式，可测试）；陈旧密码阈值取内核默认（365 天，AUD-04）。
+    ///
+    /// 报告只携带 item_id / 标题 / 非敏感元数据，不含密码明文。
+    pub fn health_report(&self, now_secs: i64) -> Result<FfiHealthReport, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.health_report(now_secs)))
+            .map(Into::into)
+    }
+
     // ------------------------------------------------------- 账户安全
 
     /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，

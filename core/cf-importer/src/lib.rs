@@ -61,6 +61,7 @@ use cf_store::{ItemRow, ItemStore, Repos};
 pub mod csv;
 pub mod precheck;
 pub mod pux;
+pub mod risk;
 
 pub use csv::mapping::{ImportModel, OtpauthData};
 pub use precheck::{analyze_csv, read_and_analyze, CsvAnalysis, CsvPrecheckReport};
@@ -68,6 +69,7 @@ pub use pux::{
     import_1pux, import_1pux_with_options, precheck_1pux, NotImportedItem, PuxAnalysis,
     PuxFieldModel, PuxFileRef, PuxImportResult, PuxItemModel, PuxPrecheckReport,
 };
+pub use risk::{advise_csv_source_deletion, advise_pux_source_deletion, SourceDeletionAdvice};
 
 /// CSV 导入结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

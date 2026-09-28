@@ -529,6 +529,22 @@ fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
     typealias FfiType = Int64
     typealias SwiftType = Int64
@@ -646,6 +662,22 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
     func createVault(baseDir: String, name: String, password: String) throws  -> FfiVaultBrief
     
     /**
+     * 导出加密备份（FR-8.1，docs/09 §3.1）：工作目录打包为 `.coffer`
+     * （ZIP 交换形态），成功后自动执行结构校验并给源库
+     * `meta.last_backup_at` 打点（FR-8.5）。
+     *
+     * **锁定态可执行**（TC-EXP-08）——全程不接触密钥，属 CofferApp 级
+     * 操作。导出的是完整库（非明文但可被爆破），UI 二次确认由 Swift
+     * 侧负责（docs/09 §5 FFI 备注）。
+     *
+     * # 错误
+     *
+     * 源目录不是合法库目录 → 1012；打包 / 落盘失败 → 2003
+     * （docs/09 §4 错误表）。
+     */
+    func exportBackup(vaultDir: String, outPath: String) throws  -> FfiBackupExportResult
+    
+    /**
      * 枚举工作目录下的全部库（只读 header.json 非敏感字段）。
      *
      * 目录不存在返回空列表；单个库目录 header 损坏 / 不完整（如创建中）
@@ -679,6 +711,20 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
     func openVault(baseDir: String, vaultUuid: String) throws  -> VaultSession
     
     /**
+     * 恢复备份（FR-8.1 回环）：解包到
+     * `<target_base_dir>/<vault_uuid>/`，返回恢复产物目录路径。
+     *
+     * **锁定态可执行**；包内路径经 zip-slip 防护。恢复后走常规
+     * `open_vault` + `unlock`（主密码校验在解锁侧，FR-1.4）。
+     *
+     * # 错误
+     *
+     * 非 Coffer 包 → 2001；目标已存在同名库目录 → 1004；条目路径
+     * 非法 / 恢复产物自检失败 → 1005。
+     */
+    func restoreBackup(backupPath: String, targetBaseDir: String) throws  -> String
+    
+    /**
      * 密码强度评估（zxcvbn 0–4 + 改进建议；纯计算，无会话依赖）。
      *
      * 建库前尚无会话（v0.1 已知限制），建库界面的强度条由本工厂方法
@@ -686,6 +732,17 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
      * 委托 [`strength_estimate_impl`]）。
      */
     func strengthEstimate(candidate: String) throws  -> FfiStrengthEstimate
+    
+    /**
+     * 备份结构校验（FR-8.6，无需密码）：ZIP 可解 → `header.json` 合法 →
+     * `db.sqlite` schema 可验证。锁定态可执行。
+     *
+     * # 错误
+     *
+     * 非 ZIP / 缺关键文件（无法认定是 Coffer 备份）→ 2001；
+     * header 畸形 → 1005；格式版本过新 → 1006。
+     */
+    func verifyBackup(backupPath: String) throws  -> FfiBackupVerifyReport
     
 }
 /**
@@ -773,6 +830,31 @@ open func createVault(baseDir: String, name: String, password: String)throws  ->
 }
     
     /**
+     * 导出加密备份（FR-8.1，docs/09 §3.1）：工作目录打包为 `.coffer`
+     * （ZIP 交换形态），成功后自动执行结构校验并给源库
+     * `meta.last_backup_at` 打点（FR-8.5）。
+     *
+     * **锁定态可执行**（TC-EXP-08）——全程不接触密钥，属 CofferApp 级
+     * 操作。导出的是完整库（非明文但可被爆破），UI 二次确认由 Swift
+     * 侧负责（docs/09 §5 FFI 备注）。
+     *
+     * # 错误
+     *
+     * 源目录不是合法库目录 → 1012；打包 / 落盘失败 → 2003
+     * （docs/09 §4 错误表）。
+     */
+open func exportBackup(vaultDir: String, outPath: String)throws  -> FfiBackupExportResult  {
+    return try  FfiConverterTypeFfiBackupExportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_export_backup(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(vaultDir),
+        FfiConverterString.lower(outPath),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 枚举工作目录下的全部库（只读 header.json 非敏感字段）。
      *
      * 目录不存在返回空列表；单个库目录 header 损坏 / 不完整（如创建中）
@@ -836,6 +918,29 @@ open func openVault(baseDir: String, vaultUuid: String)throws  -> VaultSession  
 }
     
     /**
+     * 恢复备份（FR-8.1 回环）：解包到
+     * `<target_base_dir>/<vault_uuid>/`，返回恢复产物目录路径。
+     *
+     * **锁定态可执行**；包内路径经 zip-slip 防护。恢复后走常规
+     * `open_vault` + `unlock`（主密码校验在解锁侧，FR-1.4）。
+     *
+     * # 错误
+     *
+     * 非 Coffer 包 → 2001；目标已存在同名库目录 → 1004；条目路径
+     * 非法 / 恢复产物自检失败 → 1005。
+     */
+open func restoreBackup(backupPath: String, targetBaseDir: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_restore_backup(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(backupPath),
+        FfiConverterString.lower(targetBaseDir),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 密码强度评估（zxcvbn 0–4 + 改进建议；纯计算，无会话依赖）。
      *
      * 建库前尚无会话（v0.1 已知限制），建库界面的强度条由本工厂方法
@@ -848,6 +953,25 @@ open func strengthEstimate(candidate: String)throws  -> FfiStrengthEstimate  {
     uniffi_cf_ffi_fn_method_cofferapp_strength_estimate(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(candidate),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 备份结构校验（FR-8.6，无需密码）：ZIP 可解 → `header.json` 合法 →
+     * `db.sqlite` schema 可验证。锁定态可执行。
+     *
+     * # 错误
+     *
+     * 非 ZIP / 缺关键文件（无法认定是 Coffer 备份）→ 2001；
+     * header 畸形 → 1005；格式版本过新 → 1006。
+     */
+open func verifyBackup(backupPath: String)throws  -> FfiBackupVerifyReport  {
+    return try  FfiConverterTypeFfiBackupVerifyReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_verify_backup(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(backupPath),uniffiCallStatus
     )
 })
 }
@@ -911,6 +1035,25 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 超时则锁定；返回是否执行了锁定（Swift 定时器驱动）。
      */
     func autoLockIfExpired(nowSecs: Int64)  -> Bool
+    
+    /**
+     * 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，
+     * 不重加密全库；bio 封装不受影响）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。流程：新密码 zxcvbn 门禁
+     * （< 3 → 1010，先于任何文件操作）→ 旧密码重验证（错 → 1002，
+     * header 未动）→ 新盐 + 新 KEK → 重封装 → `write_header` 原子重写。
+     * 任何失败磁盘 header 保持原样，旧密码仍可解锁。
+     *
+     * `new_kdf` 可选传入新 Argon2id 档位顺带升级（越界 → 5002）；
+     * `None` 沿用当前 header.kdf 参数。
+     */
+    func changePassword(oldPassword: String, newPassword: String, newKdf: FfiKdfParams?) throws 
+    
+    /**
+     * 当前剪贴板自动清除时间（秒）；`0` 表示从不清除。
+     */
+    func clipboardClearSecs()  -> Int64
     
     /**
      * 创建条目，返回新条目 ID（UUIDv7 文本）。
@@ -987,6 +1130,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func isUnlocked()  -> Bool
     
     /**
+     * 上次成功备份时间（Unix 秒；从未备份返回 `None`，FR-8.5）。
+     *
+     * 打点方为 [`CofferApp::export_backup`] 成功路径（写源库
+     * `meta.last_backup_at`），本方法只读。门禁：需解锁态（1001）。
+     */
+    func lastBackupAt() throws  -> Int64?
+    
+    /**
      * 列出条目（updated_at 倒序）；`filter` 传 `None` 为默认全量。
      */
     func listItems(filter: FfiItemFilter?) throws  -> [FfiItemSummary]
@@ -1017,6 +1168,17 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func search(query: String) throws  -> [FfiItemSummary]
     
     /**
+     * 设置剪贴板自动清除时间（FR-14.2）。
+     *
+     * 合法档位：10 / 30 / 60 / 120 秒，或 `0`（「从不」，与自动锁定
+     * 「从不」档语义一致）。非法值（含负数）→ 5002 且原配置不变。
+     * 会话级元配置：无解锁门禁、跨 `lock()` 存活（清除定时器由平台侧
+     * 执行）；档位列表经 [`clipboard_clear_tiers`](crate::clipboard_clear_tiers) 到 Swift 侧做
+     * UI 选择器。
+     */
+    func setClipboardClearSecs(secs: Int64) throws 
+    
+    /**
      * 设置 / 取消收藏。
      */
     func setFavorite(itemId: String, favorite: Bool) throws 
@@ -1030,6 +1192,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 记录最后活动时间（Unix 秒，平台事件驱动喂入）。
      */
     func setLastActivity(unixSecs: Int64) 
+    
+    /**
+     * 是否应提醒备份（FR-8.5，docs/09 §2.2）：从未备份，或距上次成功
+     * 备份 `>= threshold_secs` 秒 → 应提醒；`threshold_secs <= 0` 视为
+     * 禁用（永不提醒）。`now_secs` 由平台注入（与自动锁定同模式）。
+     * 门禁：需解锁态（1001）。
+     */
+    func shouldSuggestBackup(thresholdSecs: Int64, nowSecs: Int64) throws  -> Bool
     
     /**
      * 密码强度评估（zxcvbn 0–4 + 改进建议）。
@@ -1166,6 +1336,41 @@ open func autoLockIfExpired(nowSecs: Int64) -> Bool  {
     uniffi_cf_ffi_fn_method_vaultsession_auto_lock_if_expired(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(nowSecs),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，
+     * 不重加密全库；bio 封装不受影响）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。流程：新密码 zxcvbn 门禁
+     * （< 3 → 1010，先于任何文件操作）→ 旧密码重验证（错 → 1002，
+     * header 未动）→ 新盐 + 新 KEK → 重封装 → `write_header` 原子重写。
+     * 任何失败磁盘 header 保持原样，旧密码仍可解锁。
+     *
+     * `new_kdf` 可选传入新 Argon2id 档位顺带升级（越界 → 5002）；
+     * `None` 沿用当前 header.kdf 参数。
+     */
+open func changePassword(oldPassword: String, newPassword: String, newKdf: FfiKdfParams?)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_change_password(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(oldPassword),
+        FfiConverterString.lower(newPassword),
+        FfiConverterOptionTypeFfiKdfParams.lower(newKdf),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 当前剪贴板自动清除时间（秒）；`0` 表示从不清除。
+     */
+open func clipboardClearSecs() -> Int64  {
+    return try!  FfiConverterInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_clipboard_clear_secs(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1329,6 +1534,21 @@ open func isUnlocked() -> Bool  {
 }
     
     /**
+     * 上次成功备份时间（Unix 秒；从未备份返回 `None`，FR-8.5）。
+     *
+     * 打点方为 [`CofferApp::export_backup`] 成功路径（写源库
+     * `meta.last_backup_at`），本方法只读。门禁：需解锁态（1001）。
+     */
+open func lastBackupAt()throws  -> Int64?  {
+    return try  FfiConverterOptionInt64.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_last_backup_at(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 列出条目（updated_at 倒序）；`filter` 传 `None` 为默认全量。
      */
 open func listItems(filter: FfiItemFilter?)throws  -> [FfiItemSummary]  {
@@ -1404,6 +1624,24 @@ open func search(query: String)throws  -> [FfiItemSummary]  {
 }
     
     /**
+     * 设置剪贴板自动清除时间（FR-14.2）。
+     *
+     * 合法档位：10 / 30 / 60 / 120 秒，或 `0`（「从不」，与自动锁定
+     * 「从不」档语义一致）。非法值（含负数）→ 5002 且原配置不变。
+     * 会话级元配置：无解锁门禁、跨 `lock()` 存活（清除定时器由平台侧
+     * 执行）；档位列表经 [`clipboard_clear_tiers`](crate::clipboard_clear_tiers) 到 Swift 侧做
+     * UI 选择器。
+     */
+open func setClipboardClearSecs(secs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_set_clipboard_clear_secs(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(secs),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * 设置 / 取消收藏。
      */
 open func setFavorite(itemId: String, favorite: Bool)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -1438,6 +1676,23 @@ open func setLastActivity(unixSecs: Int64)  {try! rustCall() {
         FfiConverterInt64.lower(unixSecs),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * 是否应提醒备份（FR-8.5，docs/09 §2.2）：从未备份，或距上次成功
+     * 备份 `>= threshold_secs` 秒 → 应提醒；`threshold_secs <= 0` 视为
+     * 禁用（永不提醒）。`now_secs` 由平台注入（与自动锁定同模式）。
+     * 门禁：需解锁态（1001）。
+     */
+open func shouldSuggestBackup(thresholdSecs: Int64, nowSecs: Int64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_should_suggest_backup(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(thresholdSecs),
+        FfiConverterInt64.lower(nowSecs),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -1626,6 +1881,174 @@ public func FfiConverterTypeVaultSession_lower(_ value: VaultSession) -> UInt64 
 }
 
 
+
+
+/**
+ * 加密备份导出结果（FR-8.1，docs/09 §3.1 冻结契约镜像）。
+ */
+public struct FfiBackupExportResult: Equatable, Hashable {
+    /**
+     * 备份文件路径
+     */
+    public var filePath: String
+    /**
+     * 打包的文件数（不含目录条目）
+     */
+    public var fileCount: UInt64
+    /**
+     * 备份文件字节数
+     */
+    public var sizeBytes: UInt64
+    /**
+     * 导出后自动执行了一次结构校验（FR-8.6）且通过
+     */
+    public var verified: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 备份文件路径
+         */filePath: String, 
+        /**
+         * 打包的文件数（不含目录条目）
+         */fileCount: UInt64, 
+        /**
+         * 备份文件字节数
+         */sizeBytes: UInt64, 
+        /**
+         * 导出后自动执行了一次结构校验（FR-8.6）且通过
+         */verified: Bool) {
+        self.filePath = filePath
+        self.fileCount = fileCount
+        self.sizeBytes = sizeBytes
+        self.verified = verified
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiBackupExportResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiBackupExportResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBackupExportResult {
+        return
+            try FfiBackupExportResult(
+                filePath: FfiConverterString.read(from: &buf), 
+                fileCount: FfiConverterUInt64.read(from: &buf), 
+                sizeBytes: FfiConverterUInt64.read(from: &buf), 
+                verified: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiBackupExportResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.filePath, into: &buf)
+        FfiConverterUInt64.write(value.fileCount, into: &buf)
+        FfiConverterUInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterBool.write(value.verified, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBackupExportResult_lift(_ buf: RustBuffer) throws -> FfiBackupExportResult {
+    return try FfiConverterTypeFfiBackupExportResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBackupExportResult_lower(_ value: FfiBackupExportResult) -> RustBuffer {
+    return FfiConverterTypeFfiBackupExportResult.lower(value)
+}
+
+
+/**
+ * 备份结构校验报告（FR-8.6，docs/09 §3.1 冻结契约镜像）。
+ */
+public struct FfiBackupVerifyReport: Equatable, Hashable {
+    /**
+     * 包内 `header.json` 声明的库 UUID
+     */
+    public var vaultUuid: String
+    /**
+     * 包内声明的容器格式版本（恒为当前支持版本）
+     */
+    public var formatVersion: UInt16
+    /**
+     * 包内文件条目数（不含目录条目）
+     */
+    public var fileCount: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 包内 `header.json` 声明的库 UUID
+         */vaultUuid: String, 
+        /**
+         * 包内声明的容器格式版本（恒为当前支持版本）
+         */formatVersion: UInt16, 
+        /**
+         * 包内文件条目数（不含目录条目）
+         */fileCount: UInt64) {
+        self.vaultUuid = vaultUuid
+        self.formatVersion = formatVersion
+        self.fileCount = fileCount
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiBackupVerifyReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiBackupVerifyReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBackupVerifyReport {
+        return
+            try FfiBackupVerifyReport(
+                vaultUuid: FfiConverterString.read(from: &buf), 
+                formatVersion: FfiConverterUInt16.read(from: &buf), 
+                fileCount: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiBackupVerifyReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.vaultUuid, into: &buf)
+        FfiConverterUInt16.write(value.formatVersion, into: &buf)
+        FfiConverterUInt64.write(value.fileCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBackupVerifyReport_lift(_ buf: RustBuffer) throws -> FfiBackupVerifyReport {
+    return try FfiConverterTypeFfiBackupVerifyReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBackupVerifyReport_lower(_ value: FfiBackupVerifyReport) -> RustBuffer {
+    return FfiConverterTypeFfiBackupVerifyReport.lower(value)
+}
 
 
 /**
@@ -2611,6 +3034,88 @@ public func FfiConverterTypeFfiItemSummary_lift(_ buf: RustBuffer) throws -> Ffi
 #endif
 public func FfiConverterTypeFfiItemSummary_lower(_ value: FfiItemSummary) -> RustBuffer {
     return FfiConverterTypeFfiItemSummary.lower(value)
+}
+
+
+/**
+ * Argon2id KDF 档位（FR-1.8 改密可选升级，docs/09 §3.2）。
+ *
+ * 与 header `kdf` 节同构；合法性（`m_cost_kib >= 8 MiB` 等）由
+ * `cf_crypto::kdf::KdfParams::new` 在 `to_domain` 时校验，越界 → 5002。
+ */
+public struct FfiKdfParams: Equatable, Hashable {
+    /**
+     * 内存成本（KiB）
+     */
+    public var mCostKib: UInt32
+    /**
+     * 时间成本（迭代次数）
+     */
+    public var tCost: UInt32
+    /**
+     * 并行度
+     */
+    public var pCost: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 内存成本（KiB）
+         */mCostKib: UInt32, 
+        /**
+         * 时间成本（迭代次数）
+         */tCost: UInt32, 
+        /**
+         * 并行度
+         */pCost: UInt32) {
+        self.mCostKib = mCostKib
+        self.tCost = tCost
+        self.pCost = pCost
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiKdfParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiKdfParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiKdfParams {
+        return
+            try FfiKdfParams(
+                mCostKib: FfiConverterUInt32.read(from: &buf), 
+                tCost: FfiConverterUInt32.read(from: &buf), 
+                pCost: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiKdfParams, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.mCostKib, into: &buf)
+        FfiConverterUInt32.write(value.tCost, into: &buf)
+        FfiConverterUInt32.write(value.pCost, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiKdfParams_lift(_ buf: RustBuffer) throws -> FfiKdfParams {
+    return try FfiConverterTypeFfiKdfParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiKdfParams_lower(_ value: FfiKdfParams) -> RustBuffer {
+    return FfiConverterTypeFfiKdfParams.lower(value)
 }
 
 
@@ -4671,6 +5176,30 @@ fileprivate struct FfiConverterOptionTypeFfiItemFilter: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiKdfParams: FfiConverterRustBuffer {
+    typealias SwiftType = FfiKdfParams?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiKdfParams.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiKdfParams.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiTotpDetail: FfiConverterRustBuffer {
     typealias SwiftType = FfiTotpDetail?
 
@@ -4832,6 +5361,31 @@ fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceInt64: FfiConverterRustBuffer {
+    typealias SwiftType = [Int64]
+
+    public static func write(_ value: [Int64], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterInt64.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int64] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Int64]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterInt64.read(from: &buf))
         }
         return seq
     }
@@ -5086,6 +5640,47 @@ fileprivate struct FfiConverterSequenceTypeFfiVaultBrief: FfiConverterRustBuffer
         return seq
     }
 }
+/**
+ * 剪贴板自动清除的定时档位（FR-14.2）：`[10, 30, 60, 120]` 秒。
+ *
+ * Swift 侧 UI 选择器数据源；「从不」档不入本表，以 `0` 表示
+ * （见 [`validate_clipboard_clear_secs`](crate::validate_clipboard_clear_secs)）。
+ */
+public func clipboardClearTiers() -> [Int64]  {
+    return try!  FfiConverterSequenceInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_func_clipboard_clear_tiers(uniffiCallStatus
+    )
+})
+}
+/**
+ * 剪贴板自动清除的默认档位（FR-14.2）：30 秒
+ * （与 macOS 现行固定 30s 行为向后兼容）。
+ */
+public func defaultClipboardClearSecs() -> Int64  {
+    return try!  FfiConverterInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_func_default_clipboard_clear_secs(uniffiCallStatus
+    )
+})
+}
+/**
+ * 校验剪贴板自动清除档位（FR-14.2，Swift 选择器侧预校验）。
+ *
+ * 合法值：10 / 30 / 60 / 120 秒，或 `0`（「从不」）；其余值（含负数）
+ * → 5002。与 [`VaultSession::set_clipboard_clear_secs`] 同一校验实现。
+ *
+ * # Errors
+ *
+ * 非档位值 → `FfiError`（5002 InvalidArgument）。
+ */
+public func validateClipboardClearSecs(secs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_func_validate_clipboard_clear_secs(
+        FfiConverterInt64.lower(secs),uniffiCallStatus
+    )
+}
+}
 
 private enum InitializationResult {
     case ok
@@ -5102,7 +5697,19 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_cf_ffi_checksum_func_clipboard_clear_tiers() != 41038) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_func_default_clipboard_clear_secs() != 22834) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_func_validate_clipboard_clear_secs() != 25779) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_cofferapp_create_vault() != 44549) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_export_backup() != 7932) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_cofferapp_list_vaults() != 51569) {
@@ -5117,10 +5724,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_cofferapp_open_vault() != 38146) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_restore_backup() != 36291) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_cofferapp_strength_estimate() != 63619) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_verify_backup() != 35451) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired() != 4111) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_change_password() != 62977) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_clipboard_clear_secs() != 63952) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_create_item() != 50566) {
@@ -5156,6 +5775,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_is_unlocked() != 1040) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_last_backup_at() != 21279) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_list_items() != 48491) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5174,6 +5796,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_search() != 35502) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_set_clipboard_clear_secs() != 5629) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_favorite() != 56106) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5181,6 +5806,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_last_activity() != 3130) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_should_suggest_backup() != 65460) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_strength_estimate() != 54383) {

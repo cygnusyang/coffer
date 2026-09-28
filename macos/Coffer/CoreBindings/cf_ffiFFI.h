@@ -264,6 +264,11 @@ uint64_t uniffi_cf_ffi_fn_constructor_cofferapp_new(RustCallStatus *_Nonnull out
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_create_vault(uint64_t ptr, RustBuffer base_dir, RustBuffer name, RustBuffer password, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_EXPORT_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_EXPORT_BACKUP
+RustBuffer uniffi_cf_ffi_fn_method_cofferapp_export_backup(uint64_t ptr, RustBuffer vault_dir, RustBuffer out_path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_LIST_VAULTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_LIST_VAULTS
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_list_vaults(uint64_t ptr, RustBuffer base_dir, RustCallStatus *_Nonnull out_status
@@ -284,9 +289,19 @@ RustBuffer uniffi_cf_ffi_fn_method_cofferapp_new_biometric_unwrap_key(uint64_t p
 uint64_t uniffi_cf_ffi_fn_method_cofferapp_open_vault(uint64_t ptr, RustBuffer base_dir, RustBuffer vault_uuid, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_RESTORE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_RESTORE_BACKUP
+RustBuffer uniffi_cf_ffi_fn_method_cofferapp_restore_backup(uint64_t ptr, RustBuffer backup_path, RustBuffer target_base_dir, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_STRENGTH_ESTIMATE
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_STRENGTH_ESTIMATE
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_strength_estimate(uint64_t ptr, RustBuffer candidate, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_VERIFY_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_VERIFY_BACKUP
+RustBuffer uniffi_cf_ffi_fn_method_cofferapp_verify_backup(uint64_t ptr, RustBuffer backup_path, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_CLONE_VAULTSESSION
@@ -302,6 +317,16 @@ void uniffi_cf_ffi_fn_free_vaultsession(uint64_t handle, RustCallStatus *_Nonnul
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 int8_t uniffi_cf_ffi_fn_method_vaultsession_auto_lock_if_expired(uint64_t ptr, int64_t now_secs, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CHANGE_PASSWORD
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CHANGE_PASSWORD
+void uniffi_cf_ffi_fn_method_vaultsession_change_password(uint64_t ptr, RustBuffer old_password, RustBuffer new_password, RustBuffer new_kdf, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
+int64_t uniffi_cf_ffi_fn_method_vaultsession_clipboard_clear_secs(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CREATE_ITEM
@@ -359,6 +384,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_import_csv(uint64_t ptr, RustBuf
 int8_t uniffi_cf_ffi_fn_method_vaultsession_is_unlocked(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LAST_BACKUP_AT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LAST_BACKUP_AT
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_last_backup_at(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_ITEMS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_ITEMS
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_items(uint64_t ptr, RustBuffer filter, RustCallStatus *_Nonnull out_status
@@ -389,6 +419,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_restore_item(uint64_t ptr, RustBuffer 
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_search(uint64_t ptr, RustBuffer query, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
+void uniffi_cf_ffi_fn_method_vaultsession_set_clipboard_clear_secs(uint64_t ptr, int64_t secs, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_FAVORITE
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_FAVORITE
 void uniffi_cf_ffi_fn_method_vaultsession_set_favorite(uint64_t ptr, RustBuffer item_id, int8_t favorite, RustCallStatus *_Nonnull out_status
@@ -402,6 +437,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_set_idle_timeout_secs(uint64_t ptr, in
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_LAST_ACTIVITY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_LAST_ACTIVITY
 void uniffi_cf_ffi_fn_method_vaultsession_set_last_activity(uint64_t ptr, int64_t unix_secs, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SHOULD_SUGGEST_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SHOULD_SUGGEST_BACKUP
+int8_t uniffi_cf_ffi_fn_method_vaultsession_should_suggest_backup(uint64_t ptr, int64_t threshold_secs, int64_t now_secs, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_STRENGTH_ESTIMATE
@@ -447,6 +487,23 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_vault_dir(uint64_t ptr, RustCall
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_VAULT_UUID
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_VAULT_UUID
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_vault_uuid(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_FUNC_CLIPBOARD_CLEAR_TIERS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_FUNC_CLIPBOARD_CLEAR_TIERS
+RustBuffer uniffi_cf_ffi_fn_func_clipboard_clear_tiers(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_FUNC_DEFAULT_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_FUNC_DEFAULT_CLIPBOARD_CLEAR_SECS
+int64_t uniffi_cf_ffi_fn_func_default_clipboard_clear_secs(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_FUNC_VALIDATE_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_FUNC_VALIDATE_CLIPBOARD_CLEAR_SECS
+void uniffi_cf_ffi_fn_func_validate_clipboard_clear_secs(int64_t secs, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_CF_FFI_RUSTBUFFER_ALLOC
@@ -709,9 +766,33 @@ void ffi_cf_ffi_rust_future_free_void(uint64_t handle
 void ffi_cf_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_FUNC_CLIPBOARD_CLEAR_TIERS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_FUNC_CLIPBOARD_CLEAR_TIERS
+uint16_t uniffi_cf_ffi_checksum_func_clipboard_clear_tiers(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_FUNC_DEFAULT_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_FUNC_DEFAULT_CLIPBOARD_CLEAR_SECS
+uint16_t uniffi_cf_ffi_checksum_func_default_clipboard_clear_secs(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_FUNC_VALIDATE_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_FUNC_VALIDATE_CLIPBOARD_CLEAR_SECS
+uint16_t uniffi_cf_ffi_checksum_func_validate_clipboard_clear_secs(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_CREATE_VAULT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_CREATE_VAULT
 uint16_t uniffi_cf_ffi_checksum_method_cofferapp_create_vault(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_EXPORT_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_EXPORT_BACKUP
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_export_backup(void
     
 );
 #endif
@@ -739,15 +820,39 @@ uint16_t uniffi_cf_ffi_checksum_method_cofferapp_open_vault(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_RESTORE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_RESTORE_BACKUP
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_restore_backup(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_STRENGTH_ESTIMATE
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_STRENGTH_ESTIMATE
 uint16_t uniffi_cf_ffi_checksum_method_cofferapp_strength_estimate(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_VERIFY_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_VERIFY_BACKUP
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_verify_backup(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_CHANGE_PASSWORD
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_CHANGE_PASSWORD
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_change_password(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_clipboard_clear_secs(void
     
 );
 #endif
@@ -817,6 +922,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_is_unlocked(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LAST_BACKUP_AT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LAST_BACKUP_AT
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_last_backup_at(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_ITEMS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_ITEMS
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_list_items(void
@@ -853,6 +964,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_search(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_clipboard_clear_secs(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_FAVORITE
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_FAVORITE
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_favorite(void
@@ -868,6 +985,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_idle_timeout_secs(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_LAST_ACTIVITY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_LAST_ACTIVITY
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_last_activity(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SHOULD_SUGGEST_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SHOULD_SUGGEST_BACKUP
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_should_suggest_backup(void
     
 );
 #endif

@@ -23,9 +23,10 @@
 //! 的 [`crate::ItemStore::with_tx`] 事务内 INSERT 行。两条容忍规则：
 //!
 //! - **文件在行无**（写入后事务回滚 / rename 后进程崩溃）：孤儿文件，
-//!   由调用方在导入/批量写收尾时调 [`AttachmentRepo::cleanup_orphans`]
-//!   清理（当前唯一调用点：cf-importer 1PUX 导入收尾；非导入路径回滚
-//!   产生的孤儿暂无自动清理时机，见 LOW-2 登记，v0.3 内核收口时补）；
+//!   由调用方在批量写收尾时调 [`AttachmentRepo::cleanup_orphans`] 清理
+//!   （当前调用点：cf-importer 1PUX 导入收尾；cf-session 跨库复制
+//!   `copy_item` 的错误收尾——FR-2.10，v0.4.0 补上了 LOW-2 登记的
+//!   非导入路径回滚孤儿清理时机）；
 //! - **行在文件无**（文件被外部删除）：读时报 [`CfError::Corrupted`]。
 //!
 //! 删除顺序相反：先删行（调用方事务）后删文件。

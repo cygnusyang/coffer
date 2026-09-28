@@ -10,10 +10,17 @@
 //!
 //! ## 事件类型
 //!
-//! [`AuditEvent`] 是封闭枚举，覆盖 v0.2.0 的四类动作；`event` 列以
+//! [`AuditEvent`] 是封闭枚举，覆盖 v0.2.0 的四类动作与 v0.4.0 的跨库
+//! 复制（FR-2.10 `item_copy`）；`event` 列以
 //! `as_str` 文本落盘，读取时反向解析——遇到本实现不认识的文本（更高
 //! 版本 App 写入）返回 [`CfError::Corrupted`]，**不静默跳过**（与
 //! schema 版本校验的 O-2 纪律一致）。
+//!
+//! ## 已知风险（FR-2.10，设计裁决接受）
+//!
+//! `ItemCopy` 变体使旧版本 App 读取含 `item_copy` 事件的库时在
+//! [`AuditRepo::list_desc`] 处返回 [`CfError::Corrupted`]——封闭枚举 +
+//! 不静默跳过的既有纪律使然，v0.4.0 设计评审明确接受（正向版本要求）。
 //!
 //! 会话层埋点（unlock / 失败计数等）由 cf-session 后续接入，本仓库只
 //! 提供忠实读写原语。
@@ -33,6 +40,9 @@ pub enum AuditEvent {
     CsvExport,
     /// 修改主密码成功（FR-1.8）。
     PasswordChange,
+    /// 跨库复制条目成功（FR-2.10，v0.4.0）。源库与目标库各打一条，
+    /// `detail` = 非敏感上下文（两端库 uuid + 条目 uuid，不含标题）。
+    ItemCopy,
 }
 
 impl AuditEvent {
@@ -44,6 +54,7 @@ impl AuditEvent {
             Self::BackupRestore => "backup_restore",
             Self::CsvExport => "csv_export",
             Self::PasswordChange => "password_change",
+            Self::ItemCopy => "item_copy",
         }
     }
 
@@ -55,6 +66,7 @@ impl AuditEvent {
             "backup_restore" => Some(Self::BackupRestore),
             "csv_export" => Some(Self::CsvExport),
             "password_change" => Some(Self::PasswordChange),
+            "item_copy" => Some(Self::ItemCopy),
             _ => None,
         }
     }
@@ -210,6 +222,7 @@ mod tests {
             AuditEvent::BackupRestore,
             AuditEvent::CsvExport,
             AuditEvent::PasswordChange,
+            AuditEvent::ItemCopy,
         ] {
             assert_eq!(AuditEvent::parse(event.as_str()), Some(event));
         }

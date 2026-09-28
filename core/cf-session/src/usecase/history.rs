@@ -219,7 +219,10 @@ pub(crate) fn snapshot_current(
 
 /// 快照 → [`ItemDraft`]（回滚路径）。字段挂接的 `section_index` 由
 /// 快照内 `section_uuid` 在 `sections` 列表中的下标反解。
-fn draft_from_snapshot(snap: &ItemSnapshot) -> Result<ItemDraft, CfError> {
+///
+/// `pub(crate)`：跨库复制（FR-2.10）复用同一「快照 → 草稿」组装，
+/// 使复制载荷过同一套 `validate_item` 不变量。
+pub(crate) fn draft_from_snapshot(snap: &ItemSnapshot) -> Result<ItemDraft, CfError> {
     let urls = snap
         .urls
         .iter()

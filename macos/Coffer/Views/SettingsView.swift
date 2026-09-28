@@ -7,7 +7,7 @@
 //   ③ 备份提醒：提醒间隔档位（FR-8.5；评估逻辑 T-G 接入）
 //   ④ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
-//   ⑤ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」占位（T-I 接入）
+//   ⑤ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
 //   ⑥ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
@@ -29,7 +29,7 @@ struct SettingsView: View {
     @State private var showChangePassword = false
     /// 「从备份恢复」sheet（T-H：RestoreBackupView 加密备份恢复流程，FR-8.1）。
     @State private var showRestore = false
-    /// 「审计日志」sheet（占位，T-I 接入 FR-12.6 审计日志查看）。
+    /// 「审计日志」sheet（T-I：AuditLogView 只读审计日志查看，FR-12.6）。
     @State private var showAuditLog = false
 
     var body: some View {
@@ -60,8 +60,9 @@ struct SettingsView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $showAuditLog) {
-            // 占位视图：T-I 替换为审计日志查看（FR-12.6）
-            placeholderSheet(title: "审计日志", taskTag: "T-I")
+            // 审计日志查看（FR-12.6，T-I）：只读最近 200 条，Rust 侧倒序返回
+            AuditLogView()
+                .environmentObject(model)
         }
     }
 
@@ -144,7 +145,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑤ 数据（T-H / T-I 占位）
+    // MARK: - ⑤ 数据（T-H 恢复备份 / T-I 审计日志）
 
     private var dataSection: some View {
         Section("数据") {
@@ -160,7 +161,7 @@ struct SettingsView: View {
             } label: {
                 Label("审计日志…", systemImage: "list.bullet.rectangle")
             }
-            // T-I 接入前弹出占位 sheet
+            // T-I：弹出 AuditLogView（见 body 的 showAuditLog sheet）
         }
     }
 
@@ -175,18 +176,5 @@ struct SettingsView: View {
                 Spacer()
             }
         }
-    }
-
-    // MARK: - 占位 sheet
-
-    /// T-I 接入前的占位 sheet 内容。
-    private func placeholderSheet(title: String, taskTag: String) -> some View {
-        VStack(spacing: 10) {
-            Text(title).font(.headline)
-            Text("该功能尚未开放（\(taskTag) 接入）。")
-                .foregroundStyle(.secondary)
-        }
-        .padding(30)
-        .frame(width: 320)
     }
 }

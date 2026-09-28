@@ -165,7 +165,9 @@ pub fn run_health_report(
                 hmac_b64: cf_audit::password_fingerprint(plain, audit_key.as_bytes()),
             });
             common_candidates.push((item_id.clone(), plain.to_owned()));
-            // 明文（plain）在此离开循环体，不驻留（借用于解密返回值）
+            // 明文（plain）进入 common_candidates 持有至本函数末尾消费
+            // （与 usecase/audit.rs 既有模式一致）：**不进报告、不越函数
+            // 边界**，HealthReport 只收指纹与 item_id。
         }
 
         let item_urls = repos.urls.read_for_item(&item_id)?;

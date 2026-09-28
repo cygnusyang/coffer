@@ -10,14 +10,21 @@
 //!
 //! 参照 CSV 导入（docs/07 §3.1）的硬上限纪律：`export.data` 明文
 //! [`MAX_EXPORT_DATA_BYTES`]（64 MiB）、条目总数 [`MAX_ITEMS`]（10 万）、
-//! 单条目 JSON 的 `export.attributes` 64 KiB。附件内容大小上限由
-//! `cf-store::AttachmentRepo::add`（100 MiB，FR-9.1）在落库前把守。
+//! 单条目 JSON 的 `export.attributes` 64 KiB、单个附件内容
+//! [`cf_store::MAX_ATTACHMENT_BYTES`]（100 MiB，与 cf-store 落库检查同一
+//! 常量，防口径漂移）。
+//!
+//! 附件上限在导入侧**读入时**把守（防 zip bomb）：central directory
+//! 声明的大小只是读前快筛，恶意归档可声明小尺寸、解压出远超声明的
+//! 数据——实际读取一律经 [`read_bounded`] 以 `max + 1` 硬限宽（`.take`），
+//! 超限即整体拒绝，不把超限数据交给上层。
 
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
 use cf_domain::CfError;
+use cf_store::MAX_ATTACHMENT_BYTES;
 use zip::ZipArchive;
 
 use super::model::PuxModel;
@@ -90,18 +97,25 @@ impl PuxArchive {
 
     /// 读取单个附件条目的明文内容（落库时按需调用）。
     ///
+    /// 防 zip bomb（dev-review HIGH-1）：先按 central directory 声明大小
+    /// 快筛，再以 [`MAX_ATTACHMENT_BYTES`] 硬限宽读取（见模块文档）。
+    ///
     /// # Errors
     ///
-    /// 条目不存在 → [`CfError::ImportFailed`]；读失败 → [`CfError::Io`]。
+    /// 条目不存在 / 声明或实际大小超上限 → [`CfError::ImportFailed`]；
+    /// 读失败 → [`CfError::Io`]。
     pub fn read_entry_content(&mut self, entry_name: &str) -> Result<Vec<u8>, CfError> {
-        let mut f = self
+        let f = self
             .archive
             .by_name(entry_name)
             .map_err(|_| CfError::ImportFailed(format!("ZIP 内缺少条目 {entry_name}")))?;
-        let mut buf = Vec::with_capacity(f.size().min(usize::MAX as u64) as usize);
-        f.read_to_end(&mut buf)
-            .map_err(|e| CfError::Io(format!("读取 ZIP 条目 {entry_name} 失败：{e}")))?;
-        Ok(buf)
+        if f.size() > MAX_ATTACHMENT_BYTES as u64 {
+            return Err(CfError::ImportFailed(format!(
+                "ZIP 条目 {entry_name} 声明大小 {} 超过附件上限 {MAX_ATTACHMENT_BYTES}",
+                f.size()
+            )));
+        }
+        read_bounded(f, &format!("条目 {entry_name}"), MAX_ATTACHMENT_BYTES)
     }
 
     /// 定位 [`crate::pux::model::PuxFileRef`] 对应的 ZIP 条目名。
@@ -139,7 +153,7 @@ impl PuxArchive {
 
     /// 读取 ZIP 内指定成员的原始字节（上限内）。
     fn read_entry_bytes(&mut self, name: &str, max: usize) -> Result<Vec<u8>, CfError> {
-        let mut f = self
+        let f = self
             .archive
             .by_name(name)
             .map_err(|_| CfError::ImportFailed(format!("1PUX ZIP 内缺少必需成员 {name}")))?;
@@ -149,8 +163,23 @@ impl PuxArchive {
                 f.size()
             )));
         }
-        let mut buf = Vec::with_capacity(f.size() as usize);
-        f.read_to_end(&mut buf).map_err(|e| CfError::Io(format!("读取 ZIP 成员 {name} 失败：{e}")))?;
-        Ok(buf)
+        read_bounded(f, &format!("成员 {name}"), max)
     }
+}
+
+/// 真正防线：以 `max + 1` 硬限宽（`.take`）读取已打开的 ZIP 条目，
+/// 实际解压字节数超过 `max` → [`CfError::ImportFailed`]，不把超限数据
+/// 交给上层。central directory 声明的大小不可信（各调用方已快筛）。
+fn read_bounded(f: impl Read, label: &str, max: usize) -> Result<Vec<u8>, CfError> {
+    let mut limited = f.take(max as u64 + 1);
+    let mut buf = Vec::new();
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| CfError::Io(format!("读取 ZIP {label} 失败：{e}")))?;
+    if buf.len() > max {
+        return Err(CfError::ImportFailed(format!(
+            "ZIP {label} 实际解压后大小超过上限 {max}（声明大小不可信），拒绝导入"
+        )));
+    }
+    Ok(buf)
 }

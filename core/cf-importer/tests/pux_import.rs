@@ -298,6 +298,117 @@ fn zip_entry_bytes(pux_path: &Path, entry: &str) -> Vec<u8> {
     assert_eq!(content, b"official form B content");
 }
 
+/// 附件 zip bomb（dev-review HIGH-1）：`files/` 条目 central directory
+/// 声明的解压大小很小、实际解压内容超过单附件 100 MiB 上限 → 导入报
+/// `ImportFailed` 且不落库（不得依赖 cf-store 落库前的第二道检查兜底）。
+#[test]
+ fn 附件zip炸弹声明尺寸小实际解压超限被拒() {
+    let pux_path = bomb_1pux("attachment_bomb", 110 * 1024 * 1024, 0);
+    tamper_central_dir_uncompressed_size(&pux_path, "files/BOMBDOC___bomb.bin", 16);
+
+    let mut h = harness();
+    let err = import_1pux(&pux_path, &mut h.store, &h.vault_dir).unwrap_err();
+    assert!(
+        matches!(err, cf_domain::CfError::ImportFailed(ref m) if m.contains("实际解压")),
+        "应报实际解压超限的 ImportFailed，实际 {err:?}"
+    );
+    assert_eq!(
+        h.store.repos().items.count(None).unwrap(),
+        0,
+        "炸弹条目不得落库"
+    );
+}
+
+/// export.data zip bomb：central directory 声明很小、实际解压超过
+/// 64 MiB 上限 → 预检报 `ImportFailed`（读入阶段拦截，不进 JSON 解析）。
+#[test]
+ fn 导出数据zip炸弹声明尺寸小实际解压超限被拒() {
+    let pux_path = bomb_1pux("data_bomb", 1, 65 * 1024 * 1024);
+    tamper_central_dir_uncompressed_size(&pux_path, "export.data", 20);
+
+    let err = precheck_1pux(&pux_path).unwrap_err();
+    assert!(
+        matches!(err, cf_domain::CfError::ImportFailed(ref m) if m.contains("实际解压")),
+        "应报实际解压超限的 ImportFailed，实际 {err:?}"
+    );
+}
+
+/// 把 ZIP central directory 中指定条目的「解压后大小」字段篡改为
+/// `fake`（模拟 zip bomb：声明小尺寸、实际解压内容远大于声明）。
+/// 只改 central directory（`f.size()` 的来源），不动压缩数据与 CRC。
+fn tamper_central_dir_uncompressed_size(path: &Path, entry: &str, fake: u32) {
+    let mut raw = std::fs::read(path).unwrap();
+    let needle = entry.as_bytes();
+    let mut patched = false;
+    let mut from = 0;
+    while let Some(off) = find_subslice(&raw[from..], b"PK\x01\x02") {
+        let base = from + off;
+        from = base + 4;
+        let name_len = u16::from_le_bytes([raw[base + 28], raw[base + 29]]) as usize;
+        if &raw[base + 46..base + 46 + name_len] == needle {
+            raw[base + 24..base + 28].copy_from_slice(&fake.to_le_bytes());
+            patched = true;
+        }
+    }
+    assert!(patched, "central directory 中未找到条目 {entry}");
+    std::fs::write(path, &raw).unwrap();
+}
+
+/// 在 `haystack` 中定位 `needle` 首次出现位置。
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// 构造 zip bomb 测试用单条目 1PUX（形态 B 附件，`files/BOMBDOC___bomb.bin`）。
+///
+/// `content_len`：附件条目内容字节数（重复 `'A'`，deflate 高度可压，
+/// 实际 ZIP 文件仍然很小）；`data_pad`：export.data 尾部空白填充字节数
+/// （JSON 合法性不受影响）。`file_stem` 须各测试唯一——测试并行运行，
+/// 共享路径会互相覆盖产生损坏的 ZIP。
+fn bomb_1pux(file_stem: &str, content_len: usize, data_pad: usize) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("coffer-pux-bomb-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{file_stem}.1pux"));
+    let f = std::fs::File::create(&path).unwrap();
+    let mut zip = zip::ZipWriter::new(f);
+    let opts = zip::write::SimpleFileOptions::default();
+    use std::io::Write as _;
+    zip.start_file("export.attributes", opts).unwrap();
+    zip.write_all(br#"{"version": 3}"#).unwrap();
+    let mut data = serde_json::json!({
+        "accounts": [{
+            "attrs": {"name": "B"},
+            "vaults": [{
+                "attrs": {"uuid": "VB", "name": "v", "type": "P"},
+                "items": [{
+                    "uuid": "SB1", "categoryUuid": "112", "state": "active",
+                    "createdAt": 1_700_000_000i64, "updatedAt": 1_700_000_000i64,
+                    "overview": {"title": "B"},
+                    "details": {"documentAttributes": {
+                        "fileName": "bomb.bin", "documentId": "BOMBDOC",
+                        "decryptedSize": content_len as i64
+                    }}
+                }]
+            }]
+        }]
+    })
+    .to_string()
+    .into_bytes();
+    data.resize(data.len() + data_pad, b' ');
+    zip.start_file("export.data", opts).unwrap();
+    zip.write_all(&data).unwrap();
+    zip.start_file("files/BOMBDOC___bomb.bin", opts).unwrap();
+    let chunk = [b'A'; 65536];
+    let mut left = content_len;
+    while left > 0 {
+        let n = chunk.len().min(left);
+        zip.write_all(&chunk[..n]).unwrap();
+        left -= n;
+    }
+    zip.finish().unwrap();
+    path
+}
+
 /// 构造官方形态（fieldType 键 + documentAttributes）的小样本 1PUX。
 fn tmp_1pux() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("coffer-pux-test-{}", std::process::id()));

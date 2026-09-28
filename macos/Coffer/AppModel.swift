@@ -124,15 +124,15 @@ final class AppModel: ObservableObject {
     /// 自动锁定平台驱动（锁屏 / 休眠 / 屏保立即锁定 + 空闲喂入）。
     private var lockMonitor: AutoLockMonitor?
 
-    // MARK: 备份提醒配置（FR-8.5 / T06 设置页归位；评估逻辑 T-G 接入）
+    // MARK: 备份提醒（FR-8.5 / T06 设置页归位；T-G 评估逻辑已接入）
 
     /// 备份提醒间隔天数（FR-8.5 四档：0 = 禁用 / 7 / 14 / 30，默认 30）。
     /// 哨兵语义注意（三者互不相同，勿混淆）：
     ///   - autoLockMinutes：运行态 0 = 从不，落盘 -1 = 从不；
     ///   - clipboardClearSecs：0 = 从不（落盘同值）；
     ///   - backupReminderDays：0 = 禁用提醒（落盘同值）。
-    /// didSet 仅落盘；「距上次备份是否超期 → 触发提醒」的评估逻辑由
-    /// T-G 接入（本属性先作为设置项数据源）。
+    /// didSet 落盘 + 解锁态下重评估（T-G）：改档即重算横幅
+    /// （如从 30 天改 7 天且已超期，横幅立即出现；反之立即消失）。
     @Published var backupReminderDays: Int = AppModel.loadBackupReminderDays() {
         didSet {
             // 防御校验（与 clipboardClearSecs 同纪律）：非法值宁可不生效，
@@ -141,8 +141,13 @@ final class AppModel: ObservableObject {
             guard oldValue != backupReminderDays else { return }
             UserDefaults.standard.set(backupReminderDays,
                                       forKey: Self.backupReminderDefaultsKey)
+            evaluateBackupReminder()
         }
     }
+
+    /// 备份提醒横幅可见性（FR-8.5，T-G）。提醒非配置：不入 UserDefaults，
+    /// 每次解锁成功 / 改档 / 备份导出成功时重算（见 evaluateBackupReminder）。
+    @Published private(set) var showBackupBanner = false
 
     /// 从 UserDefaults 读档位（nonisolated，供属性默认值使用）。
     /// 用 object(forKey:) 区分「未配置」与「显式 0（禁用）」——integer(forKey:)
@@ -157,6 +162,43 @@ final class AppModel: ObservableObject {
     /// 默认档位：30 天（FR-8.5）。
     nonisolated static let defaultBackupReminderDays = 30
     nonisolated static let backupReminderDefaultsKey = "backupReminderDays"
+
+    /// 评估是否显示备份提醒横幅（FR-8.5，T-G）。
+    ///
+    /// 调用时机纪律：shouldSuggestBackup 有解锁态门禁（Rust 1001），只能在
+    /// 解锁完成后调用——本模型在 unlock / unlockWithTouchID 成功切 .unlocked
+    /// 之后、backupReminderDays didSet（改档即重评估）三处调用。
+    ///
+    /// - days == 0（禁用）→ 直接置 false，不发 FFI 调用（Rust 侧
+    ///   threshold <= 0 同样视为禁用，此处提前短路省一次跨桥）。
+    /// - 从未备份：Rust 侧 lastBackupAt 为 nil 同样返回应提醒，无需区分文案。
+    /// - FFI 失败（含 1001）按「不提醒」处理：提醒是 Should 级非门禁功能，
+    ///   评估失败静默降级为不显示横幅，不阻塞解锁流程、不打扰用户。
+    func evaluateBackupReminder() {
+        guard phase == .unlocked, let session else {
+            showBackupBanner = false
+            return
+        }
+        // 防御校验（与 didSet 同纪律）：非法档位视为禁用
+        guard Self.backupReminderOptions.contains(backupReminderDays) else {
+            showBackupBanner = false
+            return
+        }
+        // 0 = 禁用提醒（FR-8.5 档位语义）：不发 FFI 调用
+        guard backupReminderDays > 0 else {
+            showBackupBanner = false
+            return
+        }
+        let threshold = Int64(backupReminderDays) * 86_400
+        let now = Int64(Date().timeIntervalSince1970)
+        showBackupBanner = (try? session.shouldSuggestBackup(thresholdSecs: threshold, nowSecs: now)) == true
+    }
+
+    /// 「暂不」：本会话隐藏横幅。下次解锁成功 / 改档 / 备份导出成功时
+    /// 会重评估（提醒非配置，状态不持久化）。
+    func dismissBackupBanner() {
+        showBackupBanner = false
+    }
 
     // MARK: - FFI 对象
 
@@ -273,6 +315,8 @@ final class AppModel: ObservableObject {
             vaultName = info.displayName
             applyIdleTimeout()
             phase = .unlocked
+            // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
+            evaluateBackupReminder()
         } catch {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
@@ -382,6 +426,8 @@ final class AppModel: ObservableObject {
             vaultName = info.displayName
             applyIdleTimeout()
             phase = .unlocked
+            // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
+            evaluateBackupReminder()
         } catch {
             // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
             // FfiError（1002 / 4001 / 5999）各自语义化呈现

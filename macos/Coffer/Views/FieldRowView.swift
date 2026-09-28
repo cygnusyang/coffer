@@ -1,5 +1,7 @@
 // FieldRowView.swift —— 详情字段行：普通字段直出，Concealed 字段默认掩码、
 // 点击「显示」按需经 getFieldValue 取明文（取回即用，只存行内局部状态）。
+// FR-5.6（v0.4）：密码字段的复制按钮在条目含 TOTP 时走序列复制
+// （ClipboardManager.copyPasswordThenTotp，docs/15 §3.3.3）。
 
 import SwiftUI
 
@@ -131,13 +133,14 @@ struct ConcealedFieldRow: View {
         isBusy = false
     }
 
-    /// 复制敏感值：取回即写剪贴板（不落任何状态），按当前档位自动清除。
+    /// 复制敏感值：取回即写剪贴板（不落任何状态），按当前档位自动清除；
+    /// FR-5.6 条件满足时走序列复制（见 copyWithTotpIfApplicable）。
     private func copyValue() {
         guard !isBusy else { return }
         isBusy = true
         do {
             let value = try revealed ?? (model.fieldValue(itemId: itemId, fieldId: field.uuid) ?? "")
-            ClipboardManager.shared.copyWithAutoClear(value)
+            copyWithTotpIfApplicable(value)
             copiedFeedback = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 copiedFeedback = false
@@ -146,5 +149,26 @@ struct ConcealedFieldRow: View {
             model.handleFfiError(error)
         }
         isBusy = false
+    }
+
+    /// FR-5.6（docs/15 §3.3.3 调用点：FieldRowView 密码复制按钮）：仅密码
+    /// 字段（designation == .password）且条目含 TOTP 时走「密码 → 延迟
+    /// 取码 → 验证码」序列，否则单次自动清除复制（现状）。TOTP 元数据取
+    /// 自当前详情——本行由 ItemDetailView 以 currentDetails 渲染，uuid
+    /// 对齐校验防错配（与本字段不是同一详情时按单次复制降级）。
+    private func copyWithTotpIfApplicable(_ value: String) {
+        guard field.designation == .password,
+              let details = model.currentDetails,
+              details.uuid == itemId,
+              details.totp != nil else {
+            ClipboardManager.shared.copyWithAutoClear(value)
+            return
+        }
+        // totpProvider 延迟执行取 fresh code；闭包体内访问 @MainActor 的
+        // AppModel，经 assumeIsolated 进入——ClipboardManager 保证回调只在
+        // 主队列触发（与 MainView HK-3 调用点同一模式）
+        ClipboardManager.shared.copyPasswordThenTotp(password: value) {
+            MainActor.assumeIsolated { try? model.totpCode(itemId: itemId).code }
+        }
     }
 }

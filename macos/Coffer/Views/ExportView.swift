@@ -64,17 +64,30 @@ struct ExportView: View {
     /// 双门禁②：confirmationDialog 是否弹出
     @State private var csvShowFinalConfirm = false
 
+    /// 任一导出流执行中（关闭按钮此时禁用，防丢结果页）。
+    private var isAnyExporting: Bool {
+        if case .exporting = step { return true }
+        if case .exporting = csvStep { return true }
+        return false
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("导出").font(.headline)
-                Spacer()
                 Picker("", selection: $tab) {
                     Text("加密备份").tag(Tab.encrypted)
                     Text("CSV 明文").tag(Tab.csv)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
+                Spacer()
+                // 显式关闭出口（BUG-5 同类修复：macOS sheet 点外部不关闭、
+                // 无按钮时 Esc 无效）。导出执行中禁用（结果页会丢，任务
+                // 本身不受影响；备份/CSV 均为写目标文件，无中断损坏面）。
+                Button("关闭") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isAnyExporting)
             }
             .padding()
 

@@ -253,7 +253,8 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 1. ImportView 标题栏右侧补「关闭」按钮（`.keyboardShortcut(.cancelAction)`，Esc 生效），导入事务执行中禁用（防丢结果页；事务 all-or-nothing 无数据风险）。
 2. T-I（AuditLogView）已于合入前修复（toolbar「完成」+ dismiss）。
-3. **流程改进**：docs/07 §4 UI 纪律补一条「macOS sheet 必须提供显式关闭出口（关闭/完成按钮，含 cancelAction 快捷键）；执行中需禁用时必须保证可从错误/取消路径返回」——防第四个实例。
+3. **全量 sheet 审计（2026-09-28，验收中发现 ExportView 同病后触发）**：9 处 `.sheet` 挂载 8 个目标 View 逐一核查——ExportView（备份/CSV 两流的选路径与确认页）与 RestoreBackupView（选文件与确认页）同样缺失，已按同款修复（标题栏「关闭」+ cancelAction，exporting/restoring/verifying 执行中禁用）。其余 6 个（SettingsView / ChangePasswordView / AuditLogView / ImportView / ItemEditView / VaultBioEnableOfferView）确认合格。
+4. **流程改进**：docs/07 §2.4 UI 纪律补一条「macOS sheet 必须提供显式关闭出口（关闭/完成按钮，含 cancelAction 快捷键）；执行中需禁用时必须保证可从错误/取消路径返回」——防第四个实例。
 
 ### 复现与诊断
 

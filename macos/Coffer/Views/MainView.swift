@@ -96,6 +96,8 @@ struct MainView: View {
             }
             Section {
                 Label("回收站", systemImage: "trash").tag(SidebarFilter.trash)
+                // 安全体检入口（FR-6.2–6.7，v0.3.0-T05 T-D）
+                Label("安全体检", systemImage: "cross.case.fill").tag(SidebarFilter.health)
             }
         }
         .listStyle(.sidebar)
@@ -108,6 +110,9 @@ struct MainView: View {
         Group {
             if model.sidebarFilter == .trash {
                 TrashListView()
+            } else if model.sidebarFilter == .health {
+                // 安全体检页（FR-6.2–6.7，T-D）：整页视图，不走条目列表
+                HealthCheckView()
             } else {
                 ActiveItemList()
             }
@@ -132,10 +137,12 @@ struct MainView: View {
                 } label: {
                     Label("设置", systemImage: "gearshape")
                 }
-                Button {
-                    model.showImport = true
+                // 导入入口菜单（v0.3.0-T05 FR-7.1）：CSV 与 1PUX 两格式并列
+                Menu {
+                    Button("CSV…") { model.showImport = true }
+                    Button("1Password (.1pux)…") { model.showImportPux = true }
                 } label: {
-                    Label("导入 CSV", systemImage: "square.and.arrow.down")
+                    Label("导入", systemImage: "square.and.arrow.down")
                 }
                 // 加密备份导出入口（FR-8.1/8.6，T-E；底层契约锁定态可用，
                 // UI 入口置于解锁后主界面，TC-EXP-08）
@@ -153,6 +160,10 @@ struct MainView: View {
         }
         .sheet(isPresented: $model.showImport) {
             ImportView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.showImportPux) {
+            PuxImportView()
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.showExport) {
@@ -242,6 +253,8 @@ struct ActiveItemList: View {
         case .favorites: return "收藏"
         case .category(let category): return category.displayName
         case .trash: return "回收站"
+        // 防御分支：.health 下中栏渲染 HealthCheckView，本标题不可达。
+        case .health: return "安全体检"
         }
     }
 }

@@ -20,6 +20,23 @@ struct CofferMainApp: App {
                 .frame(minWidth: 820, minHeight: 540)
         }
         .windowToolbarStyle(.unified)
+        .commands {
+            // 「数据」菜单（验收反馈：菜单里没有导入/导出）：与工具栏
+            // 触发同一 sheet 状态（AppModel @Published）。锁定态禁用——
+            // 导入需解锁态（1001 门禁）、导出/设置入口在主界面（解锁区）。
+            CommandMenu("数据") {
+                Button("导入 CSV…") { model.showImport = true }
+                    .keyboardShortcut("i", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+                Button("导出…") { model.showExport = true }
+                    .keyboardShortcut("e", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+                Divider()
+                Button("设置…") { model.showSettings = true }
+                    .keyboardShortcut(",", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+            }
+        }
     }
 }
 

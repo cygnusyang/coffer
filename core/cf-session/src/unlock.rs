@@ -331,6 +331,11 @@ pub(crate) fn recover_dek(
 
 /// 解锁内核收尾（步骤 4–5）：DEK → SubKeys 派生 → ItemStore 打开。
 /// 主密码路径与 bio 路径（docs/08 §6「共享步骤 3–5」）共用。
+///
+/// 步骤 5 之后追加**完整性校验**（NFR-REL-02/03，docs/09 §2 v0.2-T04）：
+/// `verify_integrity` 校验 meta 基线（缺行自举 = 旧库兼容），任何失败
+/// 归一为 [`CfError::UnlockFailed`]（1002，三态合并纪律延伸到完整性路径，
+/// 不泄露「完整性失败」细节，FR-1.4 / TC-MAC-06）。
 pub(crate) fn finish_unlock(
     vault_dir: &Path,
     header: &cf_format::Header,
@@ -341,13 +346,21 @@ pub(crate) fn finish_unlock(
     let uuid = uuid::Uuid::parse_str(&header.vault_uuid).map_err(|_| UNLOCK_FAILED)?;
     let uuid_b = *uuid.as_bytes();
 
-    // 4. HKDF 派生 7 子密钥（失败归一为 1002——正常输入下不会发生，
+    // 4. HKDF 派生 9 子密钥（失败归一为 1002——正常输入下不会发生，
     //    但不借错误分支泄露任何派生进度信息）
     let subkeys = SubKeys::derive(dek.as_bytes(), &uuid_b).map_err(|_| UNLOCK_FAILED)?;
 
     // 5. 打开数据库（连接失败 / schema 版本异常 → 1002）
     let conn = Connection::open(vault_dir.join(DB_FILE)).map_err(|_| UNLOCK_FAILED)?;
-    cf_store::ItemStore::open(conn, subkeys).map_err(|_| UNLOCK_FAILED)
+    let store = cf_store::ItemStore::open(conn, subkeys).map_err(|_| UNLOCK_FAILED)?;
+
+    // 5b. 完整性校验（NFR-REL-02/03）：meta 基线缺失则自举（旧库兼容，
+    //     open 后连接为读写模式，可安全落盘）；计数/MAC 不符 → 1002
+    let meta = cf_store::MetaRepo::new(store.connection());
+    meta.verify_integrity(&store.subkeys().root_mac_key)
+        .map_err(|_| UNLOCK_FAILED)?;
+
+    Ok(store)
 }
 
 /// 解锁内核：密码 → KEK → DEK → verifier 校验 → SubKeys → ItemStore。

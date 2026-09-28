@@ -4,10 +4,28 @@
 //!
 //! - 标量整数以 **i64 小端（LE）** 编码进 BLOB（对齐 §3.1 预置行注释）；
 //! - `item_count` 是已知元数据泄露项（`03` §3.5），明文存储是有意为之；
-//! - `record_count` / `root_mac` 的防删除/防回滚校验推后 v0.2（docs/07 §5 C-4），
-//!   本仓库层只提供键值读写原语。
+//! - `record_count` / `root_mac` 完整性校验（防删除/防回滚，docs/07 §5 C-4
+//!   → v0.2 T04 落地，NFR-REL-02/03）：[`MetaRepo::bump_integrity`] 在每个
+//!   写事务末尾重算基线，[`MetaRepo::verify_integrity`] 在解锁时校验，
+//!   MAC 密钥为第 9 把子密钥 `root_mac_key`（不落盘，库文件篡改不可伪造）。
+//!
+//! ## root_mac 计算（docs/09 §2 v0.2-T04 冻结）
+//!
+//! `root_mac = HMAC-SHA256(root_mac_key, LE(record_count) ‖ LE(schema_version))`：
+//! - `record_count` 为 **items 表行数**（COUNT(*)，见 [`MetaRepo::bump_integrity`]）；
+//! - `schema_version` 取 `cf_format::FORMAT_VERSION`（跨 crate 引用防漂移），
+//!   两端均按 i64 小端编码（与 meta 表既有 i64-LE 约定一致）；
+//! - 存储形态与 meta 既有风格一致：record_count 走 i64-LE BLOB
+//!   （`set_i64`），root_mac 走 base64 文本（对齐 header/content_mac 的
+//!   base64 惯例）。
 
+use base64::Engine as _;
+use cf_crypto::aead::SessionKey;
+use hmac::digest::generic_array::GenericArray;
+use hmac::digest::KeyInit;
+use hmac::{Hmac, Mac};
 use rusqlite::Connection;
+use sha2::Sha256;
 
 use crate::error::{CfStoreResult, RusqliteResultExt};
 
@@ -26,6 +44,12 @@ pub const KEY_ROOT_MAC: &str = "root_mac";
 /// 打点方为 cf-exporter 的 `export_backup` 成功路径（明文元数据，无需
 /// 解锁态）；缺行 = 从未备份过。
 pub const KEY_LAST_BACKUP_AT: &str = "last_backup_at";
+
+/// root MAC 字节长度（HMAC-SHA256 输出，`root_mac_key` 为 32 字节子密钥）。
+const ROOT_MAC_LEN: usize = 32;
+
+/// HMAC-SHA256 实例别名（与 cf-audit watchtower 同构）。
+type HmacSha256 = Hmac<Sha256>;
 
 /// meta 表键值仓库。
 pub struct MetaRepo<'a> {
@@ -110,6 +134,112 @@ impl<'a> MetaRepo<'a> {
     pub fn set_last_backup_at(&self, unix_secs: i64) -> CfStoreResult<()> {
         self.set_i64(KEY_LAST_BACKUP_AT, unix_secs)
     }
+
+    // ------------------------------------------------------------ 完整性校验
+    // （NFR-REL-02/03，docs/09 §2 v0.2-T04，docs/07 §5 C-4 落地）
+
+    /// 受保护条目计数：`items` 表行数（COUNT(*)）。
+    ///
+    /// 口径裁决（v0.2-T04）：**只计 items 表**。理由：record_count 的语义是
+    /// 「条目记录数」，与 §3.1 预置行注释及 meta.item_count 的条目口径对齐；
+    /// attachments / history / fields 等从表均以 `ON DELETE CASCADE` 挂在
+    /// items 下，条目删除必然级联可见，单独纳入只增加口径漂移面。
+    fn record_count_actual(&self) -> CfStoreResult<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))
+            .store()
+    }
+
+    /// 重算完整性基线并写入 meta 两行（NFR-REL-02/03）。
+    ///
+    /// `record_count = COUNT(*) FROM items`；
+    /// `root_mac = HMAC-SHA256(root_mac_key, LE(record_count) ‖ LE(schema_version))`。
+    ///
+    /// 由 [`crate::ItemStore::with_tx`] 在事务闭包成功后统一调用（单点实现，
+    /// SQLite 事务保证与业务写入同生共死：本函数失败自动 ROLLBACK）。
+    pub fn bump_integrity(&self, key: &SessionKey) -> CfStoreResult<()> {
+        let count = self.record_count_actual()?;
+        self.set_i64(KEY_RECORD_COUNT, count)?;
+        let mac_b64 = base64::engine::general_purpose::STANDARD
+            .encode(root_mac_bytes(key, count));
+        self.set(KEY_ROOT_MAC, mac_b64.as_bytes())
+    }
+
+    /// 校验完整性基线（NFR-REL-02/03，解锁路径调用）。
+    ///
+    /// - 两行**任一缺失** → 自举：按 `COUNT(*)` 初始化写入（旧库兼容，
+    ///   无需格式迁移）；
+    /// - `record_count` 行与 items 表实际行数不符（绕过 with_tx 的直接
+    ///   删除/插入）→ [`CfError::Corrupted`]；
+    /// - `root_mac` 与以当前基线重算的 HMAC 不符（base64 恒定时间比较）→
+    ///   [`CfError::Corrupted`]；调用方（cf-session）归一为 1002。
+    ///
+    /// 自举分支会产生写入：解锁连接以读写模式打开，可安全落盘。
+    pub fn verify_integrity(&self, key: &SessionKey) -> CfStoreResult<()> {
+        let stored_count = self.get_i64(KEY_RECORD_COUNT)?;
+        let stored_mac = self.get(KEY_ROOT_MAC)?;
+        let (stored_count, stored_mac) = match (stored_count, stored_mac) {
+            (Some(c), Some(m)) => (c, m),
+            // 任一行缺失 → 自举（旧库兼容语义，docs/07 §5 C-4）
+            _ => return self.bump_integrity(key),
+        };
+
+        let fresh_count = self.record_count_actual()?;
+        if stored_count != fresh_count {
+            return Err(cf_domain::CfError::Corrupted(
+                "record_count does not match items table".into(),
+            ));
+        }
+
+        // 存储形态：base64 文本。非法 UTF-8 / 非法 base64 / 长度不符
+        // 均按「MAC 不匹配」同语义处理（Corrupted），不泄露形态细节。
+        let mac_text = std::str::from_utf8(&stored_mac).map_err(|_| {
+            cf_domain::CfError::Corrupted("root mac value is corrupt".into())
+        })?;
+        let mac_bytes = base64::engine::general_purpose::STANDARD
+            .decode(mac_text)
+            .map_err(|_| cf_domain::CfError::Corrupted("root mac value is corrupt".into()))?;
+        if mac_bytes.len() != ROOT_MAC_LEN {
+            return Err(cf_domain::CfError::Corrupted(
+                "root mac value is corrupt".into(),
+            ));
+        }
+
+        // 恒定时间比较（Mac::verify_slice 内部用 subtle），防时序侧信道
+        let mut mac = hmac_sha256(key.as_bytes());
+        mac.update(&fresh_count.to_le_bytes());
+        mac.update(&i64::from(cf_format::FORMAT_VERSION).to_le_bytes());
+        mac.verify_slice(&mac_bytes).map_err(|_| {
+            cf_domain::CfError::Corrupted("root mac mismatch".into())
+        })
+    }
+}
+
+/// 由 32 字节子密钥构造 HMAC-SHA256 实例。
+///
+/// 按 RFC 2104 §2 将 32 字节密钥**零填充**到 HMAC 分组长度（64B）后走
+/// infallible 的 `Mac::new`——两者逐字节等价（HMAC 对短密钥即零填充到
+/// 分组长度），与 cf-audit watchtower 的既有模式一致，不可达错误分支被
+/// 结构性消除。
+fn hmac_sha256(key: &[u8; 32]) -> HmacSha256 {
+    const HMAC_SHA256_BLOCK_LEN: usize = 64;
+    let mut padded = [0u8; HMAC_SHA256_BLOCK_LEN];
+    padded[..key.len()].copy_from_slice(key);
+    <HmacSha256 as KeyInit>::new(GenericArray::from_slice(&padded))
+}
+
+/// 计算完整性根 MAC（docs/09 §2 v0.2-T04 冻结公式）。
+///
+/// `HMAC-SHA256(root_mac_key, LE(record_count) ‖ LE(schema_version))`，
+/// schema_version 取 `cf_format::FORMAT_VERSION`，两端 i64 小端编码。
+fn root_mac_bytes(key: &SessionKey, record_count: i64) -> [u8; ROOT_MAC_LEN] {
+    let mut mac = hmac_sha256(key.as_bytes());
+    mac.update(&record_count.to_le_bytes());
+    mac.update(&i64::from(cf_format::FORMAT_VERSION).to_le_bytes());
+    let out = mac.finalize().into_bytes();
+    let mut arr = [0u8; ROOT_MAC_LEN];
+    arr.copy_from_slice(&out);
+    arr
 }
 
 #[cfg(test)]
@@ -174,5 +304,164 @@ mod tests {
         meta.set_last_backup_at(1_700_000_000).unwrap();
         meta.set_last_backup_at(1_700_000_100).unwrap(); // 二次备份覆盖
         assert_eq!(meta.last_backup_at().unwrap(), Some(1_700_000_100));
+    }
+
+    // ------------------------------------------------------------ 完整性校验
+
+    /// 完整性校验用的 32 字节测试密钥（任意常量，非生产密钥）。
+    fn root_mac_test_key() -> cf_crypto::aead::SessionKey {
+        cf_crypto::aead::SessionKey::new([0x5au8; 32])
+    }
+
+    /// 直接向 items 表插一行（绕过 with_tx，构造计数漂移用）。
+    fn insert_item_row_raw(conn: &Connection, uuid: &str) {
+        conn.execute(
+            "INSERT INTO items (uuid, category, enc_title, created_at, updated_at)
+             VALUES (?1, 'login', x'00', 1, 1)",
+            [uuid],
+        )
+        .unwrap();
+    }
+
+    /// bump → verify 往返：空库基线为 (0, mac)，校验通过
+    #[test]
+    fn bump后verify往返通过() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        let key = root_mac_test_key();
+
+        // 未 bump 前两行缺失 → verify 自举（旧库兼容路径）
+        meta.verify_integrity(&key).unwrap();
+        assert_eq!(meta.get_i64(KEY_RECORD_COUNT).unwrap(), Some(0));
+        assert!(meta.get(KEY_ROOT_MAC).unwrap().is_some());
+
+        // 再次 verify（非缺失路径）依旧通过
+        meta.verify_integrity(&key).unwrap();
+    }
+
+    /// 条目增删后基线随之重算：旧 MAC 失效、重新 bump 后恢复
+    #[test]
+    fn 条目增删后旧基线失效重新bump后恢复() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        let key = root_mac_test_key();
+
+        meta.bump_integrity(&key).unwrap();
+        let mac_before = meta.get(KEY_ROOT_MAC).unwrap().unwrap();
+
+        insert_item_row_raw(&conn, "u1");
+        // record_count 行仍为 0，实际行数 1 → 校验失败（防删除）
+        assert!(matches!(
+            meta.verify_integrity(&key),
+            Err(cf_domain::CfError::Corrupted(_))
+        ));
+
+        // 重新 bump：计数变 1，MAC 变化，恢复一致
+        meta.bump_integrity(&key).unwrap();
+        assert_eq!(meta.get_i64(KEY_RECORD_COUNT).unwrap(), Some(1));
+        assert_ne!(meta.get(KEY_ROOT_MAC).unwrap().unwrap(), mac_before);
+        meta.verify_integrity(&key).unwrap();
+
+        // 删除条目后同理：未 bump → 失败；bump → 恢复
+        conn.execute("DELETE FROM items WHERE uuid = 'u1'", []).unwrap();
+        assert!(matches!(
+            meta.verify_integrity(&key),
+            Err(cf_domain::CfError::Corrupted(_))
+        ));
+        meta.bump_integrity(&key).unwrap();
+        meta.verify_integrity(&key).unwrap();
+    }
+
+    /// 直接 SQL 篡改 record_count 行 → verify 失败
+    #[test]
+    fn 篡改record_count行verify失败() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        let key = root_mac_test_key();
+        meta.bump_integrity(&key).unwrap();
+
+        conn.execute(
+            "UPDATE meta SET value = ?1 WHERE key = 'record_count'",
+            [2_i64.to_le_bytes().as_slice()],
+        )
+        .unwrap();
+        assert!(matches!(
+            meta.verify_integrity(&key),
+            Err(cf_domain::CfError::Corrupted(_))
+        ));
+    }
+
+    /// 直接 SQL 篡改 root_mac 行（合法 base64 但值错误）→ verify 失败
+    #[test]
+    fn 篡改root_mac行verify失败() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        let key = root_mac_test_key();
+        meta.bump_integrity(&key).unwrap();
+
+        // 用另一把密钥重算出「结构合法但值不同」的 MAC 文本
+        let other = base64::engine::general_purpose::STANDARD
+            .encode(root_mac_bytes(&cf_crypto::aead::SessionKey::new([0x01u8; 32]), 0));
+        conn.execute(
+            "UPDATE meta SET value = ?1 WHERE key = 'root_mac'",
+            [other.as_bytes()],
+        )
+        .unwrap();
+        assert!(matches!(
+            meta.verify_integrity(&key),
+            Err(cf_domain::CfError::Corrupted(_))
+        ));
+    }
+
+    /// 直接 SQL 篡改 root_mac 行（非法 base64 文本）→ verify 失败而非自举
+    #[test]
+    fn root_mac行损坏按篡改处理() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        let key = root_mac_test_key();
+        meta.bump_integrity(&key).unwrap();
+
+        conn.execute("UPDATE meta SET value = x'ff' WHERE key = 'root_mac'", [])
+            .unwrap();
+        assert!(matches!(
+            meta.verify_integrity(&key),
+            Err(cf_domain::CfError::Corrupted(_))
+        ));
+    }
+
+    /// 删除任一行 → verify 自举重建（旧库兼容语义），且重建后校验通过
+    #[test]
+    fn 删除任一行后verify自举重建() {
+        let key = root_mac_test_key();
+
+        // 删 record_count 行
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        meta.bump_integrity(&key).unwrap();
+        insert_item_row_raw(&conn, "u1");
+        meta.bump_integrity(&key).unwrap();
+        conn.execute("DELETE FROM meta WHERE key = 'record_count'", []).unwrap();
+        meta.verify_integrity(&key).unwrap();
+        assert_eq!(meta.get_i64(KEY_RECORD_COUNT).unwrap(), Some(1));
+
+        // 删 root_mac 行
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        meta.bump_integrity(&key).unwrap();
+        conn.execute("DELETE FROM meta WHERE key = 'root_mac'", []).unwrap();
+        meta.verify_integrity(&key).unwrap();
+        assert!(meta.get(KEY_ROOT_MAC).unwrap().is_some());
+    }
+
+    /// 不同密钥算出的 MAC 互不通过（密钥绑定，非固定值）
+    #[test]
+    fn 不同密钥的基线互不通过() {
+        let conn = repo();
+        let meta = MetaRepo::new(&conn);
+        meta.bump_integrity(&root_mac_test_key()).unwrap();
+        assert!(matches!(
+            meta.verify_integrity(&cf_crypto::aead::SessionKey::new([0x33u8; 32])),
+            Err(cf_domain::CfError::Corrupted(_))
+        ));
     }
 }

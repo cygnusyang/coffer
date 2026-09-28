@@ -384,6 +384,16 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_get_item(uint64_t ptr, RustBuffe
 int8_t uniffi_cf_ffi_fn_method_vaultsession_has_biometric_wrap(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HEALTH_REPORT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HEALTH_REPORT
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_health_report(uint64_t ptr, int64_t now_secs, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_1PUX
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_1PUX
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_import_1pux(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_import_csv(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
@@ -397,6 +407,11 @@ int8_t uniffi_cf_ffi_fn_method_vaultsession_is_unlocked(uint64_t ptr, RustCallSt
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LAST_BACKUP_AT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LAST_BACKUP_AT
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_last_backup_at(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_HISTORY
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_history(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_ITEMS
@@ -414,6 +429,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_lock(uint64_t ptr, RustCallStatus *_No
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_parse_otpauth_uri(uint64_t ptr, RustBuffer uri, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_1PUX
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_1PUX
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_1pux(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
@@ -422,6 +442,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(uint64_t ptr, RustB
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_recent_audit_events(uint64_t ptr, RustBuffer offset, RustBuffer limit, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_HISTORY
+void uniffi_cf_ffi_fn_method_vaultsession_restore_history(uint64_t ptr, RustBuffer item_id, RustBuffer history_uuid, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_ITEM
@@ -937,6 +962,18 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HEALTH_REPORT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HEALTH_REPORT
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_health_report(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_1PUX
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_1PUX
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_import_1pux(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_import_csv(void
@@ -952,6 +989,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_is_unlocked(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LAST_BACKUP_AT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LAST_BACKUP_AT
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_last_backup_at(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_HISTORY
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_list_history(void
     
 );
 #endif
@@ -973,6 +1016,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_parse_otpauth_uri(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_1PUX
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_1PUX
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_1pux(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv(void
@@ -982,6 +1031,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RESTORE_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RESTORE_HISTORY
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_restore_history(void
     
 );
 #endif

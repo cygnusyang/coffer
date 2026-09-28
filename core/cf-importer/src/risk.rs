@@ -34,9 +34,16 @@
 //!
 //! ## 已知缺口（上报项，不在本次修复）
 //!
-//! CSV「非法 bool 值按 false 处理」目前仅存在于 `warnings` 文本，
-//! 无结构化字段（原始值被丢弃、构成信息损失但无法从报告结构化
-//! 判定）；待预检报告补结构化字段后再纳入拦截条件。
+//! 1. **CSV「非法 bool 值按 false 处理」**：仅存在于 `warnings` 文本，
+//!    无结构化字段（原始值被丢弃、构成信息损失但无法从报告结构化
+//!    判定）；待预检报告补结构化字段后再纳入拦截条件。
+//! 2. **PUX「坏 otpauth 并入 notes」（v0.3 审查 H-1 登记）**：TOTP
+//!    字段解析失败时原值并入 notes（`pux/mapping.rs`），TOTP 结构
+//!    丢失但 notes 保有原值，`PuxPrecheckReport` 仅 warnings 文本、
+//!    无结构化字段 → 本函数**不拦截**（与缺口 1 同待遇，明确推后）；
+//!    行为由测试 `pux坏otpauth并入notes不拦截缺口声明` 锁定。
+//! 3. **PUX「未知 state 按 active 处理」（v0.3 审查 LOW 登记）**：
+//!    原始 state 值被丢弃，极小元数据损失，同待遇推后。
 
 use crate::precheck::CsvPrecheckReport;
 use crate::pux::PuxPrecheckReport;
@@ -366,5 +373,25 @@ mod tests {
         let advice = advise_csv_source_deletion(&report);
         assert!(!advice.can_delete);
         assert!(!advice.blockers.is_empty());
+    }
+
+    /// 已知缺口声明锁定（v0.3 审查 H-1）：PUX 坏 otpauth 并入 notes
+    /// 的信息损失目前仅存在于 `warnings` 文本、无结构化字段——本测试
+    /// 锁定「warnings 有坏 otpauth 记录但 can_delete 仍为 true」的
+    /// 现状，防止未来误以为已拦截；待 PuxPrecheckReport 补结构化
+    /// 字段后本测试应改为拦截断言（与 CSV 非法 bool 同待遇）。
+    #[test]
+    fn pux坏otpauth并入notes不拦截缺口声明() {
+        let mut report = PuxPrecheckReport::default();
+        // 非空导入（避开空导入保守分支），正常条目 1 条
+        report.total_items = 1;
+        report.importable_items = 1;
+        // 模拟坏 otpauth 场景在报告上的唯一痕迹：warnings 文本
+        report.warnings.push(
+            "条目 0197xxxx：otpauth 解析失败，原值已并入 notes（TOTP 结构丢失）".into(),
+        );
+        let advice = advise_pux_source_deletion(&report);
+        assert!(advice.can_delete, "缺口声明：warnings 文本不参与拦截");
+        assert!(advice.degraded_items.is_empty());
     }
 }

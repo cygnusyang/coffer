@@ -211,7 +211,7 @@ object VaultSession:
 
 ### 2.4 SwiftUI 壳（概要）
 
-> **UI 纪律：macOS sheet 必须提供显式关闭出口**（关闭/完成按钮 + `.keyboardShortcut(.cancelAction)`）：macOS sheet 点外部不关闭、无按钮时 Esc 无效，缺失即困住用户。执行中（事务进行）可禁用关闭，但必须保证错误/取消路径可返回。**来源：BUG-3（2026-09-27）与 BUG-5（2026-09-28）两例同类缺陷**——ImportView / SecuritySettingsView / AuditLogView 先后中招，新 sheet 交付前按此自查。
+> **UI 纪律：macOS sheet 必须提供显式关闭出口**（关闭/完成按钮 + `.keyboardShortcut(.cancelAction)`）：macOS sheet 点外部不关闭、无按钮时 Esc 无效，缺失即困住用户。执行中（事务进行）可禁用关闭，但必须保证错误/取消路径可返回。**来源：BUG-3（2026-09-27）与 BUG-5（2026-09-28）两例同类缺陷**——ImportView / SecuritySettingsView / AuditLogView / ExportView / RestoreBackupView 先后中招（已全量审计修复，9 处 sheet 挂载全覆盖），新 sheet 交付前按此自查。
 
 ```
 macos/Coffer/

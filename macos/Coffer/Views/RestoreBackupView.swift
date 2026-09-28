@@ -43,11 +43,23 @@ struct RestoreBackupView: View {
     /// 恢复产物未能在库列表中匹配（理论不可达）时的降级提示。
     @State private var showHandoffFallback = false
 
+    /// 校验/恢复执行中（关闭按钮此时禁用，防丢结果页）。
+    private var isBusyStep: Bool {
+        if case .verifying = step { return true }
+        if case .restoring = step { return true }
+        return false
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("从备份恢复").font(.headline)
                 Spacer()
+                // 显式关闭出口（BUG-5 同类修复：macOS sheet 点外部不关闭、
+                // 无按钮时 Esc 无效）。校验/恢复执行中禁用。
+                Button("关闭") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isBusyStep)
             }
             .padding()
 

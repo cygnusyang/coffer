@@ -42,6 +42,13 @@ pub const LABEL_ATTACH_MAC: &str = "cf/attach-mac/v1";
 /// 旧库打开时多派生一把即可。
 pub const LABEL_AUDIT: &str = "cf/audit/v1";
 
+/// 完整性根 MAC 子密钥用途字面量（NFR-REL-02/03，docs/09 §2 v0.2-T04）。
+///
+/// 用途：`root_mac = HMAC-SHA256(root_mac_key, LE(record_count) ‖ LE(schema_version))`，
+/// 写入 meta 表防条目删除/回滚（docs/07 §5 C-4 落地）。纯运行时派生：
+/// 不落盘、不改 DDL、对 fmt-v1 零影响，旧库打开时多派生一把即可。
+pub const LABEL_ROOT_MAC: &str = "cf/root-mac/v1";
+
 // ---------------------------------------------------------------- 容器
 
 /// `docs/03-详细设计.md` §2.4 定义的全部子密钥。
@@ -65,6 +72,8 @@ pub struct SubKeys {
     pub attach_mac_key: SessionKey,
     /// 安全审计子密钥（`cf/audit/v1`，docs/09 §3.5 D-5）。
     pub audit_key: SessionKey,
+    /// 完整性根 MAC 子密钥（`cf/root-mac/v1`，NFR-REL-02/03）。
+    pub root_mac_key: SessionKey,
 }
 
 impl SubKeys {
@@ -82,6 +91,7 @@ impl SubKeys {
             manifest_key: SessionKey::new(derive_subkey(dek, vault_uuid, LABEL_MANIFEST)?),
             attach_mac_key: SessionKey::new(derive_subkey(dek, vault_uuid, LABEL_ATTACH_MAC)?),
             audit_key: SessionKey::new(derive_subkey(dek, vault_uuid, LABEL_AUDIT)?),
+            root_mac_key: SessionKey::new(derive_subkey(dek, vault_uuid, LABEL_ROOT_MAC)?),
         })
     }
 }
@@ -100,9 +110,9 @@ mod tests {
         [0x11u8; 16]
     }
 
-    /// 八个子密钥两两互不相同（一钥一用）。
+    /// 九个子密钥两两互不相同（一钥一用）。
     #[test]
-    fn 八个子密钥两两互不相同() {
+    fn 九个子密钥两两互不相同() {
         let keys = SubKeys::derive(&test_dek(), &test_vault_uuid()).expect("派生成功");
         let all = [
             &keys.meta_key,
@@ -113,6 +123,7 @@ mod tests {
             &keys.manifest_key,
             &keys.attach_mac_key,
             &keys.audit_key,
+            &keys.root_mac_key,
         ];
 
         for (i, a) in all.iter().enumerate() {
@@ -139,6 +150,7 @@ mod tests {
             &keys.manifest_key,
             &keys.attach_mac_key,
             &keys.audit_key,
+            &keys.root_mac_key,
         ];
 
         for k in all {
@@ -161,6 +173,7 @@ mod tests {
         assert_ne!(a.manifest_key.as_bytes(), b.manifest_key.as_bytes());
         assert_ne!(a.attach_mac_key.as_bytes(), b.attach_mac_key.as_bytes());
         assert_ne!(a.audit_key.as_bytes(), b.audit_key.as_bytes());
+        assert_ne!(a.root_mac_key.as_bytes(), b.root_mac_key.as_bytes());
     }
 
     /// 相同输入 → 相同集合（确定性）。
@@ -204,5 +217,30 @@ mod tests {
         assert_ne!(keys.audit_key.as_bytes(), keys.meta_key.as_bytes());
         assert_ne!(keys.audit_key.as_bytes(), keys.field_key.as_bytes());
         assert_ne!(keys.audit_key.as_bytes(), keys.attach_mac_key.as_bytes());
+        assert_ne!(keys.audit_key.as_bytes(), keys.root_mac_key.as_bytes());
+    }
+
+    /// root_mac_key 已知答案测试（NFR-REL-02/03，docs/09 §2 v0.2-T04）。
+    ///
+    /// 期望值由独立 Python 实现按相同输入计算（2026-09-29，随 v0.2 T04
+    /// 引入 `cf/root-mac/v1` label 时首算；计算脚本与 audit_key KAT 同构，
+    /// 且先用 audit_key 输入复算出冻结值 93ec…a6ae 交叉验证了脚本本身）：
+    /// HKDF-SHA256，salt = vault_uuid，ikm = dek，info = label，L = 32。
+    #[test]
+    fn root_mac_key与已知答案一致() {
+        let dek = [0x42u8; 32];
+        let vault_uuid = [0x11u8; 16];
+
+        let keys = SubKeys::derive(&dek, &vault_uuid).expect("派生成功");
+        let expected: Vec<u8> = "bc8a85137b183970571d9a8a07d33c84dae8116350fa0d1204e70ecda0a25e2b"
+            .as_bytes()
+            .chunks(2)
+            .map(|h| u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16).expect("hex digit"))
+            .collect();
+        assert_eq!(keys.root_mac_key.as_bytes(), expected.as_slice());
+
+        // 直接走 label 派生必须与容器字段一致（防两处漂移）
+        let direct = crate::kdf::derive_subkey(&dek, &vault_uuid, LABEL_ROOT_MAC).expect("派生成功");
+        assert_eq!(keys.root_mac_key.as_bytes(), direct.as_slice());
     }
 }

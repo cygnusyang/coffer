@@ -55,7 +55,10 @@ pub use repo::attachment::{AttachmentMeta, AttachmentRepo, MAX_ATTACHMENT_BYTES}
 pub use repo::audit::{AuditEntry, AuditEvent, AuditRepo};
 pub use repo::history::{HistoryMeta, HistoryRepo, COLUMN_HISTORY_SNAPSHOT};
 pub use repo::item::{ItemListFilter, ItemRow, ItemWithTitle, ItemsRepo, COLUMN_ITEM_TITLE};
-pub use repo::meta::{MetaRepo, KEY_ITEM_COUNT, KEY_LAST_BACKUP_AT, KEY_SCHEMA_VERSION};
+pub use repo::meta::{
+    MetaRepo, KEY_ITEM_COUNT, KEY_LAST_BACKUP_AT, KEY_RECORD_COUNT, KEY_ROOT_MAC,
+    KEY_SCHEMA_VERSION,
+};
 pub use repo::totp::{TotpMeta, TotpRepo, TotpStore, COLUMN_TOTP_ACCOUNT, COLUMN_TOTP_ISSUER, COLUMN_TOTP_SECRET};
 pub use repo::Repos;
 
@@ -98,11 +101,25 @@ impl ItemStore {
     ///
     /// 条目写入（create / update / delete）与 CSV 导入都必须走本方法
     /// （NFR-REL-01）。
+    ///
+    /// ## 完整性基线单点维护（NFR-REL-02/03，docs/09 §2 v0.2-T04）
+    ///
+    /// 闭包成功后、COMMIT 前，在同一事务内统一调
+    /// [`MetaRepo::bump_integrity`] 重算 `record_count` / `root_mac`：
+    /// 单点实现覆盖全部写路径（含条目增删、CSV 导入、附件 add/remove、
+    /// 审计追加），SQLite 事务保证基线与业务写入同生共死——bump 失败
+    /// 或闭包失败都整体 ROLLBACK，无半更新（TC-MAC-08）。读路径走
+    /// [`ItemStore::repos`]（自动提交），不经本方法、无写放大。
     pub fn with_tx<T>(
         &mut self,
         f: impl FnOnce(&Repos<'_>) -> CfStoreResult<T>,
     ) -> CfStoreResult<T> {
-        tx::with_tx(&mut self.conn, |tx| f(&Repos::new(tx, &self.subkeys)))
+        tx::with_tx(&mut self.conn, |tx| {
+            let out = f(&Repos::new(tx, &self.subkeys))?;
+            // 业务写入成功后重算完整性基线；失败随事务一起 ROLLBACK
+            repo::meta::MetaRepo::new(tx).bump_integrity(&self.subkeys.root_mac_key)?;
+            Ok(out)
+        })
     }
 }
 

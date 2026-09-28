@@ -23,6 +23,15 @@ struct MainView: View {
         // 不挂 NavigationSplitView 顶层：macOS 上 safeAreaInset(.top) 与
         // 窗口工具栏同区，横幅文字与工具栏按钮重叠（验收发现，已修）。
         // onAppear 的 safeAreaInset 见 middleColumn。
+        // 备份提醒横幅（FR-8.5）：挂整个窗口右下角（用户裁定：详情区
+        // 上方悬浮、最上层，不挤占任何内容区布局；overlay 不入工具栏
+        // 区域，无早期 safeAreaInset(.top) 的重叠问题）
+        .overlay(alignment: .bottomTrailing) {
+            if model.showBackupBanner {
+                backupBanner
+                    .padding(12)
+            }
+        }
         .onAppear {
             model.reloadItems()
             if model.selectedItemID != nil {
@@ -104,15 +113,6 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 300)
-        // 备份提醒横幅（FR-8.5）：右下角浮动卡片（用户裁定两轮迭代：
-        // 顶部挡工具栏/列表 → 底部仍占位 → 定稿悬浮于右下角最上层，
-        // 不挤占任何内容区布局）
-        .overlay(alignment: .bottomTrailing) {
-            if model.showBackupBanner {
-                backupBanner
-                    .padding(12)
-            }
-        }
         .toolbar {
             ToolbarItemGroup {
                 Menu {

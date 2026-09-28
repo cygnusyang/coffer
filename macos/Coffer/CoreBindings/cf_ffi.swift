@@ -1032,6 +1032,13 @@ public func FfiConverterTypeCofferApp_lower(_ value: CofferApp) -> UInt64 {
 public protocol VaultSessionProtocol: AnyObject, Sendable {
     
     /**
+     * 添加附件（FR-9.1）：`filename` 为 UTF-8 明文，`content` 为明文
+     * 内容（≤ 100 MiB，超限 → 1012）。只校验条目存在（1011），不限制
+     * 条目状态（docs/15 §3.1.2 边界声明）；同文件名不判重。锁定 → 1001。
+     */
+    func addAttachment(itemId: String, filename: String, content: Data) throws  -> FfiAttachmentMeta
+    
+    /**
      * 超时则锁定；返回是否执行了锁定（Swift 定时器驱动）。
      */
     func autoLockIfExpired(nowSecs: Int64)  -> Bool
@@ -1064,6 +1071,19 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 当前剪贴板自动清除时间（秒）；`0` 表示从不清除。
      */
     func clipboardClearSecs()  -> Int64
+    
+    /**
+     * 复制本会话条目到目标会话所在库（FR-2.10），返回目标库新条目
+     * uuid（UUIDv7 文本）。复制载荷含 TOTP / 标签 / 附件（附件文件落
+     * **目标库**目录）。
+     *
+     * 锁不双持由内核承担（FFI 层零锁逻辑）：`dst` 须来自同一
+     * [`CofferApp`] 注册表（UI 只能经 `list_vaults` + `open_vault`
+     * 获得，结构上满足）。错误：src 或 dst 锁定 → 1001；src 条目
+     * 不存在 → 1011；校验失败 → 5002（目标库零写入）。同库复制内核
+     * 允许（产生副本），UI 层禁止选择当前库。
+     */
+    func copyItem(itemId: String, dst: VaultSession) throws  -> String
     
     /**
      * 创建条目，返回新条目 ID（UUIDv7 文本）。
@@ -1112,6 +1132,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 调用本方法——内核不提供也不应绕过该门禁（D-11 默认关闭）。
      */
     func exportCsv(outPath: String) throws  -> FfiCsvExportResult
+    
+    /**
+     * 生成密码短语（FR-3.3，EFF 词表不重复抽样；参数见
+     * [`FfiPassphraseOptions`]）。镜像 [`VaultSession::generate_password`]
+     * 的 Validation 映射：词数 3..=10、分隔符 1..=3 可打印字符，越界
+     * → 码 1012。纯计算，无解锁门禁（与 `generate_password` 同语义）。
+     */
+    func generatePassphrase(opts: FfiPassphraseOptions) throws  -> String
     
     /**
      * 生成随机密码（CSPRNG，参数见 [`FfiPasswordGenOptions`]）。
@@ -1176,6 +1204,13 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func lastBackupAt() throws  -> Int64?
     
     /**
+     * 列出条目附件（created_at 升序，FR-9.3）：需解锁态（锁定 → 1001）；
+     * 条目不存在 → 1011。元数据见 [`FfiAttachmentMeta`]，明文内容只经
+     * [`VaultSession::read_attachment`] 按需取（与字段值同纪律）。
+     */
+    func listAttachments(itemId: String) throws  -> [FfiAttachmentMeta]
+    
+    /**
      * 条目历史版本列表（FR-2.9，version 倒序）：需解锁态（1001）。
      *
      * 快照明文不跨 FFI，仅返回 history_uuid / version / created_at
@@ -1212,12 +1247,23 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func precheckCsv(path: String) throws  -> FfiCsvPrecheckReport
     
     /**
+     * 读附件明文内容（FR-9.2，一次一个、即用即弃；整块 `Data` 返回）。
+     * 行不存在 → 1012；行在文件无 / 密文损坏 → 1005。锁定 → 1001。
+     */
+    func readAttachment(attachmentUuid: String) throws  -> Data
+    
+    /**
      * 本地审计日志只读分页查询（FR-12.6；锁定态 → 1001）。
      *
      * 按时间倒序；`offset` / `limit` 语义与条目过滤一致（`None` 偏移
      * 视为 0、`None` 上限不限量）。事件只由内核动作打点，本方法只读。
      */
     func recentAuditEvents(offset: Int64?, limit: Int64?) throws  -> [FfiAuditEntry]
+    
+    /**
+     * 删除附件（FR-9.2）：先删行后删文件；行不存在 → 1012。锁定 → 1001。
+     */
+    func removeAttachment(attachmentUuid: String) throws 
     
     /**
      * 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
@@ -1397,6 +1443,23 @@ open class VaultSession: VaultSessionProtocol, @unchecked Sendable {
 
     
     /**
+     * 添加附件（FR-9.1）：`filename` 为 UTF-8 明文，`content` 为明文
+     * 内容（≤ 100 MiB，超限 → 1012）。只校验条目存在（1011），不限制
+     * 条目状态（docs/15 §3.1.2 边界声明）；同文件名不判重。锁定 → 1001。
+     */
+open func addAttachment(itemId: String, filename: String, content: Data)throws  -> FfiAttachmentMeta  {
+    return try  FfiConverterTypeFfiAttachmentMeta_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_add_attachment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),
+        FfiConverterString.lower(filename),
+        FfiConverterData.lower(content),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 超时则锁定；返回是否执行了锁定（Swift 定时器驱动）。
      */
 open func autoLockIfExpired(nowSecs: Int64) -> Bool  {
@@ -1457,6 +1520,28 @@ open func clipboardClearSecs() -> Int64  {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_clipboard_clear_secs(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 复制本会话条目到目标会话所在库（FR-2.10），返回目标库新条目
+     * uuid（UUIDv7 文本）。复制载荷含 TOTP / 标签 / 附件（附件文件落
+     * **目标库**目录）。
+     *
+     * 锁不双持由内核承担（FFI 层零锁逻辑）：`dst` 须来自同一
+     * [`CofferApp`] 注册表（UI 只能经 `list_vaults` + `open_vault`
+     * 获得，结构上满足）。错误：src 或 dst 锁定 → 1001；src 条目
+     * 不存在 → 1011；校验失败 → 5002（目标库零写入）。同库复制内核
+     * 允许（产生副本），UI 层禁止选择当前库。
+     */
+open func copyItem(itemId: String, dst: VaultSession)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_copy_item(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),
+        FfiConverterTypeVaultSession_lower(dst),uniffiCallStatus
     )
 })
 }
@@ -1550,6 +1635,22 @@ open func exportCsv(outPath: String)throws  -> FfiCsvExportResult  {
     uniffi_cf_ffi_fn_method_vaultsession_export_csv(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(outPath),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 生成密码短语（FR-3.3，EFF 词表不重复抽样；参数见
+     * [`FfiPassphraseOptions`]）。镜像 [`VaultSession::generate_password`]
+     * 的 Validation 映射：词数 3..=10、分隔符 1..=3 可打印字符，越界
+     * → 码 1012。纯计算，无解锁门禁（与 `generate_password` 同语义）。
+     */
+open func generatePassphrase(opts: FfiPassphraseOptions)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_generate_passphrase(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiPassphraseOptions_lower(opts),uniffiCallStatus
     )
 })
 }
@@ -1687,6 +1788,21 @@ open func lastBackupAt()throws  -> Int64?  {
 }
     
     /**
+     * 列出条目附件（created_at 升序，FR-9.3）：需解锁态（锁定 → 1001）；
+     * 条目不存在 → 1011。元数据见 [`FfiAttachmentMeta`]，明文内容只经
+     * [`VaultSession::read_attachment`] 按需取（与字段值同纪律）。
+     */
+open func listAttachments(itemId: String)throws  -> [FfiAttachmentMeta]  {
+    return try  FfiConverterSequenceTypeFfiAttachmentMeta.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_list_attachments(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 条目历史版本列表（FR-2.9，version 倒序）：需解锁态（1001）。
      *
      * 快照明文不跨 FFI，仅返回 history_uuid / version / created_at
@@ -1769,6 +1885,20 @@ open func precheckCsv(path: String)throws  -> FfiCsvPrecheckReport  {
 }
     
     /**
+     * 读附件明文内容（FR-9.2，一次一个、即用即弃；整块 `Data` 返回）。
+     * 行不存在 → 1012；行在文件无 / 密文损坏 → 1005。锁定 → 1001。
+     */
+open func readAttachment(attachmentUuid: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_read_attachment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(attachmentUuid),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 本地审计日志只读分页查询（FR-12.6；锁定态 → 1001）。
      *
      * 按时间倒序；`offset` / `limit` 语义与条目过滤一致（`None` 偏移
@@ -1783,6 +1913,18 @@ open func recentAuditEvents(offset: Int64?, limit: Int64?)throws  -> [FfiAuditEn
         FfiConverterOptionInt64.lower(limit),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * 删除附件（FR-9.2）：先删行后删文件；行不存在 → 1012。锁定 → 1001。
+     */
+open func removeAttachment(attachmentUuid: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_remove_attachment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(attachmentUuid),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -2083,6 +2225,106 @@ public func FfiConverterTypeVaultSession_lower(_ value: VaultSession) -> UInt64 
 }
 
 
+
+
+/**
+ * 附件元数据（docs/15 §3.1.2 冻结契约；镜像
+ * `cf_session::AttachmentInfo`，时间戳恒 i64 Unix 秒）。
+ */
+public struct FfiAttachmentMeta: Equatable, Hashable {
+    /**
+     * 附件行 UUID（旁路文件名同名）。
+     */
+    public var attachmentUuid: String
+    /**
+     * 所属条目 UUID。
+     */
+    public var itemUuid: String
+    /**
+     * 文件名（解密后明文）。
+     */
+    public var filename: String
+    /**
+     * 明文长度（字节；usize 不跨 FFI → i64）。
+     */
+    public var sizeBytes: Int64
+    /**
+     * 创建时间（Unix 秒）。
+     */
+    public var createdAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 附件行 UUID（旁路文件名同名）。
+         */attachmentUuid: String, 
+        /**
+         * 所属条目 UUID。
+         */itemUuid: String, 
+        /**
+         * 文件名（解密后明文）。
+         */filename: String, 
+        /**
+         * 明文长度（字节；usize 不跨 FFI → i64）。
+         */sizeBytes: Int64, 
+        /**
+         * 创建时间（Unix 秒）。
+         */createdAt: Int64) {
+        self.attachmentUuid = attachmentUuid
+        self.itemUuid = itemUuid
+        self.filename = filename
+        self.sizeBytes = sizeBytes
+        self.createdAt = createdAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiAttachmentMeta: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAttachmentMeta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAttachmentMeta {
+        return
+            try FfiAttachmentMeta(
+                attachmentUuid: FfiConverterString.read(from: &buf), 
+                itemUuid: FfiConverterString.read(from: &buf), 
+                filename: FfiConverterString.read(from: &buf), 
+                sizeBytes: FfiConverterInt64.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAttachmentMeta, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.attachmentUuid, into: &buf)
+        FfiConverterString.write(value.itemUuid, into: &buf)
+        FfiConverterString.write(value.filename, into: &buf)
+        FfiConverterInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAttachmentMeta_lift(_ buf: RustBuffer) throws -> FfiAttachmentMeta {
+    return try FfiConverterTypeFfiAttachmentMeta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAttachmentMeta_lower(_ value: FfiAttachmentMeta) -> RustBuffer {
+    return FfiConverterTypeFfiAttachmentMeta.lower(value)
+}
 
 
 /**
@@ -4224,6 +4466,99 @@ public func FfiConverterTypeFfiNotImportedItem_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeFfiNotImportedItem_lower(_ value: FfiNotImportedItem) -> RustBuffer {
     return FfiConverterTypeFfiNotImportedItem.lower(value)
+}
+
+
+/**
+ * 密码短语生成参数（FR-3.3，docs/15 §3.3.4；镜像
+ * `cf_audit::PassphraseOptions`，usize 不跨 FFI → wordCount 用 u32）。
+ *
+ * 门禁（越界 → 码 1012，内核校验）：词数 3..=10；分隔符 1..=3 个
+ * 可打印字符。
+ */
+public struct FfiPassphraseOptions: Equatable, Hashable {
+    /**
+     * 词数（3..=10）。
+     */
+    public var wordCount: UInt32
+    /**
+     * 词间分隔符（1..=3 个可打印字符）。
+     */
+    public var separator: String
+    /**
+     * 词首大写（Title Case）。
+     */
+    public var capitalize: Bool
+    /**
+     * 末尾追加随机数字 0–9。
+     */
+    public var numberSuffix: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 词数（3..=10）。
+         */wordCount: UInt32, 
+        /**
+         * 词间分隔符（1..=3 个可打印字符）。
+         */separator: String, 
+        /**
+         * 词首大写（Title Case）。
+         */capitalize: Bool, 
+        /**
+         * 末尾追加随机数字 0–9。
+         */numberSuffix: Bool) {
+        self.wordCount = wordCount
+        self.separator = separator
+        self.capitalize = capitalize
+        self.numberSuffix = numberSuffix
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPassphraseOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPassphraseOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPassphraseOptions {
+        return
+            try FfiPassphraseOptions(
+                wordCount: FfiConverterUInt32.read(from: &buf), 
+                separator: FfiConverterString.read(from: &buf), 
+                capitalize: FfiConverterBool.read(from: &buf), 
+                numberSuffix: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPassphraseOptions, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.wordCount, into: &buf)
+        FfiConverterString.write(value.separator, into: &buf)
+        FfiConverterBool.write(value.capitalize, into: &buf)
+        FfiConverterBool.write(value.numberSuffix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPassphraseOptions_lift(_ buf: RustBuffer) throws -> FfiPassphraseOptions {
+    return try FfiConverterTypeFfiPassphraseOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPassphraseOptions_lower(_ value: FfiPassphraseOptions) -> RustBuffer {
+    return FfiConverterTypeFfiPassphraseOptions.lower(value)
 }
 
 
@@ -7281,6 +7616,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiAttachmentMeta: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiAttachmentMeta]
+
+    public static func write(_ value: [FfiAttachmentMeta], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiAttachmentMeta.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiAttachmentMeta] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiAttachmentMeta]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiAttachmentMeta.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiAuditEntry: FfiConverterRustBuffer {
     typealias SwiftType = [FfiAuditEntry]
 
@@ -7845,6 +8205,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_cofferapp_verify_backup() != 35451) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_add_attachment() != 26137) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired() != 4111) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7855,6 +8218,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_clipboard_clear_secs() != 63952) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_copy_item() != 20237) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_create_item() != 50566) {
@@ -7873,6 +8239,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_generate_passphrase() != 47529) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_generate_password() != 13850) {
@@ -7902,6 +8271,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_last_backup_at() != 21279) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_list_attachments() != 17081) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_list_history() != 41294) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7920,7 +8292,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv() != 64030) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_read_attachment() != 18594) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events() != 53755) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_remove_attachment() != 8932) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_history() != 48287) {

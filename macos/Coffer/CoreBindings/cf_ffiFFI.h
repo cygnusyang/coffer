@@ -314,6 +314,11 @@ uint64_t uniffi_cf_ffi_fn_clone_vaultsession(uint64_t handle, RustCallStatus *_N
 void uniffi_cf_ffi_fn_free_vaultsession(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ADD_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ADD_ATTACHMENT
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_add_attachment(uint64_t ptr, RustBuffer item_id, RustBuffer filename, RustBuffer content, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 int8_t uniffi_cf_ffi_fn_method_vaultsession_auto_lock_if_expired(uint64_t ptr, int64_t now_secs, RustCallStatus *_Nonnull out_status
@@ -332,6 +337,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_change_password(uint64_t ptr, RustBuff
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
 int64_t uniffi_cf_ffi_fn_method_vaultsession_clipboard_clear_secs(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_COPY_ITEM
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_COPY_ITEM
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_copy_item(uint64_t ptr, RustBuffer item_id, uint64_t dst, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CREATE_ITEM
@@ -362,6 +372,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_enable_biometric(uint64_t ptr, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_csv(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_PASSPHRASE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_PASSPHRASE
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_generate_passphrase(uint64_t ptr, RustBuffer opts, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_PASSWORD
@@ -409,6 +424,11 @@ int8_t uniffi_cf_ffi_fn_method_vaultsession_is_unlocked(uint64_t ptr, RustCallSt
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_last_backup_at(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_ATTACHMENTS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_ATTACHMENTS
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_attachments(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_HISTORY
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_history(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
@@ -439,9 +459,19 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_1pux(uint64_t ptr, Rust
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_READ_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_READ_ATTACHMENT
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_read_attachment(uint64_t ptr, RustBuffer attachment_uuid, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_recent_audit_events(uint64_t ptr, RustBuffer offset, RustBuffer limit, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
+void uniffi_cf_ffi_fn_method_vaultsession_remove_attachment(uint64_t ptr, RustBuffer attachment_uuid, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_HISTORY
@@ -878,6 +908,12 @@ uint16_t uniffi_cf_ffi_checksum_method_cofferapp_verify_backup(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ADD_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ADD_ATTACHMENT
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_add_attachment(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired(void
@@ -899,6 +935,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_change_password(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_CLIPBOARD_CLEAR_SECS
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_clipboard_clear_secs(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_COPY_ITEM
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_COPY_ITEM
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_copy_item(void
     
 );
 #endif
@@ -935,6 +977,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_csv(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GENERATE_PASSPHRASE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GENERATE_PASSPHRASE
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_generate_passphrase(void
     
 );
 #endif
@@ -992,6 +1040,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_last_backup_at(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_ATTACHMENTS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_ATTACHMENTS
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_list_attachments(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_HISTORY
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_list_history(void
@@ -1028,9 +1082,21 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_READ_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_READ_ATTACHMENT
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_read_attachment(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RECENT_AUDIT_EVENTS
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_remove_attachment(void
     
 );
 #endif

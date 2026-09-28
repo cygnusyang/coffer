@@ -1,10 +1,16 @@
-// ExportView.swift —— 导出向导：加密备份（FR-8.1/8.6）+ CSV 明文占位（T-F）。
+// ExportView.swift —— 导出向导：加密备份（FR-8.1/8.6）+ CSV 明文（FR-8.3/8.4）。
 //
 // 双入口 segmented Picker：
-//   - 加密备份（本任务）：NSSavePanel 选路径 → 确认页（UI 义务，docs/09
+//   - 加密备份：NSSavePanel 选路径 → 确认页（UI 义务，docs/09
 //     §3.1：必须告知「加密归档非明文，但可被暴力破解」）→ 导出 → 结果页。
-//   - CSV 明文：占位（T-F 接入），本文件不实现任何 CSV 导出逻辑。
+//   - CSV 明文（T-F）：NSSavePanel 选路径 → 强风险页 → 二次确认 →
+//     导出 → 结果页（FR-8.4 / TC-UI-08 / TC-UI-09）。
 //
+// CSV 双门禁（内核不提供确认门禁，D-11：UI 是唯一防线）：
+//   ① 强风险页勾选框「我已知晓风险」——未勾选导出按钮 disabled；
+//   ② confirmationDialog 二次确认——仅「确认导出」才调用 exportCsv。
+//   未走完双门禁不存在任何调用路径（TC-UI-08 负向验收）。
+//   勾选框在流程重置（取消 / 回退 / 出错）时清零，防勾选残留一键通过。
 // 底层契约（TC-EXP-08）：exportBackup 挂在 CofferApp 工厂级（非 session），
 // 锁定态亦可用；UI 入口放在解锁后的主界面仅是产品选择，不构成门禁。
 // Rust 侧导出成功自动打点 meta.last_backup_at，并自动执行一次结构校验
@@ -26,7 +32,7 @@ struct ExportView: View {
     @Environment(\.dismiss)
     private var dismiss
 
-    /// 顶部双入口（CSV 明文 tab 为 T-F 占位）。
+    /// 顶部双入口。
     enum Tab {
         case encrypted
         case csv
@@ -39,8 +45,23 @@ struct ExportView: View {
         case done(FfiBackupExportResult)
     }
 
+    /// CSV 明文流状态机（与备份流平行，互不干扰）。
+    enum CsvStep {
+        case pickPath
+        /// 强风险页（双门禁①：勾选框）
+        case riskConfirm(path: String)
+        case exporting
+        case done(FfiCsvExportResult)
+    }
+
     @State private var tab: Tab = .encrypted
     @State private var step: Step = .pickPath
+
+    @State private var csvStep: CsvStep = .pickPath
+    /// 双门禁①：风险确认勾选框；流程重置时必须清零
+    @State private var csvRiskAcknowledged = false
+    /// 双门禁②：confirmationDialog 是否弹出
+    @State private var csvShowFinalConfirm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,8 +93,16 @@ struct ExportView: View {
                         doneBody(result)
                     }
                 case .csv:
-                    // T-F 接入 CSV 明文导出流程（FR-8.x），本任务不做任何实现
-                    csvPlaceholderBody
+                    switch csvStep {
+                    case .pickPath:
+                        csvPickPathBody
+                    case .riskConfirm(let path):
+                        csvRiskConfirmBody(path: path)
+                    case .exporting:
+                        csvExportingBody
+                    case .done(let result):
+                        csvDoneBody(result)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -239,18 +268,171 @@ struct ExportView: View {
         }
     }
 
-    // MARK: - CSV 明文占位（T-F）
+    // MARK: - CSV 明文（FR-8.3/8.4，T-F）
 
-    private var csvPlaceholderBody: some View {
-        VStack(spacing: 12) {
+    // MARK: CSV ① 选路径
+
+    private var csvPickPathBody: some View {
+        VStack(spacing: 16) {
             Image(systemName: "doc.plaintext")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
-            Text("CSV 明文导出尚未开放（T-F 接入）。")
+            Text("将密码库导出为 CSV 明文文件")
                 .font(.callout)
+            Text("所有条目（含密码、TOTP 密钥）将以不加密的 CSV 写入磁盘。")
+                .font(.caption)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("选择导出位置…") { pickCsvPath() }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func pickCsvPath() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = suggestedCsvFileName()
+        panel.message = "选择 CSV 明文文件的保存位置"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        csvRiskAcknowledged = false
+        csvStep = .riskConfirm(path: url.path)
+    }
+
+    /// 建议文件名：Coffer导出-<库名>-<yyyyMMdd>.csv；库名取不到用固定前缀。
+    private func suggestedCsvFileName() -> String {
+        let formatter = DateFormatter()
+        // 固定 en_US_POSIX：同备份流纪律，文件名时间戳不受用户日历与
+        // 数字 locale 影响，保证跨环境生成的文件名稳定可读。
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd"
+        let stamp = formatter.string(from: Date())
+        if model.vaultName.isEmpty {
+            return "Coffer导出-\(stamp).csv"
+        }
+        return "Coffer导出-\(model.vaultName)-\(stamp).csv"
+    }
+
+    // MARK: CSV ② 强风险页（双门禁①：勾选框）
+
+    private func csvRiskConfirmBody(path: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("高风险操作").font(.headline)
+            Text(URL(fileURLWithPath: path).path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            // FR-8.4：必须明示「导出文件为明文，包含全部密码」
+            Label("导出文件为明文，包含全部密码。",
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.callout.bold())
+                .foregroundStyle(.red)
+            Text("所有条目（含密码、TOTP 密钥）将以不加密的 CSV 写入磁盘，任何能读取该文件的程序或人都能获取全部凭据。")
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .multilineTextAlignment(.leading)
+            Toggle(isOn: $csvRiskAcknowledged) {
+                Text("我已知晓风险，确认导出明文文件")
+                    .font(.callout)
+            }
+            Spacer()
+            HStack {
+                Button("取消") { csvResetToPickPath() }
+                Spacer()
+                Button("导出明文文件") {
+                    // 双门禁②：勾选通过后才弹二次确认
+                    csvShowFinalConfirm = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                // 未勾选时导出按钮 disabled（TC-UI-08 门禁①）
+                .disabled(!csvRiskAcknowledged || model.isBusy)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 双门禁②：仅「确认导出」才执行；取消留在本页
+        .confirmationDialog(
+            "再次确认：写出明文 CSV？",
+            isPresented: $csvShowFinalConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("确认导出", role: .destructive) { doCsvExport(path: path) }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    // MARK: CSV ③ 导出中
+
+    private var csvExportingBody: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("正在导出 CSV 明文…")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// CSV 导出（session 级调用，需解锁态：锁定态返回 1001；错误 2003 导出失败）。
+    /// 唯一调用点：双门禁①勾选 + ②confirmationDialog「确认导出」之后（TC-UI-08）。
+    private func doCsvExport(path: String) {
+        guard let session = model.session, !model.isBusy else { return }
+        csvStep = .exporting
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try session.exportCsv(outPath: path)
+                await MainActor.run {
+                    csvStep = .done(result)
+                }
+            } catch {
+                await MainActor.run {
+                    // 1001（锁定态）/ 2003（导出失败）等经 ErrorPresenter 直出；
+                    // 回到选路径页可重试（勾选框一并重置）
+                    csvResetToPickPath()
+                    model.lastErrorMessage = ErrorPresenter.text(error)
+                }
+            }
+        }
+    }
+
+    // MARK: CSV ④ 结果页（TC-UI-09）
+
+    private func csvDoneBody(_ result: FfiCsvExportResult) -> some View {
+        VStack(spacing: 16) {
+            // 固定警示：CSV 已落盘为明文，用完即删（TC-UI-09）
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 44))
+                .foregroundStyle(.green)
+            Text("导出完成").font(.headline)
+            Label("导出文件为明文，包含全部密码，请立即删除源明文文件。",
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.callout.bold())
+                .foregroundStyle(.red)
+                .multilineTextAlignment(.leading)
+
+            HStack(spacing: 24) {
+                statLabel("写入条数", "\(result.rowCount)")
+                statLabel("回收站跳过", "\(result.skippedTrashed)")
+            }
+            .font(.callout)
+
+            Spacer()
+            HStack {
+                Spacer()
+                Button("完成") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// CSV 流程重置：回选路径页并清零勾选框——防「上次勾选残留导致
+    /// 下次一键通过」（TC-UI-08）。
+    private func csvResetToPickPath() {
+        csvRiskAcknowledged = false
+        csvShowFinalConfirm = false
+        csvStep = .pickPath
     }
 
     // MARK: - 辅助

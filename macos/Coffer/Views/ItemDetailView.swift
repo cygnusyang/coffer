@@ -13,6 +13,8 @@ struct ItemDetailView: View {
     @State private var showEditSheet = false
     @State private var confirmHardDelete = false
     @State private var showHistory = false
+    /// 跨库复制 sheet（v0.4 FR-2.10，MB-2）。
+    @State private var showCrossCopy = false
     /// 历史版本数（出现时轻量拉一次；失败显示 0 并静默——入口数字
     /// 非关键信息，不弹窗打扰）。
     @State private var historyCount = 0
@@ -26,18 +28,41 @@ struct ItemDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                // FR-9.4 Document 条目（最小形态）：附件是主体内容，
+                // 附件区置于字段区之上（判定见 ItemTemplates 扩展）。
+                if details.category.placesAttachmentSectionAboveFields {
+                    attachmentSection
+                }
                 fieldSection
                 if !details.urls.isEmpty { urlSection }
                 if !details.tags.isEmpty { tagSection }
                 if let totp = details.totp { totpSection(totp) }
                 if !isTrashed { historySection }
                 metaSection
+                // MA-2 挂载点约定（docs/15 §7 风险 8）：非 Document 条目的
+                // 附件区在 body 尾部，与 MB-2 的右键复制菜单（context menu
+                // 头部）物理隔离，避免同文件串行接驳冲突。
+                if !details.category.placesAttachmentSectionAboveFields {
+                    attachmentSection
+                }
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(details.title)
         .toolbar { toolbarContent }
+        // 跨库复制入口（v0.4 FR-2.10，MB-2）：详情右键菜单，单行挂载——
+        // 与 MA-2 附件区物理隔离（docs/15 §7 风险 8 约定）。回收站条目
+        // 不出入口（内核 Trashed→Active 语义外的 UI 双保险，§3.2.4-4）。
+        .contextMenu {
+            if !isTrashed {
+                Button {
+                    showCrossCopy = true
+                } label: {
+                    Label("复制到其他库…", systemImage: "doc.on.doc")
+                }
+            }
+        }
         .task {
             refreshHistoryCount()
         }
@@ -51,6 +76,10 @@ struct ItemDetailView: View {
         }
         .sheet(isPresented: $showEditSheet) {
             ItemEditView(mode: .edit(details))
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showCrossCopy) {
+            CrossCopySheet(sourceItemId: details.uuid, sourceTitle: details.title)
                 .environmentObject(model)
         }
         .confirmationDialog(
@@ -142,6 +171,14 @@ struct ItemDetailView: View {
             Text("一次性密码（TOTP）").font(.headline)
             TotpCodeView(itemId: details.uuid, detail: totp)
         }
+    }
+
+    // MARK: - 附件（FR-9.3 / 9.4，v0.4.0 MA-2）
+
+    /// 附件区（自持状态，经 environmentObject 只读访问 session；docs/15
+    /// §6.1 S2 切片：零 AppModel 改动）。
+    private var attachmentSection: some View {
+        AttachmentSection(itemId: details.uuid)
     }
 
     // MARK: - 历史版本（FR-2.9）

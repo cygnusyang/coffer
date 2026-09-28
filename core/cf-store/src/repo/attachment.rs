@@ -26,7 +26,8 @@
 //!   由调用方在批量写收尾时调 [`AttachmentRepo::cleanup_orphans`] 清理
 //!   （当前调用点：cf-importer 1PUX 导入收尾；cf-session 跨库复制
 //!   `copy_item` 的错误收尾——FR-2.10，v0.4.0 补上了 LOW-2 登记的
-//!   非导入路径回滚孤儿清理时机）；
+//!   非导入路径回滚孤儿清理时机；cf-session `open_vault` 成功路径——
+//!   v0.4 M-2，开库时兜底清理孤儿）；
 //! - **行在文件无**（文件被外部删除）：读时报 [`CfError::Corrupted`]。
 //!
 //! 删除顺序相反：先删行（调用方事务）后删文件。
@@ -127,7 +128,8 @@ impl<'a> AttachmentRepo<'a> {
     /// 负责 seal（AAD 钉附件行 uuid）→ 写 `attachments/.tmp-<uuid>` →
     /// fsync → rename 正式名 → INSERT 行。**调用方须包在
     /// [`crate::ItemStore::with_tx`] 内**；若事务随后回滚，旁路文件成为
-    /// 孤儿（容忍，unlock 时 [`AttachmentRepo::cleanup_orphans`] 清理）。
+    /// 孤儿（容忍，由调用方在收尾或 `open_vault` 时调
+    /// [`AttachmentRepo::cleanup_orphans`] 清理）。
     ///
     /// # 错误
     ///
@@ -297,8 +299,10 @@ impl<'a> AttachmentRepo<'a> {
         }
     }
 
-    /// 清理孤儿旁路文件（unlock 时调用）：删除 `attachments/` 下未被任何
-    /// DB 行引用的文件（含崩溃残留的 `.tmp-` 半截文件），返回删除数。
+    /// 清理孤儿旁路文件（调用点：cf-importer 1PUX 导入收尾、cf-session
+    /// 跨库复制错误收尾与 `open_vault` 开库兜底）：删除 `attachments/`
+    /// 下未被任何 DB 行引用的文件（含崩溃残留的 `.tmp-` 半截文件），
+    /// 返回删除数。
     ///
     /// 目录不存在视为无孤儿（`Ok(0)`）；单文件删除失败向上传播
     /// （不静默降级——调用方可重试）。

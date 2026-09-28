@@ -422,6 +422,59 @@ impl VaultSession {
             .map(|items| items.into_iter().map(Into::into).collect())
     }
 
+    // ------------------------------------------------ 附件（FR-9.3 / 9.4）
+
+    /// 列出条目附件（created_at 升序，FR-9.3）：需解锁态（锁定 → 1001）；
+    /// 条目不存在 → 1011。元数据见 [`FfiAttachmentMeta`]，明文内容只经
+    /// [`VaultSession::read_attachment`] 按需取（与字段值同纪律）。
+    pub fn list_attachments(&self, item_id: String) -> Result<Vec<FfiAttachmentMeta>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.list_attachments(&item_id)))
+            .map(|infos| infos.into_iter().map(Into::into).collect())
+    }
+
+    /// 添加附件（FR-9.1）：`filename` 为 UTF-8 明文，`content` 为明文
+    /// 内容（≤ 100 MiB，超限 → 1012）。只校验条目存在（1011），不限制
+    /// 条目状态（docs/15 §3.1.2 边界声明）；同文件名不判重。锁定 → 1001。
+    pub fn add_attachment(
+        &self,
+        item_id: String,
+        filename: String,
+        content: Vec<u8>,
+    ) -> Result<FfiAttachmentMeta, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.add_attachment(&item_id, &filename, &content)
+        }))
+        .map(Into::into)
+    }
+
+    /// 读附件明文内容（FR-9.2，一次一个、即用即弃；整块 `Data` 返回）。
+    /// 行不存在 → 1012；行在文件无 / 密文损坏 → 1005。锁定 → 1001。
+    pub fn read_attachment(&self, attachment_uuid: String) -> Result<Vec<u8>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.read_attachment(&attachment_uuid)))
+    }
+
+    /// 删除附件（FR-9.2）：先删行后删文件；行不存在 → 1012。锁定 → 1001。
+    pub fn remove_attachment(&self, attachment_uuid: String) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.remove_attachment(&attachment_uuid)))
+    }
+
+    // ---------------------------------------------- 跨库复制（FR-2.10）
+
+    /// 复制本会话条目到目标会话所在库（FR-2.10），返回目标库新条目
+    /// uuid（UUIDv7 文本）。复制载荷含 TOTP / 标签 / 附件（附件文件落
+    /// **目标库**目录）。
+    ///
+    /// 锁不双持由内核承担（FFI 层零锁逻辑）：`dst` 须来自同一
+    /// [`CofferApp`] 注册表（UI 只能经 `list_vaults` + `open_vault`
+    /// 获得，结构上满足）。错误：src 或 dst 锁定 → 1001；src 条目
+    /// 不存在 → 1011；校验失败 → 5002（目标库零写入）。同库复制内核
+    /// 允许（产生副本），UI 层禁止选择当前库。
+    pub fn copy_item(&self, item_id: String, dst: Arc<VaultSession>) -> Result<String, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_session::copy_item(&self.inner, &item_id, &dst.inner)
+        }))
+    }
+
     // ---------------------------------------------------- 取值与 TOTP
 
     /// 按需取字段明文值（密码等敏感值，随取随走，docs/07 §4.2）。
@@ -472,6 +525,16 @@ impl VaultSession {
     pub fn generate_password(&self, opts: FfiPasswordGenOptions) -> Result<String, FfiError> {
         let opts = cf_audit::PasswordGenOptions::try_from(opts)?;
         cf_audit::generate_password(&opts)
+            .map_err(|reason| FfiError::from(CfError::Validation(reason.to_owned())))
+    }
+
+    /// 生成密码短语（FR-3.3，EFF 词表不重复抽样；参数见
+    /// [`FfiPassphraseOptions`]）。镜像 [`VaultSession::generate_password`]
+    /// 的 Validation 映射：词数 3..=10、分隔符 1..=3 可打印字符，越界
+    /// → 码 1012。纯计算，无解锁门禁（与 `generate_password` 同语义）。
+    pub fn generate_passphrase(&self, opts: FfiPassphraseOptions) -> Result<String, FfiError> {
+        let opts = cf_audit::PassphraseOptions::try_from(opts)?;
+        cf_audit::generate_passphrase(&opts)
             .map_err(|reason| FfiError::from(CfError::Validation(reason.to_owned())))
     }
 

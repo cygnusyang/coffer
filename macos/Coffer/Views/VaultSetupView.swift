@@ -17,6 +17,11 @@ struct VaultSetupView: View {
     @EnvironmentObject
     private var model: AppModel
 
+    /// 是否首次建库（工作目录内尚无库，docs/15 §3.2.5 MB-1 复用微调）：
+    /// 从库切换器进入时（已有库）说明文案改为「新增独立库」口径，
+    /// 避免误导用户以为建库会替换当前库。默认 true 保持 noVault 现状路径。
+    var isFirstVault: Bool = true
+
     @State private var name = "我的密码库"
     @State private var password = ""
     @State private var confirm = ""
@@ -29,8 +34,10 @@ struct VaultSetupView: View {
                 Image(systemName: "shippingbox.circle.fill")
                     .font(.system(size: 52))
                     .foregroundStyle(.tint)
-                Text("创建密码库").font(.title2.bold())
-                Text("库文件保存在本机，主密码是唯一解锁凭据，遗失后无法找回。")
+                Text(isFirstVault ? "创建密码库" : "新建密码库").font(.title2.bold())
+                Text(isFirstVault
+                     ? "库文件保存在本机，主密码是唯一解锁凭据，遗失后无法找回。"
+                     : "将在本机新增一座独立密码库，与现有库互不相通；主密码是该库唯一解锁凭据，遗失后无法找回。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

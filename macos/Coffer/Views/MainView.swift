@@ -120,6 +120,14 @@ struct MainView: View {
         .frame(minWidth: 300)
         .toolbar {
             ToolbarItemGroup {
+                // 库切换器入口（v0.4 FR-1.2，MB-1）：当前库名 + 下拉，
+                // sheet 承载库列表 / 新建库（docs/15 §3.2.1）
+                Menu {
+                    Button("切换密码库…") { model.showVaultSwitcher = true }
+                } label: {
+                    Label(model.vaultName.isEmpty ? "密码库" : model.vaultName,
+                          systemImage: "vault")
+                }
                 Menu {
                     ForEach(FfiItemCategory.editableCategories, id: \.self) { category in
                         Button {
@@ -240,11 +248,20 @@ struct ActiveItemList: View {
                 }
             }
         }
-        .searchable(text: $model.searchText, placement: .toolbar, prompt: "按标题搜索")
+        // FR-11.2 文案收尾（v0.4 MB-1 并入，docs/15 §3.3.5）：内核 search
+        // 即模糊搜索（标题/用户名/网址/标签），仅此提示文案过时
+        .searchable(text: $model.searchText, placement: .toolbar,
+                    prompt: "搜索标题、用户名、网址、标签")
         .onChange(of: model.searchText) { _, _ in
             model.reloadItems()
         }
         .navigationTitle(navigationTitleText)
+        // HK-2/3/4 主窗口局部键（v0.4 MC，docs/15 §3.3.2 r1.4）：以隐藏
+        // 按钮 + keyboardShortcut 承载——列表无焦点（如焦点在搜索框）时
+        // 同样触发，判据①「搜索 → 回车复制」链路依赖此形态
+        .background {
+            hotKeyActions
+        }
     }
 
     private var navigationTitleText: String {
@@ -256,5 +273,87 @@ struct ActiveItemList: View {
         // 防御分支：.health 下中栏渲染 HealthCheckView，本标题不可达。
         case .health: return "安全体检"
         }
+    }
+
+    // MARK: - 主窗口局部键（HK-2/3/4，docs/15 §3.3.2 r1.4）
+
+    /// 隐藏快捷键按钮组：⌘U 复制用户名的禁用态由按钮 disabled 承载
+    /// （无用户名 = 禁用，快捷键随之失效）；Enter/↑/↓ 恒可用（无选中
+    /// 时动作内 guard 兜底）。.hidden() 不移出视图层级，快捷键仍注册。
+    private var hotKeyActions: some View {
+        Group {
+            Button("上移选中") { moveSelection(-1) }
+                .keyboardShortcut(.upArrow, modifiers: [])
+            Button("下移选中") { moveSelection(1) }
+                .keyboardShortcut(.downArrow, modifiers: [])
+            Button("复制选中条目密码") { copySelectedPassword() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.currentDetails == nil)
+            Button("复制选中条目用户名") { copySelectedUsername() }
+                .keyboardShortcut("u", modifiers: .command)
+                .disabled(selectedUsername == nil)
+        }
+        .hidden()
+        .accessibilityHidden(true)
+    }
+
+    /// 选中条目的用户名值（nil = 无选中 / 无用户名字段 / 值为空——HK-4
+    /// 禁用态依据）。用户名为普通字段，值已随详情直出（掩码纪律只约束
+    /// Concealed 字段），不经 fieldValue 跨桥。
+    private var selectedUsername: String? {
+        guard let field = model.currentDetails?.fields.first(where: {
+            $0.designation == .username
+        }), let value = field.value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    /// HK-2：结果列表移动选中（相对当前选中 ±offset）。无选中时 ↓ 到
+    /// 第一条、↑ 到最后一条（Finder 语义）；越界钳制到两端。
+    private func moveSelection(_ offset: Int) {
+        let ids = model.items.map(\.uuid)
+        guard !ids.isEmpty else { return }
+        let next: Int
+        switch model.selectedItemID.flatMap({ ids.firstIndex(of: $0) }) {
+        case nil:
+            next = offset > 0 ? 0 : ids.count - 1
+        case let current?:
+            next = min(max(current + offset, 0), ids.count - 1)
+        }
+        model.selectedItemID = ids[next]
+    }
+
+    /// HK-3：复制选中条目密码（FR-5.6 序列，docs/15 §3.3.3）：条目含
+    /// TOTP（details.totp 非空）才走「密码 → 延迟 → TOTP」序列，否则
+    /// 单次自动清除复制（现状）。明文经 fieldValue 随取随用，不落状态。
+    private func copySelectedPassword() {
+        guard let itemId = model.selectedItemID,
+              let details = model.currentDetails,
+              let passwordField = details.fields.first(where: {
+                  $0.designation == .password
+              }) else { return }
+        do {
+            guard let password = try model.fieldValue(itemId: itemId, fieldId: passwordField.uuid),
+                  !password.isEmpty else { return }
+            if details.totp != nil {
+                // totpProvider 延迟执行取 fresh code；闭包体内访问
+                // @MainActor 的 AppModel，经 assumeIsolated 进入——
+                // ClipboardManager 保证回调只在主队列触发
+                ClipboardManager.shared.copyPasswordThenTotp(password: password) {
+                    MainActor.assumeIsolated { try? model.totpCode(itemId: itemId).code }
+                }
+            } else {
+                ClipboardManager.shared.copyWithAutoClear(password)
+            }
+        } catch {
+            // 1001（取值时会话已锁）→ 切回锁定界面；其余 code+message 直出
+            model.handleFfiError(error)
+        }
+    }
+
+    /// HK-4：复制用户名（copyPlain 不自动清除，与 FieldRowView 普通字段
+    /// 复制同纪律）。无用户名由按钮禁用态拦截，此处 guard 兜底。
+    private func copySelectedUsername() {
+        guard let username = selectedUsername else { return }
+        ClipboardManager.shared.copyPlain(username)
     }
 }

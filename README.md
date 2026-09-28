@@ -102,7 +102,7 @@ Rust 工作区（`core/`）11 个 crate：
 
 **当前进展（2026-09-28）**：
 
-- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **679 个用例**，门禁命令下 **671 条执行通过**（另 8 条标 `#[ignore]`：1 条 1 GiB KDF 重载荷用例 release 人工独占、fuzz/统计类用例按 CI 口径 `--include-ignored` 执行）
+- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **749 个用例**，门禁命令下 **741 条执行通过**（另 8 条标 `#[ignore]`：1 条 1 GiB KDF 重载荷用例 release 人工独占、fuzz/统计类用例按 CI 口径 `--include-ignored` 执行）
 - ℹ️ 门禁命令为 `cargo test --workspace --no-fail-fast`（**须在 `core/` 下执行**）。历史上曾有两条用例需要 `--skip`（1 GiB KDF 资源耗尽、`千条搜索基线` 单次墙钟断言 flaky），**BUG-4 已于 2026-09-27 修复，`--skip` 不再需要**；根因与修复见 `docs/KNOWN-ISSUES.md` **BUG-4**
 - ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零；**9 把派生子密钥**（v0.2 增 audit_key、root_mac_key）
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通
@@ -110,12 +110,13 @@ Rust 工作区（`core/`）11 个 crate：
 - 🟡 Argon2id 参数：开发机摸底完成（见 `05-Argon2id参数标定.md`），**最低端设备待做**
 - ✅ `cf-format` / `cf-domain` / `cf-importer` / `cf-store` / `cf-session` / `cf-ffi` 均已实现并有测试覆盖；**v0.2 内核新增**：加密备份/恢复/校验、CSV 导出、改主密码、暴力退避、剪贴板五档配置、备份提醒、本地审计日志、root_mac 完整性校验（防行级删除/篡改）
 - ✅ `cf-exporter` 已交付（FR-8.1/8.6 加密备份 + FR-8.3 CSV 导出 + 备份打点）；**1PUX 导入内核已交付**（含 `files/` 附件、预检报告）；附件存储内核已交付
-- ⬜ **尚未实现**：1PUX 导入的真实样本验收（685 条样本待重导）、体检报告编排（FR-6.7）、FR-7.8 风险提示、附件 UI 接线（v0.3 附件 UI / v0.4）、菜单栏/快捷键、Passkey、Android 端
+- ✅ **v0.4.0 已交付（2026-09-29，回归收口 `627cf5f`）**：菜单栏常驻 + 全局快捷键 ⌥⌘P（关窗驻留）、多库切换 + 跨库复制 UI、附件交互 UI（列表/添加/内存预览/导出打开）、随机字符 + 密码短语双模式生成器、复制密码联动 TOTP 验证码（FR-5.6）；真机验收项集中列 `docs/16-v0.4验收判据骨架.md` TC-M 清单
+- ⬜ **尚未实现**：v0.4.0 真机验收（TC-M 陪跑）、Passkey（v0.5.0 条件性）、Android 端（v1.0.0 后）。此前清单中的体检报告（FR-6.7）/ FR-7.8 / 1PUX 真实样本验收（685 补验 12/12，2026-09-28）均已随 v0.3.0 交付
 - ✅ **v0.2.0 Swift UI 接线已完成（2026-09-28）**：统一设置页（剪贴板五档 / 自动锁定 / 备份提醒档位）、改主密码、加密备份导出、CSV 明文导出（双门禁）、从备份恢复、备份提醒横幅、审计日志查看页、解锁退避倒计时；真机验收为唯一剩余项
 
 > **已有可用的构建产物**：macOS v0.1 纵切已交付，`./tools/build_macos_app.sh` 可构建出 `macos/build/Coffer.app`（构建命令与签名核查方法见 `macos/README.md`）。
 > 数据出口已随 v0.2.0 内核交付（加密备份/CSV 导出/改主密码），「不要存真实密码」的早期限制**解除**；**v0.2.0 的 Swift UI 侧接线已完成（2026-09-28）**——导出/恢复/改密/剪贴板五档等均可在 App 内操作，真机验收（docs/10 人工用例清单）待执行。
-> 诚实说明：Passkey、菜单栏、附件 UI、多库 UI 尚未实现；1PUX 导入已过合成样本验收，真实样本验收待补。
+> 诚实说明：Passkey（v0.5.0 条件性）与 Android 端尚未实现；1PUX 导入已过 685 真实样本验收（2026-09-28）；v0.4.0 真机验收项见 `docs/16` TC-M。
 
 ---
 

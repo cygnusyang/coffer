@@ -723,7 +723,7 @@ final class AppModel: ObservableObject {
                     continuation.resume()
                 } else {
                     // 保留系统错误信息用于调试日志；用户面统一 4001 文案
-                    NSLog("Coffer TouchID evaluatePolicy 失败: \(String(describing: error))")
+                    DiagLog.append("Coffer TouchID evaluatePolicy 失败: \(String(describing: error))")
                     continuation.resume(throwing: TouchIDError.unavailable)
                 }
             }

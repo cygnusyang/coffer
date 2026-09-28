@@ -160,39 +160,30 @@ fn 正常跨库复制内容逐项相等且时间戳保留() {
             target.value.as_ref().map(|v| v.expose()),
             f.value.as_ref().map(|v| v.expose())
         );
-        let src_section = f
-            .section_uuid
-            .as_ref()
-            .map(|su| {
-                src_before
-                    .sections
-                    .iter()
-                    .find(|s| &s.uuid == su)
-                    .unwrap()
-                    .title
-                    .expose()
-            });
-        let dst_section = target
-            .section_uuid
-            .as_ref()
-            .map(|su| {
-                copied
-                    .sections
-                    .iter()
-                    .find(|s| &s.uuid == su)
-                    .unwrap()
-                    .title
-                    .expose()
-            });
+        let src_section = f.section_uuid.as_ref().map(|su| {
+            src_before
+                .sections
+                .iter()
+                .find(|s| &s.uuid == su)
+                .unwrap()
+                .title
+                .expose()
+        });
+        let dst_section = target.section_uuid.as_ref().map(|su| {
+            copied
+                .sections
+                .iter()
+                .find(|s| &s.uuid == su)
+                .unwrap()
+                .title
+                .expose()
+        });
         assert_eq!(src_section, dst_section, "字段挂接分区标题应相等");
     }
 
     // URL / 标签 / 分区
     assert_eq!(copied.urls.len(), src_before.urls.len());
-    assert_eq!(
-        copied.urls[0].url.expose(),
-        src_before.urls[0].url.expose()
-    );
+    assert_eq!(copied.urls[0].url.expose(), src_before.urls[0].url.expose());
     assert_eq!(copied.urls[0].is_primary, src_before.urls[0].is_primary);
     let mut src_tags: Vec<_> = src_before.tags.iter().map(|t| t.expose()).collect();
     src_tags.sort();
@@ -252,7 +243,10 @@ fn 跨库复制密文换绑重加密() {
         "目标库密文必须是 dst key 重密封的产物，不得原样搬运"
     );
     // 目标库用自己的密钥可正常读回（正向换绑成立）
-    assert_eq!(dst.get_item(&new_id).unwrap().unwrap().title.expose(), "换绑条目");
+    assert_eq!(
+        dst.get_item(&new_id).unwrap().unwrap().title.expose(),
+        "换绑条目"
+    );
 }
 
 // ---------------------------------------------------------------- 判据 ④
@@ -277,8 +271,14 @@ fn 同库复制合法且产物独立() {
     let mut edited = rich_draft("副本改标题");
     edited.totp = None;
     session.update_item(&copy_id, &edited).unwrap();
-    assert_eq!(session.get_item(&src_id).unwrap().unwrap().title.expose(), "原始条目");
-    assert_eq!(session.get_item(&copy_id).unwrap().unwrap().title.expose(), "副本改标题");
+    assert_eq!(
+        session.get_item(&src_id).unwrap().unwrap().title.expose(),
+        "原始条目"
+    );
+    assert_eq!(
+        session.get_item(&copy_id).unwrap().unwrap().title.expose(),
+        "副本改标题"
+    );
 }
 
 // ---------------------------------------------------------------- 判据 ⑤
@@ -367,7 +367,9 @@ fn 审计源库与目标库各一条且非敏感() {
 
     let dst_events: Vec<(String, Option<String>)> = {
         let conn = rusqlite::Connection::open(dst_dir.join("db.sqlite")).unwrap();
-        let mut stmt = conn.prepare("SELECT event, detail FROM audit_local").unwrap();
+        let mut stmt = conn
+            .prepare("SELECT event, detail FROM audit_local")
+            .unwrap();
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .filter_map(Result::ok)
@@ -386,7 +388,9 @@ fn 审计源库与目标库各一条且非敏感() {
 
     let src_events: Vec<(String, Option<String>)> = {
         let conn = rusqlite::Connection::open(src_dir.join("db.sqlite")).unwrap();
-        let mut stmt = conn.prepare("SELECT event, detail FROM audit_local").unwrap();
+        let mut stmt = conn
+            .prepare("SELECT event, detail FROM audit_local")
+            .unwrap();
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .filter_map(Result::ok)
@@ -408,7 +412,10 @@ fn 审计源库与目标库各一条且非敏感() {
         assert_eq!(event, "item_copy");
         let detail = detail.as_deref().unwrap_or_default();
         assert!(!detail.contains("审计条目"), "detail 不得含标题：{detail}");
-        assert!(!detail.contains("hunter2"), "detail 不得含字段明文：{detail}");
+        assert!(
+            !detail.contains("hunter2"),
+            "detail 不得含字段明文：{detail}"
+        );
     }
 }
 
@@ -423,7 +430,10 @@ fn 往返复制顺序调用不死锁不串数据() {
 
     let a_id = a.create_item(&rich_draft("甲库条目")).unwrap();
     let in_b = copy_item(&a, &a_id, &b).unwrap();
-    assert_eq!(b.get_item(&in_b).unwrap().unwrap().title.expose(), "甲库条目");
+    assert_eq!(
+        b.get_item(&in_b).unwrap().unwrap().title.expose(),
+        "甲库条目"
+    );
 
     // 反向：把 b 里的副本复制回 a（新条目，不与源冲突）
     let back_in_a = copy_item(&b, &in_b, &a).unwrap();

@@ -190,7 +190,11 @@ fn keep与其它编辑组合_totp仍存活() {
     assert_eq!(details.title.expose(), "组合编辑后");
     assert!(details.totp.is_some(), "组合编辑后 TOTP 必须存活");
     assert_eq!(
-        details.tags.iter().map(|t| t.expose().to_owned()).collect::<Vec<_>>(),
+        details
+            .tags
+            .iter()
+            .map(|t| t.expose().to_owned())
+            .collect::<Vec<_>>(),
         vec!["新标签".to_owned()]
     );
     let username = details
@@ -198,7 +202,10 @@ fn keep与其它编辑组合_totp仍存活() {
         .iter()
         .find(|f| f.designation == Some(cf_domain::field::Designation::Username))
         .unwrap();
-    assert_eq!(username.value.as_ref().map(|v| v.expose()), Some("bob@example.com"));
+    assert_eq!(
+        username.value.as_ref().map(|v| v.expose()),
+        Some("bob@example.com")
+    );
 }
 
 /// 对无 TOTP 的条目 Keep：静默无害——不报错、不凭空造出 totp 行。
@@ -233,12 +240,20 @@ fn 连续两次keep幂等() {
     let id = item_with_totp(&session, "连续Keep");
 
     session
-        .update_item_with_totp(&id, &login_draft_without_totp("第一次Keep"), TotpUpdate::Keep)
+        .update_item_with_totp(
+            &id,
+            &login_draft_without_totp("第一次Keep"),
+            TotpUpdate::Keep,
+        )
         .unwrap();
     let mid = totp_rows(&dir, &id);
 
     session
-        .update_item_with_totp(&id, &login_draft_without_totp("第二次Keep"), TotpUpdate::Keep)
+        .update_item_with_totp(
+            &id,
+            &login_draft_without_totp("第二次Keep"),
+            TotpUpdate::Keep,
+        )
         .unwrap();
     let end = totp_rows(&dir, &id);
 
@@ -321,7 +336,13 @@ fn replace非法载荷拒绝后旧totp完好() {
     let (dir, session) = fresh_session("replace_invalid");
     let id = item_with_totp(&session, "非法Replace");
     let before = totp_rows(&dir, &id);
-    let title_before = session.get_item(&id).unwrap().unwrap().title.expose().to_owned();
+    let title_before = session
+        .get_item(&id)
+        .unwrap()
+        .unwrap()
+        .title
+        .expose()
+        .to_owned();
 
     // 单独的非法 Replace（载荷 9 字节，恰好低于校验线）
     let err = session
@@ -359,7 +380,11 @@ fn remove后行清空且totp_code报1011() {
 
     // Remove 对已无 TOTP 的条目再执行一次：空操作不报错（幂等）
     session
-        .update_item_with_totp(&id, &login_draft_without_totp("再Remove"), TotpUpdate::Remove)
+        .update_item_with_totp(
+            &id,
+            &login_draft_without_totp("再Remove"),
+            TotpUpdate::Remove,
+        )
         .unwrap();
     assert!(totp_rows(&dir, &id).is_empty());
 }
@@ -398,9 +423,7 @@ fn keep后锁定解锁totp仍可出码() {
 fn totp_config三分_不存在无totp软删() {
     let (dir, session) = fresh_session("config_tri");
     let id = item_with_totp(&session, "三分返回");
-    let bare = session
-        .create_item(&login_draft("无TOTP", None))
-        .unwrap();
+    let bare = session.create_item(&login_draft("无TOTP", None)).unwrap();
 
     // ① 不存在条目 → Ok(None)
     assert!(session.totp_config("no-such-item").unwrap().is_none());

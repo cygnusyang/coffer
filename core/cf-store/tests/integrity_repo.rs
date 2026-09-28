@@ -132,7 +132,10 @@ fn tc_mac_02_篡改record_count行检出() {
         )
         .unwrap();
     let result = meta_of(&store).verify_integrity(&store.subkeys().root_mac_key);
-    assert!(matches!(result, Err(CfError::Corrupted(_))), "篡改 record_count 必须检出");
+    assert!(
+        matches!(result, Err(CfError::Corrupted(_))),
+        "篡改 record_count 必须检出"
+    );
 }
 
 /// TC-MAC-03：翻转 `root_mac` BLOB 任一字节 → verify 失败（负路径）。
@@ -158,7 +161,10 @@ fn tc_mac_03_篡改root_mac单字节检出() {
         .unwrap();
 
     let result = meta_of(&store).verify_integrity(&store.subkeys().root_mac_key);
-    assert!(matches!(result, Err(CfError::Corrupted(_))), "MAC 单字节翻转必须检出");
+    assert!(
+        matches!(result, Err(CfError::Corrupted(_))),
+        "MAC 单字节翻转必须检出"
+    );
 }
 
 /// TC-MAC-04：删 `root_mac` / `record_count` 任一行 → 自举成功不报错

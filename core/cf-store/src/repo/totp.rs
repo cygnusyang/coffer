@@ -24,7 +24,7 @@ use rusqlite::Connection;
 use zeroize::Zeroizing;
 
 use crate::error::{CfError, CfStoreResult, CryptoResultExt, RusqliteResultExt};
-use crate::repo::{field_aad, uuid_bytes, unix_now};
+use crate::repo::{field_aad, unix_now, uuid_bytes};
 
 /// `enc_secret` 的 AAD 列名（既有常量，保持兼容）。
 pub const COLUMN_TOTP_SECRET: &str = "enc_totp_secret";
@@ -160,14 +160,22 @@ impl<'a> TotpRepo<'a> {
                     uuid: totp_uuid.clone(),
                     item_uuid,
                     algo: row.get(2).store()?,
-                    digits: u8::try_from(row.get::<_, i64>(3).store()?).map_err(|_| {
-                        CfError::Corrupted("digits out of range".into())
-                    })?,
-                    period: u32::try_from(row.get::<_, i64>(4).store()?).map_err(|_| {
-                        CfError::Corrupted("period out of range".into())
-                    })?,
-                    issuer: open_optional(self.field_key, &totp_uuid, COLUMN_TOTP_ISSUER, enc_issuer)?,
-                    account: open_optional(self.field_key, &totp_uuid, COLUMN_TOTP_ACCOUNT, enc_account)?,
+                    digits: u8::try_from(row.get::<_, i64>(3).store()?)
+                        .map_err(|_| CfError::Corrupted("digits out of range".into()))?,
+                    period: u32::try_from(row.get::<_, i64>(4).store()?)
+                        .map_err(|_| CfError::Corrupted("period out of range".into()))?,
+                    issuer: open_optional(
+                        self.field_key,
+                        &totp_uuid,
+                        COLUMN_TOTP_ISSUER,
+                        enc_issuer,
+                    )?,
+                    account: open_optional(
+                        self.field_key,
+                        &totp_uuid,
+                        COLUMN_TOTP_ACCOUNT,
+                        enc_account,
+                    )?,
                     created_at: row.get(7).store()?,
                 }))
             }
@@ -321,7 +329,16 @@ impl TotpStore {
         issuer: Option<&str>,
         account: Option<&str>,
     ) -> CfStoreResult<()> {
-        self.repo().insert_totp(uuid, item_uuid, plain_secret, algo, digits, period, issuer, account)
+        self.repo().insert_totp(
+            uuid,
+            item_uuid,
+            plain_secret,
+            algo,
+            digits,
+            period,
+            issuer,
+            account,
+        )
     }
 
     /// 读取 TOTP 元数据（见 [`TotpRepo::totp_meta`]）。
@@ -357,7 +374,8 @@ mod tests {
     fn store() -> TotpStore {
         let conn = Connection::open_in_memory().unwrap();
         // items 外键引用的宿主表：最小化建表，并插入测试用宿主条目
-        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);").unwrap();
+        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);")
+            .unwrap();
         for seed in 2u8..=5 {
             conn.execute(
                 "INSERT INTO items (uuid) VALUES (?1)",
@@ -466,15 +484,27 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_ne!(enc_account, b"alice@example.com", "account 明文不得出现在数据库中");
+        assert_ne!(
+            enc_account, b"alice@example.com",
+            "account 明文不得出现在数据库中"
+        );
     }
 
     /// 可空加密列：None 落盘为 SQL NULL，读回 None
     #[test]
     fn null_columns_round_trip_as_null() {
         let s = store();
-        s.insert_totp(&test_uuid(1), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
-            .unwrap();
+        s.insert_totp(
+            &test_uuid(1),
+            &test_uuid(2),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
         let n: i64 = s
             .conn
             .query_row(
@@ -500,8 +530,17 @@ mod tests {
     #[test]
     fn delete_removes_record() {
         let s = store();
-        s.insert_totp(&test_uuid(1), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
-            .unwrap();
+        s.insert_totp(
+            &test_uuid(1),
+            &test_uuid(2),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
 
         s.delete_totp(&test_uuid(1)).unwrap();
         assert!(s.totp_meta(&test_uuid(1)).unwrap().is_none());
@@ -511,7 +550,8 @@ mod tests {
     #[test]
     fn wrong_key_fails_to_decrypt() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);").unwrap();
+        conn.execute_batch("CREATE TABLE items (uuid TEXT PRIMARY KEY);")
+            .unwrap();
         conn.execute(
             "INSERT INTO items (uuid) VALUES (?1)",
             rusqlite::params![uuid::Uuid::from_bytes([2; 16]).to_string()],
@@ -521,7 +561,16 @@ mod tests {
         let good_key = SessionKey::new([0x55u8; 32]);
         let writer = TotpStore::new(conn, good_key).unwrap();
         writer
-            .insert_totp(&test_uuid(1), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
+            .insert_totp(
+                &test_uuid(1),
+                &test_uuid(2),
+                b"0123456789",
+                "sha1",
+                6,
+                30,
+                None,
+                None,
+            )
             .unwrap();
 
         // 同一连接、错误密钥：记录可见但解密必须失败
@@ -536,7 +585,16 @@ mod tests {
     #[test]
     fn invalid_uuid_rejected() {
         let s = store();
-        let result = s.insert_totp(&test_uuid(1), "not-a-uuid", b"0123456789", "sha1", 6, 30, None, None);
+        let result = s.insert_totp(
+            &test_uuid(1),
+            "not-a-uuid",
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        );
         assert!(matches!(result, Err(CfError::Corrupted(_))));
     }
 
@@ -544,12 +602,39 @@ mod tests {
     #[test]
     fn list_uuids_for_item() {
         let s = store();
-        s.insert_totp(&test_uuid(1), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
-            .unwrap();
-        s.insert_totp(&test_uuid(3), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
-            .unwrap();
-        s.insert_totp(&test_uuid(4), &test_uuid(5), b"0123456789", "sha1", 6, 30, None, None)
-            .unwrap();
+        s.insert_totp(
+            &test_uuid(1),
+            &test_uuid(2),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
+        s.insert_totp(
+            &test_uuid(3),
+            &test_uuid(2),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
+        s.insert_totp(
+            &test_uuid(4),
+            &test_uuid(5),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
 
         let uuids = s.totp_uuids_for_item(&test_uuid(2)).unwrap();
         assert_eq!(uuids.len(), 2);
@@ -564,10 +649,28 @@ mod tests {
     #[test]
     fn enc_secret钉死在totp行uuid上() {
         let s = store();
-        s.insert_totp(&test_uuid(1), &test_uuid(2), b"secret-AAAA", "sha1", 6, 30, None, None)
-            .unwrap();
-        s.insert_totp(&test_uuid(3), &test_uuid(2), b"secret-BBBB", "sha1", 6, 30, None, None)
-            .unwrap();
+        s.insert_totp(
+            &test_uuid(1),
+            &test_uuid(2),
+            b"secret-AAAA",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
+        s.insert_totp(
+            &test_uuid(3),
+            &test_uuid(2),
+            b"secret-BBBB",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
 
         // ① 把行搬到别的条目：行 uuid 不变 ⇒ AAD 不变 ⇒ 仍可解密
         s.conn
@@ -577,7 +680,11 @@ mod tests {
             )
             .unwrap();
         let got = s.totp_secret(&test_uuid(1)).unwrap().unwrap();
-        assert_eq!(&got[..], b"secret-AAAA", "item_uuid 变化不影响行级钉死的 AAD");
+        assert_eq!(
+            &got[..],
+            b"secret-AAAA",
+            "item_uuid 变化不影响行级钉死的 AAD"
+        );
 
         // ② 把 t1 的密文搬到 t3（同 item，不同 totp 行）：AAD 不匹配 ⇒ 解密失败
         s.conn
@@ -596,10 +703,28 @@ mod tests {
     #[test]
     fn issuer_ciphertext_pinned_to_totp_uuid() {
         let s = store();
-        s.insert_totp(&test_uuid(1), &test_uuid(2), b"0123456789", "sha1", 6, 30, Some("GitHub"), None)
-            .unwrap();
-        s.insert_totp(&test_uuid(3), &test_uuid(2), b"0123456789", "sha1", 6, 30, None, None)
-            .unwrap();
+        s.insert_totp(
+            &test_uuid(1),
+            &test_uuid(2),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            Some("GitHub"),
+            None,
+        )
+        .unwrap();
+        s.insert_totp(
+            &test_uuid(3),
+            &test_uuid(2),
+            b"0123456789",
+            "sha1",
+            6,
+            30,
+            None,
+            None,
+        )
+        .unwrap();
 
         s.conn
             .execute(

@@ -58,8 +58,8 @@
 #![warn(missing_docs)]
 
 mod backoff;
-mod export_gate;
 pub mod change_password;
+mod export_gate;
 pub mod idle;
 pub mod reminder;
 pub mod testing;
@@ -80,8 +80,8 @@ use cf_totp::TotpConfig;
 pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
 pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
 pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};
-pub use usecase::audit::{PasswordFingerprint, WatchtowerReport};
 pub use usecase::attachments::AttachmentInfo;
+pub use usecase::audit::{PasswordFingerprint, WatchtowerReport};
 pub use usecase::cross_copy::copy_item;
 pub use usecase::history::HistoryEntry;
 pub use vault::VaultSession;

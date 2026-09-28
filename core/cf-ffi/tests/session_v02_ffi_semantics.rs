@@ -42,10 +42,7 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-v02-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-v02-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -88,7 +85,10 @@ fn 改密后旧密码失败新密码成功() {
 
     let err = session.unlock(STRONG_PASSWORD.to_owned()).unwrap_err();
     assert_eq!(err.code(), 1002, "旧密码必须失效");
-    assert!(session.unlock(NEW_PASSWORD.to_owned()).is_ok(), "新密码必须生效");
+    assert!(
+        session.unlock(NEW_PASSWORD.to_owned()).is_ok(),
+        "新密码必须生效"
+    );
 
     // 对称换回：FFI 路径可往返
     session
@@ -132,18 +132,22 @@ fn 改密门禁与header不变量() {
         )),
         1002
     );
-    assert_eq!(header_bytes(&vault_dir), before, "旧密码错后 header 必须未变");
+    assert_eq!(
+        header_bytes(&vault_dir),
+        before,
+        "旧密码错后 header 必须未变"
+    );
 
     // 新密码弱 → 1010，header 未变
     assert_eq!(
-        err_code(session.change_password(
-            STRONG_PASSWORD.to_owned(),
-            "123456".to_owned(),
-            None,
-        )),
+        err_code(session.change_password(STRONG_PASSWORD.to_owned(), "123456".to_owned(), None,)),
         1010
     );
-    assert_eq!(header_bytes(&vault_dir), before, "弱密码被拒后 header 必须未变");
+    assert_eq!(
+        header_bytes(&vault_dir),
+        before,
+        "弱密码被拒后 header 必须未变"
+    );
 
     // kdf 档位越界 → 5002（FFI record → KdfParams 校验）
     assert_eq!(
@@ -158,7 +162,11 @@ fn 改密门禁与header不变量() {
         )),
         5002
     );
-    assert_eq!(header_bytes(&vault_dir), before, "非法档位下 header 必须未变");
+    assert_eq!(
+        header_bytes(&vault_dir),
+        before,
+        "非法档位下 header 必须未变"
+    );
 
     // 带合法 kdf 档位改密 → 新密码按新档位解锁成功
     session
@@ -183,10 +191,19 @@ fn 剪贴板档位设置与非法值拒绝() {
     // Swift 侧选择器数据源：档位常量 + 默认值 + 0（从不）语义
     assert_eq!(cf_ffi::api::clipboard_clear_tiers(), vec![10, 30, 60, 120]);
     assert_eq!(cf_ffi::api::default_clipboard_clear_secs(), 30);
-    assert!(cf_ffi::api::validate_clipboard_clear_secs(0).is_ok(), "0 = 从不");
+    assert!(
+        cf_ffi::api::validate_clipboard_clear_secs(0).is_ok(),
+        "0 = 从不"
+    );
     assert!(cf_ffi::api::validate_clipboard_clear_secs(120).is_ok());
-    assert_eq!(err_code(cf_ffi::api::validate_clipboard_clear_secs(-1)), 5002);
-    assert_eq!(err_code(cf_ffi::api::validate_clipboard_clear_secs(45)), 5002);
+    assert_eq!(
+        err_code(cf_ffi::api::validate_clipboard_clear_secs(-1)),
+        5002
+    );
+    assert_eq!(
+        err_code(cf_ffi::api::validate_clipboard_clear_secs(45)),
+        5002
+    );
 
     let base = temp_base("clip");
     let brief = setup_vault(&base, "剪贴板库");
@@ -229,9 +246,18 @@ fn 备份提醒门禁与判定() {
 
     session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
     assert_eq!(session.last_backup_at().unwrap(), None, "新库从未备份");
-    assert!(session.should_suggest_backup(300, 1_000).unwrap(), "从未备份应提醒");
-    assert!(!session.should_suggest_backup(0, 1_000).unwrap(), "0 视为禁用");
-    assert!(!session.should_suggest_backup(-1, 1_000).unwrap(), "负值视为禁用");
+    assert!(
+        session.should_suggest_backup(300, 1_000).unwrap(),
+        "从未备份应提醒"
+    );
+    assert!(
+        !session.should_suggest_backup(0, 1_000).unwrap(),
+        "0 视为禁用"
+    );
+    assert!(
+        !session.should_suggest_backup(-1, 1_000).unwrap(),
+        "负值视为禁用"
+    );
 }
 
 /// CSV 导出（FR-8.3）+ 审计打点/查询回环（FR-12.6）：导出成功后
@@ -273,8 +299,14 @@ fn 审计分页与锁定门禁() {
     assert!(matches!(events[0].event, FfiAuditEvent::PasswordChange));
 
     // 分页：limit=0 → 空；offset 越界 → 空
-    assert!(session.recent_audit_events(None, Some(0)).unwrap().is_empty());
-    assert!(session.recent_audit_events(Some(9), None).unwrap().is_empty());
+    assert!(session
+        .recent_audit_events(None, Some(0))
+        .unwrap()
+        .is_empty());
+    assert!(session
+        .recent_audit_events(Some(9), None)
+        .unwrap()
+        .is_empty());
 
     // 锁定态 → 1001
     session.lock();

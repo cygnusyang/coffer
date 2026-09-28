@@ -39,9 +39,7 @@ use cf_crypto::aead::{open, seal, SessionKey, KEY_LEN};
 use cf_domain::CfError;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::unlock::{
-    b64_decode, b64_encode, finish_unlock, format_err, header_aad, recover_dek,
-};
+use crate::unlock::{b64_decode, b64_encode, finish_unlock, format_err, header_aad, recover_dek};
 use crate::SessionResult;
 
 /// `wrapped_dek_bio` 的 AAD 用途标签（docs/08 D-2：`vault_uuid_bytes ‖ purpose`）。
@@ -308,7 +306,9 @@ mod tests {
 
         let k_bio = super::new_biometric_unwrap_key().unwrap();
         let k_bio_bytes: [u8; 32] = *k_bio.as_bytes();
-        session.enable_biometric(STRONG_PASSWORD, &k_bio_bytes).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, &k_bio_bytes)
+            .unwrap();
         assert!(session.has_biometric_wrap());
 
         // 解锁态重复 enable 幂等可用（④ 的一部分：新 K_bio 覆盖旧值）
@@ -336,12 +336,15 @@ mod tests {
     #[test]
     fn bio_错误k_bio解封失败1002() {
         let base = crate::tests_support::temp_dir("bio_wrong_key");
-        let brief = create_vault_with_kdf(&base, "错误钥匙库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let brief =
+            create_vault_with_kdf(&base, "错误钥匙库", STRONG_PASSWORD, fast_kdf()).unwrap();
         let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
         session.unlock(STRONG_PASSWORD).unwrap();
 
         let k_bio = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k_bio.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
         session.lock();
 
         let wrong = super::new_biometric_unwrap_key().unwrap();
@@ -360,7 +363,9 @@ mod tests {
         session.unlock(STRONG_PASSWORD).unwrap();
 
         let k_bio = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k_bio.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
         session.lock();
 
         // 伪造一段形状合法（nonce24‖ct32‖tag16 → 72B）的密文替换原密文
@@ -368,7 +373,9 @@ mod tests {
         patch_header_biometric(&vault_dir, &forged);
 
         let session2 = open_vault(&vault_dir).unwrap();
-        let err = session2.unlock_with_biometric(k_bio.as_bytes()).unwrap_err();
+        let err = session2
+            .unlock_with_biometric(k_bio.as_bytes())
+            .unwrap_err();
         assert_eq!(err.code(), 1002);
     }
 
@@ -384,14 +391,18 @@ mod tests {
         let session_a = open_vault(&dir_a).unwrap();
         session_a.unlock(STRONG_PASSWORD).unwrap();
         let k_bio = super::new_biometric_unwrap_key().unwrap();
-        session_a.enable_biometric(STRONG_PASSWORD, k_bio.as_bytes()).unwrap();
+        session_a
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
 
         // 攻击：把 A 的 biometric_wrap 密文整体搬进 B 的 header
         let wrapped_a = header_bio_wrapped(&dir_a);
         patch_header_biometric(&dir_b, &wrapped_a);
 
         let session_b = open_vault(&dir_b).unwrap();
-        let err = session_b.unlock_with_biometric(k_bio.as_bytes()).unwrap_err();
+        let err = session_b
+            .unlock_with_biometric(k_bio.as_bytes())
+            .unwrap_err();
         assert_eq!(err.code(), 1002, "AAD 钉库：跨库搬运必须解封失败");
     }
 
@@ -405,9 +416,13 @@ mod tests {
         session.unlock(STRONG_PASSWORD).unwrap();
 
         let k1 = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k1.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k1.as_bytes())
+            .unwrap();
         let k2 = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k2.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k2.as_bytes())
+            .unwrap();
         session.lock();
 
         let err = session.unlock_with_biometric(k1.as_bytes()).unwrap_err();
@@ -443,16 +458,22 @@ mod tests {
         session.unlock(STRONG_PASSWORD).unwrap();
 
         // enable：31 字节拒绝
-        let err = session.enable_biometric(STRONG_PASSWORD, &[0u8; 31]).unwrap_err();
+        let err = session
+            .enable_biometric(STRONG_PASSWORD, &[0u8; 31])
+            .unwrap_err();
         assert_eq!(err.code(), 5002);
         // enable：33 字节拒绝
-        let err = session.enable_biometric(STRONG_PASSWORD, &[0u8; 33]).unwrap_err();
+        let err = session
+            .enable_biometric(STRONG_PASSWORD, &[0u8; 33])
+            .unwrap_err();
         assert_eq!(err.code(), 5002);
         assert!(!session.has_biometric_wrap());
 
         // unlock：启用后传 31 字节同样 5002（长度是参数错误，非解封失败）
         let k_bio = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k_bio.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
         session.lock();
         let err = session.unlock_with_biometric(&[0u8; 31]).unwrap_err();
         assert_eq!(err.code(), 5002);
@@ -484,7 +505,9 @@ mod tests {
         session.disable_biometric().unwrap();
 
         let k_bio = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k_bio.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
         session.lock();
 
         // 锁定态 disable → 1001（设置页仅在解锁态可达，docs/08 §4.1）
@@ -514,7 +537,9 @@ mod tests {
         session.unlock(STRONG_PASSWORD).unwrap();
 
         let k_bio = super::new_biometric_unwrap_key().unwrap();
-        session.enable_biometric(STRONG_PASSWORD, k_bio.as_bytes()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
         drop(session);
 
         // 直接读磁盘 JSON 核对四字段形状（docs/08 §3.1）

@@ -88,7 +88,9 @@ fn login_draft_full(title: &str, username: &str, url: Option<&str>, tags: &[&str
 #[test]
 fn edit_distance_one_hits() {
     let session = unlocked_vault("srh02");
-    session.create_item(&login_draft_full("GitHub 登录", "alice", None, &[])).unwrap();
+    session
+        .create_item(&login_draft_full("GitHub 登录", "alice", None, &[]))
+        .unwrap();
 
     for query in ["githb", "gihub", "githu"] {
         let hits = session.search(query).unwrap();
@@ -101,7 +103,9 @@ fn edit_distance_one_hits() {
 #[test]
 fn edit_distance_two_misses() {
     let session = unlocked_vault("srh03");
-    session.create_item(&login_draft_full("GitHub 登录", "alice", None, &[])).unwrap();
+    session
+        .create_item(&login_draft_full("GitHub 登录", "alice", None, &[]))
+        .unwrap();
 
     assert!(
         session.search("gtxbx").unwrap().is_empty(),
@@ -123,7 +127,11 @@ fn short_word_no_fuzzy() {
     session
         .create_item(&login_draft_full("bank only", "alice", None, &[]))
         .unwrap();
-    assert_eq!(session.search("bnk").unwrap().len(), 0, "bnk 词长 3 同样关闭近似");
+    assert_eq!(
+        session.search("bnk").unwrap().len(),
+        0,
+        "bnk 词长 3 同样关闭近似"
+    );
     assert_eq!(session.search("bank").unwrap().len(), 2, "精确子串不受影响");
 }
 
@@ -181,18 +189,19 @@ fn nfc_equivalence() {
     let nfd_hits = session.search("cafe\u{0301}").unwrap();
     assert_eq!(nfc_hits.len(), 1, "NFC 查询命中");
     assert_eq!(nfd_hits.len(), 1, "NFD 查询同样命中");
-    assert_eq!(
-        nfc_hits[0].title, nfd_hits[0].title,
-        "两种编码形式结果一致"
-    );
+    assert_eq!(nfc_hits[0].title, nfd_hits[0].title, "两种编码形式结果一致");
 }
 
 /// TC-SRH-07 大小写不敏感回归：`GitHub` vs `github` 双向均命中。
 #[test]
 fn case_insensitive() {
     let session = unlocked_vault("srh07");
-    session.create_item(&login_draft_full("GitHub 登录", "alice", None, &[])).unwrap();
-    session.create_item(&login_draft_full("github 小写", "alice", None, &[])).unwrap();
+    session
+        .create_item(&login_draft_full("GitHub 登录", "alice", None, &[]))
+        .unwrap();
+    session
+        .create_item(&login_draft_full("github 小写", "alice", None, &[]))
+        .unwrap();
 
     assert_eq!(session.search("GitHub").unwrap().len(), 2);
     assert_eq!(session.search("github").unwrap().len(), 2);
@@ -204,16 +213,26 @@ fn case_insensitive() {
 #[test]
 fn all_terms_must_match() {
     let session = unlocked_vault("srh08");
-    session.create_item(&login_draft_full("GitHub Work", "alice", None, &[])).unwrap();
-    session.create_item(&login_draft_full("GitHub Play", "alice", None, &[])).unwrap();
-    session.create_item(&login_draft_full("GitLab Work", "alice", None, &[])).unwrap();
+    session
+        .create_item(&login_draft_full("GitHub Work", "alice", None, &[]))
+        .unwrap();
+    session
+        .create_item(&login_draft_full("GitHub Play", "alice", None, &[]))
+        .unwrap();
+    session
+        .create_item(&login_draft_full("GitLab Work", "alice", None, &[]))
+        .unwrap();
 
     let hits = session.search("githb work").unwrap();
     assert_eq!(hits.len(), 1, "githb（近似）+ work（子串）必须同时命中");
     assert_eq!(hits[0].title, "GitHub Work");
 
     // 只命中一词不返回
-    assert_eq!(session.search("githb").unwrap().len(), 2, "GitHub 两词同源近似命中");
+    assert_eq!(
+        session.search("githb").unwrap().len(),
+        2,
+        "GitHub 两词同源近似命中"
+    );
     assert_eq!(session.search("work").unwrap().len(), 2);
 }
 
@@ -252,7 +271,11 @@ fn inactive_excluded() {
     );
 
     session.restore_item(&id).unwrap();
-    assert_eq!(session.search("可搜索").unwrap().len(), 1, "恢复后重新可搜索");
+    assert_eq!(
+        session.search("可搜索").unwrap().len(),
+        1,
+        "恢复后重新可搜索"
+    );
 }
 
 /// TC-SRH-11 性能基线（#[ignore]，CI release 档执行）：1000 条 × 4 字段

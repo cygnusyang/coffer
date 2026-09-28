@@ -100,12 +100,7 @@ impl<'a> AuditRepo<'a> {
     ///
     /// `ts` 由调用方注入（与 history 仓库同模式，时间不取自库内）；
     /// `detail` 只允许非敏感上下文（见模块文档纪律）。
-    pub fn append(
-        &self,
-        ts: i64,
-        event: AuditEvent,
-        detail: Option<&str>,
-    ) -> CfStoreResult<i64> {
+    pub fn append(&self, ts: i64, event: AuditEvent, detail: Option<&str>) -> CfStoreResult<i64> {
         self.conn
             .execute(
                 "INSERT INTO audit_local (ts, event, detail) VALUES (?1, ?2, ?3)",
@@ -171,7 +166,9 @@ mod tests {
     fn 追加读取往返() {
         let conn = repo();
         let r = AuditRepo::new(&conn);
-        let id1 = r.append(1_000, AuditEvent::BackupExport, Some("/tmp/库.coffer")).unwrap();
+        let id1 = r
+            .append(1_000, AuditEvent::BackupExport, Some("/tmp/库.coffer"))
+            .unwrap();
         let id2 = r.append(1_001, AuditEvent::PasswordChange, None).unwrap();
         assert_ne!(id1, id2, "自增 id 必须不同");
 
@@ -191,8 +188,12 @@ mod tests {
         let conn = repo();
         let r = AuditRepo::new(&conn);
         for i in 0..5_i64 {
-            r.append(1_000 + i % 2, AuditEvent::BackupExport, Some(&i.to_string()))
-                .unwrap();
+            r.append(
+                1_000 + i % 2,
+                AuditEvent::BackupExport,
+                Some(&i.to_string()),
+            )
+            .unwrap();
         }
 
         let all = r.list_desc(None, None).unwrap();
@@ -210,8 +211,14 @@ mod tests {
         assert_eq!(page2.len(), 2);
         assert_eq!(page1[0].id, all[0].id);
         assert_eq!(page2[0].id, all[2].id, "offset 翻页衔接");
-        assert!(r.list_desc(Some(4), Some(2)).unwrap().len() == 1, "末页允许不满页");
-        assert!(r.list_desc(Some(5), Some(2)).unwrap().is_empty(), "越界偏移为空");
+        assert!(
+            r.list_desc(Some(4), Some(2)).unwrap().len() == 1,
+            "末页允许不满页"
+        );
+        assert!(
+            r.list_desc(Some(5), Some(2)).unwrap().is_empty(),
+            "越界偏移为空"
+        );
     }
 
     /// 全事件类型文本往返：as_str ↔ parse 互逆
@@ -251,7 +258,12 @@ mod tests {
         let mut store = crate::ItemStore::open(conn, subkeys).unwrap();
 
         store
-            .with_tx(|repos| repos.audit.append(1, AuditEvent::CsvExport, None).map(|_| ()))
+            .with_tx(|repos| {
+                repos
+                    .audit
+                    .append(1, AuditEvent::CsvExport, None)
+                    .map(|_| ())
+            })
             .unwrap();
         assert_eq!(store.repos().audit.list_desc(None, None).unwrap().len(), 1);
 

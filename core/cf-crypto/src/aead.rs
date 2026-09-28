@@ -90,8 +90,7 @@ impl SessionKey {
     /// 绝不降级到弱随机（NFR-SEC-06）。
     pub fn random() -> Result<Self, CfCryptoError> {
         let mut bytes = [0u8; KEY_LEN];
-        getrandom::fill(&mut bytes)
-            .map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
+        getrandom::fill(&mut bytes).map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
         Ok(Self(bytes))
     }
 }
@@ -108,11 +107,7 @@ impl SessionKey {
 ///
 /// 随机源不可用时返回 [`CfCryptoError::RandomUnavailable`]——
 /// 绝不降级到弱随机（NFR-SEC-06）。
-pub fn seal(
-    key: &SessionKey,
-    aad: &[u8],
-    plaintext: &[u8],
-) -> Result<Vec<u8>, CfCryptoError> {
+pub fn seal(key: &SessionKey, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CfCryptoError> {
     let cipher = XChaCha20Poly1305::new(key.as_bytes().into());
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -121,7 +116,13 @@ pub fn seal(
 
     let nonce = XNonce::from(nonce_bytes);
     let ciphertext = cipher
-        .encrypt(&nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| CfCryptoError::AeadSealFailed)?;
 
     let mut out = Vec::with_capacity(NONCE_LEN + ciphertext.len());
@@ -155,7 +156,13 @@ pub fn open(key: &SessionKey, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, CfCr
     let nonce = XNonce::from(nonce_arr);
 
     cipher
-        .decrypt(&nonce, Payload { msg: ciphertext, aad })
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| CfCryptoError::AeadOpenFailed)
 }
 
@@ -251,7 +258,10 @@ mod tests {
         let aad_value = build_field_aad(&[0x01u8; 16], "enc_value");
 
         let sealed = seal(&key, &aad_title, b"secret").unwrap();
-        assert_eq!(open(&key, &aad_value, &sealed), Err(CfCryptoError::AeadOpenFailed));
+        assert_eq!(
+            open(&key, &aad_value, &sealed),
+            Err(CfCryptoError::AeadOpenFailed)
+        );
     }
 
     /// UUID 不匹配 → 解密失败（防跨行搬运）
@@ -262,7 +272,10 @@ mod tests {
         let aad_b = build_field_aad(&[0x02u8; 16], "enc_title");
 
         let sealed = seal(&key, &aad_a, b"secret").unwrap();
-        assert_eq!(open(&key, &aad_b, &sealed), Err(CfCryptoError::AeadOpenFailed));
+        assert_eq!(
+            open(&key, &aad_b, &sealed),
+            Err(CfCryptoError::AeadOpenFailed)
+        );
     }
 
     /// 密文被篡改 → 解密失败（认证标签校验）
@@ -286,7 +299,10 @@ mod tests {
         let aad = b"aad";
 
         let sealed = seal(&key, aad, b"secret").unwrap();
-        assert_eq!(open(&wrong_key, aad, &sealed), Err(CfCryptoError::AeadOpenFailed));
+        assert_eq!(
+            open(&wrong_key, aad, &sealed),
+            Err(CfCryptoError::AeadOpenFailed)
+        );
     }
 
     /// 长度不足的 sealed 数据 → InvalidLength（格式错误，先于认证失败判定）
@@ -349,7 +365,10 @@ mod tests {
     #[test]
     fn error_display_does_not_leak() {
         let msg = format!("{}", CfCryptoError::AeadOpenFailed);
-        assert!(!msg.contains("tag") && !msg.contains("aad"), "错误信息不应包含失败原因细节");
+        assert!(
+            !msg.contains("tag") && !msg.contains("aad"),
+            "错误信息不应包含失败原因细节"
+        );
     }
 
     /// 随机密钥长度固定 32 字节
@@ -364,6 +383,10 @@ mod tests {
     fn random_keys_differ_between_calls() {
         let k1 = SessionKey::random().expect("随机源可用");
         let k2 = SessionKey::random().expect("随机源可用");
-        assert_ne!(k1.as_bytes(), k2.as_bytes(), "两次随机得到相同密钥——随机源可疑");
+        assert_ne!(
+            k1.as_bytes(),
+            k2.as_bytes(),
+            "两次随机得到相同密钥——随机源可疑"
+        );
     }
 }

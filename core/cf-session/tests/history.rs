@@ -201,7 +201,9 @@ fn soft_delete_preserves_history() {
 #[test]
 fn no_change_no_snapshot() {
     let (session, _dir) = unlocked_vault("his03");
-    let id = session.create_item(&login_draft("同一标题", "同一密码")).unwrap();
+    let id = session
+        .create_item(&login_draft("同一标题", "同一密码"))
+        .unwrap();
     let draft = login_draft("同一标题", "同一密码");
 
     for _ in 0..3 {

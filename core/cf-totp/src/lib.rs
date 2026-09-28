@@ -73,9 +73,16 @@ impl TotpConfig {
             return Err(TotpError::SecretTooShort);
         }
         if digits != 6 && digits != 8 {
-            return Err(TotpError::InvalidDigits(format!("Digits must be 6 or 8, got {}", digits)));
+            return Err(TotpError::InvalidDigits(format!(
+                "Digits must be 6 or 8, got {}",
+                digits
+            )));
         }
-        Ok(Self { secret, period, digits })
+        Ok(Self {
+            secret,
+            period,
+            digits,
+        })
     }
 
     /// 生成当前时间窗口的验证码。
@@ -121,14 +128,18 @@ impl TotpConfig {
     }
 
     fn verify_for_counter(&self, code: &str, counter: u64) -> Result<bool, TotpError> {
-        let expected = self.generate_for_counter(counter).map_err(|_| TotpError::InvalidUriEncoding)?;
+        let expected = self
+            .generate_for_counter(counter)
+            .map_err(|_| TotpError::InvalidUriEncoding)?;
         use subtle::ConstantTimeEq;
         Ok(code.as_bytes().ct_eq(expected.as_bytes()).into())
     }
 
     fn current_counter(&self) -> Result<u64, TotpError> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let duration = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| TotpError::InvalidUriEncoding)?;
+        let duration = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| TotpError::InvalidUriEncoding)?;
         Ok(duration.as_secs() / self.period as u64)
     }
 
@@ -330,7 +341,10 @@ mod tests {
         assert_eq!(config.period, 30);
         assert_eq!(config.digits, 6);
         // secret 取自查询参数（"Hello!\xDE\xAD\xBE\xEF" 的 Base32），不是路径段
-        assert_eq!(config.secret, vec![0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x21, 0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            config.secret,
+            vec![0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x21, 0xDE, 0xAD, 0xBE, 0xEF]
+        );
     }
 
     /// 标准向量端到端：RFC 6238 Appendix B（SHA-1）的 20 字节密钥
@@ -338,7 +352,8 @@ mod tests {
     /// 从 URI 解析出的配置在 T=59 处必须产出标准 8 位码 94287082。
     #[test]
     fn test_parse_uri_rfc6238_vector_roundtrip() {
-        let uri = "otpauth://totp/RFC:vector?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8&period=30";
+        let uri =
+            "otpauth://totp/RFC:vector?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8&period=30";
         let config = parse_totp_uri(uri).unwrap();
         assert_eq!(config.secret, b"12345678901234567890".to_vec());
         assert_eq!(config.digits, 8);
@@ -351,26 +366,14 @@ mod tests {
     /// 小写 secret / 带填充 secret 解码一致
     #[test]
     fn test_parse_uri_lowercase_and_padded_secret() {
-        let plain = parse_totp_uri(
-            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP",
-        )
-        .unwrap();
-        let lower = parse_totp_uri(
-            "otpauth://totp/x?secret=jbswy3dpehpk3pxp",
-        )
-        .unwrap();
+        let plain = parse_totp_uri("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP").unwrap();
+        let lower = parse_totp_uri("otpauth://totp/x?secret=jbswy3dpehpk3pxp").unwrap();
         assert_eq!(plain.secret, lower.secret);
 
         // 带 `=` 填充（RFC 4648）：数据段 18 字符 + 6 个 `=` = 24（8 的倍数），
         // 与无填充前 18 字符解码结果一致
-        let plain18 = parse_totp_uri(
-            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXPKA",
-        )
-        .unwrap();
-        let padded = parse_totp_uri(
-            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXPKA======",
-        )
-        .unwrap();
+        let plain18 = parse_totp_uri("otpauth://totp/x?secret=JBSWY3DPEHPK3PXPKA").unwrap();
+        let padded = parse_totp_uri("otpauth://totp/x?secret=JBSWY3DPEHPK3PXPKA======").unwrap();
         assert_eq!(plain18.secret, padded.secret);
     }
 
@@ -473,12 +476,39 @@ mod tests {
     fn test_rfc_6238_appendix_b_sha1() {
         let test_vectors = vec![
             // B.1: Generic TOTP examples (SHA-1, period=30, 6 digits)
-            ("JBSWY3DPEHPK3PXP", vec![1u8; 20], 30, 6, vec![(Some(59), "287"), (Some(60), "348"), (Some(61), "370")]),
+            (
+                "JBSWY3DPEHPK3PXP",
+                vec![1u8; 20],
+                30,
+                6,
+                vec![(Some(59), "287"), (Some(60), "348"), (Some(61), "370")],
+            ),
             // B.2: SHA-1 / HOTP / time-based counter (from RFC 4226)
             // 注：原 4 字节密钥（32 bits）被 H1 的 80-bit 下限拒绝，改为 20 字节。
-            ("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", vec![159u8; 20], 30, 6, vec![(Some(0), "755924"), (Some(1), "649507"), (Some(2), "182995"), (Some(3), "816819")]),
+            (
+                "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+                vec![159u8; 20],
+                30,
+                6,
+                vec![
+                    (Some(0), "755924"),
+                    (Some(1), "649507"),
+                    (Some(2), "182995"),
+                    (Some(3), "816819"),
+                ],
+            ),
             // B.3-B.18: Additional TOTP vectors with various parameters
-            ("MFRGGZDFMY", vec![234u8; 20], 30, 6, vec![(Some(59), "047558"), (Some(60), "999659"), (Some(61), "990612")]),
+            (
+                "MFRGGZDFMY",
+                vec![234u8; 20],
+                30,
+                6,
+                vec![
+                    (Some(59), "047558"),
+                    (Some(60), "999659"),
+                    (Some(61), "990612"),
+                ],
+            ),
         ];
 
         for (_secret_base, secret_bytes, period, digits, time_codes) in test_vectors {
@@ -488,10 +518,20 @@ mod tests {
             for (counter, _) in &time_codes {
                 if let Some(counter) = counter {
                     let code = config.generate_for_counter(*counter).unwrap();
-                    assert_eq!(code.len(), 6, "Counter {} produced invalid code: {}", counter, code);
+                    assert_eq!(
+                        code.len(),
+                        6,
+                        "Counter {} produced invalid code: {}",
+                        counter,
+                        code
+                    );
                     // Verify all digits are numeric
-                    assert!(code.chars().all(|c| c.is_ascii_digit()),
-                        "Counter {} contains non-digit chars: {}", counter, code);
+                    assert!(
+                        code.chars().all(|c| c.is_ascii_digit()),
+                        "Counter {} contains non-digit chars: {}",
+                        counter,
+                        code
+                    );
                 }
             }
         }
@@ -512,9 +552,9 @@ mod tests {
     #[test]
     fn test_rfc_6238_b5_sha1_different_lengths() {
         let configs = vec![
-            (vec![1u8; 10], 10),   // 80-bit secret
-            (vec![1u8; 20], 20),   // 160-bit secret (SHA-1 full size)
-            (vec![1u8; 30], 30),   // Longer secret with truncation
+            (vec![1u8; 10], 10), // 80-bit secret
+            (vec![1u8; 20], 20), // 160-bit secret (SHA-1 full size)
+            (vec![1u8; 30], 30), // Longer secret with truncation
         ];
 
         for (secret, _length) in configs {
@@ -529,7 +569,11 @@ mod tests {
     fn test_rfc_6238_b11_various_periods() {
         let secret = vec![1u8; 20];
 
-        for (period, counter, _) in [(30, 59, "expected"), (30, 60, "expected"), (60, 0, "expected")] {
+        for (period, counter, _) in [
+            (30, 59, "expected"),
+            (30, 60, "expected"),
+            (60, 0, "expected"),
+        ] {
             let config = TotpConfig::new(secret.clone(), period, 6).unwrap();
             let _code = config.generate_for_counter(counter).unwrap();
         }
@@ -593,7 +637,10 @@ mod tests {
         let code_59 = config.generate_for_counter(59).unwrap();
         let code_60 = config.generate_for_counter(60).unwrap();
 
-        assert_ne!(code_59, code_60, "Adjacent counters should produce different codes");
+        assert_ne!(
+            code_59, code_60,
+            "Adjacent counters should produce different codes"
+        );
         assert!(code_59.len() == 6);
         assert!(code_60.len() == 6);
     }
@@ -629,8 +676,12 @@ mod tests {
             std::time::Duration::from_millis(1)
         };
 
-        assert!(per_call < budget,
-            "TOTP generation took {:?} per call, expected < {:?}", per_call, budget);
+        assert!(
+            per_call < budget,
+            "TOTP generation took {:?} per call, expected < {:?}",
+            per_call,
+            budget
+        );
     }
 
     /// Performance: TOTP verification (includes drift-window checks)
@@ -651,8 +702,12 @@ mod tests {
             std::time::Duration::from_millis(5)
         };
 
-        assert!(per_call < budget,
-            "TOTP verification took {:?} per call, expected < {:?}", per_call, budget);
+        assert!(
+            per_call < budget,
+            "TOTP verification took {:?} per call, expected < {:?}",
+            per_call,
+            budget
+        );
     }
 
     /// RFC 6238 B.1-B.17: Summary of implemented test vectors
@@ -660,9 +715,9 @@ mod tests {
     fn test_all_rfc_6238_vectors() {
         // This integration test verifies all Appendix B vectors are covered
         let configs = vec![
-            TotpConfig::new(vec![1u8; 20], 30, 6).unwrap(),   // B.1, B.2, B.3
-            TotpConfig::new(vec![2u8; 20], 30, 6).unwrap(),   // B.5 variations
-            TotpConfig::new(vec![3u8; 20], 60, 6).unwrap(),   // B.11 variations
+            TotpConfig::new(vec![1u8; 20], 30, 6).unwrap(), // B.1, B.2, B.3
+            TotpConfig::new(vec![2u8; 20], 30, 6).unwrap(), // B.5 variations
+            TotpConfig::new(vec![3u8; 20], 60, 6).unwrap(), // B.11 variations
         ];
 
         for config in configs {

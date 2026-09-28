@@ -324,7 +324,9 @@ impl<'a> AttachmentRepo<'a> {
         }
 
         let mut removed = 0usize;
-        for entry in fs::read_dir(&dir).map_err(|e| CfError::Io(format!("读取附件目录失败：{e}")))? {
+        for entry in
+            fs::read_dir(&dir).map_err(|e| CfError::Io(format!("读取附件目录失败：{e}")))?
+        {
             let entry = entry.map_err(|e| CfError::Io(format!("读取附件目录项失败：{e}")))?;
             let path = entry.path();
             if !path.is_file() {
@@ -369,7 +371,11 @@ impl<'a> AttachmentRepo<'a> {
     }
 
     /// 解密 filename：AEAD open（AAD 钉附件行 uuid）→ UTF-8 校验。
-    fn decrypt_filename(&self, enc_filename: &[u8], attachment_uuid: &str) -> CfStoreResult<String> {
+    fn decrypt_filename(
+        &self,
+        enc_filename: &[u8],
+        attachment_uuid: &str,
+    ) -> CfStoreResult<String> {
         let aad = field_aad("attachments", attachment_uuid, COLUMN_FILENAME)?;
         let plain = open(self.file_key, &aad, enc_filename).crypto()?;
         String::from_utf8(plain)

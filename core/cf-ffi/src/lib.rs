@@ -129,7 +129,10 @@ mod tests {
         match &err {
             FfiError::InternalPanic { message } => {
                 assert!(!message.contains(SENSITIVE), "泄漏敏感值: {message:?}");
-                assert!(!message.contains("unlock failed"), "panic 文案透传: {message:?}");
+                assert!(
+                    !message.contains("unlock failed"),
+                    "panic 文案透传: {message:?}"
+                );
                 assert!(
                     message.contains("panic payload redacted (type=String"),
                     "message 应为脱敏指纹，实际 {message:?}"

@@ -550,7 +550,10 @@ fn 会话级剪贴板清除时间配置() {
     }
 
     // 非法值拒绝（错误码 5002），原值保持
-    assert_eq!(session.set_clipboard_clear_secs(45).unwrap_err().code(), 5002);
+    assert_eq!(
+        session.set_clipboard_clear_secs(45).unwrap_err().code(),
+        5002
+    );
     assert_eq!(session.clipboard_clear_secs(), 0);
 
     // 会话级配置：锁定后仍可读取
@@ -616,7 +619,13 @@ fn 更新keep保留既有totp() {
     session.unlock(STRONG).unwrap();
 
     let id = session.create_item(&login_draft("带TOTP登录")).unwrap();
-    let before = session.get_item(&id).unwrap().unwrap().totp.clone().unwrap();
+    let before = session
+        .get_item(&id)
+        .unwrap()
+        .unwrap()
+        .totp
+        .clone()
+        .unwrap();
 
     // FFI 编辑场景：草稿不含 TOTP，默认 Keep
     session
@@ -641,7 +650,13 @@ fn 更新replace删旧插新() {
     session.unlock(STRONG).unwrap();
 
     let id = session.create_item(&login_draft("待替换登录")).unwrap();
-    let old = session.get_item(&id).unwrap().unwrap().totp.clone().unwrap();
+    let old = session
+        .get_item(&id)
+        .unwrap()
+        .unwrap()
+        .totp
+        .clone()
+        .unwrap();
 
     let mut updated = login_draft_without_totp("替换后");
     updated.totp = Some(TotpData {
@@ -651,7 +666,11 @@ fn 更新replace删旧插新() {
         period: 60,
     });
     session
-        .update_item_with_totp(&id, &updated, TotpUpdate::Replace(updated.totp.clone().unwrap()))
+        .update_item_with_totp(
+            &id,
+            &updated,
+            TotpUpdate::Replace(updated.totp.clone().unwrap()),
+        )
         .unwrap();
 
     let reloaded = session.get_item(&id).unwrap().unwrap();
@@ -677,7 +696,11 @@ fn 更新remove删除且非法replace被拒() {
         period: 30,
     };
     assert!(session
-        .update_item_with_totp(&id, &login_draft_without_totp("非法载荷"), TotpUpdate::Replace(bad))
+        .update_item_with_totp(
+            &id,
+            &login_draft_without_totp("非法载荷"),
+            TotpUpdate::Replace(bad)
+        )
         .is_err());
     assert!(session.get_item(&id).unwrap().unwrap().totp.is_some());
 

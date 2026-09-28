@@ -28,8 +28,8 @@ use cf_domain::CfError;
 use cf_importer::OtpauthData;
 
 use crate::error::FfiError;
-use crate::types::*;
 use crate::session_call;
+use crate::types::*;
 
 /// 应用入口工厂：库的枚举 / 创建 / 打开，以及打开会话的注册表。
 #[derive(uniffi::Object)]
@@ -116,10 +116,11 @@ impl CofferApp {
         base_dir: String,
         vault_uuid: String,
     ) -> Result<Arc<VaultSession>, FfiError> {
-        let uuid = uuid::Uuid::parse_str(&vault_uuid)
-            .map_err(|_| FfiError::from(CfError::InvalidArgument(
+        let uuid = uuid::Uuid::parse_str(&vault_uuid).map_err(|_| {
+            FfiError::from(CfError::InvalidArgument(
                 "vault_uuid is not a valid uuid".into(),
-            )))?;
+            ))
+        })?;
         let key = uuid.to_string();
 
         let mut map = self.sessions_lock();
@@ -245,9 +246,7 @@ fn strength_estimate_impl(candidate: &str) -> FfiStrengthEstimate {
 impl CofferApp {
     /// 注册表互斥锁守卫（poison 不扩散：会话状态本身可安全接管）。
     fn sessions_lock(&self) -> MutexGuard<'_, HashMap<String, Arc<VaultSession>>> {
-        self.sessions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -323,7 +322,9 @@ impl VaultSession {
     /// 本方法返回 Err 时 header 保持原样，Swift 依据 Err 补偿删除
     /// Keychain 项。
     pub fn enable_biometric(&self, password: String, k_bio: Vec<u8>) -> Result<(), FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.enable_biometric(&password, &k_bio)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.enable_biometric(&password, &k_bio)
+        }))
     }
 
     /// 关闭 Touch ID 解锁（docs/08 §4.1 disable，header 侧）。
@@ -348,8 +349,10 @@ impl VaultSession {
     /// 4002（凭据已变更）**Rust 不产生**——发生在 Swift 侧 Keychain
     /// 读取，根本不到达 Rust。
     pub fn unlock_with_biometric(&self, k_bio: Vec<u8>) -> Result<FfiVaultInfo, FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.unlock_with_biometric(&k_bio)))
-            .map(Into::into)
+        session_call(AssertUnwindSafe(|| {
+            self.inner.unlock_with_biometric(&k_bio)
+        }))
+        .map(Into::into)
     }
 
     // ------------------------------------------------------ 条目 CRUD
@@ -383,7 +386,9 @@ impl VaultSession {
     /// 静默丢失 TOTP）。TOTP 三态显式控制走 [`VaultSession::update_item_with_totp`]。
     pub fn update_item(&self, item_id: String, draft: FfiItemDraft) -> Result<(), FfiError> {
         let draft = draft.to_domain()?;
-        session_call(AssertUnwindSafe(|| self.inner.update_item(&item_id, &draft)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.update_item(&item_id, &draft)
+        }))
     }
 
     /// 更新条目（TOTP 三态显式版）：`keep` 保留既有加密行 / `replace`
@@ -413,7 +418,9 @@ impl VaultSession {
 
     /// 设置 / 取消收藏。
     pub fn set_favorite(&self, item_id: String, favorite: bool) -> Result<(), FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.set_favorite(&item_id, favorite)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.set_favorite(&item_id, favorite)
+        }))
     }
 
     /// 标题搜索（多关键词全命中，仅 Active 态；空查询返回空结果）。
@@ -450,12 +457,16 @@ impl VaultSession {
     /// 读附件明文内容（FR-9.2，一次一个、即用即弃；整块 `Data` 返回）。
     /// 行不存在 → 1012；行在文件无 / 密文损坏 → 1005。锁定 → 1001。
     pub fn read_attachment(&self, attachment_uuid: String) -> Result<Vec<u8>, FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.read_attachment(&attachment_uuid)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.read_attachment(&attachment_uuid)
+        }))
     }
 
     /// 删除附件（FR-9.2）：先删行后删文件；行不存在 → 1012。锁定 → 1001。
     pub fn remove_attachment(&self, attachment_uuid: String) -> Result<(), FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.remove_attachment(&attachment_uuid)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.remove_attachment(&attachment_uuid)
+        }))
     }
 
     // ---------------------------------------------- 跨库复制（FR-2.10）
@@ -511,11 +522,12 @@ impl VaultSession {
     pub fn parse_otpauth_uri(&self, uri: String) -> Result<FfiTotpDraft, FfiError> {
         // parse_otpauth 是纯函数（无密钥材料、无共享状态），直接调用；
         // 错误统一为 Validation(1012) 语义
-        let data: OtpauthData = cf_importer::csv::mapping::parse_otpauth(&uri).map_err(|reason| {
-            FfiError::from(CfError::Validation(format!(
-                "invalid otpauth uri: {reason}"
-            )))
-        })?;
+        let data: OtpauthData =
+            cf_importer::csv::mapping::parse_otpauth(&uri).map_err(|reason| {
+                FfiError::from(CfError::Validation(format!(
+                    "invalid otpauth uri: {reason}"
+                )))
+            })?;
         Ok(data.into())
     }
 
@@ -559,10 +571,7 @@ impl VaultSession {
 
     /// CSV 导入（单事务 all-or-nothing；锁定态 → 码 1001）。
     pub fn import_csv(&self, path: String) -> Result<FfiCsvImportResult, FfiError> {
-        session_call(AssertUnwindSafe(|| {
-            self.inner.import_csv(Path::new(&path))
-        }))
-        .map(Into::into)
+        session_call(AssertUnwindSafe(|| self.inner.import_csv(Path::new(&path)))).map(Into::into)
     }
 
     /// 1PUX 预检（FR-7.4~7.7）：纯文件只读，可反复调用。
@@ -603,11 +612,7 @@ impl VaultSession {
     /// 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
     /// 一次修改（可再回滚）。需解锁态（1001）；条目 / 历史行不存在 →
     /// 1011；Trashed / Archived 条目被状态门禁拒绝 → 1012（内核行为）。
-    pub fn restore_history(
-        &self,
-        item_id: String,
-        history_uuid: String,
-    ) -> Result<(), FfiError> {
+    pub fn restore_history(&self, item_id: String, history_uuid: String) -> Result<(), FfiError> {
         session_call(AssertUnwindSafe(|| {
             self.inner.restore_history(&item_id, &history_uuid)
         }))
@@ -621,8 +626,7 @@ impl VaultSession {
     ///
     /// 报告只携带 item_id / 标题 / 非敏感元数据，不含密码明文。
     pub fn health_report(&self, now_secs: i64) -> Result<FfiHealthReport, FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.health_report(now_secs)))
-            .map(Into::into)
+        session_call(AssertUnwindSafe(|| self.inner.health_report(now_secs))).map(Into::into)
     }
 
     // ------------------------------------------------------- 账户安全
@@ -675,7 +679,9 @@ impl VaultSession {
     /// 执行）；档位列表经 [`clipboard_clear_tiers`](crate::clipboard_clear_tiers) 到 Swift 侧做
     /// UI 选择器。
     pub fn set_clipboard_clear_secs(&self, secs: i64) -> Result<(), FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.set_clipboard_clear_secs(secs)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.set_clipboard_clear_secs(secs)
+        }))
     }
 
     /// 当前剪贴板自动清除时间（秒）；`0` 表示从不清除。
@@ -763,7 +769,9 @@ pub fn default_clipboard_clear_secs() -> i64 {
 /// 非档位值 → `FfiError`（5002 InvalidArgument）。
 #[uniffi::export]
 pub fn validate_clipboard_clear_secs(secs: i64) -> Result<(), FfiError> {
-    session_call(AssertUnwindSafe(|| cf_session::vault::validate_clipboard_clear_secs(secs)))
+    session_call(AssertUnwindSafe(|| {
+        cf_session::vault::validate_clipboard_clear_secs(secs)
+    }))
 }
 
 #[cfg(test)]
@@ -786,10 +794,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "cf-ffi-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("cf-ffi-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -814,7 +819,9 @@ mod tests {
             .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
             .unwrap();
 
-        let err = session.unlock("wrong password indeed!".to_owned()).unwrap_err();
+        let err = session
+            .unlock("wrong password indeed!".to_owned())
+            .unwrap_err();
         assert_eq!(err.code(), 1002);
         assert!(!session.is_unlocked());
 
@@ -843,7 +850,10 @@ mod tests {
             1001
         );
         assert_eq!(
-            session.totp_code("some-item".to_owned()).unwrap_err().code(),
+            session
+                .totp_code("some-item".to_owned())
+                .unwrap_err()
+                .code(),
             1001
         );
     }
@@ -869,7 +879,9 @@ mod tests {
         let base_str = base.to_string_lossy().into_owned();
         let app = app();
 
-        let first = app.open_vault(base_str.clone(), brief.uuid.to_string()).unwrap();
+        let first = app
+            .open_vault(base_str.clone(), brief.uuid.to_string())
+            .unwrap();
         let second = app.open_vault(base_str, brief.uuid.to_string()).unwrap();
         assert!(!first.is_unlocked());
 
@@ -883,7 +895,9 @@ mod tests {
         assert!(!second.is_unlocked());
 
         // 注册表保留实例：再次 open 复用同一对象
-        let third = app.open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string()).unwrap();
+        let third = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
         assert!(!third.is_unlocked());
     }
 
@@ -1190,7 +1204,10 @@ mod tests {
             .enable_biometric("wrong password indeed!".to_owned(), k_bio.clone())
             .unwrap_err();
         assert_eq!(err.code(), 1002);
-        assert!(!session.has_biometric_wrap(), "错密码 enable 后 header 不得变更");
+        assert!(
+            !session.has_biometric_wrap(),
+            "错密码 enable 后 header 不得变更"
+        );
 
         // 正确密码 enable → 意图位翻转
         session
@@ -1244,7 +1261,10 @@ mod tests {
                 .code(),
             5002
         );
-        assert!(!session.has_biometric_wrap(), "长度门禁失败后 header 不得变更");
+        assert!(
+            !session.has_biometric_wrap(),
+            "长度门禁失败后 header 不得变更"
+        );
 
         // 解锁路径的 4001（未启用）先于长度门禁（D-8 检查顺序），
         // 须先正确启用才能在 unlock 侧命中 5002
@@ -1278,7 +1298,10 @@ mod tests {
             1001
         );
         assert_eq!(session.disable_biometric().unwrap_err().code(), 1001);
-        assert!(!session.has_biometric_wrap(), "锁定态门禁失败后 header 不得变更");
+        assert!(
+            !session.has_biometric_wrap(),
+            "锁定态门禁失败后 header 不得变更"
+        );
     }
 
     /// panic 注入（新接口同守卫）→ 5999 不杀进程
@@ -1317,9 +1340,7 @@ mod tests {
 
         // 不存在的工作目录 → 空列表（不是错误）
         let empty = app
-            .list_vaults(
-                base.join("no-such-dir").to_string_lossy().into_owned(),
-            )
+            .list_vaults(base.join("no-such-dir").to_string_lossy().into_owned())
             .unwrap();
         assert!(empty.is_empty());
     }

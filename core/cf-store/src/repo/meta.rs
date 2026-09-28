@@ -64,7 +64,10 @@ impl<'a> MetaRepo<'a> {
 
     /// 读取原始值；键不存在返回 `None`。
     pub fn get(&self, key: &str) -> CfStoreResult<Option<Vec<u8>>> {
-        let mut stmt = self.conn.prepare("SELECT value FROM meta WHERE key = ?1").store()?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM meta WHERE key = ?1")
+            .store()?;
         let mut rows = stmt.query([key]).store()?;
         match rows.next().store()? {
             Some(row) => Ok(Some(row.get(0).store()?)),
@@ -160,8 +163,7 @@ impl<'a> MetaRepo<'a> {
     pub fn bump_integrity(&self, key: &SessionKey) -> CfStoreResult<()> {
         let count = self.record_count_actual()?;
         self.set_i64(KEY_RECORD_COUNT, count)?;
-        let mac_b64 = base64::engine::general_purpose::STANDARD
-            .encode(root_mac_bytes(key, count));
+        let mac_b64 = base64::engine::general_purpose::STANDARD.encode(root_mac_bytes(key, count));
         self.set(KEY_ROOT_MAC, mac_b64.as_bytes())
     }
 
@@ -193,9 +195,8 @@ impl<'a> MetaRepo<'a> {
 
         // 存储形态：base64 文本。非法 UTF-8 / 非法 base64 / 长度不符
         // 均按「MAC 不匹配」同语义处理（Corrupted），不泄露形态细节。
-        let mac_text = std::str::from_utf8(&stored_mac).map_err(|_| {
-            cf_domain::CfError::Corrupted("root mac value is corrupt".into())
-        })?;
+        let mac_text = std::str::from_utf8(&stored_mac)
+            .map_err(|_| cf_domain::CfError::Corrupted("root mac value is corrupt".into()))?;
         let mac_bytes = base64::engine::general_purpose::STANDARD
             .decode(mac_text)
             .map_err(|_| cf_domain::CfError::Corrupted("root mac value is corrupt".into()))?;
@@ -209,9 +210,8 @@ impl<'a> MetaRepo<'a> {
         let mut mac = hmac_sha256(key.as_bytes());
         mac.update(&fresh_count.to_le_bytes());
         mac.update(&i64::from(cf_format::FORMAT_VERSION).to_le_bytes());
-        mac.verify_slice(&mac_bytes).map_err(|_| {
-            cf_domain::CfError::Corrupted("root mac mismatch".into())
-        })
+        mac.verify_slice(&mac_bytes)
+            .map_err(|_| cf_domain::CfError::Corrupted("root mac mismatch".into()))
     }
 }
 
@@ -292,7 +292,10 @@ mod tests {
         let meta = MetaRepo::new(&conn);
         assert!(meta.vault_display_name().unwrap().is_none());
         meta.set_vault_display_name("我的密码库").unwrap();
-        assert_eq!(meta.vault_display_name().unwrap().as_deref(), Some("我的密码库"));
+        assert_eq!(
+            meta.vault_display_name().unwrap().as_deref(),
+            Some("我的密码库")
+        );
     }
 
     /// 上次备份时间：缺行 = 从未备份，写入后可读回（FR-8.5）
@@ -363,7 +366,8 @@ mod tests {
         meta.verify_integrity(&key).unwrap();
 
         // 删除条目后同理：未 bump → 失败；bump → 恢复
-        conn.execute("DELETE FROM items WHERE uuid = 'u1'", []).unwrap();
+        conn.execute("DELETE FROM items WHERE uuid = 'u1'", [])
+            .unwrap();
         assert!(matches!(
             meta.verify_integrity(&key),
             Err(cf_domain::CfError::Corrupted(_))
@@ -400,8 +404,10 @@ mod tests {
         meta.bump_integrity(&key).unwrap();
 
         // 用另一把密钥重算出「结构合法但值不同」的 MAC 文本
-        let other = base64::engine::general_purpose::STANDARD
-            .encode(root_mac_bytes(&cf_crypto::aead::SessionKey::new([0x01u8; 32]), 0));
+        let other = base64::engine::general_purpose::STANDARD.encode(root_mac_bytes(
+            &cf_crypto::aead::SessionKey::new([0x01u8; 32]),
+            0,
+        ));
         conn.execute(
             "UPDATE meta SET value = ?1 WHERE key = 'root_mac'",
             [other.as_bytes()],
@@ -440,7 +446,8 @@ mod tests {
         meta.bump_integrity(&key).unwrap();
         insert_item_row_raw(&conn, "u1");
         meta.bump_integrity(&key).unwrap();
-        conn.execute("DELETE FROM meta WHERE key = 'record_count'", []).unwrap();
+        conn.execute("DELETE FROM meta WHERE key = 'record_count'", [])
+            .unwrap();
         meta.verify_integrity(&key).unwrap();
         assert_eq!(meta.get_i64(KEY_RECORD_COUNT).unwrap(), Some(1));
 
@@ -448,7 +455,8 @@ mod tests {
         let conn = repo();
         let meta = MetaRepo::new(&conn);
         meta.bump_integrity(&key).unwrap();
-        conn.execute("DELETE FROM meta WHERE key = 'root_mac'", []).unwrap();
+        conn.execute("DELETE FROM meta WHERE key = 'root_mac'", [])
+            .unwrap();
         meta.verify_integrity(&key).unwrap();
         assert!(meta.get(KEY_ROOT_MAC).unwrap().is_some());
     }

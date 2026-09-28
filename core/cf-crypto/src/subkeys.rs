@@ -201,7 +201,10 @@ mod tests {
         let expected: Vec<u8> = "93ec6676592e99d5b4aeb1ff5b5e6a9a9aac8a3da9ecf47429e4d14e411ca6ae"
             .as_bytes()
             .chunks(2)
-            .map(|h| u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16).expect("hex digit"))
+            .map(|h| {
+                u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16)
+                    .expect("hex digit")
+            })
             .collect();
         assert_eq!(keys.audit_key.as_bytes(), expected.as_slice());
 
@@ -235,12 +238,16 @@ mod tests {
         let expected: Vec<u8> = "bc8a85137b183970571d9a8a07d33c84dae8116350fa0d1204e70ecda0a25e2b"
             .as_bytes()
             .chunks(2)
-            .map(|h| u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16).expect("hex digit"))
+            .map(|h| {
+                u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16)
+                    .expect("hex digit")
+            })
             .collect();
         assert_eq!(keys.root_mac_key.as_bytes(), expected.as_slice());
 
         // 直接走 label 派生必须与容器字段一致（防两处漂移）
-        let direct = crate::kdf::derive_subkey(&dek, &vault_uuid, LABEL_ROOT_MAC).expect("派生成功");
+        let direct =
+            crate::kdf::derive_subkey(&dek, &vault_uuid, LABEL_ROOT_MAC).expect("派生成功");
         assert_eq!(keys.root_mac_key.as_bytes(), direct.as_slice());
     }
 }

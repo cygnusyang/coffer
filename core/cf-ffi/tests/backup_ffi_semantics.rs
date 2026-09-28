@@ -44,10 +44,7 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-bak-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-bak-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -98,7 +95,9 @@ fn vault_with_item(
         .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
         .unwrap();
     session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
-    session.create_item(login_draft("GitHub", "p@ssw0rd-42!")).unwrap();
+    session
+        .create_item(login_draft("GitHub", "p@ssw0rd-42!"))
+        .unwrap();
     session.lock();
     let uuid = brief.uuid.to_string();
     (brief, app, uuid)
@@ -140,7 +139,10 @@ fn 备份导出校验恢复全回环() {
         )
         .unwrap();
     assert_eq!(
-        std::path::Path::new(&restored_dir).file_name().unwrap().to_string_lossy(),
+        std::path::Path::new(&restored_dir)
+            .file_name()
+            .unwrap()
+            .to_string_lossy(),
         uuid,
         "恢复目录名必须是库 uuid"
     );

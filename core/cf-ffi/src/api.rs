@@ -530,6 +530,18 @@ impl VaultSession {
         }))
     }
 
+    // ------------------------------------------------- 暴力退避（FR-12.5）
+
+    /// 当前暴力退避门禁剩余秒数（FR-12.5；`0` = 无退避）。
+    ///
+    /// 同步只读旁路通道：门禁期内 `unlock` / `enable_biometric` /
+    /// `change_password` 一律返回 1002（维持 FR-1.4 不可区分性），UI 的
+    /// 倒计时显示只经本方法获取等待时间。与内核语义一致：内存级计数，
+    /// 进程重启清零（设计裁决的接受限制）。
+    pub fn backoff_remaining_secs(&self) -> u64 {
+        self.inner.backoff_remaining_secs()
+    }
+
     // -------------------------------------------- 剪贴板清除（FR-14.2）
 
     /// 设置剪贴板自动清除时间（FR-14.2）。
@@ -635,7 +647,7 @@ pub fn validate_clipboard_clear_secs(secs: i64) -> Result<(), FfiError> {
 mod tests {
     use super::*;
     use cf_crypto::kdf::KdfParams;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     /// 测试用快速 KDF 档位（8 MiB / t=1 / p=1，约几十毫秒）。
     fn fast_kdf() -> KdfParams {
@@ -1235,5 +1247,46 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.code(), 1010);
+    }
+
+    /// FR-12.5 退避旁路跨 FFI：新会话无退避 → 0；连续 4 次错误密码触发
+    /// 门禁 → 剩余秒数 > 0（UI 倒计时数据源，docs/09 §2 v0.2.0 Must）。
+    ///
+    /// 曲线（cf-session backoff）：第 3 次失败起延迟 `min(2^(n-3), 60)` 秒
+    /// ——第 3 次 1s；门禁期内 unlock 直接 1002 且**不计数**，须等待期满
+    /// 后第 4 次失败才设 2s 门禁。FFI 层无时钟注入（注入口仅内核测试可见），
+    /// 以真实短暂 sleep 换取确定性。
+    #[test]
+    fn 退避剩余秒数跨ffi() {
+        let base = temp_base("backoff");
+        let brief = setup_vault(&base, "退避库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        // 无失败记录：无门禁
+        assert_eq!(session.backoff_remaining_secs(), 0, "新会话不应有退避");
+
+        // 前 3 次错误密码 → 第 3 次失败设 1s 门禁（均为密码错误 1002）
+        for _ in 0..3 {
+            let err = session
+                .unlock("wrong password indeed!".to_owned())
+                .unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+
+        // 门禁期内第 4 次尝试被拒且不计数（1002），先等 1s 门禁期满
+        std::thread::sleep(Duration::from_millis(1100));
+
+        // 第 4 次失败 → 2s 门禁（2^(4-3)），旁路可查剩余秒数
+        let err = session
+            .unlock("wrong password indeed!".to_owned())
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert!(
+            session.backoff_remaining_secs() > 0,
+            "第 4 次失败应触发 2s 门禁，剩余秒数必须 > 0"
+        );
     }
 }

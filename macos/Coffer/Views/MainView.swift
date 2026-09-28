@@ -8,8 +8,12 @@ struct MainView: View {
 
     @State private var newSheetCategory: FfiItemCategory?
     @State private var showImport = false
-    /// 安全设置 sheet（docs/08 §7.5：Touch ID 设置节入口）。
-    @State private var showSecuritySettings = false
+    /// 加密备份导出 sheet（FR-8.1/8.6，T-E）。
+    @State private var showExport = false
+    /// 统一设置 sheet（docs/09-v0.2实现方案.md §3.7，T06 设置页归位：
+    /// 自动锁定 / 剪贴板 / 备份提醒 / 安全 / 数据归位到 SettingsView，
+    /// 取代原 autoLockMenu + 安全设置入口）。
+    @State private var showSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -18,6 +22,13 @@ struct MainView: View {
             middleColumn
         } detail: {
             detailPane
+        }
+        // 备份提醒横幅（FR-8.5，T-G）：挂在 split view 顶部安全区，
+        // 不挤压三栏 content（safeAreaInset 标准做法）
+        .safeAreaInset(edge: .top) {
+            if model.showBackupBanner {
+                backupBanner
+            }
         }
         .onAppear {
             model.reloadItems()
@@ -29,6 +40,32 @@ struct MainView: View {
             ItemEditView(mode: .create(category))
                 .environmentObject(model)
         }
+    }
+
+    // MARK: - 备份提醒横幅（FR-8.5，T-G）
+
+    /// 黄色警示横幅：文案统一「距上次备份已超过 N 天」——从未备份时
+    /// Rust 侧 lastBackupAt 为 nil 同样返回应提醒，无需区分文案（保持简单）。
+    /// 「立即备份」保留横幅显示：导出成功回调（ExportView →
+    /// evaluateBackupReminder）基于 Rust 新打点的 last_backup_at 重算，
+    /// 横幅自动消失；「暂不」本会话隐藏，下次解锁重评估。
+    private var backupBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+            Text("距上次备份已超过 \(model.backupReminderDays) 天，建议备份以防数据丢失")
+                .font(.callout)
+            Spacer()
+            Button("立即备份") {
+                showExport = true
+            }
+            Button("暂不") {
+                model.dismissBackupBanner()
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.yellow.opacity(0.15))
     }
 
     // MARK: - 侧栏
@@ -77,19 +114,23 @@ struct MainView: View {
                 } label: {
                     Label("新建", systemImage: "plus")
                 }
-                autoLockMenu
-                // 安全设置入口：无 Touch ID 设备整体隐藏（docs/08 §7.5 降级）
-                if model.isTouchIDSupported {
-                    Button {
-                        showSecuritySettings = true
-                    } label: {
-                        Label("安全设置", systemImage: "lock.shield")
-                    }
+                // 统一设置入口（docs/09-v0.2实现方案.md §3.7）
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("设置", systemImage: "gearshape")
                 }
                 Button {
                     showImport = true
                 } label: {
                     Label("导入 CSV", systemImage: "square.and.arrow.down")
+                }
+                // 加密备份导出入口（FR-8.1/8.6，T-E；底层契约锁定态可用，
+                // UI 入口置于解锁后主界面，TC-EXP-08）
+                Button {
+                    showExport = true
+                } label: {
+                    Label("导出", systemImage: "arrow.up.doc")
                 }
                 Button {
                     model.lock()
@@ -102,22 +143,14 @@ struct MainView: View {
             ImportView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showSecuritySettings) {
-            SecuritySettingsView()
+        .sheet(isPresented: $showExport) {
+            ExportView()
                 .environmentObject(model)
         }
-    }
-
-    /// 自动锁定超时档位（1 / 5 / 15 / 30 分钟、从不）。
-    private var autoLockMenu: some View {
-        Picker(selection: $model.autoLockMinutes) {
-            ForEach(AppModel.autoLockOptions, id: \.self) { minutes in
-                Text(minutes == 0 ? "从不" : "\(minutes) 分钟").tag(minutes)
-            }
-        } label: {
-            Label("自动锁定", systemImage: "timer")
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(model)
         }
-        .pickerStyle(.menu)
     }
 
     // MARK: - 详情

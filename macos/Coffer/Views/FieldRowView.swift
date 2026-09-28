@@ -131,7 +131,7 @@ struct ConcealedFieldRow: View {
         isBusy = false
     }
 
-    /// 复制敏感值：取回即写剪贴板（不落任何状态），30 秒后自动清除。
+    /// 复制敏感值：取回即写剪贴板（不落任何状态），按当前档位自动清除。
     private func copyValue() {
         guard !isBusy else { return }
         isBusy = true

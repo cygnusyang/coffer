@@ -42,6 +42,17 @@ final class AppModel: ObservableObject {
     /// 慢调用（建库 / 解锁 / 导入）进行中标记，用于禁用按钮。
     @Published private(set) var isBusy = false
 
+    /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
+    ///
+    /// 计时模式：只在收到 1002 时经 `backoffRemainingSecs` 旁路读**一次**
+    /// 剩余秒数，换算成本地截止 Date（LockView 用 TimelineView 本地倒数），
+    /// 不轮询 FFI。1002 一码两义（普通密码错 / 门禁期拒绝），区分即靠该
+    /// 旁路：剩余 > 0 才是门禁期。门禁期内强试 unlock 返回 1002 但不计数、
+    /// 不延长门禁（core/cf-session/src/backoff.rs `try_acquire` 门禁优先），
+    /// 倒计时不被强试推迟。内存级：计数器在 Rust 会话内，App 重启归零
+    /// （docs/09 冻结裁决，设计接受）。
+    @Published private(set) var lockBackoffDeadline: Date?
+
     /// 建库成功后的可选「启用 Touch ID」步骤标记（docs/08 §4.1 建库可选启用）。
     /// 建库成功时置位（仅 Touch ID 设备）；用户在首次解锁后的引导 sheet 中
     /// 完成或跳过后清除。无 Touch ID 设备恒 false——v0.1 建库流程零变化
@@ -77,6 +88,37 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: 剪贴板清除配置（T06 / FR-14.2）
+
+    /// 剪贴板自动清除秒数（FR-14.2 五档：10 / 30 / 60 / 120 / 0=从不）。
+    /// 注意哨兵语义与 autoLockMinutes 相反：这里 0 = 从不（不落 -1）。
+    /// didSet：① UserDefaults 落盘 ② 同步 ClipboardManager 定时器
+    /// ③ 回放到 Rust 会话（try? 原因：该调用锁定态也可用，失败仅意味
+    /// Rust 侧镜像值未更新——Swift 侧定时器（实际执行者，C-5）已生效，
+    /// 且新值在写入前已经两侧档位校验，失败属理论路径，无安全影响）。
+    @Published var clipboardClearSecs: Int = AppModel.loadClipboardClearSecs() {
+        didSet {
+            // 防御校验（P3）：当前无调用方可写非法值，但一旦有未来路径
+            // 写入非法值，会导致 UserDefaults / ClipboardManager / Rust
+            // 会话三处状态互相不一致——宁可不生效也不落脏数据。
+            guard ClipboardManager.isValidClearSecs(clipboardClearSecs) else { return }
+            guard oldValue != clipboardClearSecs else { return }
+            UserDefaults.standard.set(clipboardClearSecs,
+                                      forKey: Self.clipboardClearDefaultsKey)
+            ClipboardManager.shared.updateClearInterval(secs: clipboardClearSecs)
+            if let session {
+                try? session.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
+            }
+        }
+    }
+
+    /// 从 UserDefaults 读档位（nonisolated，供属性默认值使用）。
+    /// 校验与回退规则在 ClipboardManager.loadStoredClearSecs（两侧共用一处）。
+    nonisolated private static func loadClipboardClearSecs() -> Int {
+        ClipboardManager.loadStoredClearSecs()
+    }
+    nonisolated static let clipboardClearDefaultsKey = ClipboardManager.clearSecsDefaultsKey
+
     /// 从 UserDefaults 读已保存档位（nonisolated，供属性默认值使用）。
     nonisolated private static func loadAutoLockMinutes() -> Int {
         let stored = UserDefaults.standard.integer(forKey: "autoLockMinutes")
@@ -87,11 +129,87 @@ final class AppModel: ObservableObject {
         default: return autoLockOptions.contains(stored) ? stored : 5
         }
     }
-    /// 可选档位：1 / 5 / 15 / 30 分钟、从不。
-    nonisolated static let autoLockOptions: [Int] = [1, 5, 15, 30, 0]
+    /// 可选档位：1 / 5 / 15 / 30 / 60 分钟、从不（FR-14.1 六档）。
+    nonisolated static let autoLockOptions: [Int] = [1, 5, 15, 30, 60, 0]
     nonisolated static let autoLockDefaultsKey = "autoLockMinutes"
     /// 自动锁定平台驱动（锁屏 / 休眠 / 屏保立即锁定 + 空闲喂入）。
     private var lockMonitor: AutoLockMonitor?
+
+    // MARK: 备份提醒（FR-8.5 / T06 设置页归位；T-G 评估逻辑已接入）
+
+    /// 备份提醒间隔天数（FR-8.5 四档：0 = 禁用 / 7 / 14 / 30，默认 30）。
+    /// 哨兵语义注意（三者互不相同，勿混淆）：
+    ///   - autoLockMinutes：运行态 0 = 从不，落盘 -1 = 从不；
+    ///   - clipboardClearSecs：0 = 从不（落盘同值）；
+    ///   - backupReminderDays：0 = 禁用提醒（落盘同值）。
+    /// didSet 落盘 + 解锁态下重评估（T-G）：改档即重算横幅
+    /// （如从 30 天改 7 天且已超期，横幅立即出现；反之立即消失）。
+    @Published var backupReminderDays: Int = AppModel.loadBackupReminderDays() {
+        didSet {
+            // 防御校验（与 clipboardClearSecs 同纪律）：非法值宁可不生效，
+            // 也不落脏数据破坏「UserDefaults / 设置页」两处一致。
+            guard Self.backupReminderOptions.contains(backupReminderDays) else { return }
+            guard oldValue != backupReminderDays else { return }
+            UserDefaults.standard.set(backupReminderDays,
+                                      forKey: Self.backupReminderDefaultsKey)
+            evaluateBackupReminder()
+        }
+    }
+
+    /// 备份提醒横幅可见性（FR-8.5，T-G）。提醒非配置：不入 UserDefaults，
+    /// 每次解锁成功 / 改档 / 备份导出成功时重算（见 evaluateBackupReminder）。
+    @Published private(set) var showBackupBanner = false
+
+    /// 从 UserDefaults 读档位（nonisolated，供属性默认值使用）。
+    /// 用 object(forKey:) 区分「未配置」与「显式 0（禁用）」——integer(forKey:)
+    /// 对键不存在也返回 0，而 0 是合法档位，必须区分（同 ClipboardManager 纪律）。
+    nonisolated private static func loadBackupReminderDays() -> Int {
+        guard let stored = UserDefaults.standard.object(forKey: backupReminderDefaultsKey) as? Int
+        else { return defaultBackupReminderDays }
+        return backupReminderOptions.contains(stored) ? stored : defaultBackupReminderDays
+    }
+    /// 可选档位：禁用 / 7 / 14 / 30 天。
+    nonisolated static let backupReminderOptions: [Int] = [0, 7, 14, 30]
+    /// 默认档位：30 天（FR-8.5）。
+    nonisolated static let defaultBackupReminderDays = 30
+    nonisolated static let backupReminderDefaultsKey = "backupReminderDays"
+
+    /// 评估是否显示备份提醒横幅（FR-8.5，T-G）。
+    ///
+    /// 调用时机纪律：shouldSuggestBackup 有解锁态门禁（Rust 1001），只能在
+    /// 解锁完成后调用——本模型在 unlock / unlockWithTouchID 成功切 .unlocked
+    /// 之后、backupReminderDays didSet（改档即重评估）三处调用。
+    ///
+    /// - days == 0（禁用）→ 直接置 false，不发 FFI 调用（Rust 侧
+    ///   threshold <= 0 同样视为禁用，此处提前短路省一次跨桥）。
+    /// - 从未备份：Rust 侧 lastBackupAt 为 nil 同样返回应提醒，无需区分文案。
+    /// - FFI 失败（含 1001）按「不提醒」处理：提醒是 Should 级非门禁功能，
+    ///   评估失败静默降级为不显示横幅，不阻塞解锁流程、不打扰用户。
+    func evaluateBackupReminder() {
+        guard phase == .unlocked, let session else {
+            showBackupBanner = false
+            return
+        }
+        // 防御校验（与 didSet 同纪律）：非法档位视为禁用
+        guard Self.backupReminderOptions.contains(backupReminderDays) else {
+            showBackupBanner = false
+            return
+        }
+        // 0 = 禁用提醒（FR-8.5 档位语义）：不发 FFI 调用
+        guard backupReminderDays > 0 else {
+            showBackupBanner = false
+            return
+        }
+        let threshold = Int64(backupReminderDays) * 86_400
+        let now = Int64(Date().timeIntervalSince1970)
+        showBackupBanner = (try? session.shouldSuggestBackup(thresholdSecs: threshold, nowSecs: now)) == true
+    }
+
+    /// 「暂不」：本会话隐藏横幅。下次解锁成功 / 改档 / 备份导出成功时
+    /// 会重评估（提醒非配置，状态不持久化）。
+    func dismissBackupBanner() {
+        showBackupBanner = false
+    }
 
     // MARK: - FFI 对象
 
@@ -145,13 +263,24 @@ final class AppModel: ObservableObject {
 
     // MARK: - 会话管理
 
-    private func openSession(_ brief: FfiVaultBrief) {
+    /// 建库 / 启动 / 恢复后打开统一入口（openVault + 状态收尾，phase → .locked
+    /// 由 LockView 承担解锁引导）。T-H（FR-8.1）：恢复流为第三个调用点——
+    /// RestoreBackupView 恢复完成后按 vaultUuid 匹配 brief 经此开会话，故由
+    /// private 收紧为 internal 最小可见性（签名与行为不变）。
+    func openSession(_ brief: FfiVaultBrief) {
         do {
             let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
             session = opened
             vaultName = brief.displayName
             vaultUUID = brief.vaultUuid
             applyIdleTimeout()
+            // 回放剪贴板清除档位到 Rust 会话（FR-14.2）：Rust 侧无持久化，
+            // 每次开会话都要把 UserDefaults 持久值重放过去；try? 理由同
+            // didSet 注释（锁定态即可调用，失败无安全影响）。
+            try? opened.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
+            // 新会话退避计数从 0 起算（FR-12.5 内存级）：清掉旧会话可能
+            // 残留的倒计时截止时刻（如恢复备份替换会话的边缘路径）。
+            lockBackoffDeadline = nil
             phase = .locked
             refreshTouchIDStatus()
         } catch {
@@ -204,10 +333,42 @@ final class AppModel: ObservableObject {
             vaultName = info.displayName
             applyIdleTimeout()
             phase = .unlocked
+            // 解锁成功清零退避（Rust on_success），倒计时随之撤销（FR-12.5）
+            lockBackoffDeadline = nil
+            // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
+            evaluateBackupReminder()
         } catch {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
             lastErrorMessage = errText
+            // FR-12.5：1002 后刷新倒计时——第 3 次失败起门禁激活（剩余 > 0，
+            // 记截止时刻）；前 2 次普通密码错（剩余 == 0）置 nil 不显示倒数
+            if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
+                refreshBackoffDeadline()
+            }
+        }
+    }
+
+    /// 解锁失败退避（FR-12.5）门禁剩余秒数（旁路读一次）。
+    ///
+    /// Swift 绑定 `backoffRemainingSecs()` 为非抛掷纯读（UInt64，0 =
+    /// 无门禁；> 0 = 剩余秒数向上取整）——无 `try?` 场景。会话缺失按
+    /// 无门禁处理（倒计时无意义）。
+    private func refreshBackoffDeadline() {
+        guard let session else {
+            lockBackoffDeadline = nil
+            return
+        }
+        let secs = session.backoffRemainingSecs()
+        lockBackoffDeadline = secs > 0 ? Date().addingTimeInterval(TimeInterval(secs)) : nil
+    }
+
+    /// 倒计时归零清除（FR-12.5）：LockView 的 TimelineView 倒数到 0 时经
+    /// Task 派发调用（避免视图更新周期内直接改 @Published）；按截止时刻
+    /// 复核，过期才清——按钮恢复可用、计时条卸载。
+    func clearBackoffIfExpired() {
+        if let deadline = lockBackoffDeadline, deadline <= Date() {
+            lockBackoffDeadline = nil
         }
     }
 
@@ -222,6 +383,10 @@ final class AppModel: ObservableObject {
         currentDetails = nil
         selectedItemID = nil
         searchText = ""
+        // 退避倒计时兜底清 nil（FR-12.5）：lock 只能从解锁态进入，而成功
+        // 解锁已在 Rust 侧清零计数，此处是状态一致性兜底（新开会话计数
+        // 必从 0 起算，不应残留旧会话的倒计时）。
+        lockBackoffDeadline = nil
         phase = session != nil ? .locked : .noVault
         refreshTouchIDStatus()
     }
@@ -313,12 +478,24 @@ final class AppModel: ObservableObject {
             vaultName = info.displayName
             applyIdleTimeout()
             phase = .unlocked
+            // 解锁成功清零退避倒计时（FR-12.5，与主密码解锁同收尾）
+            lockBackoffDeadline = nil
+            // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
+            evaluateBackupReminder()
         } catch {
             // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
             // FfiError（1002 / 4001 / 5999）各自语义化呈现
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
             lastErrorMessage = errText
+            // FR-12.5 兜底：unlockWithBiometric 完全豁免退避（不门禁也不
+            // 计数，见 vault.rs「bio解锁不受退避门禁且不计数」单测），本
+            // 路径 1002 只会是 K_bio 不匹配 / 篡改（AEAD open 失败），正常
+            // 读不到门禁剩余秒数；判定保留为防御——错误码与 unlock 共用，
+            // enable 主密码错计入同一计数器（共享 oracle 语义）。
+            if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
+                refreshBackoffDeadline()
+            }
             // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
             refreshTouchIDStatus()
         }

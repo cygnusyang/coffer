@@ -26,7 +26,8 @@
 //! - ✅ 随机密码生成（passwords，FR-3，参数化：docs/07 §2.3 `PasswordGenOptions`）—— [`generate_password`]
 //! - ✅ 密码短语生成（EFF 词表，FR-3.3，docs/09 §3.4）—— [`generate_passphrase`]
 //! - ✅ 重复密码 / 弱 URL 检测纯函数（FR-6.2 / FR-6.3，docs/09 §3.5）—— [`watchtower`]
-//! - ❌ 陈旧密码 / 泄露字典 / 无 2FA 检测 —— 不在本版（docs/09 §9）
+//! - ✅ 陈旧密码 / 泄露启发式 / 无 2FA 检测纯函数（FR-6.4 / 6.5 / 6.6，
+//!   docs/03 §8 AUD-04/05/06，v0.3.0-T04）—— [`audit_rules`]
 //!
 //! 参见 `README.md`「当前状态」与 `docs/04-系统设计.md` §10.1（阶段划分）。
 //!
@@ -39,9 +40,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
 
+mod audit_rules;
 mod passphrase;
 mod watchtower;
 
+pub use audit_rules::{
+    find_common_passwords, find_missing_totp, find_stale_passwords, CommonPasswordHit,
+    CommonPasswordRule, Confidence, DEFAULT_STALE_DAYS,
+};
 pub use passphrase::{
     generate_passphrase, PassphraseOptions, MAX_SEPARATOR_CHARS, MAX_WORD_COUNT,
     MIN_SEPARATOR_CHARS, MIN_WORD_COUNT,

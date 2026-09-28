@@ -415,10 +415,18 @@ struct EditFieldRow: Identifiable {
 // MARK: - 单行编辑控件
 
 struct EditFieldRowView: View {
+    @EnvironmentObject
+    private var model: AppModel
+
     @Binding
     var row: EditFieldRow
 
     let itemId: String?
+
+    /// 密码生成器 popover（FR-3.2 / FR-3.3，MC-2：仅密码 designation 的
+    /// 掩码行提供；生成结果写入 row.value，经 SecureField 的 onChange
+    /// 自然进入「已改动」语义）。
+    @State private var showGenerator = false
 
     var body: some View {
         switch row.fieldType {
@@ -452,9 +460,244 @@ struct EditFieldRowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if row.designation == .password {
+                    // 密码生成器（FR-3.2 随机字符 / FR-3.3 密码短语双模式，
+                    // docs/15 §3.3.4）：popover 点外部即收起，无 sheet 困锁面。
+                    Button {
+                        showGenerator = true
+                    } label: {
+                        Label("生成", systemImage: "wand.and.stars")
+                    }
+                    .controlSize(.small)
+                    .popover(isPresented: $showGenerator, arrowEdge: .bottom) {
+                        PasswordGeneratorPopover { generated in
+                            row.value = generated
+                            showGenerator = false
+                        }
+                        .environmentObject(model)
+                        .frame(width: 340)
+                    }
+                }
             }
         default:
             TextField(row.name, text: $row.value)
+        }
+    }
+}
+
+// MARK: - 密码生成器（FR-3.2 随机字符 / FR-3.3 密码短语，MC-2）
+
+/// 生成器 popover：模式切换「随机字符 / 密码短语」，参数与结果同走强度
+/// 指示（Rust 工厂版 zxcvbn，ChangePasswordView / VaultSetupView 同款）。
+/// 生成与使用都发生在本 popover 行内，结果写入字段值后即随闭包丢弃——
+/// 生成结果不进 AppModel。
+struct PasswordGeneratorPopover: View {
+    @EnvironmentObject
+    private var model: AppModel
+
+    /// 「使用」回调：把生成结果写回字段行。
+    let onUse: (String) -> Void
+
+    enum GenMode: Hashable {
+        case random
+        case passphrase
+    }
+
+    /// 分隔符预设（FR-3.3：`-` / `.` / 空格 / 自定义 1–3 个可打印字符）。
+    enum SeparatorChoice: Hashable {
+        case dash, dot, space, custom
+    }
+
+    // 随机字符参数（内核约束：长度 8..=100，至少一个字符集）
+    @State private var mode: GenMode = .random
+    @State private var length = 20.0
+    @State private var useNumbers = true
+    @State private var useLowercase = true
+    @State private var useUppercase = true
+    @State private var useSymbols = false
+    @State private var excludeSimilar = true
+
+    // 密码短语参数（内核约束：词数 3..=10、分隔符 1..=3 可打印字符）
+    @State private var wordCount = 5.0
+    @State private var separatorChoice: SeparatorChoice = .dash
+    @State private var customSeparator = ""
+    @State private var capitalize = true
+    @State private var numberSuffix = true
+
+    @State private var result = ""
+    @State private var generationError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("模式", selection: $mode) {
+                Text("随机字符").tag(GenMode.random)
+                Text("密码短语").tag(GenMode.passphrase)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: mode) { _, _ in
+                result = ""
+                generationError = nil
+            }
+
+            switch mode {
+            case .random: randomOptions
+            case .passphrase: passphraseOptions
+            }
+
+            HStack {
+                Button("生成") { generate() }
+                    .buttonStyle(.borderedProminent)
+                if !result.isEmpty {
+                    Text(result)
+                        .font(.body.monospaced())
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .help(result)
+                    Spacer()
+                    Button("使用") { onUse(result) }
+                        .buttonStyle(.bordered)
+                } else {
+                    Spacer()
+                }
+            }
+
+            if let generationError {
+                Text(generationError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if !result.isEmpty {
+                strengthSection
+            }
+        }
+        .padding()
+    }
+
+    // MARK: 参数区
+
+    @ViewBuilder
+    private var randomOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("长度 \(Int(length))")
+                Slider(value: $length, in: 8...100, step: 1)
+                    .frame(maxWidth: .infinity)
+            }
+            Toggle("数字", isOn: $useNumbers)
+            Toggle("小写字母", isOn: $useLowercase)
+            Toggle("大写字母", isOn: $useUppercase)
+            Toggle("符号", isOn: $useSymbols)
+            Toggle("排除易混淆字符（iI1loO0…）", isOn: $excludeSimilar)
+        }
+        .font(.callout)
+    }
+
+    @ViewBuilder
+    private var passphraseOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("词数 \(Int(wordCount))")
+                Slider(value: $wordCount, in: 3...10, step: 1)
+                    .frame(maxWidth: .infinity)
+            }
+            Picker("分隔符", selection: $separatorChoice) {
+                Text("连字符（-）").tag(SeparatorChoice.dash)
+                Text("句点（.）").tag(SeparatorChoice.dot)
+                Text("空格").tag(SeparatorChoice.space)
+                Text("自定义").tag(SeparatorChoice.custom)
+            }
+            if separatorChoice == .custom {
+                TextField("1–3 个字符", text: $customSeparator)
+                    .frame(maxWidth: 120)
+            }
+            Toggle("词首大写", isOn: $capitalize)
+            Toggle("末尾追加数字", isOn: $numberSuffix)
+        }
+        .font(.callout)
+    }
+
+    // MARK: 生成
+
+    private var resolvedSeparator: String {
+        switch separatorChoice {
+        case .dash: return "-"
+        case .dot: return "."
+        case .space: return " "
+        case .custom: return customSeparator
+        }
+    }
+
+    private func generate() {
+        guard let session = model.session else { return }
+        generationError = nil
+        do {
+            switch mode {
+            case .random:
+                // 内核约束：长度 8..=100、至少一个字符集（越界 1012）
+                result = try session.generatePassword(opts: FfiPasswordGenOptions(
+                    length: UInt32(Int(length)),
+                    numbers: useNumbers,
+                    lowercaseLetters: useLowercase,
+                    uppercaseLetters: useUppercase,
+                    symbols: useSymbols,
+                    excludeSimilarCharacters: excludeSimilar
+                ))
+            case .passphrase:
+                // 内核约束：词数 3..=10、分隔符 1..=3 可打印字符（越界 1012）
+                result = try session.generatePassphrase(opts: FfiPassphraseOptions(
+                    wordCount: UInt32(Int(wordCount)),
+                    separator: resolvedSeparator,
+                    capitalize: capitalize,
+                    numberSuffix: numberSuffix
+                ))
+            }
+        } catch {
+            result = ""
+            generationError = ErrorPresenter.text(error)
+        }
+    }
+
+    // MARK: 强度条（展示用途；与 ChangePasswordView / VaultSetupView 同款）
+
+    @ViewBuilder
+    private var strengthSection: some View {
+        let score = currentScore
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(0..<5, id: \.self) { index in
+                    Capsule()
+                        .fill(index <= score ? strengthColor(score) : Color.secondary.opacity(0.2))
+                        .frame(height: 5)
+                }
+                Text(verbatim: PasswordStrength.label(score))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let estimate = model.estimateStrength(result), !estimate.warnings.isEmpty {
+                Text(estimate.warnings.joined(separator: "；"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Rust zxcvbn 估算（有会话恒可用；估算失败用本地粗估兜底）。
+    private var currentScore: Int {
+        if let estimate = model.estimateStrength(result) {
+            return Int(estimate.score)
+        }
+        return PasswordStrength.localScore(result)
+    }
+
+    private func strengthColor(_ score: Int) -> Color {
+        switch score {
+        case 0: return .red
+        case 1: return .orange
+        case 2: return .yellow
+        case 3: return .green
+        default: return .mint
         }
     }
 }

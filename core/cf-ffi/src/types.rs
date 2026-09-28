@@ -848,8 +848,9 @@ impl TryFrom<FfiPasswordGenOptions> for cf_audit::PasswordGenOptions {
 /// 密码短语生成参数（FR-3.3，docs/15 §3.3.4；镜像
 /// `cf_audit::PassphraseOptions`，usize 不跨 FFI → wordCount 用 u32）。
 ///
-/// 门禁（越界 → 码 1012，内核校验）：词数 3..=10；分隔符 1..=3 个
-/// 可打印字符。
+/// 门禁：词数 3..=10、分隔符 1..=3 个可打印字符，越界 → 码 1012
+/// （内核校验）。wordCount 的 u32→usize 转换溢出 → 码 5002
+/// （[`TryFrom`] 实现的防御性路径，64 位平台不可达）。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FfiPassphraseOptions {
     /// 词数（3..=10）。

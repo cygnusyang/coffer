@@ -1,5 +1,6 @@
 // ItemDetailView.swift —— 条目详情：字段掩码/显示切换、URL/标签/TOTP 元数据、
-// 收藏 / 编辑 / 删除动作。复制按钮在阶段三接入（剪贴板 30s 清除一并实现）。
+// 收藏 / 编辑 / 删除动作、历史版本入口（FR-2.9，回滚见 HistorySheet）。
+// 复制按钮在阶段三接入（剪贴板 30s 清除一并实现）。
 
 import SwiftUI
 
@@ -11,6 +12,10 @@ struct ItemDetailView: View {
 
     @State private var showEditSheet = false
     @State private var confirmHardDelete = false
+    @State private var showHistory = false
+    /// 历史版本数（出现时轻量拉一次；失败显示 0 并静默——入口数字
+    /// 非关键信息，不弹窗打扰）。
+    @State private var historyCount = 0
 
     private var isTrashed: Bool {
         if case .trashed = details.state { return true }
@@ -25,6 +30,7 @@ struct ItemDetailView: View {
                 if !details.urls.isEmpty { urlSection }
                 if !details.tags.isEmpty { tagSection }
                 if let totp = details.totp { totpSection(totp) }
+                if !isTrashed { historySection }
                 metaSection
             }
             .padding(24)
@@ -32,6 +38,17 @@ struct ItemDetailView: View {
         }
         .navigationTitle(details.title)
         .toolbar { toolbarContent }
+        .task {
+            refreshHistoryCount()
+        }
+        .onChange(of: showHistory) {
+            // sheet 关闭后刷新计数（回滚会写入新版本，列表 +1）。
+            if !showHistory { refreshHistoryCount() }
+        }
+        .sheet(isPresented: $showHistory) {
+            HistorySheet(itemId: details.uuid)
+                .environmentObject(model)
+        }
         .sheet(isPresented: $showEditSheet) {
             ItemEditView(mode: .edit(details))
                 .environmentObject(model)
@@ -125,6 +142,30 @@ struct ItemDetailView: View {
             Text("一次性密码（TOTP）").font(.headline)
             TotpCodeView(itemId: details.uuid, detail: totp)
         }
+    }
+
+    // MARK: - 历史版本（FR-2.9）
+
+    // 回收站条目回滚被内核拒绝（错误码 1012），故 trashed 条目整体
+    // 不渲染本 section——不给入口优于让用户点了再吃报错。快照明文
+    // 不跨 FFI 是内核刻意设计，入口只展示版本数，详见 HistorySheet。
+
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("历史版本").font(.headline)
+            Button("\(historyCount) 个历史版本 ›") {
+                showHistory = true
+            }
+            .buttonStyle(.link)
+        }
+        .font(.callout)
+    }
+
+    /// 轻量计数：listHistory 只回元数据（毫秒级，同 ItemStore CRUD
+    /// 纪律直接主线程调用）；失败静默为 0。
+    private func refreshHistoryCount() {
+        guard let session = model.session else { return }
+        historyCount = (try? session.listHistory(itemId: details.uuid).count) ?? 0
     }
 
     private var metaSection: some View {

@@ -23,6 +23,13 @@ struct MainView: View {
         } detail: {
             detailPane
         }
+        // 备份提醒横幅（FR-8.5，T-G）：挂在 split view 顶部安全区，
+        // 不挤压三栏 content（safeAreaInset 标准做法）
+        .safeAreaInset(edge: .top) {
+            if model.showBackupBanner {
+                backupBanner
+            }
+        }
         .onAppear {
             model.reloadItems()
             if model.selectedItemID != nil {
@@ -33,6 +40,32 @@ struct MainView: View {
             ItemEditView(mode: .create(category))
                 .environmentObject(model)
         }
+    }
+
+    // MARK: - 备份提醒横幅（FR-8.5，T-G）
+
+    /// 黄色警示横幅：文案统一「距上次备份已超过 N 天」——从未备份时
+    /// Rust 侧 lastBackupAt 为 nil 同样返回应提醒，无需区分文案（保持简单）。
+    /// 「立即备份」保留横幅显示：导出成功回调（ExportView →
+    /// evaluateBackupReminder）基于 Rust 新打点的 last_backup_at 重算，
+    /// 横幅自动消失；「暂不」本会话隐藏，下次解锁重评估。
+    private var backupBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+            Text("距上次备份已超过 \(model.backupReminderDays) 天，建议备份以防数据丢失")
+                .font(.callout)
+            Spacer()
+            Button("立即备份") {
+                showExport = true
+            }
+            Button("暂不") {
+                model.dismissBackupBanner()
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.yellow.opacity(0.15))
     }
 
     // MARK: - 侧栏

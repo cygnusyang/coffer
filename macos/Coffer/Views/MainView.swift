@@ -94,8 +94,9 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 300)
-        // 备份提醒横幅（FR-8.5）：中栏顶部，位于工具栏下方不重叠
-        .safeAreaInset(edge: .top) {
+        // 备份提醒横幅（FR-8.5）：挂中栏**底部**（用户裁定：顶部遮挡
+        // 列表内容挡视线；底部不挡条目区，按钮仍随手可及）
+        .safeAreaInset(edge: .bottom) {
             if model.showBackupBanner {
                 backupBanner
             }

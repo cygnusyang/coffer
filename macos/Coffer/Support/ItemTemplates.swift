@@ -89,6 +89,8 @@ enum SidebarFilter: Hashable {
     case favorites
     case category(FfiItemCategory)
     case trash
+    /// 安全体检页（v0.3.0-T05 T-D）：中栏渲染 HealthCheckView 而非条目列表。
+    case health
 }
 
 // MARK: - 四类字段模板（与 cf-domain::template 对齐）

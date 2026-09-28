@@ -31,7 +31,8 @@
 //! - [`change_password`]：修改主密码（FR-1.8，只重封装 header 的 DEK，
 //!   docs/09 §3.2 D-2）
 //! - [`usecase`]：条目 CRUD（四类完整 + 只读兜底）、搜索（多字段 + 词级
-//!   近似，FR-11.2）、历史版本（FR-2.9）、Watchtower 编排（FR-6.2/6.3）
+//!   近似，FR-11.2）、历史版本（FR-2.9）、跨库复制（FR-2.10）、
+//!   Watchtower 编排（FR-6.2/6.3）
 //! - [`types`]：跨模块的会话层数据结构（`VaultInfo` / `ItemDetails` / `TotpCode`）
 //!
 //! ## 错误统一（docs/07 §5 C-6）
@@ -80,6 +81,7 @@ pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
 pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
 pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};
 pub use usecase::audit::{PasswordFingerprint, WatchtowerReport};
+pub use usecase::cross_copy::copy_item;
 pub use usecase::history::HistoryEntry;
 pub use vault::VaultSession;
 

@@ -321,7 +321,10 @@ pub(crate) fn to_summary(row: ItemRow, title: &SecretString) -> Result<ItemSumma
 ///
 /// `totp` 控制 TOTP 从表写法：`Keep` 完全不动（既有加密行原样保留）、
 /// `Replace` 删旧插新、`Remove` 删旧（create 路径无旧行，删除为空操作）。
-fn write_children(
+///
+/// `pub(crate)`：跨库复制（FR-2.10）在目标库事务内复用同一「删旧插新」
+/// 写入语义，子表行 uuid 全部重新生成。
+pub(crate) fn write_children(
     repos: &cf_store::Repos<'_>,
     item_uuid: &str,
     draft: &ItemDraft,

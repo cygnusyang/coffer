@@ -689,3 +689,27 @@ fn 更新remove删除且非法replace被拒() {
     // 出码 → ItemNotFound（无 TOTP 记录）
     assert_eq!(session.totp_code(&id).unwrap_err().code(), 1011);
 }
+
+/// FR-12.5（会话级）：暴力退避——连续失败触发门禁后，unlock 直接拒绝
+/// （1002，不执行 KDF），剩余等待经 `backoff_remaining_secs()` 旁路可查；
+/// 门禁为内存级，随会话存在。
+#[test]
+fn 会话级暴力退避门禁() {
+    let (_base, session) = fresh_session("backoff");
+
+    // 无门禁时剩余秒数为 0
+    assert_eq!(session.backoff_remaining_secs(), 0);
+
+    // 连续 3 次错误密码 → 触发 1s 门禁
+    for _ in 0..3 {
+        let err = session.unlock("wrong-password-indeed!").unwrap_err();
+        assert_eq!(err.code(), 1002);
+    }
+    assert!(!session.is_unlocked());
+    assert_eq!(session.backoff_remaining_secs(), 1);
+
+    // 门禁期内正确密码同样被拒（证明 KDF 未执行，兼防 KDF DoS）
+    let err = session.unlock(STRONG).unwrap_err();
+    assert_eq!(err.code(), 1002);
+    assert!(!session.is_unlocked());
+}

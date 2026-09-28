@@ -118,7 +118,9 @@ fn open_err(vault_dir: &Path) -> cf_domain::CfError {
 
 // ================================================================ 1. 解锁流
 
-/// 连续 5 次错密码：全部 1002、会话保持锁定、之后正确密码仍可解锁。
+/// 连续 5 次错密码：全部 1002、会话保持锁定；FR-12.5 起 3 次失败后
+/// 进入退避门禁——正确密码在门禁期内也被拒（1002，不跑 KDF），
+/// 经旁路查剩余等待、等待期满后正确密码仍可解锁（可恢复性不变）。
 #[test]
 fn 连续错密码全部1002且可恢复() {
     let (_base, _dir, session) = fresh("adv_bruteforce");
@@ -129,8 +131,26 @@ fn 连续错密码全部1002且可恢复() {
         assert_eq!(err.code(), 1002, "第 {i} 次错密码应报 1002");
         assert!(!session.is_unlocked(), "错密码后必须保持锁定");
     }
+
+    // FR-12.5：第 3 次失败起进入门禁——后续尝试（含上面的 4/5 次与
+    // 正确密码）都被拒（仍报 1002，维持 FR-1.4 不可区分性），且不再
+    // 计数；剩余等待 ∈ [1, 4]s（取决于第 3 次失败时已流逝的时间）
+    let err = session.unlock(STRONG).unwrap_err();
+    assert_eq!(err.code(), 1002, "门禁期内正确密码应被退避门禁拒绝");
+    assert!(!session.is_unlocked());
+    let remaining = session.backoff_remaining_secs();
+    assert!(
+        (1..=4).contains(&remaining),
+        "剩余等待应在 1–4s 内，实际 {remaining}"
+    );
+
+    // 等待期满（留 0.5s 余量）：正确密码解锁成功（可恢复性）
+    std::thread::sleep(
+        std::time::Duration::from_secs(remaining) + std::time::Duration::from_millis(500),
+    );
     session.unlock(STRONG).unwrap();
     assert!(session.is_unlocked());
+    assert_eq!(session.backoff_remaining_secs(), 0, "成功后计数应清零");
 }
 
 /// 篡改 header KDF 参数越界：open_vault 阶段即拒绝（Corrupted 1005），

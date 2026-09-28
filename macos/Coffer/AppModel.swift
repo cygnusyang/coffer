@@ -52,6 +52,9 @@ final class AppModel: ObservableObject {
     @Published var showExport = false
     /// 统一设置 sheet（工具栏 + 菜单 ⌘,）。
     @Published var showSettings = false
+    /// 库切换器 sheet（v0.4 FR-1.2，MB-1：MainView 工具栏切换器触发，
+    /// sheet 挂 RootView——与导入/设置同一跨视图触发模式）。
+    @Published var showVaultSwitcher = false
 
     /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
     ///
@@ -229,6 +232,18 @@ final class AppModel: ObservableObject {
     /// 当前打开的库会话；noVault 阶段为 nil。
     private(set) var session: VaultSession?
 
+    // MARK: - 多库（v0.4 FR-1.2，MB-1）
+
+    /// 工作目录内库列表缓存（已锁定元数据，非密钥材料）：bootstrap 装载，
+    /// 切换器 sheet 打开时经 `reloadVaultBriefs()` 刷新（建库 / 切换不在此
+    /// 更新，下次打开 sheet 时刷新即可）。
+    @Published private(set) var vaultBriefs: [FfiVaultBrief] = []
+
+    /// UserDefaults 键：最近使用的库 UUID（UUIDv7 文本，非密钥材料）。
+    /// bootstrap 默认库选择依据（docs/15 §3.2.1：lastVaultUUID 优先，
+    /// 失效回退 createdAt 最新）；删除该键即回退旧行为（可逆）。
+    nonisolated static let lastVaultUUIDDefaultsKey = "lastVaultUUID"
+
     // MARK: - 路径
 
     /// 库工作目录（沙盒内 Documents/Coffer）。
@@ -269,8 +284,13 @@ final class AppModel: ObservableObject {
 
         do {
             let briefs = try factory.listVaults(baseDir: baseDir.path)
-                .sorted { $0.createdAt < $1.createdAt } // 最早创建者优先（Q-2：UI 只做单库）
-            if let brief = briefs.last {
+                .sorted { $0.createdAt < $1.createdAt } // createdAt 升序（列表展示稳定序）
+            vaultBriefs = briefs
+            // 默认库选择（v0.4 MB-1，docs/15 §3.2.1）：lastVaultUUID 优先
+            // （记录仍存在 → 打开它）；无记录 / 记录失效 → 回退 createdAt
+            // 最新（现状行为，单库用户零感知）；无库 → noVault（现状）。
+            let lastUUID = UserDefaults.standard.string(forKey: Self.lastVaultUUIDDefaultsKey)
+            if let brief = Self.selectBootstrapVault(briefs, lastVaultUUID: lastUUID) {
                 openSession(brief)
             } else {
                 phase = .noVault
@@ -278,6 +298,20 @@ final class AppModel: ObservableObject {
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
         }
+    }
+
+    /// bootstrap 默认库选择（纯函数，docs/15 §3.2.1）：lastVaultUUID 仍在
+    /// 列表中 → 打开它（优先级高于创建时间）；否则回退 createdAt 最新。
+    /// 纯函数（无 IO / 无 UserDefaults 依赖），独立单测覆盖
+    /// （Tests 手册模式：记录命中 / 失效 / 单库 / 空列表四组）。
+    nonisolated static func selectBootstrapVault(
+        _ briefs: [FfiVaultBrief], lastVaultUUID: String?
+    ) -> FfiVaultBrief? {
+        if let lastVaultUUID,
+           let recorded = briefs.first(where: { $0.vaultUuid == lastVaultUUID }) {
+            return recorded
+        }
+        return briefs.max { $0.createdAt < $1.createdAt }
     }
 
     // MARK: - 会话管理
@@ -289,21 +323,74 @@ final class AppModel: ObservableObject {
     func openSession(_ brief: FfiVaultBrief) {
         do {
             let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
-            session = opened
-            vaultName = brief.displayName
-            vaultUUID = brief.vaultUuid
-            applyIdleTimeout()
-            // 回放剪贴板清除档位到 Rust 会话（FR-14.2）：Rust 侧无持久化，
-            // 每次开会话都要把 UserDefaults 持久值重放过去；try? 理由同
-            // didSet 注释（锁定态即可调用，失败无安全影响）。
-            try? opened.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
-            // 新会话退避计数从 0 起算（FR-12.5 内存级）：清掉旧会话可能
-            // 残留的倒计时截止时刻（如恢复备份替换会话的边缘路径）。
-            lockBackoffDeadline = nil
-            phase = .locked
-            refreshTouchIDStatus()
+            adoptSession(opened, brief: brief)
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
+        }
+    }
+
+    /// 会话装配（openSession / switchVault 成功路径的公共收尾，语义与
+    /// v0.3 openSession 一致）：状态赋值 + 配置回放 + lastVaultUUID 记录。
+    /// lastVaultUUID 在此单点落盘——bootstrap / 建库 / 恢复 / 手动切换
+    /// 四条「成功打开」路径全覆盖（docs/15 §3.2.1）。
+    private func adoptSession(_ opened: VaultSession, brief: FfiVaultBrief) {
+        session = opened
+        vaultName = brief.displayName
+        vaultUUID = brief.vaultUuid
+        applyIdleTimeout()
+        // 回放剪贴板清除档位到 Rust 会话（FR-14.2）：Rust 侧无持久化，
+        // 每次开会话都要把 UserDefaults 持久值重放过去；try? 理由同
+        // didSet 注释（锁定态即可调用，失败无安全影响）。
+        try? opened.setClipboardClearSecs(secs: Int64(clipboardClearSecs))
+        // 新会话退避计数从 0 起算（FR-12.5 内存级）：清掉旧会话可能
+        // 残留的倒计时截止时刻（如恢复备份替换会话的边缘路径）。
+        lockBackoffDeadline = nil
+        phase = .locked
+        refreshTouchIDStatus()
+        UserDefaults.standard.set(brief.vaultUuid, forKey: Self.lastVaultUUIDDefaultsKey)
+    }
+
+    // MARK: - 库切换（v0.4 FR-1.2，MB-1）
+
+    /// 切换到指定库（单活跃会话不变量，docs/15 §3.2.1）：任一时刻至多一个
+    /// 解锁会话。先开新会话（失败 → 旧会话原样保留，错误经 lastErrorMessage
+    /// 呈现），成功后 `lock()` 锁旧会话（已清 UI 条目状态 + 剪贴板）再装配
+    /// 新会话。方案文字顺序为「锁旧 → 开新」，此处反序为失败安全：开新失败
+    /// 不破坏当前会话；不变量与顺序无关（新会话装配前处于锁定态）。
+    ///
+    /// openVault 只读 header 不做 KDF（会话保持锁定态，解锁才派生密钥），
+    /// 与 openSession 同为快路径，无需 Task.detached。
+    ///
+    /// - Returns: 是否切换成功（false = 原样保留当前会话，错误文案已置入
+    ///   lastErrorMessage 呈现——切换器 sheet 据此决定关闭或留驻重试）。
+    @discardableResult
+    func switchVault(to brief: FfiVaultBrief) -> Bool {
+        // 同库切换无操作（切换器已禁用当前库行，此处为防御）；慢调用
+        // （建库 / 解锁）进行中禁止切换——会话即将被替换，调用无处落地。
+        guard brief.vaultUuid != vaultUUID, !isBusy else { return false }
+        do {
+            let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
+            lock()
+            adoptSession(opened, brief: brief)
+            return true
+        } catch {
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            return false
+        }
+    }
+
+    /// 刷新库列表缓存（切换器 sheet onAppear 调用；listVaults 为目录扫描 +
+    /// header 读取，快路径）。失败经 lastErrorMessage 呈现，保留旧缓存。
+    func reloadVaultBriefs() {
+        do {
+            vaultBriefs = try factory.listVaults(baseDir: baseDir.path)
+                .sorted { $0.createdAt < $1.createdAt }
+        } catch {
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
         }
     }
 

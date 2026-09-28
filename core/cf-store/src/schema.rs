@@ -197,9 +197,7 @@ pub fn init(conn: &mut Connection) -> CfStoreResult<()> {
         None => meta.set_i64(KEY_SCHEMA_VERSION, SCHEMA_VERSION)?,
         Some(blob) => {
             let bytes: [u8; 8] = blob.as_slice().try_into().map_err(|_| {
-                cf_domain::CfError::Corrupted(
-                    "schema version value is not an 8-byte blob".into(),
-                )
+                cf_domain::CfError::Corrupted("schema version value is not an 8-byte blob".into())
             })?;
             let v = i64::from_le_bytes(bytes);
             if v == SCHEMA_VERSION {
@@ -230,7 +228,9 @@ pub fn verify(conn: &Connection) -> CfStoreResult<()> {
         )
         .store()?;
     if has_meta == 0 {
-        return Err(cf_domain::CfError::Corrupted("schema version missing".into()));
+        return Err(cf_domain::CfError::Corrupted(
+            "schema version missing".into(),
+        ));
     }
     let meta = MetaRepo::new(conn);
     // 与 init() 一致：区分「缺失」与「损坏」（O-2）
@@ -290,9 +290,11 @@ mod tests {
         assert_eq!(meta.get_i64(KEY_SCHEMA_VERSION).unwrap(), Some(1));
 
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         // 11 张业务表 + sqlite 内部表（本用例无 AUTOINCREMENT 序列表，
         // audit_local 的 AUTOINCREMENT 会产生 sqlite_sequence）
@@ -323,10 +325,14 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         init(&mut conn).unwrap();
 
-        let fk: i64 = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(fk, 1, "foreign_keys 必须开启（级联删除依赖它）");
 
-        let page: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap();
+        let page: i64 = conn
+            .query_row("PRAGMA page_size", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(page, 4096);
     }
 
@@ -335,10 +341,15 @@ mod tests {
     fn 高版本库拒绝打开() {
         let mut conn = Connection::open_in_memory().unwrap();
         init(&mut conn).unwrap();
-        MetaRepo::new(&conn).set_i64(KEY_SCHEMA_VERSION, SCHEMA_VERSION + 1).unwrap();
+        MetaRepo::new(&conn)
+            .set_i64(KEY_SCHEMA_VERSION, SCHEMA_VERSION + 1)
+            .unwrap();
 
         let result = init(&mut conn);
-        assert!(matches!(result, Err(cf_domain::CfError::UnsupportedFormat(2))));
+        assert!(matches!(
+            result,
+            Err(cf_domain::CfError::UnsupportedFormat(2))
+        ));
     }
 
     /// verify：版本匹配放行、缺失报 Corrupted、高版本报 UnsupportedFormat
@@ -353,7 +364,9 @@ mod tests {
         init(&mut conn).unwrap();
         verify(&conn).unwrap();
 
-        MetaRepo::new(&conn).set_i64(KEY_SCHEMA_VERSION, 99).unwrap();
+        MetaRepo::new(&conn)
+            .set_i64(KEY_SCHEMA_VERSION, 99)
+            .unwrap();
         assert!(matches!(
             verify(&conn),
             Err(cf_domain::CfError::UnsupportedFormat(99))

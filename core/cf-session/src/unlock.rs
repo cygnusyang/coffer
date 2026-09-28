@@ -310,7 +310,8 @@ pub(crate) fn recover_dek(
         );
         combined.zeroize();
         let mut plain = open_result.map_err(|_| UNLOCK_FAILED)?;
-        let dek = Zeroizing::new(<[u8; 32]>::try_from(plain.as_slice()).map_err(|_| UNLOCK_FAILED)?);
+        let dek =
+            Zeroizing::new(<[u8; 32]>::try_from(plain.as_slice()).map_err(|_| UNLOCK_FAILED)?);
         // Zeroizing 持有的是拷贝；原始 Vec 同样清零，不留密钥副本
         plain.zeroize();
         dek
@@ -399,7 +400,10 @@ pub(crate) fn header_aad(vault_uuid: &[u8; 16], purpose: &[u8]) -> Vec<u8> {
 }
 
 /// header 中的 nonce_b64 + ct_b64 还原为 aead::open 需要的 `nonce ‖ ct ‖ tag`。
-pub(crate) fn assembled_sealed(nonce_b64: &str, ct_b64: &str) -> Result<Vec<u8>, base64::DecodeError> {
+pub(crate) fn assembled_sealed(
+    nonce_b64: &str,
+    ct_b64: &str,
+) -> Result<Vec<u8>, base64::DecodeError> {
     let nonce = b64_decode(nonce_b64)?;
     let ct = b64_decode(ct_b64)?;
     let mut combined = Vec::with_capacity(nonce.len() + ct.len());

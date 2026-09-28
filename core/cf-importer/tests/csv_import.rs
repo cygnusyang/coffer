@@ -9,7 +9,9 @@ use cf_crypto::subkeys::SubKeys;
 use cf_domain::field::Designation;
 use cf_domain::item::ItemState;
 use cf_domain::secret::SecretString;
-use cf_importer::{precheck_csv, import_csv, import_csv_with_options, CsvImportResult, ImportOptions};
+use cf_importer::{
+    import_csv, import_csv_with_options, precheck_csv, CsvImportResult, ImportOptions,
+};
 use cf_store::{ItemListFilter, ItemRow, ItemStore};
 
 /// 仓库根 tests/fixtures/csv 下的样本路径。
@@ -59,7 +61,11 @@ fn 九列映射往返逐字段相等() {
 
     let repos = st.repos();
     assert_eq!(repos.items.count(None).unwrap(), 3);
-    assert_eq!(repos.meta.item_count().unwrap(), 3, "meta.item_count 同事务增量");
+    assert_eq!(
+        repos.meta.item_count().unwrap(),
+        3,
+        "meta.item_count 同事务增量"
+    );
 
     let all = repos.items.list(&ItemListFilter::default()).unwrap();
     let github = all
@@ -69,7 +75,10 @@ fn 九列映射往返逐字段相等() {
     let uuid = &github.row.uuid;
 
     // items 行级字段
-    assert_eq!(github.row.category, cf_domain::category::ItemCategory::Login);
+    assert_eq!(
+        github.row.category,
+        cf_domain::category::ItemCategory::Login
+    );
     assert_eq!(github.row.state, ItemState::Active);
     assert!(github.row.is_favorite, "Favorite status = true");
 
@@ -158,7 +167,11 @@ fn bom与crlf与引号内逗号() {
         .into_iter()
         .find(|f| f.designation == Some(Designation::Username))
         .unwrap();
-    assert_eq!(username.value.unwrap().expose(), "octo, cat", "引号内逗号保留");
+    assert_eq!(
+        username.value.unwrap().expose(),
+        "octo, cat",
+        "引号内逗号保留"
+    );
 }
 
 /// 验收 ①：引号内换行 + "" 转义引号
@@ -211,7 +224,11 @@ fn 公式前缀原样入库且告警命中() {
         .iter()
         .find(|f| f.designation == Some(Designation::Username))
         .unwrap();
-    assert_eq!(username.value.as_ref().unwrap().expose(), "=SUM(A1)", "原值保留，不加前缀");
+    assert_eq!(
+        username.value.as_ref().unwrap().expose(),
+        "=SUM(A1)",
+        "原值保留，不加前缀"
+    );
     let password = fields
         .iter()
         .find(|f| f.designation == Some(Designation::Password))
@@ -223,7 +240,11 @@ fn 公式前缀原样入库且告警命中() {
 #[test]
 fn 坏otpauth不丢数据且行号准确() {
     let report = precheck_csv(&fixture("bad_otpauth.csv")).unwrap();
-    assert_eq!(report.rows_with_bad_totp, vec![3, 4, 5], "文件行号：表头为第 1 行");
+    assert_eq!(
+        report.rows_with_bad_totp,
+        vec![3, 4, 5],
+        "文件行号：表头为第 1 行"
+    );
     assert_eq!(report.valid_rows, 4);
     assert!(report.warnings.iter().any(|w| w.contains("第 3 行")));
 
@@ -237,13 +258,24 @@ fn 坏otpauth不丢数据且行号准确() {
 
     // 好 otpauth 的行有 totp 记录
     let good = all.iter().find(|i| i.title.expose() == "GoodOtp").unwrap();
-    assert_eq!(repos.totp.totp_uuids_for_item(&good.row.uuid).unwrap().len(), 1);
+    assert_eq!(
+        repos
+            .totp
+            .totp_uuids_for_item(&good.row.uuid)
+            .unwrap()
+            .len(),
+        1
+    );
 
     // 坏 otpauth 的行没有 totp 记录，但原始 URI 并入 Notes
     for title in ["BadOtpCharset", "BadOtpShort", "BadOtpDigits"] {
         let item = all.iter().find(|i| i.title.expose() == title).unwrap();
         assert!(
-            repos.totp.totp_uuids_for_item(&item.row.uuid).unwrap().is_empty(),
+            repos
+                .totp
+                .totp_uuids_for_item(&item.row.uuid)
+                .unwrap()
+                .is_empty(),
             "{title} 不应有 totp 记录"
         );
         let notes = repos
@@ -255,7 +287,10 @@ fn 坏otpauth不丢数据且行号准确() {
             .expect("坏 otpauth 必须留痕于备注");
         let value = notes.value.unwrap();
         let text = value.expose();
-        assert!(text.contains("[One-time password 无法解析，已保留原始值]"), "{title} 备注缺前缀");
+        assert!(
+            text.contains("[One-time password 无法解析，已保留原始值]"),
+            "{title} 备注缺前缀"
+        );
         assert!(text.contains("otpauth://totp/"), "{title} 备注缺原始值");
     }
 }
@@ -265,7 +300,11 @@ fn 坏otpauth不丢数据且行号准确() {
 fn 未知列并入备注且预检列出() {
     let report = precheck_csv(&fixture("unknown_column.csv")).unwrap();
     assert_eq!(report.unmapped_columns, vec!["Security Question"]);
-    assert_eq!(report.skipped_rows, vec![3], "全空数据行跳过（EmptyExtra 行）");
+    assert_eq!(
+        report.skipped_rows,
+        vec![3],
+        "全空数据行跳过（EmptyExtra 行）"
+    );
     assert_eq!(report.valid_rows, 1);
     assert_eq!(report.total_rows, 2);
 
@@ -284,7 +323,10 @@ fn 未知列并入备注且预检列出() {
     let value = notes.value.unwrap();
     let text = value.expose();
     assert!(text.contains("note line"), "原 Notes 保留");
-    assert!(text.contains("[未映射列 Security Question] What is your pet?"), "未知列值并入");
+    assert!(
+        text.contains("[未映射列 Security Question] What is your pet?"),
+        "未知列值并入"
+    );
 }
 
 /// 缺失 Title：预检告警 + 导入兜底「（无标题）」+ 全空行跳过
@@ -315,21 +357,33 @@ fn 导入中途注入失败库零变化() {
     let err = import_csv_with_options(
         &fixture("good_basic.csv"),
         &mut st,
-        &ImportOptions { fail_after_rows: Some(1) },
+        &ImportOptions {
+            fail_after_rows: Some(1),
+        },
     )
     .unwrap_err();
     assert!(matches!(err, cf_domain::CfError::ImportFailed(_)));
 
     let repos = st.repos();
     assert_eq!(repos.items.count(None).unwrap(), before_count, "条目数不变");
-    assert_eq!(repos.meta.item_count().unwrap(), before_meta, "item_count 不变");
+    assert_eq!(
+        repos.meta.item_count().unwrap(),
+        before_meta,
+        "item_count 不变"
+    );
     // 既有条目仍可读（insert_one 未写字段，字段集为空且保持不变）
-    assert!(repos.items.get_row(&existing_uuid).unwrap().is_some(), "既有条目必须仍在");
-    assert!(repos
-        .fields
-        .read_fields_for_item(&existing_uuid)
-        .unwrap()
-        .is_empty(), "既有条目字段集不变");
+    assert!(
+        repos.items.get_row(&existing_uuid).unwrap().is_some(),
+        "既有条目必须仍在"
+    );
+    assert!(
+        repos
+            .fields
+            .read_fields_for_item(&existing_uuid)
+            .unwrap()
+            .is_empty(),
+        "既有条目字段集不变"
+    );
     // 事务内新条目不应存在
     assert!(repos
         .items

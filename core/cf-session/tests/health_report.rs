@@ -48,7 +48,12 @@ fn unlocked_vault(tag: &str) -> (VaultSession, PathBuf) {
 }
 
 /// Login 草稿（指定标题 / 密码 / URL 列表 / TOTP）。
-fn login_draft(title: &str, password: &str, urls: Vec<UrlDraft>, totp: Option<TotpData>) -> ItemDraft {
+fn login_draft(
+    title: &str,
+    password: &str,
+    urls: Vec<UrlDraft>,
+    totp: Option<TotpData>,
+) -> ItemDraft {
     ItemDraft {
         title: title.to_owned(),
         category: ItemCategory::Login,
@@ -274,11 +279,7 @@ fn 陈旧密码阈值边界与纯函数语义一致() {
 
     backdate_updated_at(&dir, &boundary, now - 366 * SECS_PER_DAY);
     let report = session.health_report(now).unwrap();
-    assert_eq!(
-        report.stale_items.len(),
-        1,
-        "满 366 天（> 阈值）应报陈旧"
-    );
+    assert_eq!(report.stale_items.len(), 1, "满 366 天（> 阈值）应报陈旧");
     assert_eq!(report.stale_items[0].days_since_update, 366);
 }
 
@@ -312,10 +313,7 @@ fn 报告不含明文密码() {
     // Debug 表示检索（对抗日志误带明文）
     let debug = format!("{report:?}");
     assert!(!debug.contains(canary), "Debug 输出不得泄露明文密码");
-    assert!(
-        !debug.contains(canary_common),
-        "Debug 输出不得泄露明文密码"
-    );
+    assert!(!debug.contains(canary_common), "Debug 输出不得泄露明文密码");
 
     // 命中本身成立（否则测试失去意义）：金丝雀进弱 URL 清单且带标题
     assert!(report.http_url_items.iter().any(|f| f.item_id == id));
@@ -360,11 +358,34 @@ fn 无密码与无url条目不误报() {
     let report = session.health_report(now).unwrap();
 
     for (name, ids) in [
-        ("duplicate", report.duplicate_groups.iter().flat_map(|g| g.item_ids.iter()).collect::<Vec<_>>()),
-        ("http_url", report.http_url_items.iter().map(|f| &f.item_id).collect()),
-        ("stale", report.stale_items.iter().map(|f| &f.item_id).collect()),
-        ("leak", report.leak_suspects.iter().map(|f| &f.item_id).collect()),
-        ("missing_totp", report.missing_totp_items.iter().map(|f| &f.item_id).collect()),
+        (
+            "duplicate",
+            report
+                .duplicate_groups
+                .iter()
+                .flat_map(|g| g.item_ids.iter())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "http_url",
+            report.http_url_items.iter().map(|f| &f.item_id).collect(),
+        ),
+        (
+            "stale",
+            report.stale_items.iter().map(|f| &f.item_id).collect(),
+        ),
+        (
+            "leak",
+            report.leak_suspects.iter().map(|f| &f.item_id).collect(),
+        ),
+        (
+            "missing_totp",
+            report
+                .missing_totp_items
+                .iter()
+                .map(|f| &f.item_id)
+                .collect(),
+        ),
     ] {
         assert!(!ids.contains(&&note_id), "{name} 不得误报无密码条目");
         assert!(!ids.contains(&&nolink), "{name} 不得误报无 URL 条目");

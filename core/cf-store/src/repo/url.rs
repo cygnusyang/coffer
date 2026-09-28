@@ -122,8 +122,8 @@ impl<'a> UrlsRepo<'a> {
                 &enc_url,
             )
             .crypto()?;
-            let url = String::from_utf8(url)
-                .map_err(|_| CfError::Corrupted("url not utf-8".into()))?;
+            let url =
+                String::from_utf8(url).map_err(|_| CfError::Corrupted("url not utf-8".into()))?;
 
             let label = match r.get::<_, Option<Vec<u8>>>(2).store()? {
                 Some(ct) => {
@@ -230,13 +230,18 @@ mod tests {
         let (conn, keys) = setup();
         let repo = UrlsRepo::new(&conn, &keys);
         item(&conn, "i-1");
-        repo.replace_for_item("i-1", &[url(1, "i-1", "https://secret.example/path", Some("密标"))])
-            .unwrap();
+        repo.replace_for_item(
+            "i-1",
+            &[url(1, "i-1", "https://secret.example/path", Some("密标"))],
+        )
+        .unwrap();
 
         let raw: Vec<u8> = conn
             .query_row("SELECT enc_url FROM urls", [], |r| r.get(0))
             .unwrap();
-        assert!(!raw.windows("secret.example".len()).any(|w| w == b"secret.example"));
+        assert!(!raw
+            .windows("secret.example".len())
+            .any(|w| w == b"secret.example"));
         let lbl: Option<Vec<u8>> = conn
             .query_row("SELECT enc_label FROM urls", [], |r| r.get(0))
             .unwrap();

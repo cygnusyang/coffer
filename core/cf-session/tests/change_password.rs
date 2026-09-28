@@ -99,7 +99,9 @@ fn header_json(vault_dir: &Path) -> serde_json::Value {
 #[test]
 fn new_password_unlocks() {
     let (session, _dir) = unlocked_vault("cpw01");
-    let id = session.create_item(&login_draft("GitHub 登录", "hunter2")).unwrap();
+    let id = session
+        .create_item(&login_draft("GitHub 登录", "hunter2"))
+        .unwrap();
     let before = session.get_item(&id).unwrap().unwrap();
 
     session.change_password(P1, P2, None).unwrap();
@@ -145,8 +147,14 @@ fn header_rewrapped_fields() {
         after["wrapped_dek"]["ct_b64"], before["wrapped_dek"]["ct_b64"],
         "wrapped_dek 必须重封装"
     );
-    assert_ne!(after["verifier"]["ct_b64"], before["verifier"]["ct_b64"], "verifier 必须重封装");
-    assert_ne!(after["kdf"]["salt_b64"], before["kdf"]["salt_b64"], "盐必须换新");
+    assert_ne!(
+        after["verifier"]["ct_b64"], before["verifier"]["ct_b64"],
+        "verifier 必须重封装"
+    );
+    assert_ne!(
+        after["kdf"]["salt_b64"], before["kdf"]["salt_b64"],
+        "盐必须换新"
+    );
     assert!(
         after["modified_at"].as_i64().unwrap() >= before["modified_at"].as_i64().unwrap(),
         "modified_at 必须更新"
@@ -233,7 +241,10 @@ fn midway_failure_atomic() {
     if fs::metadata(&dir).unwrap().permissions().mode() == 0o555 {
         let err = session.change_password(P1, P2, None).unwrap_err();
         assert!(
-            matches!(err, cf_domain::CfError::Io(_) | cf_domain::CfError::Corrupted(_)),
+            matches!(
+                err,
+                cf_domain::CfError::Io(_) | cf_domain::CfError::Corrupted(_)
+            ),
             "写失败应报 Io/Corrupted，实际 {err:?}"
         );
         assert_eq!(header_bytes(&dir), before, "旧 header 必须完整");
@@ -258,9 +269,7 @@ fn midway_failure_atomic() {
 fn bio_unwrap_survives_change() {
     let (session, dir) = unlocked_vault("cpw09");
     let k_bio = cf_session::new_biometric_unwrap_key().unwrap();
-    session
-        .enable_biometric(P1, k_bio.as_bytes())
-        .unwrap();
+    session.enable_biometric(P1, k_bio.as_bytes()).unwrap();
     let bio_before = header_json(&dir)["biometric_wrap"].clone();
 
     session.change_password(P1, P2, None).unwrap();
@@ -285,7 +294,9 @@ fn bio_unwrap_survives_change() {
 #[test]
 fn kdf_upgrade_with_change() {
     let (session, dir) = unlocked_vault("cpw10");
-    let id = session.create_item(&login_draft("GitHub 登录", "hunter2")).unwrap();
+    let id = session
+        .create_item(&login_draft("GitHub 登录", "hunter2"))
+        .unwrap();
     let new_kdf = KdfParams::new(16 * 1024, 2, 1).unwrap();
 
     session.change_password(P1, P2, Some(new_kdf)).unwrap();
@@ -306,7 +317,9 @@ fn kdf_upgrade_with_change() {
 #[test]
 fn backup_after_change_uses_new_password() {
     let (session, dir) = unlocked_vault("cpw11");
-    session.create_item(&login_draft("备份回环", "hunter2")).unwrap();
+    session
+        .create_item(&login_draft("备份回环", "hunter2"))
+        .unwrap();
 
     session.change_password(P1, P2, None).unwrap();
 
@@ -317,7 +330,11 @@ fn backup_after_change_uses_new_password() {
 
     let session2 = open_vault(&restored).unwrap();
     let err = session2.unlock(P1).unwrap_err();
-    assert_eq!(err.code(), 1002, "备份携带的是换密后 header，旧密码必须失效");
+    assert_eq!(
+        err.code(),
+        1002,
+        "备份携带的是换密后 header，旧密码必须失效"
+    );
     assert!(session2.unlock(P2).is_ok(), "P2 解锁恢复的库");
     let _ = fs::remove_dir_all(&base);
 }
@@ -330,7 +347,9 @@ fn concurrent_change_no_corruption() {
     use std::sync::Arc;
 
     let (session, dir) = unlocked_vault("cpw12");
-    session.create_item(&login_draft("并发换密", "hunter2")).unwrap();
+    session
+        .create_item(&login_draft("并发换密", "hunter2"))
+        .unwrap();
     let session = Arc::new(session);
 
     let s1 = Arc::clone(&session);

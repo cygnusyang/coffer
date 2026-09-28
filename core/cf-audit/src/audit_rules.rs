@@ -154,7 +154,9 @@ fn sha256_hex(s: &str) -> String {
 /// 字典为**排序数组 + 二分查找**（编译期常量，无运行时初始化开销）；
 /// 字典本身不是秘密、不加密（docs/03 §8 AUD-05）。
 fn dict_hit(s: &str) -> bool {
-    COMMON_PASSWORD_SHA256.binary_search(&sha256_hex(s).as_str()).is_ok()
+    COMMON_PASSWORD_SHA256
+        .binary_search(&sha256_hex(s).as_str())
+        .is_ok()
 }
 
 /// 常见 leet 替换归一（FR-6.5 启发式；单遍映射，不做多重展开——
@@ -455,9 +457,12 @@ const TWO_FA_DOMAINS: [&str; 40] = [
 
 /// 域名是否在白名单中（主域名或其子域名均命中）。
 fn host_in_whitelist(host: &str) -> bool {
-    TWO_FA_DOMAINS
-        .iter()
-        .any(|d| host == *d || host.strip_suffix(d).is_some_and(|prefix| prefix.ends_with('.')))
+    TWO_FA_DOMAINS.iter().any(|d| {
+        host == *d
+            || host
+                .strip_suffix(d)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
 }
 
 /// 从 URL 提取 host（宽松解析，提取失败返回 `None`）：去 scheme →
@@ -605,7 +610,10 @@ mod tests {
         assert_eq!(hits[0].confidence, Confidence::High);
         // 命中顺序颠倒：低置信度在前，仍取高置信度者
         let reversed = multi.into_iter().rev().collect::<Vec<_>>();
-        assert_eq!(find_common_passwords(&reversed)[0].confidence, Confidence::High);
+        assert_eq!(
+            find_common_passwords(&reversed)[0].confidence,
+            Confidence::High
+        );
     }
 
     /// AUD-06：白名单域名且无 TOTP → 报；有 TOTP / 无 URL / 白名单外 → 不报。

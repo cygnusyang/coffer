@@ -317,7 +317,8 @@ mod tests {
                 &["基础设施"],
             ),
         );
-        let title_only = login_draft_full("无关标题", "charlie", "https://unrelated.example.net", &[]);
+        let title_only =
+            login_draft_full("无关标题", "charlie", "https://unrelated.example.net", &[]);
         create_via(&mut store, &title_only);
 
         // 用户名字段命中

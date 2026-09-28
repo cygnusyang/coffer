@@ -82,7 +82,8 @@ mod tests {
     /// cf-crypto 错误折叠为 CryptoError（1008），且不透出底层细节文本
     #[test]
     fn 加密错误折叠且不泄露细节() {
-        let raw: Result<(), CfCryptoError> = Err(CfCryptoError::InvalidLength("sealed data length 3".into()));
+        let raw: Result<(), CfCryptoError> =
+            Err(CfCryptoError::InvalidLength("sealed data length 3".into()));
         let got = raw.crypto().unwrap_err();
         assert_eq!(got.code(), 1008);
         assert_eq!(got.to_string(), "crypto error");

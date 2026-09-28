@@ -172,14 +172,24 @@ pub fn parse_csv(input: &[u8]) -> Result<ParsedCsv, CfError> {
                 i += 1; // CRLF 视为一条换行
                 line += 1;
                 record.push(std::mem::take(&mut field));
-                push_record(&mut header, &mut rows, std::mem::take(&mut record), record_line)?;
+                push_record(
+                    &mut header,
+                    &mut rows,
+                    std::mem::take(&mut record),
+                    record_line,
+                )?;
                 record_line = line;
                 quote_just_closed = false;
             }
             b'\n' => {
                 line += 1;
                 record.push(std::mem::take(&mut field));
-                push_record(&mut header, &mut rows, std::mem::take(&mut record), record_line)?;
+                push_record(
+                    &mut header,
+                    &mut rows,
+                    std::mem::take(&mut record),
+                    record_line,
+                )?;
                 record_line = line;
                 quote_just_closed = false;
             }
@@ -227,10 +237,7 @@ fn push_record(
 ) -> Result<(), CfError> {
     let cells: Vec<String> = record
         .into_iter()
-        .map(|f| {
-            String::from_utf8(f)
-                .map_err(|_| CfError::Corrupted("csv field not utf-8".into()))
-        })
+        .map(|f| String::from_utf8(f).map_err(|_| CfError::Corrupted("csv field not utf-8".into())))
         .collect::<Result<Vec<_>, _>>()?;
 
     if cells.len() > MAX_COLUMNS {
@@ -353,7 +360,9 @@ mod tests {
     #[test]
     fn 闭合引号后非法字符报错() {
         let err = parse_str("t\n\"abc\"x\n").unwrap_err();
-        assert!(matches!(err, CfError::ImportFailed(ref m) if m.contains("引号闭合后出现非法字符")));
+        assert!(
+            matches!(err, CfError::ImportFailed(ref m) if m.contains("引号闭合后出现非法字符"))
+        );
     }
 
     /// 数据行数超过 10 000 → 拒绝并指明行号

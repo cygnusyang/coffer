@@ -342,13 +342,23 @@ mod tests {
             })
             .collect();
 
-        let err = import_models(&models, &mut st, &ImportOptions { fail_after_rows: Some(1) })
-            .unwrap_err();
+        let err = import_models(
+            &models,
+            &mut st,
+            &ImportOptions {
+                fail_after_rows: Some(1),
+            },
+        )
+        .unwrap_err();
         assert!(matches!(err, CfError::ImportFailed(ref m) if m.contains("注入")));
 
         let repos = st.repos();
         assert_eq!(repos.items.count(None).unwrap(), 0, "回滚后不得有残留条目");
-        assert_eq!(repos.meta.item_count().unwrap(), 0, "meta 计数必须随事务回滚");
+        assert_eq!(
+            repos.meta.item_count().unwrap(),
+            0,
+            "meta 计数必须随事务回滚"
+        );
     }
 
     /// KeePass KDBX 冒烟：构造最小内存数据库 → 保存 → 重新解析。

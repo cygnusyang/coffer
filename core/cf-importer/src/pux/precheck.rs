@@ -121,7 +121,8 @@ pub fn analyze(archive: &mut PuxArchive) -> Result<PuxAnalysis, CfError> {
                     }
                     MapOutcome::Imported(mut m) => {
                         if signals.unknown_category {
-                            unknown_categories.push((m.source_uuid.clone(), item.category_uuid.clone()));
+                            unknown_categories
+                                .push((m.source_uuid.clone(), item.category_uuid.clone()));
                             warnings.push(format!(
                                 "条目 {}（{}）：未识别类别 {}，已降级导入为安全笔记（数据并入备注，计入导入成功）",
                                 m.source_uuid, m.title, item.category_uuid
@@ -189,7 +190,9 @@ pub fn analyze(archive: &mut PuxArchive) -> Result<PuxAnalysis, CfError> {
     let importable_items = models.len() as u32;
     let mut category_counts: std::collections::BTreeMap<String, u32> = Default::default();
     for m in &models {
-        *category_counts.entry(m.category.as_str().to_owned()).or_insert(0) += 1;
+        *category_counts
+            .entry(m.category.as_str().to_owned())
+            .or_insert(0) += 1;
     }
 
     // 重复 documentId（官方形态；导入全部保留，仅告警）

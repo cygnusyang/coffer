@@ -74,7 +74,8 @@ pub fn advise_pux_source_deletion(report: &PuxPrecheckReport) -> SourceDeletionA
     if report.total_items == 0 {
         advice.can_delete = false;
         advice.blockers.push(
-            "本次导入未写入任何条目（0 条成功、0 条失败），删除源文件无收益且不可恢复，建议保留".into(),
+            "本次导入未写入任何条目（0 条成功、0 条失败），删除源文件无收益且不可恢复，建议保留"
+                .into(),
         );
         return advice;
     }
@@ -82,9 +83,10 @@ pub fn advise_pux_source_deletion(report: &PuxPrecheckReport) -> SourceDeletionA
     // 未导入项：数据未入库，逐条列出（标题 + uuid + 原因）
     for item in &report.not_imported {
         advice.can_delete = false;
-        advice
-            .blockers
-            .push(format!("条目「{}」（{}）未导入：{}", item.title, item.uuid, item.reason));
+        advice.blockers.push(format!(
+            "条目「{}」（{}）未导入：{}",
+            item.title, item.uuid, item.reason
+        ));
     }
 
     // 未识别类别：已降级为安全笔记（结构信息丢失），逐条进 degraded_items，
@@ -144,7 +146,8 @@ pub fn advise_csv_source_deletion(report: &CsvPrecheckReport) -> SourceDeletionA
     if report.total_rows == 0 {
         advice.can_delete = false;
         advice.blockers.push(
-            "本次导入未写入任何条目（0 条成功、0 条失败），删除源文件无收益且不可恢复，建议保留".into(),
+            "本次导入未写入任何条目（0 条成功、0 条失败），删除源文件无收益且不可恢复，建议保留"
+                .into(),
         );
         return advice;
     }
@@ -273,10 +276,7 @@ mod tests {
         };
         let advice = advise_pux_source_deletion(&report);
         assert!(!advice.can_delete);
-        assert!(advice
-            .blockers
-            .iter()
-            .any(|b| b.contains("someCustomType")));
+        assert!(advice.blockers.iter().any(|b| b.contains("someCustomType")));
     }
 
     /// 回收站条目与重复 documentId 不拦（无信息损失，裁决见模块注释）

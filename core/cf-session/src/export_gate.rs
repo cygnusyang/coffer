@@ -13,8 +13,8 @@
 
 use std::path::Path;
 
-use crate::SessionResult;
 use crate::vault::VaultSession;
+use crate::SessionResult;
 use cf_domain::CfError;
 use cf_store::AuditEntry;
 
@@ -37,11 +37,12 @@ impl VaultSession {
         // 成功的导出，与 cf-exporter stamp_* 同纪律）。
         if result.is_ok() {
             if let Ok(now) = crate::unix_now() {
-                let _ = state
-                    .store
-                    .repos()
-                    .audit
-                    .append(now, cf_store::AuditEvent::CsvExport, None);
+                let _ =
+                    state
+                        .store
+                        .repos()
+                        .audit
+                        .append(now, cf_store::AuditEvent::CsvExport, None);
             }
         }
         result

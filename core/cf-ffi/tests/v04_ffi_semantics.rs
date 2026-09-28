@@ -44,10 +44,7 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-v04-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-v04-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -58,7 +55,10 @@ fn setup_vault(base: &std::path::Path, name: &str) -> cf_domain::vault::Vault {
 }
 
 /// 建库 → 打开 → 解锁，返回 FFI 会话。
-fn unlocked_session(base: &std::path::Path, name: &str) -> (cf_domain::vault::Vault, Arc<VaultSession>) {
+fn unlocked_session(
+    base: &std::path::Path,
+    name: &str,
+) -> (cf_domain::vault::Vault, Arc<VaultSession>) {
     let brief = setup_vault(base, name);
     let app = CofferApp::new();
     let session = app
@@ -127,7 +127,9 @@ fn 附件增列读删回环与密文落盘() {
     assert_eq!(listed, vec![meta.clone()]);
 
     // read：逐字节相等
-    let read_back = session.read_attachment(meta.attachment_uuid.clone()).unwrap();
+    let read_back = session
+        .read_attachment(meta.attachment_uuid.clone())
+        .unwrap();
     assert_eq!(read_back, content);
 
     // 密文落盘断言：旁路文件 ≠ 明文（docs/15 §3.1.5 要点 4）
@@ -139,13 +141,18 @@ fn 附件增列读删回环与密文落盘() {
     assert!(!on_disk.is_empty());
 
     // remove → 行消失；再读 / 再删 → 1012
-    session.remove_attachment(meta.attachment_uuid.clone()).unwrap();
+    session
+        .remove_attachment(meta.attachment_uuid.clone())
+        .unwrap();
     assert!(session.list_attachments(item_id).unwrap().is_empty());
     assert_eq!(
         err_code(session.read_attachment(meta.attachment_uuid.clone())),
         1012
     );
-    assert_eq!(err_code(session.remove_attachment(meta.attachment_uuid)), 1012);
+    assert_eq!(
+        err_code(session.remove_attachment(meta.attachment_uuid)),
+        1012
+    );
 }
 
 /// 锁定态四方法全部 1001（门禁在 Rust 侧强制，docs/15 §4）。
@@ -161,7 +168,10 @@ fn 附件锁定态四方法返回1001() {
         .unwrap();
     session.lock();
 
-    assert_eq!(err_code(session.list_attachments("some-item".to_owned())), 1001);
+    assert_eq!(
+        err_code(session.list_attachments("some-item".to_owned())),
+        1001
+    );
     assert_eq!(
         err_code(session.add_attachment("some-item".to_owned(), "a.txt".to_owned(), b"d".to_vec())),
         1001
@@ -170,7 +180,10 @@ fn 附件锁定态四方法返回1001() {
         err_code(session.read_attachment(meta.attachment_uuid.clone())),
         1001
     );
-    assert_eq!(err_code(session.remove_attachment(meta.attachment_uuid)), 1001);
+    assert_eq!(
+        err_code(session.remove_attachment(meta.attachment_uuid)),
+        1001
+    );
 }
 
 /// 条目不存在：add / list → 1011（存在性门禁由会话层承担）。
@@ -187,7 +200,10 @@ fn 附件条目不存在返回1011() {
         )),
         1011
     );
-    assert_eq!(err_code(session.list_attachments("no-such-item".to_owned())), 1011);
+    assert_eq!(
+        err_code(session.list_attachments("no-such-item".to_owned())),
+        1011
+    );
 }
 
 /// 行不存在（未入库的 uuid）：read / remove → 1012。
@@ -196,8 +212,14 @@ fn 附件行不存在读删返回1012() {
     let base = temp_base("att_no_row");
     let (_brief, session) = unlocked_session(&base, "无附件行库");
 
-    assert_eq!(err_code(session.read_attachment("01940000-0000-7000-8000-000000000000".to_owned())), 1012);
-    assert_eq!(err_code(session.remove_attachment("01940000-0000-7000-8000-000000000000".to_owned())), 1012);
+    assert_eq!(
+        err_code(session.read_attachment("01940000-0000-7000-8000-000000000000".to_owned())),
+        1012
+    );
+    assert_eq!(
+        err_code(session.remove_attachment("01940000-0000-7000-8000-000000000000".to_owned())),
+        1012
+    );
 }
 
 /// 行在而旁路文件被外部删除：read → 1005 Corrupted。
@@ -217,7 +239,10 @@ fn 附件文件被外部删除读返回1005() {
         .join(&meta.attachment_uuid);
     std::fs::remove_file(&sidecar).unwrap();
 
-    assert_eq!(err_code(session.read_attachment(meta.attachment_uuid)), 1005);
+    assert_eq!(
+        err_code(session.read_attachment(meta.attachment_uuid)),
+        1005
+    );
 }
 
 // ---------------------------------------------- 跨库复制（FR-2.10）
@@ -268,7 +293,9 @@ fn 跨库复制回环_附件落在目标库目录() {
     let dst_atts = dst.list_attachments(new_id.clone()).unwrap();
     assert_eq!(dst_atts.len(), 1);
     assert_eq!(dst_atts[0].filename, "便携附件.txt");
-    let dst_read = dst.read_attachment(dst_atts[0].attachment_uuid.clone()).unwrap();
+    let dst_read = dst
+        .read_attachment(dst_atts[0].attachment_uuid.clone())
+        .unwrap();
     assert_eq!(dst_read, content);
     assert!(
         std::path::Path::new(&dst.vault_dir())
@@ -277,7 +304,10 @@ fn 跨库复制回环_附件落在目标库目录() {
             .is_file(),
         "附件旁路文件必须落在目标库目录"
     );
-    assert_ne!(dst_atts[0].attachment_uuid, att.attachment_uuid, "目标库应产生新附件行");
+    assert_ne!(
+        dst_atts[0].attachment_uuid, att.attachment_uuid,
+        "目标库应产生新附件行"
+    );
 
     // 源库原样：条目仍在、附件仍可读
     assert!(src.get_item(item_id.clone()).unwrap().is_some());
@@ -317,7 +347,10 @@ fn 跨库复制源条目不存在返回1011() {
     let (_src_brief, src) = unlocked_session(&base, "源条目缺失库");
     let (_dst_brief, dst) = unlocked_session(&base, "零写入库");
 
-    assert_eq!(err_code(src.copy_item("no-such-item".to_owned(), dst.clone())), 1011);
+    assert_eq!(
+        err_code(src.copy_item("no-such-item".to_owned(), dst.clone())),
+        1011
+    );
     // 目标库零写入
     assert_eq!(dst.list_items(None).unwrap().len(), 0);
 }
@@ -397,5 +430,8 @@ fn 密码短语参数越界返回1012() {
     // 分隔符越界：空、4 字符、含不可打印字符（控制字符）
     assert_eq!(err_code(session.generate_passphrase(opts(5, ""))), 1012);
     assert_eq!(err_code(session.generate_passphrase(opts(5, "abcd"))), 1012);
-    assert_eq!(err_code(session.generate_passphrase(opts(5, "\u{7}"))), 1012);
+    assert_eq!(
+        err_code(session.generate_passphrase(opts(5, "\u{7}"))),
+        1012
+    );
 }

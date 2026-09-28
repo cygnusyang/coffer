@@ -57,10 +57,7 @@ fn to_info(meta: cf_store::AttachmentMeta) -> AttachmentInfo {
 ///
 /// 条目不存在 → [`CfError::ItemNotFound`]（1011）——内核
 /// `list_for_item` 不查条目行，存在性门禁由会话层承担。
-pub fn list_attachments(
-    store: &ItemStore,
-    item_id: &str,
-) -> SessionResult<Vec<AttachmentInfo>> {
+pub fn list_attachments(store: &ItemStore, item_id: &str) -> SessionResult<Vec<AttachmentInfo>> {
     let repos = store.repos();
     if repos.items.get_row(item_id)?.is_none() {
         return Err(CfError::ItemNotFound);

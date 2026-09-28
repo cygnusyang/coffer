@@ -221,74 +221,74 @@ fn extract_value(value: &Value, type_hint: FieldType) -> ExtractedValue {
         Value::Object(obj) if obj.len() == 1 => {
             if let Some((key, inner)) = obj.iter().next() {
                 match key.as_str() {
-                "concealed" => {
-                    let mut e = scalar(json_scalar_string(inner));
-                    e.field_type = Some(FieldType::Concealed);
-                    e
-                }
-                "email" => {
-                    let addr = inner
-                        .get("email_address")
-                        .map(json_scalar_string)
-                        .unwrap_or_default();
-                    let mut e = scalar(addr);
-                    e.field_type = Some(FieldType::Email);
-                    e
-                }
-                "address" => {
-                    // 官方形态 {street,city,state,zip,country}：非空段拼接
-                    let parts: Vec<String> = ["street", "city", "state", "zip", "country"]
-                        .iter()
-                        .filter_map(|k| inner.get(*k))
-                        .map(json_scalar_string)
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    let mut e = scalar(parts.join(", "));
-                    e.field_type = Some(FieldType::Text);
-                    e
-                }
-                "totp" => ExtractedValue {
-                    text: Some(json_scalar_string(inner)),
-                    field_type: Some(FieldType::Totp),
-                    totp_uri: Some(json_scalar_string(inner)),
-                    unmapped_keys: Vec::new(),
-                },
-                "date" => {
-                    let text = match inner.as_i64() {
-                        Some(secs) => unix_sec_to_iso_date(secs),
-                        None => json_scalar_string(inner),
-                    };
-                    let mut e = scalar(text);
-                    e.field_type = Some(FieldType::Date);
-                    e
-                }
-                "monthYear" => {
-                    let text = match inner.as_i64() {
-                        Some(v) => month_year_to_iso(v),
-                        None => json_scalar_string(inner),
-                    };
-                    let mut e = scalar(text);
-                    e.field_type = Some(FieldType::MonthYear);
-                    e
-                }
-                "creditCardNumber" | "string" | "gender" => scalar(json_scalar_string(inner)),
-                "url" => {
-                    let mut e = scalar(json_scalar_string(inner));
-                    e.field_type = Some(FieldType::Url);
-                    e
-                }
-                "phone" => {
-                    let mut e = scalar(json_scalar_string(inner));
-                    e.field_type = Some(FieldType::Phone);
-                    e
-                }
-                "menu" => scalar(json_scalar_string(inner)),
-                other => ExtractedValue {
-                    text: Some(serialize_value(value)),
-                    field_type: Some(type_hint),
-                    totp_uri: None,
-                    unmapped_keys: vec![other.to_owned()],
-                },
+                    "concealed" => {
+                        let mut e = scalar(json_scalar_string(inner));
+                        e.field_type = Some(FieldType::Concealed);
+                        e
+                    }
+                    "email" => {
+                        let addr = inner
+                            .get("email_address")
+                            .map(json_scalar_string)
+                            .unwrap_or_default();
+                        let mut e = scalar(addr);
+                        e.field_type = Some(FieldType::Email);
+                        e
+                    }
+                    "address" => {
+                        // 官方形态 {street,city,state,zip,country}：非空段拼接
+                        let parts: Vec<String> = ["street", "city", "state", "zip", "country"]
+                            .iter()
+                            .filter_map(|k| inner.get(*k))
+                            .map(json_scalar_string)
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        let mut e = scalar(parts.join(", "));
+                        e.field_type = Some(FieldType::Text);
+                        e
+                    }
+                    "totp" => ExtractedValue {
+                        text: Some(json_scalar_string(inner)),
+                        field_type: Some(FieldType::Totp),
+                        totp_uri: Some(json_scalar_string(inner)),
+                        unmapped_keys: Vec::new(),
+                    },
+                    "date" => {
+                        let text = match inner.as_i64() {
+                            Some(secs) => unix_sec_to_iso_date(secs),
+                            None => json_scalar_string(inner),
+                        };
+                        let mut e = scalar(text);
+                        e.field_type = Some(FieldType::Date);
+                        e
+                    }
+                    "monthYear" => {
+                        let text = match inner.as_i64() {
+                            Some(v) => month_year_to_iso(v),
+                            None => json_scalar_string(inner),
+                        };
+                        let mut e = scalar(text);
+                        e.field_type = Some(FieldType::MonthYear);
+                        e
+                    }
+                    "creditCardNumber" | "string" | "gender" => scalar(json_scalar_string(inner)),
+                    "url" => {
+                        let mut e = scalar(json_scalar_string(inner));
+                        e.field_type = Some(FieldType::Url);
+                        e
+                    }
+                    "phone" => {
+                        let mut e = scalar(json_scalar_string(inner));
+                        e.field_type = Some(FieldType::Phone);
+                        e
+                    }
+                    "menu" => scalar(json_scalar_string(inner)),
+                    other => ExtractedValue {
+                        text: Some(serialize_value(value)),
+                        field_type: Some(type_hint),
+                        totp_uri: None,
+                        unmapped_keys: vec![other.to_owned()],
+                    },
                 }
             } else {
                 // len == 1 守卫已保证可达；防御性兜底走多键路径
@@ -306,9 +306,11 @@ fn extract_value(value: &Value, type_hint: FieldType) -> ExtractedValue {
             field_type: Some(type_hint),
             totp_uri: None,
             unmapped_keys: vec![match value {
-                Value::Object(o) => {
-                    o.keys().next().map_or("(object)", String::as_str).to_owned()
-                }
+                Value::Object(o) => o
+                    .keys()
+                    .next()
+                    .map_or("(object)", String::as_str)
+                    .to_owned(),
                 _ => "(array)".to_owned(),
             }],
         },
@@ -332,7 +334,8 @@ fn serialize_value(v: &Value) -> String {
 /// 1P 类型码 / 类型化分派 → cf 字段类型。
 fn resolve_field_type(code: Option<&str>, dispatched: Option<FieldType>) -> FieldType {
     dispatched.unwrap_or_else(|| {
-        code.and_then(field_type_from_1p_code).unwrap_or(FieldType::Text)
+        code.and_then(field_type_from_1p_code)
+            .unwrap_or(FieldType::Text)
     })
 }
 
@@ -409,7 +412,12 @@ pub fn map_item(item: &PuxItem, signals: &mut ItemMapSignals) -> Result<MapOutco
     let mut fields: Vec<PuxFieldModel> = Vec::new();
 
     // notesPlain 是备注基线
-    if let Some(np) = item.details.notes_plain.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(np) = item
+        .details
+        .notes_plain
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         notes_parts.push(np.to_owned());
     }
 
@@ -425,18 +433,15 @@ pub fn map_item(item: &PuxItem, signals: &mut ItemMapSignals) -> Result<MapOutco
             }
             None => ExtractedValue::default(),
         };
-        signals.unmapped_value_types.extend(extracted.unmapped_keys.iter().cloned());
+        signals
+            .unmapped_value_types
+            .extend(extracted.unmapped_keys.iter().cloned());
 
-        let designation = lf
-            .designation
-            .as_deref()
-            .map(Designation::from_1p_str);
+        let designation = lf.designation.as_deref().map(Designation::from_1p_str);
         let text = extracted.text.clone().filter(|s| !s.is_empty());
 
         // TOTP：designation 或类型化分派（坏 otpauth 原值并入 notes）
-        if extracted.totp_uri.is_some()
-            || matches!(designation, Some(Designation::Totp))
-        {
+        if extracted.totp_uri.is_some() || matches!(designation, Some(Designation::Totp)) {
             let uri = extracted
                 .totp_uri
                 .clone()
@@ -450,8 +455,7 @@ pub fn map_item(item: &PuxItem, signals: &mut ItemMapSignals) -> Result<MapOutco
                 }
                 Err(reason) => {
                     signals.bad_totp = true;
-                    notes_parts
-                        .push(format!("[TOTP 无法解析（{reason}），已保留原始值] {uri}"));
+                    notes_parts.push(format!("[TOTP 无法解析（{reason}），已保留原始值] {uri}"));
                 }
             }
             continue;
@@ -488,7 +492,15 @@ pub fn map_item(item: &PuxItem, signals: &mut ItemMapSignals) -> Result<MapOutco
 
     for section in &item.details.sections {
         for f in &section.fields {
-            map_section_field(section, f, degraded, signals, &mut totp, &mut notes_parts, &mut fields)?;
+            map_section_field(
+                section,
+                f,
+                degraded,
+                signals,
+                &mut totp,
+                &mut notes_parts,
+                &mut fields,
+            )?;
         }
     }
 
@@ -549,11 +561,15 @@ fn map_section_field(
         }
         None => ExtractedValue::default(),
     };
-    signals.unmapped_value_types.extend(extracted.unmapped_keys.iter().cloned());
+    signals
+        .unmapped_value_types
+        .extend(extracted.unmapped_keys.iter().cloned());
     let text = extracted.text.clone().filter(|s| !s.is_empty());
 
     // TOTP：类型化 {totp} 分派或 designation 显式声明
-    if extracted.totp_uri.is_some() || matches!(f.designation.as_deref(), Some("totp") | Some("otp")) {
+    if extracted.totp_uri.is_some()
+        || matches!(f.designation.as_deref(), Some("totp") | Some("otp"))
+    {
         let uri = extracted
             .totp_uri
             .clone()
@@ -606,7 +622,9 @@ pub fn normalize_file_ref(item: &PuxItem) -> Option<PuxFileRef> {
     let doc = item.details.document_attributes.as_ref();
     let form_a = item.file.as_ref();
 
-    let doc_id = doc.and_then(|d| d.document_id.clone()).filter(|s| !s.is_empty());
+    let doc_id = doc
+        .and_then(|d| d.document_id.clone())
+        .filter(|s| !s.is_empty());
     let filename = doc
         .and_then(|d| d.file_name.clone())
         .filter(|s| !s.is_empty())
@@ -703,7 +721,9 @@ mod tests {
             "uuid": "B1", "categoryUuid": "custom-x", "state": "active",
             "overview": {"title": "怪类别"}, "details": {}
         }));
-        assert!(matches!(&o, MapOutcome::Imported(m) if m.degraded && m.category == ItemCategory::SecureNote));
+        assert!(
+            matches!(&o, MapOutcome::Imported(m) if m.degraded && m.category == ItemCategory::SecureNote)
+        );
         assert!(s.unknown_category);
     }
 
@@ -789,8 +809,18 @@ mod tests {
             MapOutcome::Imported(m) => m,
             other => panic!("应导入而非 {other:?}"),
         };
-        assert!(s.unmapped_value_types.is_empty(), "已知类型不应计数：{:?}", s.unmapped_value_types);
-        let get = |name: &str| m.fields.iter().find(|f| f.name.contains(name)).expect("字段应存在").clone();
+        assert!(
+            s.unmapped_value_types.is_empty(),
+            "已知类型不应计数：{:?}",
+            s.unmapped_value_types
+        );
+        let get = |name: &str| {
+            m.fields
+                .iter()
+                .find(|f| f.name.contains(name))
+                .expect("字段应存在")
+                .clone()
+        };
         assert_eq!(get("卡号").value.as_deref(), Some("4111"));
         assert_eq!(get("卡号").field_type, FieldType::Text);
         assert_eq!(get("CVV").value.as_deref(), Some("123"));
@@ -828,7 +858,10 @@ mod tests {
         };
         assert_eq!(s.unmapped_value_types, vec!["sshKey".to_owned()]);
         let f = &m.fields[0];
-        assert!(f.value.as_deref().is_some_and(|v| v.contains("privateKey")), "未知类型值序列化保留");
+        assert!(
+            f.value.as_deref().is_some_and(|v| v.contains("privateKey")),
+            "未知类型值序列化保留"
+        );
     }
 
     #[test]
@@ -850,7 +883,11 @@ mod tests {
         assert_eq!(m.fields[0].value.as_deref(), Some("5432"));
         assert_eq!(m.fields[0].field_type, FieldType::Number);
         assert_eq!(m.fields[1].field_type, FieldType::Concealed);
-        assert_eq!(m.fields[2].field_type, FieldType::Text, "未知码 Text 降级存值");
+        assert_eq!(
+            m.fields[2].field_type,
+            FieldType::Text,
+            "未知码 Text 降级存值"
+        );
     }
 
     // ---- 降级导入（未知类别） ----
@@ -878,11 +915,18 @@ mod tests {
         assert!(m.degraded);
         assert!(s.unknown_category);
         assert_eq!(m.category, ItemCategory::SecureNote);
-        assert!(m.username.is_none() && m.password.is_none(), "降级条目无 designation 结构");
+        assert!(
+            m.username.is_none() && m.password.is_none(),
+            "降级条目无 designation 结构"
+        );
         assert!(m.fields.is_empty(), "降级条目字段全部并入 notes");
-        assert!(m.notes.contains("[loginField username (T)] user@example.com"));
+        assert!(m
+            .notes
+            .contains("[loginField username (T)] user@example.com"));
         assert!(m.notes.contains("[loginField password (P)] P@ss"));
-        assert!(m.notes.contains("[section 额外字段 / credential (P)] sk_live_x"));
+        assert!(m
+            .notes
+            .contains("[section 额外字段 / credential (P)] sk_live_x"));
         assert_eq!(m.urls.len(), 1, "URL 仍走 urls 表");
     }
 
@@ -894,7 +938,9 @@ mod tests {
             "uuid": "F1", "categoryUuid": "001", "state": "archived",
             "updatedAt": 1_700_000_000, "overview": {"title": "归档"}, "details": {}
         }));
-        assert!(matches!(&o, MapOutcome::Imported(m) if m.state == ItemState::Archived && m.trashed_at.is_none()));
+        assert!(
+            matches!(&o, MapOutcome::Imported(m) if m.state == ItemState::Archived && m.trashed_at.is_none())
+        );
 
         // trashed → 回收站语义（state=Trashed + trashed_at=updatedAt）
         let (o, _) = map(json!({
@@ -980,7 +1026,10 @@ mod tests {
         };
         assert_eq!(m.title, FALLBACK_TITLE);
         assert!(s.no_title);
-        assert!(m.username.is_none() && m.password.is_none(), "空值不产生空字段");
+        assert!(
+            m.username.is_none() && m.password.is_none(),
+            "空值不产生空字段"
+        );
         assert!(m.urls.is_empty(), "空 URL 不产生行");
     }
 
@@ -1038,7 +1087,10 @@ mod tests {
         let f = m.file.expect("应有附件");
         assert_eq!(f.filename, "官方名.pdf", "官方键优先");
         assert_eq!(f.size, Some(8));
-        assert_eq!(f.zip_entry_hint, "files/D9___官方名.pdf", "精确路径优先于前缀枚举");
+        assert_eq!(
+            f.zip_entry_hint, "files/D9___官方名.pdf",
+            "精确路径优先于前缀枚举"
+        );
         assert_eq!(f.document_id.as_deref(), Some("D9"));
     }
 

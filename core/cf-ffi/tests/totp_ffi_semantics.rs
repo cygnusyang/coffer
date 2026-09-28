@@ -42,10 +42,7 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-t06-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-t06-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -56,11 +53,7 @@ fn setup_vault(base: &std::path::Path, name: &str) -> cf_domain::vault::Vault {
 }
 
 /// 打开并解锁会话。
-fn unlocked_session(
-    app: &Arc<CofferApp>,
-    base: &std::path::Path,
-    uuid: &str,
-) -> Arc<VaultSession> {
+fn unlocked_session(app: &Arc<CofferApp>, base: &std::path::Path, uuid: &str) -> Arc<VaultSession> {
     let session = app
         .open_vault(base.to_string_lossy().into_owned(), uuid.to_owned())
         .unwrap();
@@ -127,7 +120,9 @@ fn update_item默认keep_编辑不丢totp() {
     let id = item_with_totp(&session);
     let meta_before = session.totp_config(id.clone()).unwrap().unwrap();
 
-    session.update_item(id.clone(), edit_draft("改标题")).unwrap();
+    session
+        .update_item(id.clone(), edit_draft("改标题"))
+        .unwrap();
 
     let meta_after = session.totp_config(id.clone()).unwrap().unwrap();
     assert_eq!(meta_after, meta_before, "默认 Keep 下元数据必须原样");
@@ -246,7 +241,10 @@ fn totp_config三分_不存在无totp软删硬删() {
     let without_totp = session.create_item(edit_draft("无TOTP")).unwrap();
 
     // ① 不存在条目 → None
-    assert!(session.totp_config("no-such-item".to_owned()).unwrap().is_none());
+    assert!(session
+        .totp_config("no-such-item".to_owned())
+        .unwrap()
+        .is_none());
     // ② 存在但无 TOTP → None
     assert!(session.totp_config(without_totp.clone()).unwrap().is_none());
 
@@ -323,7 +321,9 @@ fn csv导入的totp条目走ffi_keep路径() {
     let id = hits[0].uuid.clone();
     assert!(session.totp_config(id.clone()).unwrap().is_some());
 
-    session.update_item(id.clone(), edit_draft("导入后编辑")).unwrap();
+    session
+        .update_item(id.clone(), edit_draft("导入后编辑"))
+        .unwrap();
     assert!(session.totp_config(id.clone()).unwrap().is_some());
     assert_eq!(session.totp_code(id).unwrap().code.len(), 6);
 }
@@ -348,10 +348,7 @@ fn strength工厂版与会话版同输入同输出() {
     for s in samples {
         let factory = app.strength_estimate(s.to_owned()).unwrap();
         let session_ver = session.strength_estimate(s.to_owned()).unwrap();
-        assert_eq!(
-            factory, session_ver,
-            "同输入 {s:?} 工厂版与会话版必须一致"
-        );
+        assert_eq!(factory, session_ver, "同输入 {s:?} 工厂版与会话版必须一致");
     }
 
     // 边界值：弱 / 强的分数语义仍成立
@@ -383,6 +380,8 @@ fn strength工厂版无会话可调用_畸形输入不panic() {
     }
 
     // 非 UTF-8 边界不适用（String 保证 UTF-8），但控制字符 / emoji 不 panic
-    let _ = app.strength_estimate("\u{0}\u{1}\u{FFFD}🎉🎉🎉".to_owned()).unwrap();
+    let _ = app
+        .strength_estimate("\u{0}\u{1}\u{FFFD}🎉🎉🎉".to_owned())
+        .unwrap();
     let _ = app.strength_estimate("x".to_owned()).unwrap();
 }

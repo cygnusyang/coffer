@@ -713,3 +713,122 @@ fn 会话级暴力退避门禁() {
     assert_eq!(err.code(), 1002);
     assert!(!session.is_unlocked());
 }
+
+// ==================================================== 第二批验收（docs/10 §11）
+
+/// TC-BKO-10（docs/10 §11.1）重启清零：退避计数器是**内存级、随会话
+/// 存在**（docs/09 冻结裁决的接受限制）——drop 会话后重新 `open_vault`
+/// 等价进程重启，计数必须归零且可立即解锁。
+#[test]
+fn 重建会话后退避计数清零() {
+    let base = temp_dir("backoff_restart");
+    let brief = create_vault_with_kdf(&base, "退避重启库", STRONG, fast_kdf()).unwrap();
+    let vault_dir = base.join(brief.uuid.to_string());
+
+    let session = open_vault(&vault_dir).unwrap();
+    for _ in 0..3 {
+        assert_eq!(
+            session.unlock("wrong-password-indeed!").unwrap_err().code(),
+            1002
+        );
+    }
+    assert_eq!(session.backoff_remaining_secs(), 1, "旧会话门禁在效");
+
+    // 模拟进程重启：drop 会话 → 重新 open_vault 同一库
+    drop(session);
+    let session = open_vault(&vault_dir).unwrap();
+    assert_eq!(
+        session.backoff_remaining_secs(),
+        0,
+        "新会话即新计数器（重启清零，接受限制）"
+    );
+    assert!(session.unlock(STRONG).is_ok(), "重启后应可立即解锁");
+}
+
+/// TC-BKO-11（docs/10 §11.1）参数错不计入退避：`enable_biometric` 的
+/// k_bio 长度门禁（5002）**先于**主密码校验（unlock_bio.rs 流程注释），
+/// 不是密码尝试；backoff 接线只对 `UnlockFailed`（1002）调 `on_failure`
+/// （vault.rs enable_biometric）。本用例锁定该接线不被回归破坏。
+#[test]
+fn 参数错不计入退避计数() {
+    let (_base, session) = fresh_session("backoff_param_err");
+    session.unlock(STRONG).unwrap();
+
+    // k_bio 31 字节（≠ K_BIO_LEN 32）→ 5002，且不污染计数器
+    let k_bad = [0u8; 31];
+    assert_eq!(
+        session.enable_biometric(STRONG, &k_bad).unwrap_err().code(),
+        5002
+    );
+    assert_eq!(session.backoff_remaining_secs(), 0);
+
+    // 交叉验证：若 5002 被误计入，再错 2 次即凑满 3 次触发门禁；
+    // 正确行为下仅 2 次真实失败，无门禁。
+    // （unlock 对已解锁态幂等返回，不验密码——须先 lock 走真实校验路径）
+    session.lock();
+    for _ in 0..2 {
+        assert_eq!(
+            session.unlock("wrong-password-indeed!").unwrap_err().code(),
+            1002
+        );
+    }
+    assert_eq!(
+        session.backoff_remaining_secs(),
+        0,
+        "5002 未计入，仅 2 次真实失败不触发门禁"
+    );
+}
+
+/// TC-CLP-06（docs/10 §11.2）Rust 侧无持久化：剪贴板档位是会话级
+/// 内存配置（持久化责任在 Swift UserDefaults，TC-UI-04）——drop 会话
+/// 重开必须回到默认 30，档位不得落盘。
+#[test]
+fn 剪贴板配置不跨会话持久化() {
+    let base = temp_dir("clip_no_persist");
+    let brief = create_vault_with_kdf(&base, "剪贴板重启库", STRONG, fast_kdf()).unwrap();
+    let vault_dir = base.join(brief.uuid.to_string());
+
+    let session = open_vault(&vault_dir).unwrap();
+    assert_eq!(session.clipboard_clear_secs(), 30);
+    session.set_clipboard_clear_secs(120).unwrap();
+    assert_eq!(session.clipboard_clear_secs(), 120);
+    drop(session);
+
+    let session = open_vault(&vault_dir).unwrap();
+    assert_eq!(
+        session.clipboard_clear_secs(),
+        30,
+        "Rust 侧无持久化：重开会话回默认 30"
+    );
+}
+
+/// TC-AUD-05（docs/10 §11.4）打点失败不否定动作：audit 表被破坏
+/// （DROP TABLE）后，`export_csv` 的审计 append 返回 Err——按静默纪律
+/// 被吞掉，导出动作本身必须成功（CSV 文件落盘）。
+///
+/// 可移植构造：锁定态会话不持有打开的 db 连接（连接只在解锁态
+/// `UnlockedState` 内），外部短连接可安全 DROP；`schema::verify` 只校验
+/// meta 表与版本号，audit_local 缺失不影响 open/unlock。
+#[test]
+fn 审计打点失败不否定导出动作() {
+    let base = temp_dir("audit_silent");
+    let brief = create_vault_with_kdf(&base, "审计静默库", STRONG, fast_kdf()).unwrap();
+    let vault_dir = base.join(brief.uuid.to_string());
+
+    let session = open_vault(&vault_dir).unwrap();
+    drop(session); // 释放（锁定态本就不持连接），允许外部写 schema
+
+    {
+        let conn = rusqlite::Connection::open(vault_dir.join("db.sqlite")).unwrap();
+        conn.execute_batch("DROP TABLE audit_local;").unwrap();
+    }
+
+    let session = open_vault(&vault_dir).unwrap();
+    session.unlock(STRONG).unwrap();
+
+    let out = base.join("export-silent.csv");
+    let result = session.export_csv(&out);
+    assert!(result.is_ok(), "打点失败不得否定已成功的导出：{result:?}");
+    assert!(out.exists(), "CSV 文件应已落盘（动作成功）");
+    assert_eq!(result.unwrap().row_count, 0);
+}

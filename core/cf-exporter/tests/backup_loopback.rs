@@ -749,3 +749,96 @@ fn tc_aud_02_export_and_restore_stamp_audit_events() {
     remove_dir_all_quiet(&base);
     remove_dir_all_quiet(&target_base);
 }
+
+/// TC-MAC-09（docs/10 §11.5）root_mac × 备份回环兼容（NFR-REL，门禁）：
+///
+/// ① **新版备份**：`record_count` / `root_mac` 两行随备份包原样恢复
+///    （与源库值一致），`verify_integrity` 直接通过（非自举路径）；
+/// ② **旧版备份模拟**（备份包早于完整性特性、包内 db 缺两行）：删除
+///    恢复产物的两行 → verify 走缺行自举，同样通过且以当前状态重建
+///    基线（record_count = 实际 items 行数），重建后二次 verify 仍过。
+///
+/// 预期语义来自实现者（d4eaf05 交付说明）；verify 显式调用——本夹具的
+/// `unlock_store` 不经 cf-session（那里 verify 才挂在 finish_unlock）。
+#[test]
+fn tc_mac_09_restore_verify_direct_and_bootstrap() {
+    let base = temp_dir("tc_mac_09");
+    let (vault_dir, _uuid) = build_vault(&base);
+    let src_db = vault_dir.join("db.sqlite");
+    let out_path = base.join("mac09.coffer");
+    export_backup(&vault_dir, &out_path).expect("导出成功");
+
+    let target_base = temp_dir("tc_mac_09_target");
+    let restored = restore_backup(&out_path, &target_base).expect("恢复成功");
+    let restored_db = restored.join("db.sqlite");
+
+    // ---- ① 新版备份：两行随包恢复，verify 直接通过 ----
+    let (src_count, src_mac) = read_integrity_rows(&src_db).expect("源库基线应已就位");
+    let (restored_count, restored_mac) =
+        read_integrity_rows(&restored_db).expect("恢复库两行应随包恢复");
+    assert_eq!(src_count, restored_count, "record_count 随备份原样恢复");
+    assert_eq!(src_mac, restored_mac, "root_mac 随备份原样恢复");
+
+    {
+        let (_header, store) = unlock_store(&restored, PASSWORD).expect("解锁成功");
+        store
+            .repos()
+            .meta
+            .verify_integrity(&store.subkeys().root_mac_key)
+            .expect("新版备份：verify 应直接通过（非自举路径）");
+    }
+
+    // ---- ② 旧版备份模拟：删两行 → 缺行自举，同样通过 ----
+    {
+        let conn = rusqlite::Connection::open(&restored_db).expect("打开恢复库成功");
+        let deleted = conn
+            .execute("DELETE FROM meta WHERE key IN ('record_count','root_mac')", [])
+            .expect("删两行成功");
+        assert_eq!(deleted, 2, "应恰好删除两行");
+    }
+    assert!(
+        read_integrity_rows(&restored_db).is_none(),
+        "两行应已删除（旧版备份形态）"
+    );
+
+    {
+        let (_header, store) = unlock_store(&restored, PASSWORD).expect("解锁成功");
+        store
+            .repos()
+            .meta
+            .verify_integrity(&store.subkeys().root_mac_key)
+            .expect("缺行自举应通过（旧库兼容）");
+
+        let (count, _) = read_integrity_rows(&restored_db).expect("自举应重建两行");
+        assert_eq!(count, 6, "record_count 应以实际 items 行数重建");
+
+        // 重建基线自洽：二次 verify 仍通过（不是「缺失被容忍」而是基线已正确）
+        store
+            .repos()
+            .meta
+            .verify_integrity(&store.subkeys().root_mac_key)
+            .expect("重建基线二次 verify 应通过");
+    }
+
+    remove_dir_all_quiet(&base);
+    remove_dir_all_quiet(&target_base);
+}
+
+/// 读库的完整性基线两行：(record_count i64, root_mac base64 文本)；
+/// 任一行缺失返回 `None`（TC-MAC-09 专用探针，不经密钥）。
+/// 两行 value 均按 BLOB 读取（record_count 为 i64-LE BLOB；root_mac 为
+/// base64 文本的字节，`set` 以 BLOB 形态写入）。
+fn read_integrity_rows(db: &std::path::Path) -> Option<(i64, String)> {
+    let conn = rusqlite::Connection::open(db).expect("打开 db 成功");
+    let count_blob: Vec<u8> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'record_count'", [], |r| {
+            r.get(0)
+        })
+        .ok()?;
+    let count = i64::from_le_bytes(count_blob.as_slice().try_into().ok()?);
+    let mac_blob: Vec<u8> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'root_mac'", [], |r| r.get(0))
+        .ok()?;
+    let mac = String::from_utf8(mac_blob).ok()?;
+    Some((count, mac))
+}

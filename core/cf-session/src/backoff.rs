@@ -7,7 +7,8 @@
 //!
 //! ## 退避曲线
 //!
-//! 连续失败 `n` 次（`unlock` 与 `enable_biometric` 共享同一计数器）：
+//! 连续失败 `n` 次（`unlock`、`enable_biometric` 与 `change_password`
+//! 共享同一计数器——后两者经 `recover_dek` 验主密码，同为密码 oracle）：
 //!
 //! - `n < BACKOFF_THRESHOLD`（前 2 次）：无延迟；
 //! - `n >= BACKOFF_THRESHOLD`：延迟 `min(2^(n-3), BACKOFF_CAP_SECS)` 秒，
@@ -84,6 +85,11 @@ pub(crate) struct UnlockBackoff {
     failures: u32,
     /// 门禁截止时刻；`None` = 无门禁。
     blocked_until: Option<Instant>,
+    /// KDF 在途标志（门禁判定 TOCTOU 修复）：`try_acquire` 放行即置位，
+    /// `on_failure` / `on_success` / `release` 清除——秒级 KDF 期间并发
+    /// 的第二次密码尝试被拒，消除「gate 判定与失败计数非同一临界区」
+    /// 形成的并行猜测 / KDF DoS 窗口。
+    in_flight: bool,
     /// 单调时钟（生产 SystemClock / 测试 FakeClock）。
     clock: Arc<dyn MonotonicClock>,
 }
@@ -94,6 +100,7 @@ impl UnlockBackoff {
         Self {
             failures: 0,
             blocked_until: None,
+            in_flight: false,
             clock: Arc::new(SystemClock),
         }
     }
@@ -104,6 +111,7 @@ impl UnlockBackoff {
         Self {
             failures: 0,
             blocked_until: None,
+            in_flight: false,
             clock,
         }
     }
@@ -123,6 +131,30 @@ impl UnlockBackoff {
         }
     }
 
+    /// 门禁判定 + 在途预占（同一临界区，MEDIUM-2 修复）：gate 放行即置
+    /// `in_flight`，调用方随后执行 KDF；失败 / 成功 / 非密码错误分别经
+    /// [`Self::on_failure`] / [`Self::on_success`] / [`Self::release`]
+    /// 清除。并发窗口内的第二次获取返回 `Err`，调用方一律按 1002 拒绝
+    /// （维持 FR-1.4 不可区分性）。
+    ///
+    /// `Err(remaining)` 两种含义：门禁期内（remaining = 剩余等待）或已
+    /// 有尝试在途（remaining = `Duration::ZERO` 占位，语义不外泄）。
+    pub(crate) fn try_acquire(&mut self) -> Result<(), Duration> {
+        self.gate()?;
+        if self.in_flight {
+            return Err(Duration::ZERO);
+        }
+        self.in_flight = true;
+        Ok(())
+    }
+
+    /// 释放预占（不触碰计数与门禁）：非密码错误路径专用（如弱密码
+    /// 1010、KDF 参数越界 5002、写失败——这些不是密码尝试，不得计入
+    /// 失败，但必须释放预占，否则后续合法尝试被永久拒绝）。
+    pub(crate) fn release(&mut self) {
+        self.in_flight = false;
+    }
+
     /// 距门禁解除的剩余秒数（向上取整；无门禁返回 0）。
     /// UI 旁路：错误呈现维持 1002 不可区分性（FR-1.4），等待时间只经
     /// 此方法单独获取。
@@ -137,6 +169,7 @@ impl UnlockBackoff {
     /// `min(2^(n-3), 60)` 秒（从当前时刻起算）。
     pub(crate) fn on_failure(&mut self) {
         self.failures = self.failures.saturating_add(1);
+        self.in_flight = false;
         if self.failures >= BACKOFF_THRESHOLD {
             // 指数位移防溢出：2^63 已远超 60s 封顶，之后恒取 cap
             let exp = u64::from(self.failures - BACKOFF_THRESHOLD).min(63);
@@ -149,6 +182,7 @@ impl UnlockBackoff {
     pub(crate) fn on_success(&mut self) {
         self.failures = 0;
         self.blocked_until = None;
+        self.in_flight = false;
     }
 }
 
@@ -247,5 +281,59 @@ mod tests {
         assert!(b.gate().is_ok());
         clock.advance(Duration::from_secs(60));
         assert!(b.gate().is_ok(), "过期门禁不应随时间重新激活");
+    }
+
+    // ------------------------------------------ 在途预占（MEDIUM-2 修复）
+
+    /// MEDIUM-2 串行可复现语义断言：try_acquire 预占期间第二次获取被拒
+    /// （并发窗口内第二调用被拒的内核语义），release 后可再获取。
+    #[test]
+    fn 预占期间再次获取被拒() {
+        let (mut b, _clock) = backoff();
+        assert!(b.try_acquire().is_ok(), "首次获取应放行并预占");
+        assert!(
+            b.try_acquire().is_err(),
+            "在途（KDF 模拟窗口）期间第二次获取应被拒"
+        );
+        b.release();
+        assert!(b.try_acquire().is_ok(), "release 后应可再次获取");
+    }
+
+    /// 失败 / 成功路径释放预占；release 不触碰计数与门禁（非密码错误
+    /// 路径专用，与 on_failure 的「计数 +1」语义解耦）
+    #[test]
+    fn 失败与成功释放预占且release不动计数() {
+        let (mut b, _clock) = backoff();
+        assert!(b.try_acquire().is_ok());
+        b.on_failure();
+        assert!(b.try_acquire().is_ok(), "on_failure 应释放预占");
+        b.on_success();
+        assert!(b.try_acquire().is_ok(), "on_success 应释放预占");
+        // release 只清预占：此后 2 次失败仍无门禁（计数未被 release 触碰）
+        b.release();
+        b.on_failure();
+        b.on_failure();
+        assert!(b.gate().is_ok(), "release 不得影响失败计数");
+    }
+
+    /// 门禁优先于预占判定：门禁期内 try_acquire 直接拒绝且**不置位**
+    /// 预占（期满后无需 release 即可获取）
+    #[test]
+    fn 门禁期内获取被拒且不置位预占() {
+        let (mut b, clock) = backoff();
+        for _ in 0..3 {
+            b.on_failure(); // 1s 门禁
+        }
+        assert!(b.try_acquire().is_err(), "门禁期内获取应被拒");
+        clock.advance(Duration::from_secs(1));
+        assert!(b.try_acquire().is_ok(), "期满后获取应放行");
+    }
+
+    /// 预占不影响 remaining_secs 旁路：UI 倒计时只反映门禁，不暴露在途
+    #[test]
+    fn 预占不影响剩余秒数旁路() {
+        let (mut b, _clock) = backoff();
+        assert!(b.try_acquire().is_ok());
+        assert_eq!(b.remaining_secs(), 0, "在途预占不是门禁，旁路应为 0");
     }
 }

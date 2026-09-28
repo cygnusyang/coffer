@@ -120,6 +120,14 @@ struct MainView: View {
         .frame(minWidth: 300)
         .toolbar {
             ToolbarItemGroup {
+                // 库切换器入口（v0.4 FR-1.2，MB-1）：当前库名 + 下拉，
+                // sheet 承载库列表 / 新建库（docs/15 §3.2.1）
+                Menu {
+                    Button("切换密码库…") { model.showVaultSwitcher = true }
+                } label: {
+                    Label(model.vaultName.isEmpty ? "密码库" : model.vaultName,
+                          systemImage: "vault")
+                }
                 Menu {
                     ForEach(FfiItemCategory.editableCategories, id: \.self) { category in
                         Button {
@@ -240,7 +248,10 @@ struct ActiveItemList: View {
                 }
             }
         }
-        .searchable(text: $model.searchText, placement: .toolbar, prompt: "按标题搜索")
+        // FR-11.2 文案收尾（v0.4 MB-1 并入，docs/15 §3.3.5）：内核 search
+        // 即模糊搜索（标题/用户名/网址/标签），仅此提示文案过时
+        .searchable(text: $model.searchText, placement: .toolbar,
+                    prompt: "搜索标题、用户名、网址、标签")
         .onChange(of: model.searchText) { _, _ in
             model.reloadItems()
         }

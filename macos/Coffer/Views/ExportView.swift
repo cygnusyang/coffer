@@ -20,7 +20,8 @@
 // 直出 → lastErrorMessage → .ffiErrorAlert（与全仓一致）。
 //
 // v0.2.0 出口判据①②（docs/09-v0.2实现方案 §3.1）：加密备份导出可用 +
-// 备份提醒可触发（提醒评估 T-G 接入，本文件留调用点注释）。
+// 备份提醒可触发（提醒评估已接入，T-G：仅备份流导出成功时重评估——
+// CSV 导出不打点 last_backup_at，不消横幅）。
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -203,8 +204,11 @@ struct ExportView: View {
                 let result = try factory.exportBackup(vaultDir: vaultDir, outPath: path)
                 await MainActor.run {
                     step = .done(result)
-                    // T-G 接入：此处调用备份提醒评估（evaluateBackupReminder），
-                    // 基于新的 meta.last_backup_at 重算下次提醒时点
+                    // 备份提醒重评估（FR-8.5，T-G）：Rust 在 exportBackup
+                    // 成功路径已打点 meta.last_backup_at，重算后横幅自然消失
+                    // （距上次备份不再超期 → shouldSuggestBackup 返回 false）。
+                    // 仅备份流接入：CSV 导出不打点 last_backup_at，不应消横幅。
+                    model.evaluateBackupReminder()
                 }
             } catch {
                 await MainActor.run {

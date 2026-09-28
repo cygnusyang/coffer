@@ -252,7 +252,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - 会话管理
 
-    private func openSession(_ brief: FfiVaultBrief) {
+    /// 建库 / 启动 / 恢复后打开统一入口（openVault + 状态收尾，phase → .locked
+    /// 由 LockView 承担解锁引导）。T-H（FR-8.1）：恢复流为第三个调用点——
+    /// RestoreBackupView 恢复完成后按 vaultUuid 匹配 brief 经此开会话，故由
+    /// private 收紧为 internal 最小可见性（签名与行为不变）。
+    func openSession(_ brief: FfiVaultBrief) {
         do {
             let opened = try factory.openVault(baseDir: baseDir.path, vaultUuid: brief.vaultUuid)
             session = opened

@@ -8,6 +8,8 @@ struct MainView: View {
 
     @State private var newSheetCategory: FfiItemCategory?
     @State private var showImport = false
+    /// 加密备份导出 sheet（FR-8.1/8.6，T-E）。
+    @State private var showExport = false
     /// 统一设置 sheet（docs/09-v0.2实现方案.md §3.7，T06 设置页归位：
     /// 自动锁定 / 剪贴板 / 备份提醒 / 安全 / 数据归位到 SettingsView，
     /// 取代原 autoLockMenu + 安全设置入口）。
@@ -90,6 +92,13 @@ struct MainView: View {
                 } label: {
                     Label("导入 CSV", systemImage: "square.and.arrow.down")
                 }
+                // 加密备份导出入口（FR-8.1/8.6，T-E；底层契约锁定态可用，
+                // UI 入口置于解锁后主界面，TC-EXP-08）
+                Button {
+                    showExport = true
+                } label: {
+                    Label("导出", systemImage: "arrow.up.doc")
+                }
                 Button {
                     model.lock()
                 } label: {
@@ -99,6 +108,10 @@ struct MainView: View {
         }
         .sheet(isPresented: $showImport) {
             ImportView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showExport) {
+            ExportView()
                 .environmentObject(model)
         }
         .sheet(isPresented: $showSettings) {

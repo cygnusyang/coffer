@@ -308,6 +308,7 @@ impl TotpStore {
                 attach_mac_key: SessionKey::new([0u8; 32]),
                 audit_key: SessionKey::new([0u8; 32]),
                 root_mac_key: SessionKey::new([0u8; 32]),
+                passkey_idx_key: SessionKey::new([0u8; 32]),
             },
         })
     }

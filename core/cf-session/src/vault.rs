@@ -565,6 +565,28 @@ impl VaultSession {
         usecase::attachments::remove_attachment(&mut state.store, &self.vault_dir, attachment_uuid)
     }
 
+    // ------------------------------------------------ Passkey（FR-10.2 / 10.5）
+
+    /// 列出条目的全部 Passkey 元数据（created_at 升序，FR-10.2）。
+    /// 锁定 → 1001；条目不存在 → 1011。元数据**无私钥字段**
+    /// （FR-10.2 红线，docs/17 §4.1）。语义详见 [`usecase::passkeys`]。
+    pub fn list_passkeys(
+        &self,
+        item_id: &str,
+    ) -> SessionResult<Vec<usecase::passkeys::PasskeyMeta>> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        usecase::passkeys::list_passkeys(&state.store, item_id)
+    }
+
+    /// 删除 Passkey（FR-10.5）：纯 DB 行删除，无文件面副作用。
+    /// 行不存在 → 1011。锁定 → 1001。
+    pub fn remove_passkey(&self, passkey_uuid: &str) -> SessionResult<()> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::passkeys::remove_passkey(&mut state.store, passkey_uuid)
+    }
+
     // ---------------------------------------------------------- 搜索
 
     /// 标题搜索（方案 A：全量解密内存搜索，docs/03 §3.3）。

@@ -211,7 +211,7 @@ struct ExportView: View {
         guard !model.isBusy else { return }
         step = .exporting
         let factory = model.factory
-        let vaultDir = model.baseDir.path
+        let vaultDir = model.vaultDirPath
         Task.detached(priority: .userInitiated) {
             do {
                 let result = try factory.exportBackup(vaultDir: vaultDir, outPath: path)

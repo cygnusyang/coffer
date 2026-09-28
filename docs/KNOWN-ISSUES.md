@@ -262,6 +262,36 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
+## BUG-7（✅ 已修复）：加密备份导出传工作目录而非库目录——必 1012
+
+**登记日期**：2026-09-28
+**发现环境**：v0.2.0 验收自动化回环测试（`tools/run_clipboard_tier_tests.sh` T8 段，真实库数据）——用户尚未手测到 Round 3 即被抓出
+**分级**：S3 / P1 / 来源版本 v0.2.0-T06（本轮引入） / 发现版本 v0.2.0（验收阶段）
+**状态**：✅ 已修复（2026-09-28）
+**核销记录**：修复 commit（本轮验收批）；复验 = `run_clipboard_tier_tests.sh` T8 段（真实库 导出 verified=true → 校验 → 恢复产物 uuid 一致 → 1004 负向）20/20 全绿
+**证据**：测试输出 `Coffer(code: 1012, message: "validation failed: 源目录不是合法库目录：容器布局不完整：缺少必需文件 header.json（vault_dir=…Documents/Coffer）")`
+
+### 现象（预期/实际 分行写）
+
+- 预期：ExportView 导出成功，done 页 verified=true。
+- 实际：`exportBackup(vaultDir: model.baseDir.path, …)` 传的是**工作目录**（`Documents/Coffer`），而 FFI 契约（api.rs）要求**库目录**（`<base>/<uuid>`，含 header.json）→ 恒 1012，导出功能完全不可用。
+
+### 根因（已实证 / 待查）
+
+已实证：T-E 接线时混淆了两级目录语义——`export_backup(vault_dir)` 参数是库目录，`restore_backup(target_base_dir)` 参数才是工作目录；同名前缀 `vaultDir` 变量名掩盖了差异。Rust 侧契约测试（`backup_ffi_semantics.rs`）传的是临时库目录所以全绿，**FFI 层测试覆盖不了 Swift 侧传参错误**。
+
+### 修复路径
+
+1. AppModel 新增 `vaultDirPath` 计算属性（`<baseDir>/<vaultUUID>`，注释标注两级目录语义差异）；
+2. ExportView `doExport` 改传 `model.vaultDirPath`；
+3. `run_clipboard_tier_tests.sh` T8 段保留「真实库回环」为回归警戒（按 briefs[0].vaultUuid 构造库目录）。
+
+### 复现与诊断
+
+修复前：App 内任意导出 → 「错误 1012：源目录不是合法库目录」；修复后导出成功且 verified=true。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

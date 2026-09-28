@@ -232,6 +232,14 @@ final class AppModel: ObservableObject {
     /// 库工作目录（沙盒内 Documents/Coffer）。
     let baseDir: URL
 
+    /// 当前库的库目录（`<baseDir>/<vaultUUID>`，含 header.json）。
+    /// 注意与 baseDir 区分：`exportBackup(vaultDir:)` 的契约参数是**库目录**
+    /// （非合法库目录 → 1012），restoreBackup 的 target 才是工作目录
+    /// （BUG-7 修复时新增，此前 ExportView 误传 baseDir）。
+    var vaultDirPath: String {
+        baseDir.appendingPathComponent(vaultUUID, isDirectory: true).path
+    }
+
     private var terminateObserver: NSObjectProtocol?
 
     // MARK: - 生命周期

@@ -449,9 +449,10 @@ impl VaultSession {
     /// `ON DELETE CASCADE` 只级联 DB 行，`attachments/<uuid>` 旁路文件
     /// 由本层编排清理——事务前 `list_for_item` 收集附件 uuid，事务成功
     /// 返回后逐个 unlink。缺失容忍（文件不存在跳过）；删除失败不回滚
-    /// DB 行（条目删除已成事实，报错只会误导），孤儿由 unlock 时
-    /// `cleanup_orphans` 语义兜底——与 attachment.rs「先删行后删文件」
-    /// 纪律一致。软删 / 恢复不动附件（回收站恢复后附件仍可用）。
+    /// DB 行（条目删除已成事实，报错只会误导），孤儿由 open_vault 成功
+    /// 路径的 `cleanup_orphans` 真调兜底（unlock.rs，v0.4 M-2）——与
+    /// attachment.rs「先删行后删文件」纪律一致。软删 / 恢复不动附件
+    /// （回收站恢复后附件仍可用）。
     pub fn delete_item(&self, item_id: &str, hard: bool) -> SessionResult<()> {
         let mut guard = self.unlocked()?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;

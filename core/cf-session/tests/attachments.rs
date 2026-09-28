@@ -303,3 +303,54 @@ fn 回收站条目仍可添加附件() {
     assert_eq!(info.item_uuid, item_id);
     assert_eq!(session.list_attachments(&item_id).unwrap().len(), 1);
 }
+
+// ------------------------------------------------ 判据：开库孤儿清理（M-2）
+
+/// M-2（审查打回）：open_vault 成功路径真调 cleanup_orphans——孤儿旁路
+/// 文件（行在文件无）与崩溃残留的 `.tmp-` 半截文件在重新开库时被清理，
+/// 且**被 DB 行引用的附件文件不受影响**（清理以 DB 引用集为准，不得误删）。
+///
+/// 孤儿构造：直连 db.sqlite 删行（schema 明文，无需密钥），模拟
+/// 「先删行后删文件」被中断的残留形态。
+#[test]
+fn 开库时清理孤儿附件且保留在引用文件() {
+    let base = temp_dir("open_cleanup");
+    let session = unlocked_vault(&base, "孤儿清理库");
+    let item_id = session
+        .create_item(&minimal_draft("孤儿清理条目"))
+        .unwrap();
+    let orphan = session.add_attachment(&item_id, "orphan.bin", b"orphan").unwrap();
+    let kept = session.add_attachment(&item_id, "kept.bin", b"kept").unwrap();
+    let vault_dir = session.vault_dir().to_path_buf();
+    let dir = attachments_dir(&session);
+
+    // 孤儿一：行在文件无——直删 DB 行，旁路文件成为孤儿
+    {
+        let conn = rusqlite::Connection::open(vault_dir.join("db.sqlite")).unwrap();
+        conn.execute(
+            "DELETE FROM attachments WHERE uuid = ?1",
+            rusqlite::params![orphan.uuid],
+        )
+        .unwrap();
+    }
+    // 孤儿二：崩溃残留的 .tmp- 半截文件
+    fs::write(dir.join(".tmp-crash-residue"), b"half written").unwrap();
+
+    // 重新开库（open_vault 成功路径）
+    session.lock();
+    drop(session);
+    let _reopened = open_vault(&vault_dir).unwrap();
+
+    assert!(
+        !dir.join(&orphan.uuid).exists(),
+        "行在文件无的孤儿旁路文件应在 open_vault 时被清理"
+    );
+    assert!(
+        !dir.join(".tmp-crash-residue").exists(),
+        ".tmp- 崩溃残留应在 open_vault 时被清理"
+    );
+    assert!(
+        dir.join(&kept.uuid).is_file(),
+        "被 DB 行引用的附件文件不得被误删"
+    );
+}

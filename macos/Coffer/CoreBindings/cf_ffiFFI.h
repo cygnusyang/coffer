@@ -319,6 +319,11 @@ void uniffi_cf_ffi_fn_free_vaultsession(uint64_t handle, RustCallStatus *_Nonnul
 int8_t uniffi_cf_ffi_fn_method_vaultsession_auto_lock_if_expired(uint64_t ptr, int64_t now_secs, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_BACKOFF_REMAINING_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_BACKOFF_REMAINING_SECS
+uint64_t uniffi_cf_ffi_fn_method_vaultsession_backoff_remaining_secs(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CHANGE_PASSWORD
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_CHANGE_PASSWORD
 void uniffi_cf_ffi_fn_method_vaultsession_change_password(uint64_t ptr, RustBuffer old_password, RustBuffer new_password, RustBuffer new_kdf, RustCallStatus *_Nonnull out_status
@@ -851,6 +856,12 @@ uint16_t uniffi_cf_ffi_checksum_method_cofferapp_verify_backup(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_AUTO_LOCK_IF_EXPIRED
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_auto_lock_if_expired(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_BACKOFF_REMAINING_SECS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_BACKOFF_REMAINING_SECS
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_backoff_remaining_secs(void
     
 );
 #endif

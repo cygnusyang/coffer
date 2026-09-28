@@ -18,6 +18,12 @@ zeroize = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
+# 附件 content_mac（FR-9.2，docs/09 v0.3.0）：HMAC-SHA256(attach_mac_key, 密文)
+# 的 base64 编码，与 cf-format MANIFEST 对密文文件的 content_mac 语义对齐。
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = "0.22"
+
 [dev-dependencies]
 rusqlite = { workspace = true }
 cf-crypto = { workspace = true }

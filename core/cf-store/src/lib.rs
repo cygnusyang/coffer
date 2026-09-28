@@ -17,8 +17,8 @@
 //!
 //! - [`schema`]：docs/03 §3.1 全部 11 张表的幂等 DDL + PRAGMA + 版本记录
 //! - [`tx`]：`with_tx` 事务框架（失败自动回滚，NFR-REL-01）
-//! - [`repo`]：八个仓库（items / fields / urls / tags / meta / totp / history /
-//!   audit）与 [`Repos`] 聚合
+//! - [`repo`]：九个仓库（items / fields / urls / tags / meta / totp / history /
+//!   audit / attachment）与 [`Repos`] 聚合
 //! - [`error`]：错误统一（C-6）——cf-store 不自持错误类型，全部用
 //!   [`cf_domain::CfError`]
 //! - [`ItemStore`]：仓库集合门面（持连接 + `SubKeys`），供 cf-session
@@ -51,6 +51,7 @@ use cf_crypto::subkeys::SubKeys;
 use rusqlite::Connection;
 
 pub use error::{CfStoreError, CfStoreResult};
+pub use repo::attachment::{AttachmentMeta, AttachmentRepo, MAX_ATTACHMENT_BYTES};
 pub use repo::audit::{AuditEntry, AuditEvent, AuditRepo};
 pub use repo::history::{HistoryMeta, HistoryRepo, COLUMN_HISTORY_SNAPSHOT};
 pub use repo::item::{ItemListFilter, ItemRow, ItemWithTitle, ItemsRepo, COLUMN_ITEM_TITLE};

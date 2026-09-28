@@ -411,6 +411,7 @@ dependencies = [
  "cf-audit",
  "cf-crypto",
  "cf-domain",
+ "cf-exporter",
  "cf-format",
  "cf-importer",
  "cf-session",
@@ -480,13 +481,16 @@ dependencies = [
 name = "cf-store"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cf-crypto",
  "cf-domain",
  "cf-format",
  "ciborium",
+ "hmac 0.12.1",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror",
  "uuid",
  "zeroize",

@@ -1,6 +1,6 @@
 //! 仓库层（`docs/07-macOS纵切设计.md` §2.1）。
 //!
-//! 八个仓库文件 + [`Repos`] 聚合：
+//! 九个仓库文件 + [`Repos`] 聚合：
 //!
 //! | 文件 | 职责 |
 //! | --- | --- |
@@ -12,6 +12,7 @@
 //! | [`totp`] | TOTP 记录（原 `TotpStore` 迁入改造，`enc_issuer`/`enc_account` 加密列，C-2） |
 //! | [`history`] | history 表（FR-2.9 条目历史版本，快照 = ItemSnapshot CBOR + `hist_key` AEAD） |
 //! | [`audit`] | audit_local 表（FR-12.6 本地审计日志，明文事件 + 非敏感 detail） |
+//! | [`attachment`] | attachments 表 + `attachments/` 旁路文件（FR-9.1/9.2 附件存储内核，docs/09 v0.3.0） |
 //!
 //! ## 加密密钥与 AAD 映射（全仓库层统一约定，O-1 后版本）
 //!
@@ -30,6 +31,7 @@
 //! | `totp.enc_secret` | `field_key` | `totp` | **totp 行** uuid（O-1 统一：原钉条目 uuid，与 enc_issuer/enc_account 语义对齐） |
 //! | `totp.enc_issuer` / `enc_account` | `field_key` | `totp` | totp 行 uuid |
 
+pub mod attachment;
 pub mod audit;
 pub mod field;
 pub mod history;
@@ -63,6 +65,8 @@ pub struct Repos<'a> {
     pub history: history::HistoryRepo<'a>,
     /// audit_local 表仓库（FR-12.6）。
     pub audit: audit::AuditRepo<'a>,
+    /// attachments 表仓库（FR-9.1/9.2，docs/09 v0.3.0）。
+    pub attachments: attachment::AttachmentRepo<'a>,
 }
 
 impl<'a> Repos<'a> {
@@ -77,6 +81,11 @@ impl<'a> Repos<'a> {
             totp: totp::TotpRepo::new(conn, subkeys),
             history: history::HistoryRepo::new(conn, subkeys),
             audit: audit::AuditRepo::new(conn),
+            attachments: attachment::AttachmentRepo::new(
+                conn,
+                &subkeys.file_key,
+                &subkeys.attach_mac_key,
+            ),
         }
     }
 }

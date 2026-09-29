@@ -30,7 +30,7 @@ impl VaultSession {
     ///
     /// 锁定态 → 1001；其余透传 `cf_exporter` 错误（docs/03 §12）。
     pub fn export_csv(&self, out_path: &Path) -> SessionResult<cf_exporter::CsvExportResult> {
-        let guard = self.unlocked()?;
+        let guard = self.write_guard(cf_domain::license::LicensedOp::ExportData)?;
         let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
         let result = cf_exporter::export_csv(&state.store, out_path);
         // FR-12.6 本地审计：CSV 导出成功事件。打点失败静默（不否定已

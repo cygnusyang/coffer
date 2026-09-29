@@ -368,3 +368,53 @@ fn 错误密钥解密失败() {
         Err(cf_domain::CfError::CryptoError)
     ));
 }
+
+// ------------------------------------------------ L-1：Debug 掩蔽（FR-10.2 红线）
+
+/// L-1（#18 审查打回）：`PasskeyRecord` 的 Debug 输出**不得含明文私钥**——
+/// 私钥字节（含其 ASCII 特征 "PKCS"）与 user_handle 字节一律掩蔽为
+/// `[REDACTED: n bytes]`；非敏感元数据（rpId / 用户名 / 凭据 ID / 算法 /
+/// 计数器）保留可读。防止调试输出 / 日志路径泄露解封后私钥。
+#[test]
+fn debug输出掩蔽私钥与user_handle() {
+    // 私钥内嵌 ASCII 特征字节，使「不含 PKCS」断言有真实判定力
+    let mut rec = record("github.com");
+    rec.private_key_pkcs8 = b"PKCS#8-FAKE-PRIVATE-KEY-BYTES".to_vec();
+    rec.user_handle = b"user-handle-plain".to_vec();
+
+    let dbg = format!("{rec:?}");
+
+    assert!(
+        !dbg.contains("PKCS"),
+        "Debug 输出不得含私钥 ASCII 特征：{dbg}"
+    );
+    let key_str = String::from_utf8_lossy(&rec.private_key_pkcs8).into_owned();
+    assert!(
+        !dbg.contains(&key_str),
+        "Debug 输出不得含私钥明文字节序列：{dbg}"
+    );
+    let handle_str = String::from_utf8_lossy(&rec.user_handle).into_owned();
+    assert!(
+        !dbg.contains(&handle_str),
+        "Debug 输出不得含 user_handle 明文字节序列：{dbg}"
+    );
+
+    // 掩蔽形态：[REDACTED: n bytes]
+    assert!(
+        dbg.contains(&format!(
+            "[REDACTED: {} bytes]",
+            rec.private_key_pkcs8.len()
+        )),
+        "私钥应以 [REDACTED: n bytes] 形态出现：{dbg}"
+    );
+    assert!(
+        dbg.contains(&format!("[REDACTED: {} bytes]", rec.user_handle.len())),
+        "user_handle 应以 [REDACTED: n bytes] 形态出现：{dbg}"
+    );
+
+    // 非敏感元数据保留可读（掩蔽不得掩盖可调试性）
+    assert!(dbg.contains("github.com"), "rp_id 应保留：{dbg}");
+    assert!(dbg.contains("GitHub"), "rp_name 应保留：{dbg}");
+    assert!(dbg.contains("alice@example.com"), "user_name 应保留：{dbg}");
+    assert!(dbg.contains("-7"), "algorithm 应保留：{dbg}");
+}

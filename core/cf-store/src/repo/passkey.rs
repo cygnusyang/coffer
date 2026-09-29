@@ -88,7 +88,13 @@ pub struct PasskeyMeta {
 ///
 /// `private_key_pkcs8` 须为 D-1 归一化后的 PKCS#8 DER（校验在导入侧
 /// cf-importer 完成，仓库层只做非空与算法判定）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` 为手写实现（L-1，#18 审查）：`private_key_pkcs8` 与
+/// `user_handle` 掩蔽为 `[REDACTED: n bytes]`——派生 Debug 会在调试
+/// 输出 / 日志路径泄露解封后的私钥字节（FR-10.2 红线在 Debug 面的
+/// 补强）；非敏感元数据（rpId / RP 名 / 用户名 / 凭据 ID / 算法 /
+/// 计数器）保留可读。
+#[derive(Clone, PartialEq, Eq)]
 pub struct PasskeyRecord {
     /// Relying Party ID（明文）。
     pub rp_id: String,
@@ -106,6 +112,27 @@ pub struct PasskeyRecord {
     pub algorithm: i64,
     /// 签名计数器（不得为负）。
     pub sign_count: i64,
+}
+
+impl std::fmt::Debug for PasskeyRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasskeyRecord")
+            .field("rp_id", &self.rp_id)
+            .field("rp_name", &self.rp_name)
+            .field("user_name", &self.user_name)
+            .field(
+                "user_handle",
+                &format_args!("[REDACTED: {} bytes]", self.user_handle.len()),
+            )
+            .field("credential_id", &self.credential_id)
+            .field(
+                "private_key_pkcs8",
+                &format_args!("[REDACTED: {} bytes]", self.private_key_pkcs8.len()),
+            )
+            .field("algorithm", &self.algorithm)
+            .field("sign_count", &self.sign_count)
+            .finish()
+    }
 }
 
 type HmacSha256 = Hmac<Sha256>;

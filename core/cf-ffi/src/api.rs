@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use cf_domain::license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
 use cf_domain::CfError;
@@ -43,7 +43,7 @@ pub struct CofferApp {
     /// restore_backup），并经 [`Self::open_vault`] 下传全部会话。默认
     /// [`PermitAllGate`]；官方装配经 [`Self::set_license_gate`] 注入
     /// cf-license（闭源，私有仓库）。
-    license_gate: std::sync::RwLock<Arc<dyn LicenseGate>>,
+    license_gate: RwLock<Arc<dyn LicenseGate>>,
 }
 
 /// 解锁会话门面（`cf_session::VaultSession` 的 UniFFI Object 包装）。
@@ -60,7 +60,7 @@ impl CofferApp {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
-            license_gate: std::sync::RwLock::new(Arc::new(PermitAllGate)),
+            license_gate: RwLock::new(Arc::new(PermitAllGate)),
         })
     }
 

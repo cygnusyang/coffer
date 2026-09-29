@@ -46,6 +46,14 @@
             "counter": 1,
             "creationDate": "2026-08-01T12:30:00.000Z",
             "encryptedPrivateKey": "AABBCCDD"
+          },
+          {
+            "credentialId": "Y3JlZC1wMzg0",
+            "keyAlgorithm": "rsa",
+            "keyCurve": "p256",
+            "rpId": "rsa.example.com",
+            "counter": 0,
+            "encryptedPrivateKey": "AABBCCDD"
           }
         ]
       },

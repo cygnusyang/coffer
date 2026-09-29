@@ -14,7 +14,8 @@ use cf_domain::category::ItemCategory;
 use cf_domain::field::Designation;
 use cf_domain::item::ItemState;
 use cf_importer::{
-    import_bitwarden_json_with_options, precheck_bitwarden_json, BwImportResult, ImportOptions,
+    import_bitwarden_json_with_options, precheck_bitwarden_json, BwImportResult,
+    BwPasskeyFailureKind, ImportOptions,
 };
 use cf_store::{ItemListFilter, ItemStore};
 
@@ -202,11 +203,11 @@ fn 坏passkey行显式列出且不丢条目() {
     // 7 条目全部可导入（降级 / 回收站均计入）
     assert_eq!(report.total_items, 7);
     assert_eq!(report.importable_items, 7);
-    // passkey 行合计 6：可导入 1（SEC1）、非 ES256 1、坏行 4
+    // passkey 行合计 7：可导入 1（SEC1）、非 ES256 2（p384 / rsa）、坏行 4
     //（坏 credentialId / EncString 私钥 / 缺 rpId / 负 counter）
-    assert_eq!(report.passkey_total, 6);
+    assert_eq!(report.passkey_total, 7);
     assert_eq!(report.passkey_importable, 1);
-    assert_eq!(report.non_es256.len(), 1, "非 ES256 显式列出（TCB-7）");
+    assert_eq!(report.non_es256.len(), 2, "非 ES256 显式列出（TCB-7）");
     assert_eq!(report.non_es256[0].item_id, "bw-p384");
     assert_eq!(report.bad_passkeys.len(), 4, "坏行逐条列出（FR-7.8 纪律）");
     let bad_items: Vec<&str> = report
@@ -228,6 +229,44 @@ fn 坏passkey行显式列出且不丢条目() {
         "EncString 私钥原因须可操作：{}",
         enc.reason
     );
+
+    // L-2（docs/17 r2.4 §9.1）：分类承载于结构化枚举，按数据不按文案
+    // ——reason 措辞漂移不得迁移分类
+    assert_eq!(
+        report.non_es256[0].kind,
+        BwPasskeyFailureKind::KeyCurveMismatch,
+        "p384 行 → keyCurve 不匹配"
+    );
+    assert_eq!(
+        report.non_es256[1].kind,
+        BwPasskeyFailureKind::KeyAlgorithmMismatch,
+        "rsa 行 → keyAlgorithm 不匹配"
+    );
+    let kinds_of = |item_id: &str| -> Vec<BwPasskeyFailureKind> {
+        report
+            .bad_passkeys
+            .iter()
+            .filter(|f| f.item_id == item_id)
+            .map(|f| f.kind)
+            .collect()
+    };
+    assert_eq!(
+        kinds_of("bw-badcred"),
+        vec![BwPasskeyFailureKind::InvalidCredentialId]
+    );
+    assert_eq!(
+        kinds_of("bw-encstring"),
+        vec![BwPasskeyFailureKind::EncryptedPrivateKey]
+    );
+    assert_eq!(
+        kinds_of("bw-twobad"),
+        vec![
+            BwPasskeyFailureKind::MissingRpId,
+            BwPasskeyFailureKind::InvalidCounter
+        ],
+        "两坏行按行序：缺 rpId → 负 counter"
+    );
+    assert!(kinds_of("bw-p384").is_empty(), "非 ES256 行不进坏行清单");
 
     assert_eq!(report.password_history_dropped, 1);
     assert_eq!(report.trashed_count, 1);

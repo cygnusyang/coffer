@@ -62,6 +62,36 @@ pub struct BwPasskeyModel {
     pub created_at: i64,
 }
 
+/// 坏 passkey 行的结构化分类（docs/17 r2.4 §9.1 L-2：按数据不按文案
+/// ——reason 是给人看的展示层，分类判定只走枚举，措辞漂移不迁移）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BwPasskeyFailureKind {
+    /// `keyAlgorithm` 显式给出且 ≠ `ecdsa`。
+    KeyAlgorithmMismatch,
+    /// `keyCurve` 显式给出且 ≠ `p256`。
+    KeyCurveMismatch,
+    /// rpId 缺失或为空。
+    MissingRpId,
+    /// credentialId 缺失或不是合法 base64。
+    InvalidCredentialId,
+    /// counter 不是非负整数。
+    InvalidCounter,
+    /// 缺失私钥字段 encryptedPrivateKey。
+    MissingPrivateKey,
+    /// 私钥为 Bitwarden EncString 加密形态（未加密导出亦不解包）。
+    EncryptedPrivateKey,
+    /// 私钥无法解析为 ES256（P-256）材料。
+    UnparseablePrivateKey,
+}
+
+impl BwPasskeyFailureKind {
+    /// 是否非 ES256 族（预检报告将其单独成列，docs/17 §4.2）。
+    #[must_use]
+    pub fn is_non_es256(self) -> bool {
+        matches!(self, Self::KeyAlgorithmMismatch | Self::KeyCurveMismatch)
+    }
+}
+
 /// 一条不可导入的 passkey 行（预检显式列出，FR-7.8 不静默丢弃）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BwPasskeyFailure {
@@ -71,7 +101,9 @@ pub struct BwPasskeyFailure {
     pub item_title: String,
     /// 行在该条目 `fido2Credentials[]` 中的下标（0 起）。
     pub index: usize,
-    /// 拒绝原因（人类可读，面向导入结果页）。
+    /// 结构化分类（程序判定唯一依据，L-2）。
+    pub kind: BwPasskeyFailureKind,
+    /// 拒绝原因（人类可读，面向导入结果页；**不作分类依据**）。
     pub reason: String,
 }
 
@@ -255,7 +287,7 @@ pub(crate) fn map_item(
                     passkeys.push(BwPasskeyModel { record, created_at });
                 }
                 Err(failure) => {
-                    if failure_is_non_es256(&failure.reason) {
+                    if failure.kind.is_non_es256() {
                         signals.non_es256.push(failure);
                     } else {
                         signals.bad_passkeys.push(failure);
@@ -363,13 +395,14 @@ fn map_passkey_row(
     index: usize,
     signals: &mut ItemSignals,
 ) -> Result<PasskeyRecord, BwPasskeyFailure> {
-    let failure = |reason: String| BwPasskeyFailure {
+    let failure = |kind: BwPasskeyFailureKind, reason: String| BwPasskeyFailure {
         item_id: item_id(item),
         item_title: item
             .name
             .clone()
             .unwrap_or_else(|| FALLBACK_TITLE.to_owned()),
         index,
+        kind,
         reason,
     };
 
@@ -389,19 +422,25 @@ fn map_passkey_row(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| failure("rpId 缺失或为空".into()))?
+        .ok_or_else(|| failure(BwPasskeyFailureKind::MissingRpId, "rpId 缺失或为空".into()))?
         .to_owned();
 
     // 算法：keyAlgorithm/keyCurve 显式给出非 ecdsa/p256 → 非 ES256 显式
-    // 列出（TCB-7）；两者缺失 → 容忍默认 ES256（私钥解析仍会把非 P-256
-    // 材料挡下）
+    // 列出（TCB-7，分类按具体失配键区分——L-2）；两者缺失 → 容忍默认
+    // ES256（私钥解析仍会把非 P-256 材料挡下）
     let algorithm = entry.get("keyAlgorithm").and_then(Value::as_str);
     let curve = entry.get("keyCurve").and_then(Value::as_str);
-    let algorithm_ok = algorithm.is_none_or(|s| s == "ecdsa") && curve.is_none_or(|s| s == "p256");
-    if !algorithm_ok {
-        return Err(failure(format!(
-            "非 ES256 算法（keyAlgorithm={algorithm:?}，keyCurve={curve:?}），Coffer 本版仅支持 ES256"
-        )));
+    if let Some(alg) = algorithm.filter(|s| *s != "ecdsa") {
+        return Err(failure(
+            BwPasskeyFailureKind::KeyAlgorithmMismatch,
+            format!("非 ES256 算法（keyAlgorithm={alg:?}），Coffer 本版仅支持 ES256"),
+        ));
+    }
+    if let Some(c) = curve.filter(|s| *s != "p256") {
+        return Err(failure(
+            BwPasskeyFailureKind::KeyCurveMismatch,
+            format!("非 ES256 算法（keyCurve={c:?}），Coffer 本版仅支持 ES256"),
+        ));
     }
 
     // credentialId：必需、base64 可解码（标准 / URL-safe、有无 padding 均容）
@@ -410,7 +449,12 @@ fn map_passkey_row(
         .and_then(Value::as_str)
         .and_then(decode_b64_flexible)
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| failure("credentialId 缺失或不是合法 base64".into()))?;
+        .ok_or_else(|| {
+            failure(
+                BwPasskeyFailureKind::InvalidCredentialId,
+                "credentialId 缺失或不是合法 base64".into(),
+            )
+        })?;
 
     // userHandle：可缺失（空字节向量落库）
     let user_handle = entry
@@ -422,10 +466,12 @@ fn map_passkey_row(
     // counter：缺省 0；须为非负整数（仓库层校验同口径）
     let sign_count = match entry.get("counter") {
         None | Some(Value::Null) => 0,
-        Some(v) => v
-            .as_i64()
-            .filter(|c| *c >= 0)
-            .ok_or_else(|| failure("counter 不是非负整数".into()))?,
+        Some(v) => v.as_i64().filter(|c| *c >= 0).ok_or_else(|| {
+            failure(
+                BwPasskeyFailureKind::InvalidCounter,
+                "counter 不是非负整数".into(),
+            )
+        })?,
     };
 
     // 私钥：encryptedPrivateKey 必需。EncString（Bitwarden 真实导出形态，
@@ -434,9 +480,15 @@ fn map_passkey_row(
         .get("encryptedPrivateKey")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| failure("缺失私钥字段 encryptedPrivateKey（该行不可导入）".into()))?;
+        .ok_or_else(|| {
+            failure(
+                BwPasskeyFailureKind::MissingPrivateKey,
+                "缺失私钥字段 encryptedPrivateKey（该行不可导入）".into(),
+            )
+        })?;
     if looks_like_encstring(key_raw) {
         return Err(failure(
+            BwPasskeyFailureKind::EncryptedPrivateKey,
             "私钥为 Bitwarden 加密形态（EncString，未加密导出亦不解包该密钥）\
              ——本版无法导入此 passkey 行，条目本体照常导入"
                 .into(),
@@ -445,7 +497,10 @@ fn map_passkey_row(
     let private_key_pkcs8 = decode_b64_flexible(key_raw)
         .and_then(|der| normalize_private_key(&der))
         .ok_or_else(|| {
-            failure("私钥无法解析为 ES256（P-256）私钥（支持 PKCS#8 / SEC1 DER）".into())
+            failure(
+                BwPasskeyFailureKind::UnparseablePrivateKey,
+                "私钥无法解析为 ES256（P-256）私钥（支持 PKCS#8 / SEC1 DER）".into(),
+            )
         })?;
 
     // 用户名：userName 优先，userDisplayName 兜底
@@ -471,11 +526,6 @@ fn map_passkey_row(
         algorithm: COSE_ALG_ES256,
         sign_count,
     })
-}
-
-/// 坏行归类：非 ES256 单独成列（docs/17 §4.2 预检报告要求）。
-fn failure_is_non_es256(reason: &str) -> bool {
-    reason.contains("非 ES256")
 }
 
 /// 条目 id（缺失为空串——报错定位退化为标题）。
@@ -579,5 +629,15 @@ mod tests {
         ));
         assert!(!looks_like_encstring("2.no-pipe"));
         assert!(!looks_like_encstring(""));
+    }
+
+    /// L-2：非 ES256 族判定走枚举（reason 文案不参与分类）。
+    #[test]
+    fn 非es256族按枚举判定() {
+        assert!(BwPasskeyFailureKind::KeyAlgorithmMismatch.is_non_es256());
+        assert!(BwPasskeyFailureKind::KeyCurveMismatch.is_non_es256());
+        assert!(!BwPasskeyFailureKind::EncryptedPrivateKey.is_non_es256());
+        assert!(!BwPasskeyFailureKind::MissingRpId.is_non_es256());
+        assert!(!BwPasskeyFailureKind::UnparseablePrivateKey.is_non_es256());
     }
 }

@@ -56,7 +56,9 @@ use cf_domain::CfError;
 use cf_store::rows::{FieldRow, TagRow, UrlRow};
 use cf_store::{ItemRow, ItemStore, Repos};
 
-pub use mapping::{BwFieldModel, BwItemModel, BwPasskeyFailure, BwPasskeyModel};
+pub use mapping::{
+    BwFieldModel, BwItemModel, BwPasskeyFailure, BwPasskeyFailureKind, BwPasskeyModel,
+};
 pub use precheck::{BwAnalysis, BwPrecheckReport};
 
 /// Bitwarden 导入结果（与 1PUX 的 [`crate::pux::PuxImportResult`] 同体裁：

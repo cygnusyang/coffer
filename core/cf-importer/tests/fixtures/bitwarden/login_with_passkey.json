@@ -1,0 +1,77 @@
+{
+  "encrypted": false,
+  "folders": [{ "id": "folder-1", "name": "开发账号" }],
+  "items": [
+    {
+      "id": "bw-item-1",
+      "organizationId": null,
+      "folderId": "folder-1",
+      "type": 1,
+      "name": "Example Site",
+      "notes": "主账号备注",
+      "favorite": true,
+      "reprompt": 0,
+      "login": {
+        "uris": [{ "match": null, "uri": "https://example.com/login" }],
+        "username": "alice@example.com",
+        "password": "P@ssw0rd-逐字节",
+        "totp": "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example",
+        "passwordRevisionDate": null,
+        "autofillOnPageLoad": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "Y3JlZC1pZC0x",
+            "keyType": "public-key",
+            "keyAlgorithm": "ecdsa",
+            "keyCurve": "p256",
+            "rpId": "example.com",
+            "rpName": "Example",
+            "userHandle": "dXNlci1oYW5kbGUtMQ",
+            "userName": "alice@example.com",
+            "userDisplayName": "alice@example.com",
+            "counter": 3,
+            "discoverable": true,
+            "creationDate": "2026-08-01T12:30:00.000Z",
+            "encryptedPrivateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgH1THtN9Yr04dr25YaOOECBiQSeZzztzz7gTfoKjZM0KhRANCAATJw2TFOn57PJ2qnEE5fkNqv+riQosBDzm3JeP1H9tVxVdCrzzBIu58KOXRc9gTX50LkGHG2XDfX+vgmt/Wv4dK",
+            "encryptedUserKey": null,
+            "unknownFutureField": { "keep": true }
+          }
+        ]
+      },
+      "collectionIds": null,
+      "key": null,
+      "creationDate": "2026-08-01T12:00:00.000Z",
+      "revisionDate": "2026-08-15T09:00:00.000Z",
+      "deletedDate": null,
+      "passwordHistory": null,
+      "attachments": null,
+      "fields": [
+        { "type": 0, "name": "备注字段", "value": "自定义值", "linkedId": null }
+      ]
+    },
+    {
+      "id": "bw-item-2",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "name": "No Passkey Site",
+      "notes": null,
+      "favorite": false,
+      "reprompt": 0,
+      "login": {
+        "uris": [],
+        "username": "bob",
+        "password": "bob-password-2",
+        "totp": null,
+        "fido2Credentials": []
+      },
+      "collectionIds": null,
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null,
+      "passwordHistory": null,
+      "attachments": null
+    }
+  ]
+}

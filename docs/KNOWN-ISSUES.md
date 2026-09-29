@@ -384,6 +384,35 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
+## BUG-11（🟡 显式顺延，缓解已内置）：Bitwarden 真实导出的 passkey 私钥恒为 EncString 加密形态——当前导入路径对真实导出「passkey 全部不可导入」
+
+**登记日期**：2026-09-29
+**发现环境**：v0.5.0 降级版 #18 增量审查（dev-reviewer 第一轮，PK2 批 4268f23 声明范围核查）
+**分级**：严重级 S3（功能弱于宣称——导入通道存在但真实世界 passkey 导入面 ≈ 0，条目本体与密码导入不受影响）/ P2 / 来源版本 v0.5.0-PK2（`4268f23`） / 发现版本 v0.5.0（审查阶段）
+**状态**：🟡 显式顺延（缓解已内置：预检将此类行逐条列入 bad_passkeys/不可导入清单，用户可见、不静默丢弃；条目本体照常导入）
+**核销记录**：待回填（修复版本 + 测试名）
+
+### 现象（预期/实际 分行写）
+
+- 预期：FR-10.1 降级导入——Bitwarden JSON 导出中的 passkey（fido2Credentials）可导入为库内 passkey 行。
+- 实际：Bitwarden **真实未加密导出**中 passkey 私钥字段 `encryptedPrivateKey` 恒为 EncString 加密形态（attach key 不随导出解包）——PK2 解析器将其列入 bad_passkeys，passkey 行实际全部不可导入；仅合成/手工构造的明文 PKCS#8 JSON 可导入。调研 v2「Bitwarden JSON 导出含 passkey」的【文档】级结论对私钥字段不成立（导出含条目、不含可用私钥）。
+
+### 根因（已实证 / 待查）
+
+已实证：EncString 形态由 Bitwarden 客户端导出模型决定（非 Coffer 解析缺陷）。修复需支持 Bitwarden **密码保护导出格式**（EncString 经用户主密码解密）——独立特性面（KDF + AES 解密链），非小改。
+
+### 修复路径
+
+1. 支持 Bitwarden password-protected export 解密（用户输入导出密码 → 解出 fido2Credentials 私钥 → 归一化 PKCS#8）——目标版本待定（ADP/后续版本卡均可，量级 ≈ 1 周内）；
+2. 或接受现状并显式声明（UI 预检已逐条列出不可导入原因）；
+3. **发版文案约束（审查裁定，即时生效）**：TCB-1 真实样本核对关闭前，README/docs/16 判据不得声称「Bitwarden passkey 导入可用」。
+
+### 复现与诊断
+
+真实 Bitwarden 未加密导出（含 passkey 条目）→ `precheck_bitwarden_json` → fido2Credentials 行全部进 bad_passkeys（EncString 形态拒收）。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

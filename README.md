@@ -75,7 +75,7 @@ Rust 工作区（`core/`）11 个 crate：
 | --- | --- |
 | `cf-crypto` | 加密原语封装：Argon2id KDF、XChaCha20-Poly1305 AEAD、CSPRNG、内存清零 |
 | `cf-format` | 库容器结构层：头部读写、格式版本识别、格式迁移 |
-| `cf-domain` | 领域模型：条目 / 字段 / 保险库、22 类模板、校验规则 |
+| `cf-domain` | 领域模型：条目 / 字段 / 保险库、22 类模板、校验规则；`LicenseGate` 许可门禁端口（FR-15，默认 `PermitAllGate`，官方判定器闭源不入公开仓） |
 | `cf-store` | 存储引擎：SQLite schema、加密字段读写、事务、附件、历史版本 |
 | `cf-importer` | 1PUX / CSV / opvault 解析、字段映射、预检报告 |
 | `cf-exporter` | 加密备份、1PUX 兼容导出、CSV 导出 |
@@ -100,9 +100,9 @@ Rust 工作区（`core/`）11 个 crate：
 | **M4 macOS 完整** | 附件、opvault 导入、1PUX 导出、Passkey | ⬜ 未开始 |
 | **M5 Android 端** | 第二交付目标 | ⬜ 未开始 |
 
-**当前进展（2026-09-28）**：
+**当前进展（2026-09-29）**：
 
-- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **749 个用例**，门禁命令下 **741 条执行通过**（另 8 条标 `#[ignore]`：1 条 1 GiB KDF 重载荷用例 release 人工独占、fuzz/统计类用例按 CI 口径 `--include-ignored` 执行）
+- ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **768 个用例**，门禁命令下 **760 条执行通过**（另 8 条标 `#[ignore]`：1 条 1 GiB KDF 重载荷用例 release 人工独占、fuzz/统计类用例按 CI 口径 `--include-ignored` 执行）
 - ℹ️ 门禁命令为 `cargo test --workspace --no-fail-fast`（**须在 `core/` 下执行**）。历史上曾有两条用例需要 `--skip`（1 GiB KDF 资源耗尽、`千条搜索基线` 单次墙钟断言 flaky），**BUG-4 已于 2026-09-27 修复，`--skip` 不再需要**；根因与修复见 `docs/KNOWN-ISSUES.md` **BUG-4**
 - ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零；**9 把派生子密钥**（v0.2 增 audit_key、root_mac_key）
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通

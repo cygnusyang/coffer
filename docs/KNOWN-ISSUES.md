@@ -413,6 +413,33 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
+## BUG-12（🟡 已定位待修）：cf-store `attachment_repo` 测试基建并行时序 flake——`temp_vault_dir()` pid+纳秒命名可撞名
+
+**登记日期**：2026-09-29
+**发现环境**：v0.5.0 PW 批门禁（workspace 并行满载首跑 FAIL、复跑全绿；日志 `/tmp/coffer-gate-084749.log`（FAIL）/ `/tmp/coffer-gate-085126.log`（全绿）——dev-coder-ffi 发现上报，lead 按源码与日志复核证实）
+**分级**：严重级 S3（测试基建缺陷，BUG-4 同族——具门禁否决力：并行满载下偶发假红）/ P1 / 来源版本 v0.1（fixture 自入库即带病） / 发现版本 v0.5.0-PW 批门禁
+**状态**：🟡 已定位待修（单开小工单，恢复开发后首批执行）
+**核销记录**：待回填
+
+### 现象（预期/实际 分行写）
+
+- 预期：`cargo test --workspace --no-fail-fast` 并行满载下 `cf-store --test attachment_repo` 稳定全绿。
+- 实际：偶发 `密文跨附件搬运解密失败` / `content_mac篡改检出` 两用例 FAILED（8 passed / 2 failed），单跑即过、复跑全绿——非产品缺陷（本批代码不涉 cf-store）。
+
+### 根因（已实证）
+
+`attachment_repo.rs:29` `temp_vault_dir()` 用 `pid + SystemTime 纳秒` 命名临时目录：同进程（同 pid）内两个并行测试在同一时钟 tick 内调用即撞名；某用例收尾 `remove_dir_all` 拆掉另一用例的现场 → 密文/结构断言失败。macOS 时钟分辨率粗于测试步进使撞名窗口实际存在。
+
+### 修复路径
+
+目录名加入测试名（或进程内原子计数器）消除同 pid 撞名；同时检查全仓 `tests/` 内同型 `pid+nanos` 命名模式一并修复（BUG-4「测试基建门禁否决力」同族，修后按其复验口径连续多次全量门禁验证）。
+
+### 复现与诊断
+
+并行满载重复跑 `cargo test --workspace --no-fail-fast`（或 `./tools/run_gate.sh --skip-build`）至偶发 attachment_repo 2 用例失败 → 单跑该 target 即过 → 对照 `/tmp/coffer-gate-084749.log`。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

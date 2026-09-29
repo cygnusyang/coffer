@@ -36,7 +36,7 @@ cd "$CORE_DIR"
 TREE_FILE="$(mktemp)"
 trap 'rm -f "$TREE_FILE"' EXIT
 
-echo "==> cargo tree --workspace -e normal（工作区根：$CORE_DIR）"
+echo "==> cargo tree --workspace -e normal（工作区根：${CORE_DIR}）"
 if ! cargo tree --workspace -e normal >"$TREE_FILE"; then
     echo "ERROR: cargo tree 执行失败，无法验证零网络（不要带病放行）" >&2
     exit 1
@@ -85,7 +85,7 @@ for dep in $(printf '%s\n' "$BLACKLIST"); do
 done
 
 if [ -n "$HITS" ]; then
-    echo "==> 结果：FAIL（黑名单命中：$HITS）"
+    echo "==> 结果：FAIL（黑名单命中：${HITS}）"
     exit 1
 fi
 
@@ -99,6 +99,6 @@ else
     echo "==> 可疑项：无（依赖名不含 http / tls / socket / net 子串）"
 fi
 
-echo "==> 结果：PASS（依赖总数 $TOTAL，黑名单 0 命中）"
+echo "==> 结果：PASS（依赖总数 ${TOTAL}，黑名单 0 命中）"
 echo "    本结果仅证明依赖图无网络 crate；运行时零 socket 见 v0.4.0 出口判据②（macOS 真机）。"
 exit 0

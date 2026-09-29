@@ -1,0 +1,168 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "id": "bw-sec1",
+      "type": 1,
+      "name": "Sec1 Key Item",
+      "login": {
+        "uris": [],
+        "username": "carol",
+        "password": "carol-pw",
+        "totp": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "Y3JlZC1pZC0x",
+            "rpId": "sec1.example.com",
+            "userHandle": "dXNlci1oYW5kbGUtMQ",
+            "counter": 0,
+            "creationDate": "2026-08-01T12:30:00.000Z",
+            "encryptedPrivateKey": "MHcCAQEEIB9Ux7TfWK9OHa9uWGjjhAgYkEnmc87c8+4E36Co2TNCoAoGCCqGSM49AwEHoUQDQgAEycNkxTp+ezydqpxBOX5Dar/q4kKLAQ85tyXj9R/bVcVXQq88wSLufCjl0XPYE1+dC5Bhxtlw31/r4Jrf1r+HSg=="
+          }
+        ]
+      },
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "bw-p384",
+      "type": 1,
+      "name": "Non ES256 Item",
+      "login": {
+        "uris": [],
+        "username": "dave",
+        "password": "dave-pw",
+        "totp": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "Y3JlZC1wMzg0",
+            "keyAlgorithm": "ecdsa",
+            "keyCurve": "p384",
+            "rpId": "p384.example.com",
+            "userHandle": "dXNlci1wMzg0",
+            "counter": 1,
+            "creationDate": "2026-08-01T12:30:00.000Z",
+            "encryptedPrivateKey": "AABBCCDD"
+          }
+        ]
+      },
+      "passwordHistory": [
+        { "lastUsedDate": "2026-06-01T00:00:00.000Z", "password": "old-pw" }
+      ],
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "bw-badcred",
+      "type": 1,
+      "name": "Bad CredentialId Item",
+      "login": {
+        "uris": [],
+        "username": "erin",
+        "password": "erin-pw",
+        "totp": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "!!not-base64!!",
+            "rpId": "bad.example.com",
+            "counter": 0,
+            "encryptedPrivateKey": "AABBCCDD"
+          }
+        ]
+      },
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "bw-encstring",
+      "type": 1,
+      "name": "EncString Key Item",
+      "login": {
+        "uris": [],
+        "username": "frank",
+        "password": "frank-pw",
+        "totp": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "Y3JlZC1lbmNyeXB0ZWQ",
+            "rpId": "enc.example.com",
+            "counter": 0,
+            "encryptedPrivateKey": "2.AbC123|xyz456|mac789"
+          }
+        ]
+      },
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "bw-twobad",
+      "type": 1,
+      "name": "Two Bad Rows Item",
+      "login": {
+        "uris": [],
+        "username": "grace",
+        "password": "grace-pw",
+        "totp": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "Y3JlZC1ub3Jw",
+            "counter": 0,
+            "encryptedPrivateKey": "AABBCCDD"
+          },
+          {
+            "credentialId": "Y3JlZC1uZWdhdGl2ZQ",
+            "rpId": "neg.example.com",
+            "counter": -1,
+            "encryptedPrivateKey": "AABBCCDD"
+          }
+        ]
+      },
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "bw-card",
+      "type": 3,
+      "name": "Bank Card",
+      "notes": "原备注",
+      "card": {
+        "cardholderName": "CAROL BLACK",
+        "number": "4111111111111111",
+        "brand": "Visa",
+        "expMonth": "12",
+        "expYear": "2030"
+      },
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "bw-trashed",
+      "type": 1,
+      "name": "Trashed Item",
+      "login": {
+        "uris": [],
+        "username": "henry",
+        "password": "henry-pw",
+        "totp": null,
+        "fido2Credentials": []
+      },
+      "fields": [],
+      "creationDate": "2026-07-01T00:00:00.000Z",
+      "revisionDate": "2026-07-01T00:00:00.000Z",
+      "deletedDate": "2026-07-20T08:00:00.000Z"
+    }
+  ]
+}

@@ -4,6 +4,8 @@
 //! 即导入所得），未导入项逐条列出、不静默丢弃（FR-7.6）。报告扩展字段：
 //!
 //! - `attachment_count`：附件总数（FR-7.4）；
+//! - `passkey_count`：检测到的疑似 passkey 字段数（docs/17 §4.2 PK2
+//!   增量字段，向后兼容——桌面导出恒为 0，见 [`super::passkey`]）；
 //! - `unknown_categories`：未识别 `(条目 uuid, categoryUuid)` 清单
 //!   （E-4：降级条目**计入导入成功**，不在未导入清单，但预检必须
 //!   surface——D-6 删源提示条件依赖它）；
@@ -27,6 +29,9 @@ pub struct PuxPrecheckReport {
     pub category_distribution: Vec<(String, u32)>,
     /// 附件总数。
     pub attachment_count: u32,
+    /// 检测到的疑似 passkey 字段数（docs/17 §4.2 PK2 增量，向后兼容；
+    /// 桌面 1PUX 恒为 0——恒空快速路径，见 [`super::passkey`]）。
+    pub passkey_count: u32,
     /// 未识别类别清单：(条目 uuid, 原始 categoryUuid)。
     pub unknown_categories: Vec<(String, String)>,
     /// 回收站条目数（state=trashed）。
@@ -92,11 +97,30 @@ pub fn analyze(archive: &mut PuxArchive) -> Result<PuxAnalysis, CfError> {
     let mut trashed_count: u32 = 0;
     let mut warnings: Vec<String> = Vec::new();
     let mut total_items: u32 = 0;
+    let mut passkey_count: u32 = 0;
 
     for account in &model.accounts {
         for vault in &account.vaults {
             for item in &vault.items {
                 total_items += 1;
+
+                // passkey 快速路径（docs/17 §4.2 PK2）：桌面导出恒为 0；
+                // 检出即 surface（计数 + 告警），本版不落库——1PUX
+                // iOS/Android passkey 字段形态未验证，见 pux::passkey
+                let refs = super::passkey::passkey_refs(item);
+                if !refs.is_empty() {
+                    passkey_count += refs.len() as u32;
+                    warnings.push(format!(
+                        "条目 {}（{}）：检测到 {} 处疑似 passkey 字段（1PUX iOS/Android 导出形态未验证，本版仅计数不导入）",
+                        item.uuid,
+                        item.overview
+                            .as_ref()
+                            .and_then(|o| o.title.as_deref())
+                            .unwrap_or("(无标题)"),
+                        refs.len()
+                    ));
+                }
+
                 let mut signals = ItemMapSignals::default();
                 match map_item(item, &mut signals)? {
                     MapOutcome::Skipped(reason) => {
@@ -237,6 +261,7 @@ pub fn analyze(archive: &mut PuxArchive) -> Result<PuxAnalysis, CfError> {
         importable_items,
         category_distribution: category_counts.into_iter().collect(),
         attachment_count: models.iter().filter(|m| m.file.is_some()).count() as u32,
+        passkey_count,
         unknown_categories,
         trashed_count,
         password_history_dropped,

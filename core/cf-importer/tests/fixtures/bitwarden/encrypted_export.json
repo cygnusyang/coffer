@@ -1,0 +1,9 @@
+{
+  "encrypted": true,
+  "password": "not-a-real-password",
+  "salt": "c2FsdA",
+  "kdfIterations": 600000,
+  "kdfType": 0,
+  "encKeyValidation_DO_NOT_EDIT": "0.aaa|bbb",
+  "items": []
+}

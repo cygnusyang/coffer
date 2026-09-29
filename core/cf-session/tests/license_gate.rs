@@ -90,7 +90,9 @@ impl LicenseGate for FixedGate {
 }
 
 fn expired_gate() -> Arc<dyn LicenseGate> {
-    Arc::new(FixedGate(LicenseDecision::Deny(LicenseDenial::TrialExpired)))
+    Arc::new(FixedGate(LicenseDecision::Deny(
+        LicenseDenial::TrialExpired,
+    )))
 }
 
 fn abnormal_gate() -> Arc<dyn LicenseGate> {
@@ -146,13 +148,14 @@ fn readonly_allow_surface() {
     // 体检（允许面：只读无副作用）
     session.run_watchtower().unwrap();
 
-    // TOTP 展示路径：无 TOTP 条目报错也应是非 6xxx 码
-    if let Err(e) = session.totp_code(&item_id) {
-        assert!(
-            e.code() < 6001 || e.code() > 6004,
-            "TOTP 展示路径不得被许可门禁拦截：{e:?}"
-        );
-    }
+    // TOTP 展示路径：无 TOTP 条目 → 1011（允许面：门禁不拦展示路径，
+    // 03 §14.6 允许组「复制与展示」）
+    let totp_err = session.totp_code(&item_id).unwrap_err();
+    assert_eq!(
+        totp_err.code(),
+        1011,
+        "TOTP 展示路径不得被许可门禁拦截：{totp_err:?}"
+    );
 }
 
 /// TC-GATE-02：拒绝面——条目写逐方法 6002。
@@ -174,8 +177,16 @@ fn readonly_deny_item_writes() {
         6002,
         "update_item_with_totp",
     );
-    assert_deny_code(session.delete_item(&item_id, false), 6002, "delete_item(soft)");
-    assert_deny_code(session.delete_item(&item_id, true), 6002, "delete_item(hard)");
+    assert_deny_code(
+        session.delete_item(&item_id, false),
+        6002,
+        "delete_item(soft)",
+    );
+    assert_deny_code(
+        session.delete_item(&item_id, true),
+        6002,
+        "delete_item(hard)",
+    );
     assert_deny_code(session.restore_item(&item_id), 6002, "restore_item");
     assert_deny_code(session.set_favorite(&item_id, true), 6002, "set_favorite");
     assert_deny_code(
@@ -256,11 +267,7 @@ fn deny_code_6002_vs_6003() {
     let (_base, session) = seeded_session("codes");
 
     session.set_license_gate(expired_gate());
-    assert_deny_code(
-        session.create_item(&login_draft("x")),
-        6002,
-        "expired gate",
-    );
+    assert_deny_code(session.create_item(&login_draft("x")), 6002, "expired gate");
 
     session.set_license_gate(abnormal_gate());
     assert_deny_code(

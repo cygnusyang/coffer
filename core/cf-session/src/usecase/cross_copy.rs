@@ -41,6 +41,7 @@
 //!   cf-store repo/audit.rs 模块注释）。
 
 use cf_domain::item::{ItemDraft, ItemState};
+use cf_domain::license::LicensedOp;
 use cf_domain::secret::SecretString;
 use cf_domain::snapshot::ItemSnapshot;
 use cf_domain::totp_data::TotpUpdate;
@@ -130,7 +131,7 @@ pub fn copy_item(
         // 许可只读门禁（FR-15）：跨库复制是对目标库的条目写，与库内
         // 写用例同过统一守卫（`docs/03` §14.6 拒绝面，矩阵 ItemWrite
         // 组含 copy_item——v0.6.0 补登记）。
-        let mut guard = dst.write_guard(cf_domain::license::LicensedOp::ItemWrite)?;
+        let mut guard = dst.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         match state.store.with_tx(|repos| {
             repos.items.insert(&row, &title)?;

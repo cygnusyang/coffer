@@ -39,7 +39,9 @@ impl LicenseGate for FixedGate {
 }
 
 fn expired_gate() -> Arc<dyn LicenseGate> {
-    Arc::new(FixedGate(LicenseDecision::Deny(LicenseDenial::TrialExpired)))
+    Arc::new(FixedGate(LicenseDecision::Deny(
+        LicenseDenial::TrialExpired,
+    )))
 }
 
 fn abnormal_gate() -> Arc<dyn LicenseGate> {
@@ -61,7 +63,8 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("cf-ffi-gate-{tag}-{}-{nanos}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("cf-ffi-gate-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -118,8 +121,8 @@ fn readonly_deny_session_import_via_ffi() {
     app.set_license_gate(expired_gate());
 
     // 建库走 Rust 侧（绕开被门禁拦截的 FFI create_vault），FFI 侧打开
-    let brief = cf_session::create_vault_with_kdf(&base, "导入库", STRONG_PASSWORD, fast_kdf())
-        .unwrap();
+    let brief =
+        cf_session::create_vault_with_kdf(&base, "导入库", STRONG_PASSWORD, fast_kdf()).unwrap();
     let session = app
         .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
         .unwrap();
@@ -135,17 +138,21 @@ fn readonly_deny_session_import_via_ffi() {
 #[test]
 fn readonly_deny_exports() {
     let base = temp_base("deny-export");
-    let brief = cf_session::create_vault_with_kdf(&base, "出口库", STRONG_PASSWORD, fast_kdf())
-        .unwrap();
+    let brief =
+        cf_session::create_vault_with_kdf(&base, "出口库", STRONG_PASSWORD, fast_kdf()).unwrap();
     let app = CofferApp::new();
     app.set_license_gate(expired_gate());
 
     // 应用级：加密备份
     let out = base.join("backup.coffer");
-    let err = err_code(app.export_backup(
-        base.join(brief.uuid.to_string()).to_string_lossy().into_owned(),
-        out.to_string_lossy().into_owned(),
-    ));
+    let err = err_code(
+        app.export_backup(
+            base.join(brief.uuid.to_string())
+                .to_string_lossy()
+                .into_owned(),
+            out.to_string_lossy().into_owned(),
+        ),
+    );
     assert_eq!(err, 6002, "export_backup 只读态必须 6002");
     assert!(!out.exists(), "被拒导出不得产生输出文件");
 
@@ -223,7 +230,10 @@ fn permit_all_default_via_ffi() {
         )
         .unwrap();
     let session = app
-        .open_vault(base.to_string_lossy().into_owned(), brief.vault_uuid.clone())
+        .open_vault(
+            base.to_string_lossy().into_owned(),
+            brief.vault_uuid.clone(),
+        )
         .unwrap();
     session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
     session

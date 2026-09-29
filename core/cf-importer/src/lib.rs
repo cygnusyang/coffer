@@ -69,7 +69,8 @@ pub mod pux;
 pub mod risk;
 
 pub use bitwarden::{
-    BwImportResult, BwItemModel, BwPasskeyFailure, BwPasskeyModel, BwPrecheckReport,
+    BwImportResult, BwItemModel, BwPasskeyFailure, BwPasskeyFailureKind, BwPasskeyModel,
+    BwPrecheckReport,
 };
 pub use csv::mapping::{ImportModel, OtpauthData};
 pub use precheck::{analyze_csv, read_and_analyze, CsvAnalysis, CsvPrecheckReport};

@@ -35,7 +35,8 @@ pub struct BwPrecheckReport {
     pub passkey_item_count: u32,
     /// **「含密码且含 passkey 的条目数」**（FR-10.6 可测试证据，D-6）。
     pub items_with_password_and_passkey: u32,
-    /// 非 ES256 passkey 行显式列表（TCB-7）。
+    /// 非 ES256 passkey 行显式列表（TCB-7；归列按
+    /// [`super::mapping::BwPasskeyFailureKind`] 枚举——L-2，按数据不按文案）。
     pub non_es256: Vec<super::mapping::BwPasskeyFailure>,
     /// 其余坏 passkey 行逐条清单（EncString / 坏 credentialId / 缺 rpId /
     /// 负 counter；导入跳过该行不丢条目）。

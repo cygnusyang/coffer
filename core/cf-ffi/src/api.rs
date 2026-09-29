@@ -22,8 +22,9 @@
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
+use cf_domain::license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
 use cf_domain::CfError;
 use cf_importer::OtpauthData;
 
@@ -37,6 +38,12 @@ pub struct CofferApp {
     /// 已打开会话注册表（key = vault uuid 文本）。持强引用防止 Swift 侧
     /// 意外提前释放导致密钥 drop（docs/07 §6.1 R-4）。
     sessions: Mutex<HashMap<String, Arc<VaultSession>>>,
+    /// 许可只读门禁（FR-15，`docs/02` §10.3 方案 C 应用级落点）：管辖
+    /// **不经过会话**的应用级写操作（create_vault / export_backup /
+    /// restore_backup），并经 [`Self::open_vault`] 下传全部会话。默认
+    /// [`PermitAllGate`]；官方装配经 [`Self::set_license_gate`] 注入
+    /// cf-license（闭源，私有仓库）。
+    license_gate: RwLock<Arc<dyn LicenseGate>>,
 }
 
 /// 解锁会话门面（`cf_session::VaultSession` 的 UniFFI Object 包装）。
@@ -53,6 +60,7 @@ impl CofferApp {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
+            license_gate: RwLock::new(Arc::new(PermitAllGate)),
         })
     }
 
@@ -101,6 +109,7 @@ impl CofferApp {
         name: String,
         password: String,
     ) -> Result<FfiVaultBrief, FfiError> {
+        self.license_check(LicensedOp::VaultWrite)?;
         session_call(AssertUnwindSafe(|| {
             cf_session::create_vault(Path::new(&base_dir), &name, &password)
         }))
@@ -130,6 +139,8 @@ impl CofferApp {
 
         let vault_dir = PathBuf::from(base_dir).join(&key);
         let session = session_call(AssertUnwindSafe(|| cf_session::open_vault(&vault_dir)))?;
+        // 许可门禁下传（FR-15）：会话级写用例统一守卫与应用级 gate 同源
+        session.set_license_gate(self.license_gate_snapshot());
         let wrapped = Arc::new(VaultSession {
             inner: Arc::new(session),
         });
@@ -185,6 +196,9 @@ impl CofferApp {
         vault_dir: String,
         out_path: String,
     ) -> Result<FfiBackupExportResult, FfiError> {
+        // FR-15.2：数据出口在只读模式全拒（`docs/03` §14.6 边界裁决：
+        // 备份诉求以「激活后可备份」文案引导，从需求原文）
+        self.license_check(LicensedOp::ExportData)?;
         session_call(AssertUnwindSafe(|| {
             cf_exporter::export_backup(Path::new(&vault_dir), Path::new(&out_path))
         }))
@@ -220,6 +234,7 @@ impl CofferApp {
         backup_path: String,
         target_base_dir: String,
     ) -> Result<String, FfiError> {
+        self.license_check(LicensedOp::ImportRestore)?;
         session_call(AssertUnwindSafe(|| {
             cf_exporter::restore_backup(Path::new(&backup_path), Path::new(&target_base_dir))
         }))
@@ -244,6 +259,45 @@ fn strength_estimate_impl(candidate: &str) -> FfiStrengthEstimate {
 }
 
 impl CofferApp {
+    /// 注入许可门禁（官方装配点，`docs/02` §10.5 方案 A）：cf-ffi-official
+    /// 构造工厂后注入 cf-license 的 gate 实例，应用级写操作与后续
+    /// [`Self::open_vault`] 创建的全部会话共用同一判定源。开源产物不
+    /// 调用——默认 [`PermitAllGate`] 即「自编译 = 全功能免费版」契约
+    /// （TC-GATE-10）。
+    ///
+    /// **刻意不进 `#[uniffi::export]`**：本方法是 Rust 装配 API 而非
+    /// FFI 面，Swift 绑定不出现该符号（TC-BLD-02：公开产物无许可代码
+    /// 路径的可扫描性）；UniFFI 也不支持 trait object 参数。装配期
+    /// 约定构造后、首次写操作前注入；运行中更换 gate 仅供测试
+    /// （TC-GATE-09）。
+    pub fn set_license_gate(&self, gate: Arc<dyn LicenseGate>) {
+        *self
+            .license_gate
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = gate;
+    }
+
+    /// 当前 gate 快照（Arc 克隆，缩短读锁持有窗口）。
+    fn license_gate_snapshot(&self) -> Arc<dyn LicenseGate> {
+        self.license_gate
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// 应用级写操作的许可判定（`docs/03` §14.6 拒绝面：不经会话的
+    /// create_vault / export_backup / restore_backup 在此收口）。
+    fn license_check(&self, op: LicensedOp) -> Result<(), FfiError> {
+        match self.license_gate_snapshot().check(op) {
+            LicenseDecision::Allow => Ok(()),
+            LicenseDecision::Deny(deny) => Err(match deny {
+                LicenseDenial::TrialExpired => CfError::LicenseTrialExpiredWriteDenied,
+                LicenseDenial::StateUnavailable => CfError::LicenseStateWriteDenied,
+            }
+            .into()),
+        }
+    }
+
     /// 注册表互斥锁守卫（poison 不扩散：会话状态本身可安全接管）。
     fn sessions_lock(&self) -> MutexGuard<'_, HashMap<String, Arc<VaultSession>>> {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)

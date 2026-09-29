@@ -138,6 +138,34 @@ pub enum CfError {
     /// 参数无效。{0} 为可操作的错误说明。
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+
+    /// 序列号无效（FR-15.3 / FR-15.6）。
+    ///
+    /// **6001 刻意合并**序列号验证的全部失败原因（格式错 / 签名错 / 他机 /
+    /// 版本不支持，同码同文案——FR-15.6 不可区分纪律，与 [`CfError::UnlockFailed`]
+    /// 的 1002 合并同构）。因此本变体**不带任何载荷**。
+    ///
+    /// 开源产物仅登记码位，**不存在产生路径**（`docs/03` §14.5：
+    /// 公开产物与官方产物差异仅为激活模块，C-05）。
+    #[error("license serial invalid")]
+    LicenseSerialInvalid,
+
+    /// 试用期已结束，写入被只读门禁拒绝（FR-15.1 / FR-15.2）。
+    /// 激活后可恢复写入。产生于官方产物的 `LicenseGate` 注入路径
+    /// （[`crate::license::LicenseDenial::TrialExpired`]）。
+    #[error("license trial expired, write denied")]
+    LicenseTrialExpiredWriteDenied,
+
+    /// 当前许可状态不允许此操作（FR-15.2 异常退化只读，`docs/03` §14.8）。
+    /// 引导重启 / 重装，仍异常再联系支持。产生路径同上
+    /// （[`crate::license::LicenseDenial::StateUnavailable`]）。
+    #[error("license state does not allow this operation")]
+    LicenseStateWriteDenied,
+
+    /// 许可信息存储暂不可用（FR-15.4，`docs/03` §14.8 失败模式表）。
+    /// 视情况可恢复（重启重试）。开源产物仅登记码位，不存在产生路径。
+    #[error("license store unavailable")]
+    LicenseStoreUnavailable,
 }
 
 impl CfError {
@@ -147,7 +175,8 @@ impl CfError {
     /// 本地化映射 —— 消息文本可随措辞调整，错误码是跨版本契约。
     ///
     /// 段的划分：1001–1012 保险库与加密与存储校验，2001–2003 导入导出，
-    /// 3001 验证码，4001–4002 生物识别，5001–5002 系统级。
+    /// 3001 验证码，4001–4002 生物识别，5001–5002 系统级，
+    /// 6001–6004 许可与授权（FR-15）。
     ///
     /// **无 `_` 兜底分支**：新增变体时编译器会强制在此补码。
     ///
@@ -190,6 +219,10 @@ impl CfError {
             Self::BiometricInvalidated => 4002,
             Self::Io(_) => 5001,
             Self::InvalidArgument(_) => 5002,
+            Self::LicenseSerialInvalid => 6001,
+            Self::LicenseTrialExpiredWriteDenied => 6002,
+            Self::LicenseStateWriteDenied => 6003,
+            Self::LicenseStoreUnavailable => 6004,
         }
     }
 }
@@ -228,6 +261,10 @@ mod tests {
             CfError::BiometricInvalidated => "BiometricInvalidated",
             CfError::Io(_) => "Io",
             CfError::InvalidArgument(_) => "InvalidArgument",
+            CfError::LicenseSerialInvalid => "LicenseSerialInvalid",
+            CfError::LicenseTrialExpiredWriteDenied => "LicenseTrialExpiredWriteDenied",
+            CfError::LicenseStateWriteDenied => "LicenseStateWriteDenied",
+            CfError::LicenseStoreUnavailable => "LicenseStoreUnavailable",
         }
     }
 
@@ -256,11 +293,15 @@ mod tests {
             CfError::BiometricInvalidated,
             CfError::Io("permission denied".into()),
             CfError::InvalidArgument("empty password".into()),
+            CfError::LicenseSerialInvalid,
+            CfError::LicenseTrialExpiredWriteDenied,
+            CfError::LicenseStateWriteDenied,
+            CfError::LicenseStoreUnavailable,
         ]
     }
 
-    /// 按 `docs/03-详细设计.md` §12 顺序排列的 20 个变体名。
-    const EXPECTED_VARIANTS: [&str; 20] = [
+    /// 按 `docs/03-详细设计.md` §12 顺序排列的 24 个变体名。
+    const EXPECTED_VARIANTS: [&str; 24] = [
         "VaultLocked",
         "UnlockFailed",
         "VaultNotFound",
@@ -281,6 +322,10 @@ mod tests {
         "BiometricInvalidated",
         "Io",
         "InvalidArgument",
+        "LicenseSerialInvalid",
+        "LicenseTrialExpiredWriteDenied",
+        "LicenseStateWriteDenied",
+        "LicenseStoreUnavailable",
     ];
 
     #[test]
@@ -299,8 +344,10 @@ mod tests {
     fn error_codes_match_design_doc_section_12() {
         // 期望值逐项抄自 docs/03-详细设计.md §12 错误码表。
         // 1010–1012 为 docs/07 纵切增补（已同步 docs/03 §12）。
+        // 6001–6004 为 FR-15 许可域（已同步 docs/03 §12 / §14.5）；
+        // 6001 / 6004 在开源产物不存在产生路径（仅登记码位）。
         // 本表是**冻结快照**：改动必须同步文档，且走评审。
-        let expected: [(CfError, u16); 20] = [
+        let expected: [(CfError, u16); 24] = [
             (CfError::VaultLocked, 1001),
             (CfError::UnlockFailed, 1002),
             (CfError::VaultNotFound, 1003),
@@ -321,6 +368,10 @@ mod tests {
             (CfError::BiometricInvalidated, 4002),
             (CfError::Io(String::new()), 5001),
             (CfError::InvalidArgument(String::new()), 5002),
+            (CfError::LicenseSerialInvalid, 6001),
+            (CfError::LicenseTrialExpiredWriteDenied, 6002),
+            (CfError::LicenseStateWriteDenied, 6003),
+            (CfError::LicenseStoreUnavailable, 6004),
         ];
 
         for (err, code) in &expected {

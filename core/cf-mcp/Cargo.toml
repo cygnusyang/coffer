@@ -19,5 +19,15 @@ thiserror = { workspace = true }
 zeroize = { workspace = true }
 tracing = { workspace = true }
 
+# CofferStoreProvider（骨架，docs/20 §4.5）经 `coffer-store` feature 才引入
+# cf-session（→ cf-store → cf-crypto / cf-format / cf-domain，单向）。
+# MVP 默认关闭：不启用该 feature 时，cf-mcp 依赖树不含 cf-session/cf-store。
+cf-session = { workspace = true, optional = true }
+
+[features]
+# 启用 Coffer 自家 Secret Store provider（v2.x 存储模型扩展落定前仅骨架）。
+# 启用后 workspace 依赖树新增 cf-mcp → cf-session 边（docs/20 §9.2 互斥核对）。
+coffer-store = ["dep:cf-session"]
+
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -9,6 +9,17 @@
 //! 否则会对桩实现假绿。实现完成后应逐条转绿；红不了的用例（本文件头部 `// 未覆盖` 条目）
 //! 不得假装已测。
 //!
+//! # 范围收缩（D-1，docs/20 §1.3/§3.3 —— 暂定、用户确认中、保持可逆）
+//! v0.5 工具集暂定收缩为 **4 个**：`list_secret_names` / `list_secrets` /
+//! `run_with_secret` / `get_secret_metadata`；`grant/revoke/rotate/environment` 系列
+//! （含 `audit_secret_usage`）顺延 v2.x。
+//!
+//! - **4 工具相关用例（16 条，无标记）**：实现到位后须核对转绿 —— 即 lead 指令 ①；
+//! - **顺延用例（25 条，带 `D-1 未确认收缩范围` 标记）**：**保留、不删、不跳过**，
+//!   作为 v2.x 回归基线 —— 即 lead 指令 ②。顺延只代表实现排期后移，不改变判据本身
+//!   （docs/10 AS-* 判据仍有效），桩实现下它们仍是预期红灯。
+//! - 转绿/保留的精确计数口径见文件尾注（lead 指令 ③）。
+//!
 //! # 测试种子契约（实现须满足，否则对应用例无法转绿）
 //! cf-mcp 桩 crate 目前不持有任何存储；验收用例通过**进程环境变量**向实现注入测试数据
 //! （docs/10 §4 U-4 存储模型未裁定，故不以任何具体存储 API 为前提）。实现须读取以下
@@ -28,7 +39,7 @@
 //!
 //! | docs/10 判据 | 覆盖方式 | 备注 |
 //! | --- | --- | --- |
-//! | AS-4 MCP 工具面 | 全部 12 个工具函数逐一正/负路径 | 桩签名即契约面 |
+//! | AS-4 MCP 工具面 | 全部 12 个工具函数逐一正/负路径；D-1 后 4 工具为 v0.5 转绿面，其余 8 工具顺延 v2.x | 桩签名即契约面；顺延用例带 `D-1 未确认收缩范围` 标记保留 |
 //! | AS-4 默认不提供 reveal/get_password/dump_vault/export_all_secrets | **未覆盖（编译期面检查）** | Rust 运行时无法断言「符号不存在」；需 trybuild/compiletest 或评审清单，另立文件 |
 //! | AS-5 模式 A（env 注入，只见名不见值） | `inject_environment_applies_to_child_process` | 变量真实注入子进程 |
 //! | AS-5 模式 B（run_with_secret：子进程+注入+退出码） | `run_with_secret_*` 一组 | 副作用/退出码可观察 |
@@ -188,6 +199,7 @@ fn list_secrets_pairs_name_with_metadata() {
 // ===========================================================================
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn create_environment_then_list_contains_it() {
     // 判据（AS-4）：create_environment 后 list_environments 必须回显。
     let env_name = unique("env");
@@ -201,18 +213,21 @@ fn create_environment_then_list_contains_it() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn create_environment_rejects_empty_name() {
     let r = mcp::create_environment("");
     assert!(r.is_err(), "empty env name must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn create_environment_rejects_whitespace_only_name() {
     let r = mcp::create_environment("   ");
     assert!(r.is_err(), "whitespace-only env name must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn create_environment_rejects_duplicate() {
     let env_name = unique("envdup");
     mcp::create_environment(&env_name).expect("first create must succeed");
@@ -225,6 +240,7 @@ fn create_environment_rejects_duplicate() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn create_environment_accepts_unicode_name() {
     let env_name = format!("环境-接受-テスト-{}", unique("u"));
     mcp::create_environment(&env_name).expect("unicode env name must be accepted");
@@ -237,6 +253,7 @@ fn create_environment_accepts_unicode_name() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn create_environment_long_name_boundary() {
     // 边界（长名）：要么被拒绝（Err），要么成功并可从 list 回显 —— 不允许静默成功无效果。
     let long = format!("e{}", "x".repeat(1024));
@@ -258,6 +275,7 @@ fn create_environment_long_name_boundary() {
 // ===========================================================================
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn mount_environment_creates_mount_path() {
     // 判据（AS-5 模式 C）：挂载后目标路径必须真实存在（临时凭证文件/目录）。
     let env_name = unique("mtenv");
@@ -273,6 +291,7 @@ fn mount_environment_creates_mount_path() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn mount_environment_rejects_unknown_env() {
     let dir = temp_dir("mount-unknown");
     let r = mcp::mount_environment("NO_SUCH_ENV_ACCEPT", dir.to_str().unwrap());
@@ -280,6 +299,7 @@ fn mount_environment_rejects_unknown_env() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn mount_environment_rejects_empty_env() {
     let dir = temp_dir("mount-empty");
     let r = mcp::mount_environment("", dir.to_str().unwrap());
@@ -287,6 +307,7 @@ fn mount_environment_rejects_empty_env() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn mount_environment_rejects_empty_path() {
     let r = mcp::mount_environment("any-env", "");
     assert!(r.is_err(), "empty mount path must be rejected");
@@ -297,6 +318,7 @@ fn mount_environment_rejects_empty_path() {
 // ===========================================================================
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn inject_environment_applies_to_child_process() {
     // 判据（AS-5 模式 A）：注入后子进程可见对应变量（Agent 只见变量名，值进子进程环境）。
     let _g = env_guard();
@@ -326,6 +348,7 @@ fn inject_environment_applies_to_child_process() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn inject_environment_rejects_unknown_env() {
     let r = mcp::inject_environment("NO_SUCH_ENV_ACCEPT");
     assert!(r.is_err(), "inject of unknown env must be rejected");
@@ -427,6 +450,7 @@ fn run_with_secret_nonzero_exit_is_returned_not_error() {
 // ===========================================================================
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn grant_secret_records_allowed_agent_in_metadata() {
     // 判据（AS-7/AS-9）：grant 后 metadata.allowed_agents 必须包含该 agent。
     let _g = env_guard();
@@ -446,24 +470,28 @@ fn grant_secret_records_allowed_agent_in_metadata() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn grant_secret_rejects_unknown_secret() {
     let r = mcp::grant_secret("NO_SUCH_SECRET_ACCEPT", "agent-x");
     assert!(r.is_err(), "grant of unknown secret must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn grant_secret_rejects_empty_agent() {
     let r = mcp::grant_secret("ANY_SECRET", "");
     assert!(r.is_err(), "empty agent name must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn grant_secret_rejects_empty_secret_name() {
     let r = mcp::grant_secret("", "agent-x");
     assert!(r.is_err(), "empty secret name must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn revoke_secret_removes_allowed_agent() {
     // 判据（AS-7）：revoke 后 metadata.allowed_agents 不再包含该 agent。
     let _g = env_guard();
@@ -490,12 +518,14 @@ fn revoke_secret_removes_allowed_agent() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn revoke_secret_rejects_unknown_secret() {
     let r = mcp::revoke_secret("NO_SUCH_SECRET_ACCEPT", "agent-x");
     assert!(r.is_err(), "revoke of unknown secret must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn revoke_secret_rejects_empty_agent() {
     let r = mcp::revoke_secret("ANY_SECRET", "");
     assert!(r.is_err(), "empty agent name must be rejected");
@@ -506,6 +536,7 @@ fn revoke_secret_rejects_empty_agent() {
 // ===========================================================================
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn rotate_secret_changes_value() {
     // 判据（AS-9）：rotate 后 secret 值必须改变。
     let _g = env_guard();
@@ -529,6 +560,7 @@ fn rotate_secret_changes_value() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn rotate_secret_updates_metadata() {
     // 判据（AS-9）：rotate 后 metadata 反映最近轮换（last_rotated_at 等）。
     let _g = env_guard();
@@ -547,12 +579,14 @@ fn rotate_secret_updates_metadata() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn rotate_secret_rejects_unknown_secret() {
     let r = mcp::rotate_secret("NO_SUCH_SECRET_ACCEPT");
     assert!(r.is_err(), "rotate of unknown secret must be rejected");
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn rotate_secret_rejects_empty_name() {
     let r = mcp::rotate_secret("");
     assert!(r.is_err(), "empty secret name must be rejected");
@@ -633,6 +667,7 @@ fn get_secret_metadata_rejects_empty_name() {
 // ===========================================================================
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn audit_secret_usage_ok_after_use_and_rotate() {
     // 判据（AS-10）：USE / ROTATE 之后审计入口可调用、不报错。
     // 注：桩签名 `-> Result<()>` 无可读审计面 —— 本条仅守「调用不炸」；
@@ -650,8 +685,32 @@ fn audit_secret_usage_ok_after_use_and_rotate() {
 }
 
 #[test]
+// D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn audit_secret_usage_rejects_unknown_secret() {
     // 桩返回 Ok(()) → 红灯（未知 secret 审计必须 Err）。
     let r = mcp::audit_secret_usage("NO_SUCH_SECRET_ACCEPT");
     assert!(r.is_err(), "audit of unknown secret must be rejected");
 }
+
+// ===========================================================================
+// 计数口径（lead 指令 ③，复跑核销时回填实际转绿/保留数）
+// ===========================================================================
+// 总用例 41 条 = 16 条 v0.5 转绿面（D-1 4 工具）+ 25 条 v2.x 保留基线（带
+// 「D-1 未确认收缩范围」标记，不删、不跳过）。
+//
+// v0.5 转绿面（4 工具，16 条，无标记）：
+//   list_secret_names       2   list_secrets       2
+//   run_with_secret         8   get_secret_metadata 4
+//
+// v2.x 保留基线（25 条，带标记）：
+//   create_environment / list_environments   6
+//   mount_environment                        4
+//   inject_environment                       2
+//   grant_secret                             4
+//   revoke_secret                            3
+//   rotate_secret                            4
+//   audit_secret_usage                       2
+//
+// 复跑核销表（dev-coder-mcp-core 合入后由 tester 回填）：
+//   - 4 工具相关 16 条：____ 转绿 / ____ 仍红
+//   - v2.x 保留基线 25 条：保留（顺延不参与 v0.5 门禁；桩实现下仍为预期红灯）

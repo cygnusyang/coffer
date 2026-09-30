@@ -578,6 +578,7 @@ pub fn normalize_private_key(der: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// 与 fixtures 同一把合成测试密钥（PKCS#8 / SEC1 双编码）。
     const PKCS8_B64: &str = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgH1THtN9Yr04dr25YaOOECBiQSeZzztzz7gTfoKjZM0KhRANCAATJw2TFOn57PJ2qnEE5fkNqv+riQosBDzm3JeP1H9tVxVdCrzzBIu58KOXRc9gTX50LkGHG2XDfX+vgmt/Wv4dK";
@@ -639,5 +640,76 @@ mod tests {
         assert!(!BwPasskeyFailureKind::EncryptedPrivateKey.is_non_es256());
         assert!(!BwPasskeyFailureKind::MissingRpId.is_non_es256());
         assert!(!BwPasskeyFailureKind::UnparseablePrivateKey.is_non_es256());
+    }
+
+    /// 把一条 fido2 行 JSON 送入分类唯一入口 [`map_passkey_row`]，返回失败
+    /// 分类结果（哨兵只关注失败行——成功行按空转处置直接 panic）。
+    fn classify_row(row: serde_json::Value) -> BwPasskeyFailure {
+        let item: BwItem = serde_json::from_value(json!({
+            "id": "bw-sentinel",
+            "name": "Sentinel Item",
+            "type": 1,
+        }))
+        .expect("哨兵条目 fixture 须可解析");
+        let entry = row
+            .as_object()
+            .expect("哨兵行须为 JSON 对象")
+            .clone();
+        let mut signals = ItemSignals::default();
+        match map_passkey_row(&entry, &item, 0, &mut signals) {
+            Ok(_) => panic!("哨兵行应分类为不可导入失败"),
+            Err(failure) => failure,
+        }
+    }
+
+    /// PL-1（KNOWN-ISSUES.md）哨兵：L-2「按数据不按文案」的回归警戒——
+    /// 同分类数据、不同 reason 文案 → 分类不变。若调用侧改回文本分类
+    /// 且当前文案未变，现有三处测试全部测不出，本哨兵必然暴露。
+    /// 输入经 [`map_passkey_row`]（分类唯一入口），不构造字面量。
+    #[test]
+    fn 同分类异reason文案分类不变() {
+        // 非 ES256 族（is_non_es256 = true）：keyCurve p384 / p521 均 →
+        // KeyCurveMismatch，reason 因内嵌曲线名而不同；其余字段给合法值
+        let p384 = classify_row(json!({
+            "rpId": "example.com",
+            "credentialId": "Y3JlZC1pZC0x",
+            "keyCurve": "p384",
+        }));
+        let p521 = classify_row(json!({
+            "rpId": "example.com",
+            "credentialId": "Y3JlZC1pZC0x",
+            "keyCurve": "p521",
+        }));
+        assert_eq!(p384.kind, p521.kind, "同分类数据不同文案 → 分类一致");
+        assert_eq!(p384.kind, BwPasskeyFailureKind::KeyCurveMismatch);
+        assert_ne!(p384.reason, p521.reason, "reason 须随曲线名不同，否则哨兵空转");
+        assert_eq!(p384.kind.is_non_es256(), p521.kind.is_non_es256());
+        assert!(p384.kind.is_non_es256(), "KeyCurveMismatch 属非 ES256 族（真路径）");
+
+        // 非 ES256 族：keyAlgorithm eddsa / rsa 同理（reason 内嵌算法名）
+        let eddsa = classify_row(json!({
+            "rpId": "example.com",
+            "credentialId": "Y3JlZC1pZC0x",
+            "keyAlgorithm": "eddsa",
+        }));
+        let rsa = classify_row(json!({
+            "rpId": "example.com",
+            "credentialId": "Y3JlZC1pZC0x",
+            "keyAlgorithm": "rsa",
+        }));
+        assert_eq!(eddsa.kind, rsa.kind, "同分类数据不同文案 → 分类一致");
+        assert_eq!(eddsa.kind, BwPasskeyFailureKind::KeyAlgorithmMismatch);
+        assert_ne!(eddsa.reason, rsa.reason, "reason 须随算法名不同");
+        assert!(eddsa.kind.is_non_es256());
+
+        // 非 ES256 族之外（is_non_es256 = false）：缺 rpId → MissingRpId
+        let missing_rp = classify_row(json!({
+            "credentialId": "Y3JlZC1pZC0x",
+        }));
+        assert_eq!(missing_rp.kind, BwPasskeyFailureKind::MissingRpId);
+        assert!(
+            !missing_rp.kind.is_non_es256(),
+            "MissingRpId 不属非 ES256 族（假路径）"
+        );
     }
 }

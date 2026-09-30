@@ -598,6 +598,51 @@ impl VaultSession {
         .map(Into::into)
     }
 
+    /// Bitwarden JSON 预检（FR-10.1）：纯文件只读，可反复调用。
+    ///
+    /// **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
+    /// 不接触密钥材料，供导入向导在解锁前展示报告。非 JSON / 缺 items /
+    /// 加密导出 → 2001 / 2002（docs/17 §5）。
+    pub fn precheck_bitwarden_json(
+        &self,
+        path: String,
+    ) -> Result<FfiBwPrecheckReport, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_importer::precheck_bitwarden_json(Path::new(&path))
+        }))
+        .map(Into::into)
+    }
+
+    /// Bitwarden JSON 导入（FR-10.1；锁定态 → 码 1001，门禁在 Rust 侧）。
+    ///
+    /// 每条目单事务，任一条目失败回滚该条、已成功条目保留；坏 passkey
+    /// 行预检显式列出、导入跳过该行不丢条目（TCB-7）。返回值内的报告
+    /// 与本次导入同管线产出（FR-7.4 所见即所得）。
+    pub fn import_bitwarden_json(&self, path: String) -> Result<FfiBwImportResult, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.import_bitwarden_json(Path::new(&path))
+        }))
+        .map(Into::into)
+    }
+
+    /// 列出条目的全部 Passkey 元数据（FR-10.2，created_at 升序）。
+    ///
+    /// 门禁：需解锁态（1001）；条目不存在 → 1011。元数据**无私钥字段**
+    /// （FR-10.2 红线，docs/17 §4.3——结构上不存在私钥展示面）。损坏行
+    /// 两级口径：密文短于 nonce+tag → 1005 Corrupted；AEAD 校验不过 →
+    /// 1008 CryptoError（docs/17 r2.2 §5）。
+    pub fn list_passkeys(&self, item_id: String) -> Result<Vec<FfiPasskeyMeta>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.list_passkeys(&item_id)))
+            .map(|metas| metas.into_iter().map(Into::into).collect())
+    }
+
+    /// 删除 Passkey（FR-10.5）：纯 DB 行删除，无文件面副作用。
+    ///
+    /// 行不存在 → 1011；锁定 → 1001（docs/17 §5）。
+    pub fn remove_passkey(&self, passkey_uuid: String) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.remove_passkey(&passkey_uuid)))
+    }
+
     // ---------------------------------------------------- 历史（FR-2.9）
 
     /// 条目历史版本列表（FR-2.9，version 倒序）：需解锁态（1001）。

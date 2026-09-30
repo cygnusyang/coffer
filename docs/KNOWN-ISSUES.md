@@ -419,7 +419,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 **发现环境**：v0.5.0 PW 批门禁（workspace 并行满载首跑 FAIL、复跑全绿；日志 `/tmp/coffer-gate-084749.log`（FAIL）/ `/tmp/coffer-gate-085126.log`（全绿）——dev-coder-ffi 发现上报，lead 按源码与日志复核证实）
 **分级**：严重级 S3（测试基建缺陷，BUG-4 同族——具门禁否决力：并行满载下偶发假红）/ P1 / 来源版本 v0.1（fixture 自入库即带病） / 发现版本 v0.5.0-PW 批门禁
 **状态**：✅ 已修复（2026-09-30，commit `97be64b`）
-**核销记录**：修复 = commit `97be64b`（`attachment_repo.rs` 的 `temp_vault_dir()` 改 pid + 进程内 `AtomicU64` 计数器，进程内唯一由构造保证）；复验 = `temp_vault_dir并行不撞名`（`core/cf-store/tests/attachment_repo.rs` 回归警戒：32 线程 × 16 次 = 512 次并行调用断言全异；commit 消息记录 cf-store 6 轮 + workspace 3 轮全绿）。**遗留跟进**：commit 同批全仓 `pid+nanos` 同型扫描命中 `cf-format/src/testutil.rs` 等 22 处，超出 `cf-store/tests/**` 闭集，登记待 lead 决定批量工单（本条只核销 cf-store 闭集内 flake，全仓同型清理由后续工单承接）
+**核销记录**：修复 = commit `97be64b`（`attachment_repo.rs` 的 `temp_vault_dir()` 改 pid + 进程内 `AtomicU64` 计数器，进程内唯一由构造保证）；复验 = `temp_vault_dir并行不撞名`（`core/cf-store/tests/attachment_repo.rs` 回归警戒：32 线程 × 16 次 = 512 次并行调用断言全异；commit 消息记录 cf-store 6 轮 + workspace 3 轮全绿）。**遗留跟进 → 已开批量工单 B-1（用户 2026-09-30 裁定）**：commit 同批全仓 `pid+nanos` 同型扫描命中 `cf-format/src/testutil.rs` 等 22 处，超出 `cf-store/tests/**` 闭集。lead 复扫定位全部命中点（`cf-format`/`cf-session`/`cf-ffi`/`cf-exporter` 的测试支持代码 + `cf-exporter/src/backup.rs` 生产临时文件命名），**批量工单 B-1** 已开并派发 dev-coder 逐处改为 BUG-12 同款「pid + 进程内原子计数器」模式；cf-mcp 同型命中（本版新增）随 MCP 收尾统一对齐（本条只核销 cf-store 闭集内 flake）。
 
 ### 现象（预期/实际 分行写）
 
@@ -437,6 +437,29 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 ### 复现与诊断
 
 并行满载重复跑 `cargo test --workspace --no-fail-fast`（或 `./tools/run_gate.sh --skip-build`）至偶发 attachment_repo 2 用例失败 → 单跑该 target 即过 → 对照 `/tmp/coffer-gate-084749.log`。
+
+---
+
+## BUG-13（🟡 登记待修，属 v0.5 工作线）：CI 在仓库根跑 cargo 必失败——根无 Cargo.toml（workspace 在 `core/`），且 `Run acceptance tests` 步骤的 `acceptance_v05` 测试是孤儿（在根 `tests/`，无 manifest 归属）
+
+**登记日期**：2026-09-30
+**发现环境**：G-G（mcp-e2e）新增 CI 冒烟步骤时发现既有 CI 在根执行 cargo 必败（根无 Cargo.toml），其 smoke 步骤实际走不到；lead 复核确认
+**分级**：严重级 S2（CI 对 main 分支形同虚设）/ 优先级 P2 / 来源版本 v0.5.0（CI 既定缺陷，非 MCP 引入）/ 发现版本 v2.0.0（G-G 集成）
+**状态**：🟡 登记待修（部分缓解已随用户裁定落地）
+**核销记录**：待回填
+**证据**：`.github/workflows/rust.yml` 原 Build/Run tests/Run acceptance 均在仓库根跑 `cargo`（根无 Cargo.toml，workspace 在 `core/`）；`tests/acceptance_v05.rs` 位于根 `tests/` 且无根 manifest 归属。
+
+### 现象（预期/实际 分行写）
+
+- 预期：main 分支 push/PR 时 CI 执行构建、全量测试、v0.5 验收、MCP 冒烟。
+- 实际：既有三个 cargo 步骤在根执行必报 `could not find Cargo.toml`；`acceptance_v05` 无 manifest 归属，任何工作目录下 `cargo test --test acceptance_v05` 都找不到 target。
+
+### 处置（用户 2026-09-30 裁定「加 working-directory: core」）
+
+- Build / Run tests 已补 `working-directory: core`（随 `33a9e27` 后的 lead CI 修复落地）；
+- MCP smoke 步骤自包含（脚本内部 cd 到 `core/`）保持在根执行；
+- `Run acceptance tests` 步骤保留但标注 BUG-13——需 v0.5 工作线补根 manifest（或把 `tests/acceptance_v05.rs` 迁入 core 工作区）后方可执行。
+- 注：workspace `cargo test` 含 MCP D-1 基线的 23 条预期红灯（v2.x 存根），CI 全绿需等 v2.0.0 MCP 存根补齐。
 
 ---
 

@@ -440,13 +440,13 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-13（🟡 登记待修，属 v0.5 工作线）：CI 在仓库根跑 cargo 必失败——根无 Cargo.toml（workspace 在 `core/`），且 `Run acceptance tests` 步骤的 `acceptance_v05` 测试是孤儿（在根 `tests/`，无 manifest 归属）
+## BUG-13（✅ 已修复，属 v0.5 工作线）：CI 在仓库根跑 cargo 必失败——根无 Cargo.toml（workspace 在 `core/`），且 `Run acceptance tests` 步骤的 `acceptance_v05` 测试是孤儿（在根 `tests/`，无 manifest 归属）
 
 **登记日期**：2026-09-30
 **发现环境**：G-G（mcp-e2e）新增 CI 冒烟步骤时发现既有 CI 在根执行 cargo 必败（根无 Cargo.toml），其 smoke 步骤实际走不到；lead 复核确认
 **分级**：严重级 S2（CI 对 main 分支形同虚设）/ 优先级 P2 / 来源版本 v0.5.0（CI 既定缺陷，非 MCP 引入）/ 发现版本 v2.0.0（G-G 集成）
-**状态**：🟡 登记待修（部分缓解已随用户裁定落地）
-**核销记录**：待回填
+**状态**：✅ 已修复（2026-09-30 核销）
+**核销记录**：2026-09-30 核销——裁定=用户「删孤儿+撤专用步骤」（删除根 `tests/acceptance_v05.rs` + 移除 rust.yml「Run acceptance tests」「Upload acceptance test log」两步）；修复=commit `4eaa393`（PW FFI 批内，dev-coder-ffi）；复验=CI `Run tests` 步骤（working-directory: core）跑全量测试含 `v05_ffi_semantics`（v0.5 验收真身，8 用例全绿）。
 **证据**：`.github/workflows/rust.yml` 原 Build/Run tests/Run acceptance 均在仓库根跑 `cargo`（根无 Cargo.toml，workspace 在 `core/`）；`tests/acceptance_v05.rs` 位于根 `tests/` 且无根 manifest 归属。
 
 ### 现象（预期/实际 分行写）
@@ -454,11 +454,11 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 - 预期：main 分支 push/PR 时 CI 执行构建、全量测试、v0.5 验收、MCP 冒烟。
 - 实际：既有三个 cargo 步骤在根执行必报 `could not find Cargo.toml`；`acceptance_v05` 无 manifest 归属，任何工作目录下 `cargo test --test acceptance_v05` 都找不到 target。
 
-### 处置（用户 2026-09-30 裁定「加 working-directory: core」）
+### 处置（用户 2026-09-30 两轮裁定：先「加 working-directory: core」、后「删孤儿+撤专用步骤」）
 
 - Build / Run tests 已补 `working-directory: core`（随 `33a9e27` 后的 lead CI 修复落地）；
 - MCP smoke 步骤自包含（脚本内部 cd 到 `core/`）保持在根执行；
-- `Run acceptance tests` 步骤保留但标注 BUG-13——需 v0.5 工作线补根 manifest（或把 `tests/acceptance_v05.rs` 迁入 core 工作区）后方可执行。
+- `Run acceptance tests` / `Upload acceptance test log` 两步已移除、根 `tests/acceptance_v05.rs` 已删除（随 `4eaa393`）——用户 2026-09-30 再裁定「删孤儿+撤专用步骤」；v0.5 验收真身 = `core/cf-ffi/tests/v05_ffi_semantics.rs`，由 `Run tests`（working-directory: core）覆盖，无需专用步骤。
 - 注：workspace `cargo test` 含 MCP D-1 基线的 23 条预期红灯（v2.x 存根），CI 全绿需等 v2.0.0 MCP 存根补齐。
 
 ---

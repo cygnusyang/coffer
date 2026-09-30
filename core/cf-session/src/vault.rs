@@ -708,6 +708,27 @@ impl VaultSession {
         cf_importer::import_1pux(path, &mut state.store, &self.vault_dir)
     }
 
+    /// Bitwarden JSON 导入（docs/17 §4.2 PK2，FR-10.1）：每条目单事务，
+    /// 任一条目失败回滚该条、已成功条目保留；坏 passkey 行预检显式列出、
+    /// 导入跳过该行不丢条目（TCB-7）。返回值携带与本次导入同管线产出的
+    /// 预检报告（FR-7.4 所见即所得）。
+    ///
+    /// 薄委托 [`cf_importer::import_bitwarden_json`]，与
+    /// [`VaultSession::import_1pux`] 同落点理由：导入编排归 cf-session，
+    /// DEK / SubKeys 不跨 FFI（docs/17 r2.3 门面存在性声明，PW 一次性扩权）。
+    ///
+    /// # 错误
+    ///
+    /// 锁定态 → 1001；解析失败 → 2001；写入失败 → 2002（docs/03 §12）。
+    pub fn import_bitwarden_json(
+        &self,
+        path: &Path,
+    ) -> SessionResult<cf_importer::BwImportResult> {
+        let mut guard = self.unlocked()?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        cf_importer::import_bitwarden_json(path, &mut state.store)
+    }
+
     // ------------------------------------------------------- 账户安全
 
     /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，

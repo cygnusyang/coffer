@@ -48,6 +48,8 @@ final class AppModel: ObservableObject {
     @Published var showImport = false
     /// 导入 1PUX sheet（工具栏「导入」菜单 + 菜单 ⌘⇧I，v0.3.0-T05 FR-7.1）。
     @Published var showImportPux = false
+    /// 导入 Bitwarden JSON sheet（工具栏「导入」菜单，v0.5.0 PK3 FR-10.1）。
+    @Published var showImportBitwarden = false
     /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
     @Published var showExport = false
     /// 统一设置 sheet（工具栏 + 菜单 ⌘,）。

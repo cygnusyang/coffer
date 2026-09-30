@@ -145,10 +145,11 @@ struct MainView: View {
                 } label: {
                     Label("设置", systemImage: "gearshape")
                 }
-                // 导入入口菜单（v0.3.0-T05 FR-7.1）：CSV 与 1PUX 两格式并列
+                // 导入入口菜单（v0.3.0-T05 FR-7.1；v0.5.0 PK3 增 Bitwarden 源）：三格式并列
                 Menu {
                     Button("CSV…") { model.showImport = true }
                     Button("1Password (.1pux)…") { model.showImportPux = true }
+                    Button("Bitwarden (.json)…") { model.showImportBitwarden = true }
                 } label: {
                     Label("导入", systemImage: "square.and.arrow.down")
                 }
@@ -172,6 +173,10 @@ struct MainView: View {
         }
         .sheet(isPresented: $model.showImportPux) {
             PuxImportView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.showImportBitwarden) {
+            BitwardenImportView()
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.showExport) {

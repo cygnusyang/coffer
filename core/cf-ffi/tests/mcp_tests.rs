@@ -4,7 +4,6 @@
 
 use std::process::Command;
 
-#[derive(Default)]
 struct DummyMcpClient;
 
 impl DummyMcpClient {
@@ -37,7 +36,7 @@ impl DummyMcpClient {
 
 #[test]
 fn test_list_secret_names() {
-    let client = DummyMcpClient::default();
+    let client = DummyMcpClient;
     let names = client.list_secret_names();
     assert!(names.contains(&"OPENAI_API_KEY".to_string()));
     assert!(names.contains(&"GITHUB_TOKEN".to_string()));
@@ -45,7 +44,7 @@ fn test_list_secret_names() {
 
 #[test]
 fn test_run_with_secret_and_redaction() {
-    let client = DummyMcpClient::default();
+    let client = DummyMcpClient;
     let output = client
         .run_with_secret(
             "OPENAI_API_KEY",

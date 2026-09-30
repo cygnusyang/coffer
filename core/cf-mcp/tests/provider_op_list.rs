@@ -205,6 +205,36 @@ fn get_secret_metadata_rejects_empty_ref() {
 }
 
 #[test]
+fn get_secret_metadata_rejects_malformed_op_reference() {
+    // L-6（dev-reviewer）：get_secret_metadata 与 run 面同口径边界校验——
+    // 畸形 `op://` 引用（无 item）在入界即拒（7005），不落到 op item get 按 7003。
+    let provider = provider();
+    let err = provider
+        .get_secret_metadata("op://Personal")
+        .expect_err("malformed op:// reference must be rejected");
+    assert_eq!(
+        McpError::from(err.clone()).code(),
+        7005,
+        "malformed op:// reference maps to 7005, got {err:?}"
+    );
+}
+
+#[test]
+fn get_secret_metadata_rejects_plaintext_value() {
+    // L-6 延伸（§4.4「引用非明文」）：明文值（含空白）不可作 metadata 引用——与
+    // run 面同口径，把「secret_ref 非明文」从约定升为结构约束。
+    let provider = provider();
+    let err = provider
+        .get_secret_metadata("plain secret value here")
+        .expect_err("plaintext value must be rejected as a reference");
+    assert_eq!(
+        McpError::from(err.clone()).code(),
+        7005,
+        "plaintext reference maps to 7005, got {err:?}"
+    );
+}
+
+#[test]
 fn get_secret_metadata_unknown_item_is_secret_not_found() {
     let provider = provider();
     let err = provider

@@ -189,6 +189,19 @@ fn run_with_secret_rejects_empty_secret_ref() {
 }
 
 #[test]
+fn run_with_secret_rejects_bare_item_id() {
+    // H-1（dev-reviewer）：run 面 dotenv 只承载 `op://` 引用（docs/20 §4.2）——
+    // 裸 item id 会被 `op run` 当字面量注入子进程 env（静默注入错误"值"）→ 7005。
+    let _g = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut spec = api_key_spec();
+    spec.secret_ref = "fixture-item-api-key".to_string();
+    let err = provider()
+        .run_with_secret(&spec)
+        .expect_err("bare item id must be rejected on run path");
+    assert_eq!(McpError::from(err.clone()).code(), 7005);
+}
+
+#[test]
 fn run_with_secret_rejects_empty_cmd() {
     let _g = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut spec = api_key_spec();

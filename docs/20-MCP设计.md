@@ -3,7 +3,7 @@
 | 项 | 内容 |
 | --- | --- |
 | 文档编号 | LV-HLD-020 |
-| 版本 | r0.2 |
+| 版本 | r0.3 |
 | 状态 | 待评审（TDD 前置设计，未分解实现；版本归属已裁定归 v2.0.0，D-1~D-4 待用户确认） |
 | 创建日期 | 2026-09-30 |
 | 作者 | dev-architect |
@@ -140,7 +140,7 @@ client ──► (可选) notifications/cancelled / 连接关闭 ──► serve
 | 7001 | Provider 不可用（op 未装/不可执行） | provider 启动失败 |
 | 7002 | 需要身份（op 未登录，OP_SESSION 缺失） | 与 1Password 未链接 |
 | 7003 | Secret 不存在 / 无权限 | list/get/run 目标缺失 |
-| 7004 | 子进程失败（含退出码） | run_with_secret 子进程非零退出 |
+| 7004 | 子进程启动失败（spawn 失败，无退出码） | run_with_secret 的 op **无法启动**目标子进程——子进程**非零退出不是错误**，作 `Ok(exit_code)` 原样返回（mcp_acceptance 契约） |
 | 7005 | 协议/参数错误 | 工具入参校验失败 |
 | 7006 | 内部错误（不泄露细节） | 兜底 |
 
@@ -211,7 +211,7 @@ pub trait SecretProvider: Send + Sync {
 | list | `op item list --vault <vault> --format json` → 解析 name/id/category（**无值**） |
 | meta | `op item get <id> --vault <vault> --format json` → 解析元数据（**不取 secret 字段值**；`--fields` 白名单限定非敏感元数据） |
 | run | 写临时 dotenv（**0600**）内容为 `ENV_NAME=op://vault/item/field` → `op run --env-file <tmp> -- <cmd> <args>` → **op 自行解析注入子进程 env，明文不经 cf-mcp 内存** → 立即删除 tmp（用后即毁，AS-5 模式 C 纪律同构） |
-| 错误 | op 非零退出 / stderr → `ProviderError` 归一（7001/7002/7003），剥离 stderr 细节（防泄露） |
+| 错误 | op 层失败 → `ProviderError` 归一（7001/7002/7003/7004/7005/7006，§3.4 表），剥离 stderr 细节（防泄露）；**目标子进程非零退出不是错误**——作退出码原样返回（mcp_acceptance 契约） |
 
 ### 4.3 环境变量约定（全部 Coffer 侧定义，文档落表）
 
@@ -399,5 +399,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | --- | --- | --- |
 | r0.1 | 2026-09-30 | 首版：协议/模块/CLI/UI/错误码/BUG-12 合并/不可逆决策清单/并行分组 |
 | r0.2 | 2026-09-30 | **版本归属裁定（§0.7）**：用户确认 MCP 归 v2.0.0、v0.5.0 不含此功能——独立 feature 继续开发、不进 v0.5.0 出口判据。其余 D-1~D-4 仍未确认（保持可逆暂定）。 |
+| r0.3 | 2026-09-30 | **§3.4 / §4.2 错误表述向实现看齐（G-F，dev-reviewer L5）**：§3.4 表 7004 由「run_with_secret 子进程非零退出」修正为「op 无法启动目标子进程（spawn 失败）」——实现（`core/cf-mcp/src/provider/op.rs` / `test_seed`）对子进程非零退出作 `Ok(exit_code)` 原样返回、非错误；7004 仅用于 spawn 阶段失败。§4.2 错误行由「op 非零退出 → 归一 7001/7002/7003」补全为 7001~7006 全段。docs/03 §12 已登记 7xxx 段（7001~7006）；缺陷登记见 KNOWN-ISSUES M-1 / M-4 / L 系列。 |
 
-*文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 用户确认回填后升 r0.3。*
+*文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 用户确认回填后升 r0.4。*

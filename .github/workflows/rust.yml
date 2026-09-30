@@ -22,6 +22,8 @@ jobs:
       run: cargo test --verbose
     - name: Run acceptance tests
       run: cargo test --test acceptance_v05 -- --nocapture | tee acceptance_v05.log
+    - name: Run MCP smoke
+      run: bash tools/run_mcp_smoke.sh
     - name: Upload acceptance test log
       uses: actions/upload-artifact@v4
       with:

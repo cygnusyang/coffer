@@ -4,7 +4,8 @@
 //! 走真实建库 / 解锁 / 编排 API（docs/10 §0.4：临时目录、真实路径）。
 
 use std::path::PathBuf;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use cf_crypto::kdf::KdfParams;
 use cf_domain::category::ItemCategory;
@@ -23,14 +24,10 @@ const P1: &str = "correct-horse-battery-staple-42!";
 
 /// 建库 + 解锁，返回会话与其工作目录。
 fn unlocked_vault(tag: &str) -> (VaultSession, PathBuf) {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cf-session-his-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let base =
+        std::env::temp_dir().join(format!("cf-session-his-{tag}-{}-{seq}", std::process::id()));
     let brief = create_vault_with_kdf(&base, "历史库", P1, fast_kdf()).unwrap();
     let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
     session.unlock(P1).unwrap();

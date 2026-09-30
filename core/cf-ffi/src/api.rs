@@ -778,7 +778,8 @@ pub fn validate_clipboard_clear_secs(secs: i64) -> Result<(), FfiError> {
 mod tests {
     use super::*;
     use cf_crypto::kdf::KdfParams;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
     /// 测试用快速 KDF 档位（8 MiB / t=1 / p=1，约几十毫秒）。
     fn fast_kdf() -> KdfParams {
@@ -788,13 +789,11 @@ mod tests {
     /// 强密码（zxcvbn score ≥ 3，可过建库门禁）。
     const STRONG_PASSWORD: &str = "correct-horse-battery-staple-42!";
 
-    /// 每测试独立的临时工作目录。
+    /// 每测试独立的临时工作目录（pid + 进程内原子计数器）。
     fn temp_base(tag: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("cf-ffi-{tag}-{}-{nanos}", std::process::id()));
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("cf-ffi-{tag}-{}-{seq}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

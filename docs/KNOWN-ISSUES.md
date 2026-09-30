@@ -413,13 +413,13 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-12（🟡 已定位待修）：cf-store `attachment_repo` 测试基建并行时序 flake——`temp_vault_dir()` pid+纳秒命名可撞名
+## BUG-12（✅ 已修复）：cf-store `attachment_repo` 测试基建并行时序 flake——`temp_vault_dir()` pid+纳秒命名可撞名
 
 **登记日期**：2026-09-29
 **发现环境**：v0.5.0 PW 批门禁（workspace 并行满载首跑 FAIL、复跑全绿；日志 `/tmp/coffer-gate-084749.log`（FAIL）/ `/tmp/coffer-gate-085126.log`（全绿）——dev-coder-ffi 发现上报，lead 按源码与日志复核证实）
 **分级**：严重级 S3（测试基建缺陷，BUG-4 同族——具门禁否决力：并行满载下偶发假红）/ P1 / 来源版本 v0.1（fixture 自入库即带病） / 发现版本 v0.5.0-PW 批门禁
-**状态**：🟡 已定位待修（单开小工单，恢复开发后首批执行）
-**核销记录**：待回填
+**状态**：✅ 已修复（2026-09-30，commit `97be64b`）
+**核销记录**：修复 = commit `97be64b`（`attachment_repo.rs` 的 `temp_vault_dir()` 改 pid + 进程内 `AtomicU64` 计数器，进程内唯一由构造保证）；复验 = `temp_vault_dir并行不撞名`（`core/cf-store/tests/attachment_repo.rs` 回归警戒：32 线程 × 16 次 = 512 次并行调用断言全异；commit 消息记录 cf-store 6 轮 + workspace 3 轮全绿）。**遗留跟进**：commit 同批全仓 `pid+nanos` 同型扫描命中 `cf-format/src/testutil.rs` 等 22 处，超出 `cf-store/tests/**` 闭集，登记待 lead 决定批量工单（本条只核销 cf-store 闭集内 flake，全仓同型清理由后续工单承接）
 
 ### 现象（预期/实际 分行写）
 
@@ -437,6 +437,118 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 ### 复现与诊断
 
 并行满载重复跑 `cargo test --workspace --no-fail-fast`（或 `./tools/run_gate.sh --skip-build`）至偶发 attachment_repo 2 用例失败 → 单跑该 target 即过 → 对照 `/tmp/coffer-gate-084749.log`。
+
+---
+
+## M-1（🟡 登记待后续处理）：run_with_secret 目标子进程 stderr 整体吞掉 + 子进程继承 OP_SESSION（blast-radius 未文档化）
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C（mcp-op）审查发现，非阻断项（docs/20 §9.1 G-F 登记）
+**分级**：严重级 S3（dev-reviewer 判 MEDIUM——子进程 stderr 对调用方不可见，且 OP_SESSION 落入目标子进程 env 的 blast-radius 未明示）/ 优先级 P2 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（G-C 审查）
+**状态**：🟡 登记待后续处理（MVP 保持现状可接受，需架构裁定透传/日志化取舍）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` run_with_secret（`cmd.stdout(Stdio::null())` + `output()` 捕获 stderr 仅作 op 层分类，不向调用方透出）；`op_command()` 设 `OP_SESSION`，经 `op run` spawn 的目标子进程继承之
+
+### 现象（预期/实际 分行写）
+
+- 预期：目标子进程 stderr 可被 Agent/用户排查；OP_SESSION 的暴露面（blast-radius）在文档中明示。
+- 实际：run_with_secret 丢弃子进程 stdout（协议帧纪律，§3.1），stderr 仅在 op 层错误分类时被消费、其余整体吞掉——子进程输出对调用方不可见；目标子进程经 `op run` 继承含 `OP_SESSION` 的完整环境（若子进程打印 env 或经 `/proc` 泄露，会话 token 暴露半径含任意被注入 secret 的进程）。
+
+### 根因（已实证）
+
+stderr 捕获后归一为稳定错误文案（剥离敏感值，§3.5-4 日志禁值纪律），**无向调用方透传子进程 stderr 的通道**；`OP_SESSION` 继承是进程环境语义（非缺陷，属设计），但 blast-radius 未文档化。
+
+### 修复路径（候选，未拍板）
+
+1. 文档明示 blast-radius（docs/20 §3.5/§4.4 补一句：`op run` 启动的目标子进程继承 `OP_SESSION`，须视为凭据暴露半径的一部分）；
+2. 子进程 stderr 透传/日志化取舍：stdout 恒为协议帧不可让渡，stderr 可经日志文件（`COFFER_MCP_LOG`）落盘或加开关透传——泄露面 vs 可诊断性，需架构裁定；
+3. 不动作（MVP 保持吞掉）亦可接受——登记留档。
+
+### 复现与诊断
+
+fake op fixture + 子进程写 stderr（`sh -c 'echo oops >&2; exit 1'`）→ run_with_secret 返回 `Ok(1)`，stderr 对调用方不可见；目标子进程内 `printenv | grep OP_SESSION` 可见 token 已注入。
+
+---
+
+## M-4（🟡 登记待协商）：run_with_secret 缺省 env_name 取整个 secret 串——`op://` 引用必 7005
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查发现，跨层联动（G-B `tools.rs` 缺省 vs G-C `op.rs` 校验），非阻断项（docs/20 §9.1 G-F 登记）
+**分级**：严重级 S3（dev-reviewer 判 MEDIUM——带 `op://` 引用且省略 env_name 的 run_with_secret 调用恒 7005，功能面缺口）/ 优先级 P2 / 来源版本 v2.0.0（MCP，G-B/G-C 契约） / 发现版本 v2.0.0（G-C 审查）
+**状态**：🟡 登记待协商（属 G-B/G-C 契约联动，需协商确定 env_name 缺省语义；改 API 签名触 D-1 冻结契约需用户确认）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/tools.rs:218` `optional_string(args, "env_name").unwrap_or_else(|| secret.clone())`（缺省取整个 secret 串）；`core/cf-mcp/src/provider/op.rs` `is_valid_env_name`（`[A-Za-z_][A-Za-z0-9_]*`）——`op://vault/item/field` 含 `/`/`:` 必不匹配 → 7005
+
+### 现象（预期/实际 分行写）
+
+- 预期：缺省 env_name 时注入到合理的默认变量名（或明确要求必填）。
+- 实际：tools.rs 缺省取**整个 secret 串**作 env_name——对 `op://vault/item/field` 引用恒 7005（`InvalidParameter`）。run_with_secret 的 inputSchema 标注「default: the secret name」，对 `op://` 形态不成立。
+
+### 根因（已实证）
+
+G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用的「名字」理解与 G-C 的 env 名合法性校验不一致——`op://vault/item/field` 整串不是合法环境变量名。跨层契约缺口。
+
+### 修复路径（候选，需协商）
+
+1. env_name 改必填（inputSchema `required` 增 env_name）——API 签名变更，触 D-1 冻结契约，需用户确认；
+2. 缺省取 `op://` 引用末段（field/item 名）作默认变量名——需定义「从引用提取默认变量名」规则（field 歧义，见 L-3）；
+3. 文档明示：`op://` 形态必须显式给 env_name（最小改动）。
+
+### 复现与诊断
+
+`run_with_secret {secret: "op://Personal/OPENAI_API_KEY/password", cmd: "env"}`（省略 env_name）→ 7005 InvalidParameter。
+
+---
+
+## L-1（🟡 LOW）：临时 dotenv 非 unix 分支无 0600 权限约束
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（G-C 审查）
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write`——`#[cfg(unix)]` 分支 `OpenOptionsExt::mode(0o600)`，`#[cfg(not(unix))]` 分支 `File::create` 无权限约束
+
+`TempDotenv` 内容仅 `ENV_NAME=op://…` 引用（无明文值，§4.4），cf-mcp 目标平台 macOS（unix）故当前无实际暴露；非 unix 分支权限缺口登记留档。修复 = 非 unix 分支补平台权限 API，或随不支持的平台一并拒编译。
+
+---
+
+## L-2（🟡 LOW）：临时 dotenv `create_new` 撞名直接 7006，无重试
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write` 用 `create_new(true)`——文件已存在则直接 `Internal`（7006）
+
+路径含 pid + 进程内原子计数器（`temp_env_path`），跨进程由 pid 隔离、进程内由计数器保证，实际碰撞面 ≈ 0；无重试可接受，登记留档。
+
+---
+
+## L-3（🟡 LOW）：`op://vault/item/field` 末段恒判为 field——item 名含 `/` 的无 field 引用无法表达
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理（与 M-4 缺省 env_name 规则联动）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `parse_secret_ref`——`op://vault/item/field` 剥除末段作 field；item 名本身含 `/`（op 允许）且无 field 时歧义（`op://vault/a/b` 被解析为 item="a"、field="b"）
+
+当前 `get_secret_metadata` 用其取 item，歧义会解析错 item；op 实测语义（末段 = field）与「item 名含 /」冲突面小，登记留档。必要时引入显式 field designation 语法。
+
+---
+
+## L-4（✅ 已接受）：`CofferStoreProvider` 骨架方法 `unimplemented!` 占位——v2.x 建模前调用即 panic
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：✅ 已接受（设计内占位：feature `coffer-store` 默认关闭不进入普通构建；docs/20 §4.5 明示本版仅骨架，v2.x 存储模型落定后替换）
+**核销记录**：随 v2.x CofferStoreProvider 落地核销
+**证据**：`core/cf-mcp/src/provider/coffer.rs` 各 `SecretProvider` 方法 `unimplemented!("CofferStoreProvider 骨架：v2.x Secret 实体未建模")`
+
+编译通过、调用即 panic 属显式占位（docs/20 §4.5 明示），非隐藏缺陷。已接受，不设修复工单。
 
 ---
 

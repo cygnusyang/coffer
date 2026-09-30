@@ -35,7 +35,9 @@ pub struct SecretMeta {
 /// `run_with_secret` 运行规格（docs/20 §4.1 冻结签名）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunSpec {
-    /// `op://vault/item/field` 引用或 item id + field designation；**非明文值**。
+    /// `op://vault/item/field` 引用或 item id（元数据面兼容裸 id）；**非明文值**。
+    /// run 面只接受 `op://` 引用形态（docs/20 §4.2——裸 id 会被 `op run` 当字面量
+    /// 注入子进程 env，H-1/dev-reviewer）。
     pub secret_ref: String,
     /// 注入的环境变量名（如 `OPENAI_API_KEY`）。
     pub env_name: String,

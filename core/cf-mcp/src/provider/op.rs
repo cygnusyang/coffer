@@ -199,8 +199,13 @@ impl SecretProvider for OpProvider {
     }
 
     fn get_secret_metadata(&self, secret_ref: &str) -> Result<SecretMeta, ProviderError> {
-        if secret_ref.trim().is_empty() {
-            return Err(ProviderError::InvalidParameter("secret_ref is empty".to_string()));
+        // 边界校验与 run 面同口径（L-6/dev-reviewer）：`op://` 无 item / 明文值等
+        // 畸形引用在入界即拒 7005，不落到 `op item get` 上按 7003 归类。消息不带
+        // 入参回显（§3.4，M-5）。元数据面兼容裸 item id（list 返回的稳定标识）。
+        if !is_valid_secret_ref(secret_ref) {
+            return Err(ProviderError::InvalidParameter(
+                "secret_ref is not a valid secret reference".to_string(),
+            ));
         }
         // `op item get` 不接受 `op://` 引用（实测 op 2.32.1），须先拆出 vault+item。
         let (item, vault_from_ref) = parse_secret_ref(secret_ref);
@@ -257,6 +262,10 @@ impl SecretProvider for OpProvider {
 // ===========================================================================
 
 /// `run_with_secret` 入参校验（边界校验，失败即 7005）。
+///
+/// run 协议（docs/20 §4.2）承载于临时 dotenv：内容为 `ENV_NAME=op://vault/item/field`
+/// 引用，`op run` 只解析 `op://` 形态——裸 item id / 明文会被**当字面量**注入子进程
+/// env（静默注入错误"值"，H-1/dev-reviewer）。故 run 面只接受 `op://` 引用。
 fn validate_run_spec(spec: &RunSpec) -> Result<(), ProviderError> {
     if spec.secret_ref.trim().is_empty() {
         return Err(ProviderError::InvalidParameter("secret_ref is empty".to_string()));
@@ -265,29 +274,32 @@ fn validate_run_spec(spec: &RunSpec) -> Result<(), ProviderError> {
         // dotenv 注入防护：`\n` 会插入额外的环境变量行。
         return Err(ProviderError::InvalidParameter("secret_ref contains newline".to_string()));
     }
+    if !spec.secret_ref.starts_with("op://") {
+        // H-1：裸 item id / 明文不属于 run 面——`op run` 对其不解析，注入的是字面量。
+        return Err(ProviderError::InvalidParameter(
+            "secret_ref must be an op:// reference".to_string(),
+        ));
+    }
     if !is_valid_secret_ref(&spec.secret_ref) {
-        // 结构校验（docs/20 §4.4）：secret_ref 须是 `op://` 引用或安全字符集
-        // item id，拒绝把明文值当作引用传入（否则明文会落进临时 dotenv）。
-        return Err(ProviderError::InvalidParameter(format!(
-            "secret_ref is not a valid op:// reference or item id: {:?}",
-            spec.secret_ref
-        )));
+        // 结构校验（docs/20 §4.4）：op:// 引用须 vault/item 非空、无控制字符。
+        // 消息不带入参回显（§3.4：7xxx 载荷不得含 Secret 值，M-5）。
+        return Err(ProviderError::InvalidParameter(
+            "secret_ref is not a valid op:// reference".to_string(),
+        ));
     }
     if !is_valid_env_name(&spec.env_name) {
-        return Err(ProviderError::InvalidParameter(format!(
-            "env_name is not a valid environment variable name: {:?}",
-            spec.env_name
-        )));
+        return Err(ProviderError::InvalidParameter(
+            "env_name is not a valid environment variable name".to_string(),
+        ));
     }
     if spec.cmd.trim().is_empty() {
         return Err(ProviderError::InvalidParameter("cmd is empty".to_string()));
     }
     if let Some(cwd) = &spec.cwd {
         if !cwd.is_dir() {
-            return Err(ProviderError::InvalidParameter(format!(
-                "cwd is not a directory: {}",
-                cwd.display()
-            )));
+            return Err(ProviderError::InvalidParameter(
+                "cwd is not a directory".to_string(),
+            ));
         }
     }
     Ok(())
@@ -310,6 +322,9 @@ fn is_valid_env_name(name: &str) -> bool {
 /// - `op://<vault>/<item>[/<field>]`：vault 与 item 均非空；
 /// - 其余形态：仅安全字符集 item id（无空白/控制字符，避免 dotenv 注入歧义）。
 ///
+/// 调用方语义：run 面（[`validate_run_spec`]）先要求 `op://` 前缀再走本校验
+/// （H-1：裸 id 会被 `op run` 当字面量注入子进程 env）；元数据面
+/// （[`get_secret_metadata`](SecretProvider::get_secret_metadata)）两者皆可。
 /// 不匹配 → 7005（由调用方转为 [`ProviderError::InvalidParameter`]）。
 fn is_valid_secret_ref(secret_ref: &str) -> bool {
     if secret_ref.trim().is_empty() || secret_ref.contains('\n') {
@@ -369,6 +384,12 @@ fn parse_secret_ref(secret_ref: &str) -> (String, Option<String>) {
 /// op 2.32.1 格式）。目标子进程经 `op run` 透传的 stderr 也汇入同一缓冲，其
 /// 自带日志若含字面 `[ERROR]`（如 `[ERROR] 2026/…` 之外的形态）**不**误判为
 /// op 层失败 —— 契约：子进程非零退出必须原样返回退出码，不吞、不误报 Err。
+///
+/// 残余边界（M-6/dev-reviewer，已登记 KNOWN-ISSUES）：若子进程日志**恰好**为
+/// `[ERROR] YYYY/MM/DD HH:MM:SS …` 时间戳形态**且**命中关键字（`could not find`
+/// 等），仍会误判为 op 层失败并归一为 7003/7004/7006——`op run` 把 op 与子进程
+/// stderr 汇入同一缓冲，无可靠区分手段。MVP 接受该启发式边界（子进程输出不受控，
+/// §3.5-3 诚实边界延伸）；修复需分隔两路 stderr（op 无原生开关）。
 fn is_op_level_error(stderr: &str) -> bool {
     // `[ERROR] YYYY/MM/DD HH:MM:SS `：前缀 + 时间戳。仅子串匹配会误伤子进程
     // 日志（任何 `[ERROR]` 开头的行），故要求前缀后紧跟日期形态。

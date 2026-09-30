@@ -22,14 +22,5 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
       working-directory: core
-    - name: Run acceptance tests
-      run: cargo test --test acceptance_v05 -- --nocapture | tee acceptance_v05.log
-      # BUG-13：acceptance_v05 在仓库根 tests/ 且无根 Cargo.toml（workspace 在 core/），
-      # 本步骤需 v0.5 工作线补根 manifest 或迁测试后方可执行（docs/KNOWN-ISSUES.md BUG-13）。
     - name: Run MCP smoke
       run: bash tools/run_mcp_smoke.sh
-    - name: Upload acceptance test log
-      uses: actions/upload-artifact@v4
-      with:
-        name: acceptance-v05-log
-        path: acceptance_v05.log

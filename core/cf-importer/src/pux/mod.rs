@@ -257,8 +257,14 @@ fn write_pux_item(
     }
 
     // 附件：密文文件事务内先落盘（AttachmentRepo 先文件后行纪律）
-    if let (Some(file), Some(entry)) = (&model.file, model.zip_entry.as_deref()) {
-        let content = archive.read_entry_content(entry)?;
+    let file = model.file.as_ref();
+    let entry_name_opt = match (file, model.zip_entry.as_deref()) {
+        (Some(_), Some(entry)) => Some(entry.to_owned()),
+        (Some(f), None) => archive.resolve_file_entry(f),
+        _ => None,
+    };
+    if let (Some(file), Some(entry_name)) = (file, entry_name_opt) {
+        let content = archive.read_entry_content(&entry_name)?;
         repos
             .attachments
             .add(&item_uuid, file.filename.as_bytes(), &content, vault_dir)?;

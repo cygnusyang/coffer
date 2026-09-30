@@ -23,6 +23,7 @@
 //! - [`audit`]：`UsageAudit` trait + 默认实现（§4.6）
 //! - [`error`]：[`McpError`]（7xxx 段，§3.4）
 //! - [`provider`]：`SecretProvider` trait + 注册表（§4.1 冻结签名）
+//! - [`cli`]：`coffer mcp` 参数解析与入口（§5，G-D）
 //! - [`McpServer`]：门面（`serve_stdio` / `handle_line`，§2.4 lib.rs 职责）
 //! - [`mcp`]：`mcp::*` 本地门面（4 实工具 + 8 个 D-1 未确认收缩范围的兼容桩）
 //!
@@ -36,6 +37,7 @@
 #![warn(missing_docs)]
 
 pub mod audit;
+pub mod cli;
 pub mod error;
 pub mod protocol;
 pub mod provider;

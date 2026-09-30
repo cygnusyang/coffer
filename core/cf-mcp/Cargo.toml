@@ -29,5 +29,12 @@ cf-session = { workspace = true, optional = true }
 # 启用后 workspace 依赖树新增 cf-mcp → cf-session 边（docs/20 §9.2 互斥核对）。
 coffer-store = ["dep:cf-session"]
 
+# `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
+# 沿用 cf-ffi `uniffi-bindgen` 先例），未来 `coffer list/run/…` 扩进同一 bin 或
+# 独立 cf-cli crate（届时再裁，本版只管 `mcp` 子命令）。
+[[bin]]
+name = "coffer"
+path = "src/main.rs"
+
 [dev-dependencies]
 serde_json = { workspace = true }

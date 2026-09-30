@@ -446,7 +446,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 **发现环境**：G-G（mcp-e2e）新增 CI 冒烟步骤时发现既有 CI 在根执行 cargo 必败（根无 Cargo.toml），其 smoke 步骤实际走不到；lead 复核确认
 **分级**：严重级 S2（CI 对 main 分支形同虚设）/ 优先级 P2 / 来源版本 v0.5.0（CI 既定缺陷，非 MCP 引入）/ 发现版本 v2.0.0（G-G 集成）
 **状态**：✅ 已修复（2026-09-30 核销）
-**核销记录**：2026-09-30 核销——裁定=用户「删孤儿+撤专用步骤」（删除根 `tests/acceptance_v05.rs` + 移除 rust.yml「Run acceptance tests」「Upload acceptance test log」两步）；修复=commit `4eaa393`（PW FFI 批内，dev-coder-ffi）；复验=CI `Run tests` 步骤（working-directory: core）跑全量测试含 `v05_ffi_semantics`（v0.5 验收真身，8 用例全绿）。
+**核销记录**：2026-09-30 核销——裁定=用户「删孤儿+撤专用步骤」（删除根 `tests/acceptance_v05.rs` + 移除 rust.yml「Run acceptance tests」「Upload acceptance test log」两步）；修复=commit `ebaa66d`（原 `4eaa393` 经 amend 并入本登记后改名落位，dev-coder-ffi；reviewer 2026-09-30 指出 `4eaa393` 为悬空对象，已改引）；复验=CI `Run tests` 步骤（working-directory: core）跑全量测试含 `v05_ffi_semantics`（v0.5 验收真身，8 用例全绿）。
 **证据**：`.github/workflows/rust.yml` 原 Build/Run tests/Run acceptance 均在仓库根跑 `cargo`（根无 Cargo.toml，workspace 在 `core/`）；`tests/acceptance_v05.rs` 位于根 `tests/` 且无根 manifest 归属。
 
 ### 现象（预期/实际 分行写）
@@ -458,7 +458,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 - Build / Run tests 已补 `working-directory: core`（随 `33a9e27` 后的 lead CI 修复落地）；
 - MCP smoke 步骤自包含（脚本内部 cd 到 `core/`）保持在根执行；
-- `Run acceptance tests` / `Upload acceptance test log` 两步已移除、根 `tests/acceptance_v05.rs` 已删除（随 `4eaa393`）——用户 2026-09-30 再裁定「删孤儿+撤专用步骤」；v0.5 验收真身 = `core/cf-ffi/tests/v05_ffi_semantics.rs`，由 `Run tests`（working-directory: core）覆盖，无需专用步骤。
+- `Run acceptance tests` / `Upload acceptance test log` 两步已移除、根 `tests/acceptance_v05.rs` 已删除（随 `ebaa66d`）——用户 2026-09-30 再裁定「删孤儿+撤专用步骤」；v0.5 验收真身 = `core/cf-ffi/tests/v05_ffi_semantics.rs`，由 `Run tests`（working-directory: core）覆盖，无需专用步骤。
 - 注：workspace `cargo test` 含 MCP D-1 基线的 23 条预期红灯（v2.x 存根），CI 全绿需等 v2.0.0 MCP 存根补齐。
 
 ---
@@ -732,6 +732,45 @@ grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` �
 **证据**：`core/cf-mcp/src/protocol.rs:89-103` `parse_frame` 对单行长度无上限
 
 本地 stdio 传输，影响面小；可选按行长度截断（超限报 7005/连接拒绝）。
+
+---
+
+## PL-1（🟡 MEDIUM，待修）：passkey 域 L-2 哨兵测试缺失——「改 reason 文案分类不变」无独立变换断言
+
+**登记日期**：2026-09-30
+**发现环境**：#18 增量审查补审（dev-reviewer 专项 L-2 落点核验，结论：结构已落地、哨兵测试待补）
+**分级**：S3（回归警戒缺口——调用侧若改回文本分类且当前文案未变，现有测试全部测不出）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：🟡 待修（已派 dev-coder-passkey-import 补哨兵单测）
+**核销记录**：待回填
+**证据**：`core/cf-importer/src/bitwarden/mapping.rs:636-641`（`非es256族按枚举判定`）、`core/cf-importer/tests/bitwarden_import.rs:204-260`、`core/cf-ffi/tests/v05_ffi_semantics.rs` 三处均只固定枚举 kind 与列表归属，无一独立变换 reason 文案再断言分类不变。
+
+### 现象（预期/实际 分行写）
+
+- 预期：L-2 纪律（docs/17 r2.4 §9.1 / docs/19 §7）「按数据不按文案」有回归哨兵——同分类数据、不同 reason 文案 → 分类不变。
+- 实际：哨兵测试按字面不存在。现有三处最近测试只锁枚举 kind 与列表归属（`BwPasskeyFailureKind::is_non_es256()` 枚举→bool、fixture→kind、跨 FFI 计数），无「同数据两条不同 reason → kind/is_non_es256 一致」的独立变换断言；调用侧若改回文本分类且当前文案未变，三处全测不出来。
+
+### 根因（已实证 / 待查）
+
+分类唯一调用点 `mapping.rs:290` `failure.kind.is_non_es256()`，全仓 grep 零 reason 文本参与分类——**结构要求已满足**；缺口纯在测试层（无哨兵）。编号说明：docs/19 原以「L-2」引用（passkey 域），与 MCP 域 L 系列（L-1~L-7）撞号，本次以 `PL-` 前缀再登记。
+
+### 修复路径
+
+补哨兵单测：经 `map_passkey_row`（或预检路径）构造同 kind、异 reason 的两输入（如 keyCurve `p384` 与 `p521` 均 → KeyCurveMismatch、reason 文案不同），断言 kind 一致 + is_non_es256 反映枚举。或由 lead 将 docs/19 验收口径改为与现有功能断言对齐（本条目按补测处理）。
+
+### 复现与诊断
+
+N/A（测试缺口，非运行期缺陷）。
+
+---
+
+## PL-2（✅ 已接受，不改）：FFI From 映射的 `try_from().unwrap_or(哨兵值)` 饱和转换
+
+**登记日期**：2026-09-30
+**发现环境**：#18 增量审查补审（dev-reviewer 其 LOW 建议 3）
+**分级**：S4 / P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已接受（遵循仓库既有 saturating convention，L-3/L-4 同款先例）
+**核销记录**：接受不改——`types.rs:1426` 已文档化「usize → u32 饱和转换」既有纪律（`u32::try_from().unwrap_or(u32::MAX)` 同款）；新映射（algorithm / sign_count 等）同构。库内契约下不可达（algorithm 恒 -7 ES256、sign_count 非负，上游由 `BwPasskeyFailureKind` 枚举强制）。
+**证据**：`core/cf-ffi/src/types.rs`（`i32::try_from(...).unwrap_or(i32::MIN)` 等）
 
 ---
 

@@ -575,6 +575,166 @@ G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用�
 
 ---
 
+## BUG-14（✅ 已修复）：run_with_secret 接受裸 item id——被 op run 当字面量注入子进程 env（静默注入错误"值"）
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（H-1，HIGH——合并前应修复）
+**分级**：严重级 S2（主要功能受损——run 面静默注入错误"值"至子进程 env，行为不可预期且极难排查）/ 优先级 P1 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（MCP 终审）
+**状态**：✅ 已修复（2026-09-30）
+**核销记录**：修复 = commit `6585218`；复验 = `run_with_secret_rejects_bare_item_id`（core/cf-mcp/tests/provider_op_run.rs，裸 id → 7005）+ cf-mcp 全测试 / clippy `-D warnings` 绿
+**证据**：`core/cf-mcp/src/provider/op.rs` 原 `validate_run_spec`（裸 id 经 `is_valid_secret_ref` 放行）→ `TempDotenv::write` 写 `ENV_NAME=<裸 id>` → `op run` 不解析、原样 export 字面量
+
+### 现象（预期/实际 分行写）
+
+- 预期：run_with_secret 的临时 dotenv 只承载 `op://` 引用（docs/20 §4.2），子进程 env 拿到的是 op 解析出的真实 secret 值。
+- 实际：secret_ref 传裸 item id（如 `fixture-item-api-key`，`is_valid_secret_ref` 明确放行）时，dotenv 写 `MY_KEY=fixture-item-api-key`，`op run` 当字面量透传——子进程 env 注入的是 **id 字符串本身，不是 secret 明文**；子进程以为注入了真凭据，静默产生错误行为。`provider_op_run.rs` 全部用例只用 `op://` 引用，此路径无测试覆盖。
+
+### 根因（已实证）
+
+run 面把「secret_ref 非明文」校验与元数据面共用 `is_valid_secret_ref`（`op://` 引用与裸 id 两种形态皆可），未约束 run 必须为 `op://` 引用形态——与 docs/20 §4.2「dotenv 内容为 `ENV_NAME=op://vault/item/field`」协议不一致。
+
+### 修复路径（2026-09-30 已落地）
+
+1. `validate_run_spec` 要求 secret_ref 必须 `op://` 前缀 + 结构校验（vault/item 非空、无控制字符）；裸 id / 明文 → 7005（与 §4.2 run 协议对齐）。
+2. 错误消息去掉入参回显（§3.4 载荷禁值纪律，联动 M-5）。
+3. `get_secret_metadata` 补同口径边界校验（联动 L-6）；元数据面仍兼容裸 id（list 返回的稳定标识）。
+
+### 复现与诊断
+
+`run_with_secret {secret_ref: "fixture-item-api-key", cmd: "env"}` → 修复前子进程 env 得字面量 id；修复后 7005 InvalidParameter。
+
+---
+
+## M-5（✅ 已修复）：7xxx 错误载荷回显外部输入——违反 §3.4「载荷不得含 Secret 值」不变量
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 M-1，MEDIUM）
+**分级**：S3（安全纪律——错误帧不经 SecretRedactor，回显可污染 Agent 侧显示/日志）/ P2 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：✅ 已修复（2026-09-30）
+**核销记录**：修复 = commit `6585218`（validate_run_spec / get_secret_metadata 错误消息全部去入参回显，改通用文案）；复验 = provider_op_* 错误码用例全绿（测试不断言消息文本，仅码值）
+**证据**：`core/cf-mcp/src/provider/op.rs` 原 `InvalidParameter(format!("…{:?}", spec.secret_ref))` 等三处回显；`lib.rs::error_frame` 不经 SecretRedactor（仅 `content[0].text` 过 redact）
+
+### 现象（预期/实际 分行写）
+
+- 预期：§3.4「7xxx 消息载荷不得含 Secret 值」；§3.5-2 redact 只覆盖 `content[0].text`，错误帧天然绕开。
+- 实际：Agent 误把明文值当作 secret 入参（§3.3 要防的场景）时，InvalidParameter 载荷原样回显该串且未经脱敏——值虽来自发起方，但进入 Agent 侧错误显示/日志，污染协议面。
+
+### 根因（已实证）
+
+错误归一消息直接 `format!` 拼接外部入参；错误帧不经 Redactor。
+
+### 修复路径（2026-09-30 已落地）
+
+全部错误消息改通用文案（`secret_ref must be an op:// reference` / `not a valid op:// reference` / `env_name is not a valid environment variable name` / `cwd is not a directory`），不携带任意外部串。
+
+### 复现与诊断
+
+`run_with_secret {secret_ref: "<含敏感串的明文>", …}` → 修复前 7005 载荷回显该串；修复后通用文案。
+
+---
+
+## M-6（🟡 登记待后续）：op/子进程 stderr 共缓冲——子进程日志「时间戳形态 + 命中关键字」可被误判为 op 层失败
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 M-2，MEDIUM）
+**分级**：S3（错误归类误判——目标子进程非零退出可能被归一为 7003/7004/7006，违背「退出码原样返回」契约）/ P2 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理（MVP 接受启发式边界；`is_op_level_error` 注释已明示残余边界）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `is_op_level_error` / `classify_run_failure`——`op run` 把 op 与子进程 stderr 汇入同一缓冲；`op_error_detection_requires_timestamp_shape` 只覆盖「无时间戳形态」反例
+
+### 现象（预期/实际 分行写）
+
+- 预期：子进程非零退出码原样返回（mcp_acceptance 契约），不误报 Err。
+- 实际：子进程日志若**恰好**为 `[ERROR] YYYY/MM/DD HH:MM:SS …` 时间戳形态（不少 CLI 工具正是此格式）**且**含 `could not find` / `could not resolve` 等关键字，`is_op_level_error` 返回 true → 归一为 7003/7004/7006，违背退出码原样返回契约。
+
+### 根因（已实证）
+
+`op run` 无原生开关分隔 op 与子进程 stderr；时间戳形态是唯一的近似判据，对「恰好同形态」的子进程日志存在误伤。
+
+### 修复路径（候选）
+
+1. 补该形态用例并文档明示边界（已部分落地：注释）；2. 后续若引入 wrapper 层可分隔两路 stderr；3. 不动作（MVP 接受，子进程输出不受控属 §3.5-3 诚实边界延伸）。
+
+### 复现与诊断
+
+`sh -c 'echo "[ERROR] 2026/09/30 15:45:51 could not find X" >&2; exit 7'` 经 op run → 当前被归类为 7003 而非返回 7。
+
+---
+
+## M-7（🟡 登记待后续）：`redact_known_values`（精确已知值脱敏）是生产死代码——更强的纵深防御面未接线
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 M-3，MEDIUM）
+**分级**：S3（安全纪律——精确值替换强于前缀指纹 `sk-`，却仅被测试引用）/ P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/redact.rs:89-98` 仅 `protocol_redact.rs:90-100` 引用；生产路径 `tools.rs:153` 的 `redact()` 只做前缀指纹（`sk-` + 阈值 8）
+
+### 现象（预期/实际 分行写）
+
+- 预期：docs/20 §3.5-2 输出 Redactor 管道（AS-11）为纵深防御；精确已知值替换是更强防御面。
+- 实际：`redact_known_values` 从未被生产路径调用——已知值清单未接线到 `McpServer`。
+
+### 修复路径（候选）
+
+1. 接入 `McpServer`（持有 provider 已知值清单）；2. 明确标注为未来 `reveal_for_broker()` 配套；3. 删除避免误导。注意方法内 `replace` 对多个已知值存在级联/子串误伤隐患，接入前需定义语义。
+
+### 复现与诊断
+
+grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` 有测试、生产无接线。
+
+---
+
+## L-5（🟡 LOW）：tools.rs `tracing::warn!` 无 subscriber——审计失败告警恒被丢弃
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-1，LOW）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/tools.rs:242` `tracing::warn!(error = ?e, secret = %secret, "audit record failed")`——仓库从未初始化 tracing subscriber
+
+当前 NoopAudit 不会失败（不可达），但 D-3 JSONL 落地后审计失败将**静默**（违反「错误不静默吞」纪律）。修复 = 改用 `cli::Logger` 或初始化 subscriber / 文档化。
+
+---
+
+## L-6（✅ 已修复）：get_secret_metadata 无边界校验——畸形 op:// 引用落到 op item get 按 7003 归类
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-2，LOW）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：✅ 已修复（2026-09-30）
+**核销记录**：修复 = commit `6585218`（get_secret_metadata 前置 `is_valid_secret_ref`，畸形引用入界即拒 7005）；复验 = `get_secret_metadata_rejects_malformed_op_reference` / `get_secret_metadata_rejects_plaintext_value`（provider_op_list.rs）
+**证据**：`core/cf-mcp/src/provider/op.rs` 原 `get_secret_metadata` 不调用 `is_valid_secret_ref`；`\n` 校验也只在 run 面
+
+### 现象（预期/实际 分行写）
+
+- 预期：get_secret_metadata 与 run 面同口径边界校验（畸形引用 7005）。
+- 实际：`op://Personal`（无 item）等畸形引用落到 `op item get "op://Personal"` → 7003，与 run 面 7005 不一致。
+
+### 修复路径（2026-09-30 已落地）
+
+入口补 `is_valid_secret_ref`（空 / 换行 / 控制字符 / 明文值 → 7005）；元数据面仍兼容裸 item id（list 返回的稳定标识）。
+
+### 复现与诊断
+
+`get_secret_metadata("op://Personal")` → 修复前 7003；修复后 7005。
+
+---
+
+## L-7（🟡 LOW）：parse_frame 对单行长度无上限——恶意/失控客户端可发超大单行造成内存压力
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-3，LOW）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/protocol.rs:89-103` `parse_frame` 对单行长度无上限
+
+本地 stdio 传输，影响面小；可选按行长度截断（超限报 7005/连接拒绝）。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

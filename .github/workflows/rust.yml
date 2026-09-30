@@ -20,3 +20,10 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Run acceptance tests
+      run: cargo test --test acceptance_v05 -- --nocapture | tee acceptance_v05.log
+    - name: Upload acceptance test log
+      uses: actions/upload-artifact@v4
+      with:
+        name: acceptance-v05-log
+        path: acceptance_v05.log

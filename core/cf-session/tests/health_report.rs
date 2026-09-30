@@ -5,7 +5,7 @@
 //! 边界语义（与 cf-audit 纯函数判据一致）。走真实建库 / 解锁 / 会话 API。
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cf_crypto::kdf::KdfParams;
 use cf_domain::category::ItemCategory;
@@ -25,14 +25,12 @@ const P1: &str = "correct-horse-battery-staple-42!";
 /// 一天的秒数。
 const SECS_PER_DAY: i64 = 86_400;
 
-/// 唯一临时目录（docs/10 §0.4：测试间零共享）。
+/// 唯一临时目录（docs/10 §0.4：测试间零共享；pid + 进程内原子计数器）。
 fn temp_base(tag: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "cf-session-health-{tag}-{}-{nanos}",
+        "cf-session-health-{tag}-{}-{seq}",
         std::process::id()
     ))
 }

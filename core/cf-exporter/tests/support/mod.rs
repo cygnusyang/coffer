@@ -63,16 +63,8 @@ pub fn test_salt() -> [u8; SALT_LEN] {
 pub fn temp_dir(tag: &str) -> PathBuf {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "cf-exporter-{}-{}-{}-{}",
-        tag,
-        std::process::id(),
-        n,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("cf-exporter-{}-{}-{}", tag, std::process::id(), n));
     fs::create_dir_all(&dir).expect("创建临时目录成功");
     dir
 }

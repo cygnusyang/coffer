@@ -409,6 +409,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_health_report(uint64_t ptr, int6
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_import_1pux(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_BITWARDEN_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_BITWARDEN_JSON
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_import_bitwarden_json(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_IMPORT_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_import_csv(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
@@ -439,6 +444,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_history(uint64_t ptr, RustB
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_items(uint64_t ptr, RustBuffer filter, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_PASSKEYS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LIST_PASSKEYS
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_list_passkeys(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LOCK
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_LOCK
 void uniffi_cf_ffi_fn_method_vaultsession_lock(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -452,6 +462,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_parse_otpauth_uri(uint64_t ptr, 
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_1PUX
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_1PUX
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_1pux(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_BITWARDEN_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_BITWARDEN_JSON
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_precheck_bitwarden_json(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_PRECHECK_CSV
@@ -472,6 +487,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_recent_audit_events(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
 void uniffi_cf_ffi_fn_method_vaultsession_remove_attachment(uint64_t ptr, RustBuffer attachment_uuid, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_PASSKEY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_PASSKEY
+void uniffi_cf_ffi_fn_method_vaultsession_remove_passkey(uint64_t ptr, RustBuffer passkey_uuid, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_HISTORY
@@ -1022,6 +1042,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_import_1pux(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_BITWARDEN_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_BITWARDEN_JSON
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_import_bitwarden_json(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_IMPORT_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_import_csv(void
@@ -1058,6 +1084,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_list_items(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_PASSKEYS
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LIST_PASSKEYS
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_list_passkeys(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LOCK
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_LOCK
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_lock(void
@@ -1073,6 +1105,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_parse_otpauth_uri(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_1PUX
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_1PUX
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_1pux(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_BITWARDEN_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_PRECHECK_BITWARDEN_JSON
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_precheck_bitwarden_json(void
     
 );
 #endif
@@ -1097,6 +1135,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_recent_audit_events(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_ATTACHMENT
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_remove_attachment(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_PASSKEY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_PASSKEY
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_remove_passkey(void
     
 );
 #endif

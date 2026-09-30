@@ -160,6 +160,14 @@ struct PuxImportView: View {
                     }
                     .font(.callout)
 
+                    // Passkey 计数（docs/17 §4.2 PK2 增量字段，FR-10.2 降级版）：
+                    // 1PUX 桌面导出无 passkey 字段，恒为 0——恒空快速路径，为 0 不展示。
+                    if report.passkeyCount > 0 {
+                        Text("检测到 Passkey \(report.passkeyCount) 个")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     // 条件计数行：为 0 不展示，避免噪音
                     if report.trashedCount > 0 {
                         Text("回收站 \(report.trashedCount) 条")
@@ -294,8 +302,8 @@ struct PuxImportView: View {
                         // 无部分导入提示的必要，回报告页即可
                         step = .report(lastReport ?? FfiPuxPrecheckReport(
                             totalItems: 0, importableItems: 0, categoryDistribution: [],
-                            attachmentCount: 0, unknownCategories: [], trashedCount: 0,
-                            passwordHistoryDropped: 0, unmappedValueTypes: [],
+                            attachmentCount: 0, passkeyCount: 0, unknownCategories: [],
+                            trashedCount: 0, passwordHistoryDropped: 0, unmappedValueTypes: [],
                             duplicateDocumentIds: [], notImported: [], warnings: []
                         ), path: lastPath ?? path)
                         model.lastErrorMessage = "会话不存在。"

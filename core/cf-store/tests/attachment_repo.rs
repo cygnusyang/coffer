@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
@@ -24,15 +24,15 @@ fn memory_store() -> ItemStore {
     ItemStore::open(conn, subkeys).unwrap()
 }
 
-/// 唯一临时 vault 目录（pid + 纳秒，不引入 tempfile 依赖；与
-/// cf-format/src/testutil.rs 同一模式）。
+/// 唯一临时 vault 目录（pid + 进程内原子计数器，不引入 tempfile 依赖）。
+///
+/// 修复 BUG-12：原实现 pid+纳秒 在 macOS 粗时钟下同 pid 同 tick 撞名
+/// （并行测试 remove_dir_all 互相拆台，见 `temp_vault_dir并行不撞名`）；
+/// 计数器按构造保证进程内唯一。
 fn temp_vault_dir() -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("coffer-attach-test-{}-{nanos}", std::process::id()));
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("coffer-attach-test-{}-{seq}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -478,4 +478,44 @@ fn 条目隔离与缺失附件() {
     ));
 
     fs::remove_dir_all(&vault).unwrap();
+}
+
+/// BUG-12 回归警戒：并行满载下 temp_vault_dir() 必须永不撞名。
+///
+/// 旧实现用 pid+纳秒 命名，同进程（同 pid）内两个并行测试在同一时钟
+/// tick 调用即撞名——某用例收尾 remove_dir_all 会拆掉另一用例的现场，
+/// 导致密文/结构断言偶发失败（macOS 时钟分辨率粗于测试步进，撞名窗口
+/// 实际存在）。修复为 pid+进程内原子计数器后，进程内唯一性由构造保证，
+/// 本测试必须稳定全绿。
+#[test]
+fn temp_vault_dir并行不撞名() {
+    const THREADS: usize = 32;
+    const PER_THREAD: usize = 16; // 共 512 次调用，barrier 压缩到同一 tick
+    let barrier = std::sync::Barrier::new(THREADS);
+    let dirs: Vec<PathBuf> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let barrier = &barrier;
+                s.spawn(move || {
+                    barrier.wait(); // 同时开跑，最大化同 tick 撞名概率
+                    (0..PER_THREAD)
+                        .map(|_| temp_vault_dir())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
+    });
+    let mut seen = std::collections::HashSet::new();
+    for dir in &dirs {
+        assert!(
+            seen.insert(dir.clone()),
+            "temp_vault_dir 撞名：{dir:?}（修复前 pid+纳秒 粗时钟可复现，BUG-12）"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+    assert_eq!(seen.len(), THREADS * PER_THREAD, "全部目录必须互不相同");
 }

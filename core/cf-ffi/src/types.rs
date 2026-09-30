@@ -1166,6 +1166,9 @@ pub struct FfiPuxPrecheckReport {
     pub category_distribution: Vec<FfiCategoryCount>,
     /// 附件总数。
     pub attachment_count: u32,
+    /// 检测到的疑似 passkey 字段数（docs/17 §4.2 PK2 增量字段，向后
+    /// 兼容；1PUX 桌面导出恒为 0——恒空快速路径）。
+    pub passkey_count: u32,
     /// 未识别类别清单。
     pub unknown_categories: Vec<FfiUnknownCategory>,
     /// 回收站条目数（state=trashed）。
@@ -1193,6 +1196,7 @@ impl From<cf_importer::PuxPrecheckReport> for FfiPuxPrecheckReport {
                 .map(Into::into)
                 .collect(),
             attachment_count: r.attachment_count,
+            passkey_count: r.passkey_count,
             unknown_categories: r.unknown_categories.into_iter().map(Into::into).collect(),
             trashed_count: r.trashed_count,
             password_history_dropped: r.password_history_dropped,
@@ -1510,6 +1514,188 @@ impl From<cf_session::AttachmentInfo> for FfiAttachmentMeta {
             filename: info.filename,
             size_bytes: info.size_bytes,
             created_at: info.created_at,
+        }
+    }
+}
+
+// ---------------------------------------------- Passkey（FR-10.2 / 10.5，v0.5）
+
+/// Passkey 元数据（docs/17 §4.1 冻结契约镜像）。
+///
+/// **无私钥字段**——FR-10.2 红线：`enc_private_key` / `enc_user_handle`
+/// 不出现在任何查询返回中，展示面结构上就不存在私钥材料。时间戳恒
+/// `i64` Unix 秒；`usize` 不跨 FFI → 计数收窄为 `u32`。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiPasskeyMeta {
+    /// passkey 行 UUID（主键）。
+    pub passkey_uuid: String,
+    /// 所属条目 UUID。
+    pub item_uuid: String,
+    /// Relying Party ID（解密后明文，如 `github.com`）。
+    pub rp_id: String,
+    /// RP 显示名（可选，解密后）。
+    pub rp_name: Option<String>,
+    /// 用户名（可选，解密后）。
+    pub user_name: Option<String>,
+    /// 凭据 ID（base64；非密钥，FR-10.2 允许展示）。
+    pub credential_id_b64: String,
+    /// COSE alg 编号（-7 = ES256）。
+    pub algorithm: i32,
+    /// 签名计数器。
+    pub sign_count: u32,
+    /// 创建时间（Unix 秒）。
+    pub created_at: i64,
+    /// 最后使用时间（Unix 秒；本版无断言路径，恒 `None`）。
+    pub last_used_at: Option<i64>,
+}
+
+impl From<cf_store::PasskeyMeta> for FfiPasskeyMeta {
+    fn from(m: cf_store::PasskeyMeta) -> Self {
+        Self {
+            passkey_uuid: m.uuid,
+            item_uuid: m.item_uuid,
+            rp_id: m.rp_id,
+            rp_name: m.rp_name,
+            user_name: m.user_name,
+            credential_id_b64: m.credential_id_b64,
+            algorithm: i32::try_from(m.algorithm).unwrap_or(i32::MIN),
+            sign_count: u32::try_from(m.sign_count).unwrap_or(u32::MAX),
+            created_at: m.created_at,
+            last_used_at: m.last_used_at,
+        }
+    }
+}
+
+// ------------------------------------- Bitwarden 预检/导入（FR-10.1，v0.5）
+
+/// 坏 passkey 行的结构化分类（L-2：#18 审查裁定——分类按数据不按文案，
+/// reason 只是展示层，措辞漂移不迁移分类）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiBwPasskeyFailureKind {
+    /// `keyAlgorithm` 显式给出且 ≠ `ecdsa`。
+    KeyAlgorithmMismatch,
+    /// `keyCurve` 显式给出且 ≠ `p256`。
+    KeyCurveMismatch,
+    /// rpId 缺失或为空。
+    MissingRpId,
+    /// credentialId 缺失或不是合法 base64。
+    InvalidCredentialId,
+    /// counter 不是非负整数。
+    InvalidCounter,
+    /// 缺失私钥字段 encryptedPrivateKey。
+    MissingPrivateKey,
+    /// 私钥为 Bitwarden EncString 加密形态（未加密导出亦不解包）。
+    EncryptedPrivateKey,
+    /// 私钥无法解析为 ES256（P-256）材料。
+    UnparseablePrivateKey,
+}
+
+impl From<cf_importer::BwPasskeyFailureKind> for FfiBwPasskeyFailureKind {
+    fn from(k: cf_importer::BwPasskeyFailureKind) -> Self {
+        match k {
+            cf_importer::BwPasskeyFailureKind::KeyAlgorithmMismatch => Self::KeyAlgorithmMismatch,
+            cf_importer::BwPasskeyFailureKind::KeyCurveMismatch => Self::KeyCurveMismatch,
+            cf_importer::BwPasskeyFailureKind::MissingRpId => Self::MissingRpId,
+            cf_importer::BwPasskeyFailureKind::InvalidCredentialId => Self::InvalidCredentialId,
+            cf_importer::BwPasskeyFailureKind::InvalidCounter => Self::InvalidCounter,
+            cf_importer::BwPasskeyFailureKind::MissingPrivateKey => Self::MissingPrivateKey,
+            cf_importer::BwPasskeyFailureKind::EncryptedPrivateKey => Self::EncryptedPrivateKey,
+            cf_importer::BwPasskeyFailureKind::UnparseablePrivateKey => Self::UnparseablePrivateKey,
+        }
+    }
+}
+
+/// 一条不可导入的 passkey 行（预检显式列出，FR-7.8 不静默丢弃）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiBwPasskeyFailure {
+    /// 所属条目 ID（Bitwarden 原始 id）。
+    pub item_id: String,
+    /// 所属条目标题。
+    pub item_title: String,
+    /// 行在该条目 `fido2Credentials[]` 中的下标（0 起；usize 不跨 FFI → u32）。
+    pub index: u32,
+    /// 结构化分类（程序判定唯一依据，L-2）。
+    pub kind: FfiBwPasskeyFailureKind,
+    /// 拒绝原因（人类可读，面向导入结果页；**不作分类依据**）。
+    pub reason: String,
+}
+
+impl From<cf_importer::BwPasskeyFailure> for FfiBwPasskeyFailure {
+    fn from(f: cf_importer::BwPasskeyFailure) -> Self {
+        Self {
+            item_id: f.item_id,
+            item_title: f.item_title,
+            index: u32::try_from(f.index).unwrap_or(u32::MAX),
+            kind: f.kind.into(),
+            reason: f.reason,
+        }
+    }
+}
+
+/// Bitwarden 预检报告（docs/17 §4.2 冻结语义镜像）。
+///
+/// 与 1PUX 预检同纪律：**报告与导入同一条管线产出**（FR-7.4 所见即所
+/// 得），坏 passkey 行逐条列出、不静默丢弃（TCB-7）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiBwPrecheckReport {
+    /// 条目总数（含回收站 / 降级条目）。
+    pub total_items: u32,
+    /// 可导入条目数（降级计入导入成功，E-4 同纪律）。
+    pub importable_items: u32,
+    /// passkey 行总数（含不可导入行）。
+    pub passkey_total: u32,
+    /// 可导入 passkey 行数。
+    pub passkey_importable: u32,
+    /// 含 ≥ 1 条可导入 passkey 的条目数。
+    pub passkey_item_count: u32,
+    /// **「含密码且含 passkey 的条目数」**（FR-10.6 可测试证据，D-6）。
+    pub items_with_password_and_passkey: u32,
+    /// 非 ES256 passkey 行显式列表（TCB-7）。
+    pub non_es256: Vec<FfiBwPasskeyFailure>,
+    /// 其余坏 passkey 行逐条清单（EncString / 坏 credentialId / 缺 rpId /
+    /// 负 counter；导入跳过该行不丢条目）。
+    pub bad_passkeys: Vec<FfiBwPasskeyFailure>,
+    /// 回收站条目数（deletedDate 非空）。
+    pub trashed_count: u32,
+    /// 丢弃的密码历史条目数（FR-2.9 语义不同构，1PUX 同裁决）。
+    pub password_history_dropped: u32,
+    /// 告警文本（未知 fido2 键、降级、坏 totp、Linked 字段跳过等）。
+    pub warnings: Vec<String>,
+}
+
+impl From<cf_importer::BwPrecheckReport> for FfiBwPrecheckReport {
+    fn from(r: cf_importer::BwPrecheckReport) -> Self {
+        Self {
+            total_items: r.total_items,
+            importable_items: r.importable_items,
+            passkey_total: r.passkey_total,
+            passkey_importable: r.passkey_importable,
+            passkey_item_count: r.passkey_item_count,
+            items_with_password_and_passkey: r.items_with_password_and_passkey,
+            non_es256: r.non_es256.into_iter().map(Into::into).collect(),
+            bad_passkeys: r.bad_passkeys.into_iter().map(Into::into).collect(),
+            trashed_count: r.trashed_count,
+            password_history_dropped: r.password_history_dropped,
+            warnings: r.warnings,
+        }
+    }
+}
+
+/// Bitwarden 导入结果（FR-10.1，与 1PUX 的 [`FfiPuxImportResult`] 同体裁：
+/// 结果页计数 + 与本次导入同管线产出的预检报告）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiBwImportResult {
+    /// 实际导入（新建）的条目数。
+    pub imported_items: u32,
+    /// 预检报告（FR-7.4 所见即所得同纪律）。
+    pub report: FfiBwPrecheckReport,
+}
+
+impl From<cf_importer::BwImportResult> for FfiBwImportResult {
+    fn from(r: cf_importer::BwImportResult) -> Self {
+        Self {
+            imported_items: r.imported_items,
+            report: r.report.into(),
         }
     }
 }

@@ -156,26 +156,21 @@ impl ProviderRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// provider 文件模块占位（G-C 合入后替换）
+// provider 文件模块（G-C 合入）
 // ---------------------------------------------------------------------------
 
-mod op {
-    //! `OpProvider`（1Password CLI，MVP 数据源，docs/20 §4.2）。
-    //!
-    //! 实现体由 **G-C**（mcp-op）承担（`provider/op.rs`）；本空壳仅为让
-    //! crate 在 G-C 合入前保持可编译。G-C 落地时将本行替换为 `mod op;`。
-}
+/// `OpProvider`（1Password CLI，MVP 数据源，docs/20 §4.2）。
+///
+/// 实现见 `provider/op.rs`。默认构建（无 feature）即包含——op 是 MVP 数据源。
+/// `pub`：CLI（G-D）构造 [`op::OpProvider`]，集成测试直接引用。
+pub mod op;
 
-mod coffer {
-    //! `CofferStoreProvider`（feature: coffer-store 门控骨架，docs/20 §4.5）。
-    //!
-    //! 实现体由 **G-C**（mcp-op）承担（`provider/coffer.rs`）；本空壳仅为让
-    //! crate 在 G-C 合入前保持可编译。G-C 落地时将本行替换为 `mod coffer;`。
-    //!
-    //! 本版不实现：Coffer 现有模型是 条目/字段（密码管理器），无「Secret /
-    //! Environment / 权限」实体——`secret_ref → (item, field)` 映射、AS-7 权限
-    //! 矩阵、生命周期元数据均属 v2.x 存储模型扩展（docs/20 §8 ④）。
-}
+/// `CofferStoreProvider`（feature `coffer-store` 门控骨架，docs/20 §4.5）。
+///
+/// 实现见 `provider/coffer.rs`。feature 关闭时本模块不进入构建，cf-mcp
+/// 默认依赖树不引入 cf-session（docs/20 §2.2 只下不上）。
+#[cfg(feature = "coffer-store")]
+mod coffer;
 
 // ---------------------------------------------------------------------------
 // 验收测试种子 provider

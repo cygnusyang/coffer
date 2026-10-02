@@ -185,6 +185,18 @@ let readCtx = readQuery[kSecUseAuthenticationContext as String] as? LAContext
 check((readCtx?.localizedReason.isEmpty) == false,
       "哨兵：读取查询带全新 LAContext 且 localizedReason 非空")
 
+// 9c. itemExists 探测查询带全新 LAContext 且 interactionNotAllowed=true
+//     （启动路径 refreshTouchIDStatus → itemExists 不得触发 ACL 认证弹窗——
+//     2026-10-03 真机 log stream 实证：元数据查询亦触发完整认证 UI，PL-4
+//     双源①，docs/KNOWN-ISSUES.md PL-4）。kSecUseAuthenticationUI =
+//     kSecUseAuthenticationUIFail 自 macOS 11 弃用，改用 interactionNotAllowed
+//     （与 PL-4 弃用 kSecUseOperationPrompt 改 localizedReason 同式）。探测
+//     失败即返回状态码，由调用方按三态语义解释。
+let existsQuery = BiometricKeychain.queryForExists(vaultUUID: uuid, useDataProtection: false)
+let existsCtx = existsQuery[kSecUseAuthenticationContext as String] as? LAContext
+check((existsCtx?.interactionNotAllowed) == true,
+      "哨兵：itemExists 查询带全新 LAContext 且 interactionNotAllowed=true（探测禁止弹 UI）")
+
 print("")
 print(failed == 0
       ? "KEYCHAIN TESTS OK —— \(passed) 项断言全部通过"

@@ -177,14 +177,13 @@ let sentinelRead = try keychain.read(vaultUUID: uuid, useDataProtection: false)
 check(sentinelRead == sentinelKey, "哨兵：未预认证直读无 ACL 项成功（读取不依赖 evaluatePolicy）")
 try keychain.delete(vaultUUID: uuid, useDataProtection: false)
 
-// 9b. 读取查询带全新 LAContext 且 localizedReason = unlockPrompt
-//     （最小可测 seam：queryForRead 内部可见；kSecUseOperationPrompt 自
-//     macOS 11 弃用，改用 LAContext.localizedReason）
+// 9b. 读取查询带全新 LAContext 且 localizedReason 非空（最小可测 seam：
+//     queryForRead 内部可见；kSecUseOperationPrompt 自 macOS 11 弃用，
+//     改用 LAContext.localizedReason。不断言文案字面量——self-referential）
 let readQuery = BiometricKeychain.queryForRead(vaultUUID: uuid, useDataProtection: false)
 let readCtx = readQuery[kSecUseAuthenticationContext as String] as? LAContext
-check(readCtx?.localizedReason == BiometricKeychain.unlockPrompt,
-      "哨兵：读取查询带全新 LAContext 且 localizedReason = unlockPrompt")
-check(BiometricKeychain.unlockPrompt == "解锁密码库", "哨兵：解锁提示文案为「解锁密码库」")
+check((readCtx?.localizedReason.isEmpty) == false,
+      "哨兵：读取查询带全新 LAContext 且 localizedReason 非空")
 
 print("")
 print(failed == 0

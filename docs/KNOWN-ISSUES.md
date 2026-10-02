@@ -808,7 +808,7 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 **发现环境**：#19 发版回归真机陪跑（用户实跑报告，AskUserQuestion 确认：第①次=启动后触控 ID 指纹框，第②次=又弹一次指纹框）
 **分级**：S3（主解锁路径体验缺陷，非阻断，可降级主密码）/ P1 / 来源版本 v0.5.0 / 发现版本 v0.5.0
 **状态**：🟡 待真机复验（代码已修 commit `e04070b`：删除 App 侧预认证，Keychain 自有单次认证 + LAContext.localizedReason；真机复验弹窗次数 = 1）
-**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）；复验 = 待真机（#19 回归同法：启动 → 锁定页「使用 Touch ID 解锁」→ 确认仅 1 次指纹框）
+**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）。**取消语义漂移已接受**：错误码映射未变，但改前取消 = App 侧预认证报 4001，改后取消 = 钥匙串认证报 4002（文案「凭据已失效」对单纯取消有误导）；`errSecUserCanceled` 独立呈现改登记为顺延项（v0.5.1，本次不改代码）。复验 = 待真机（#19 回归同法：启动 → 锁定页「使用 Touch ID 解锁」→ 确认仅 1 次指纹框）。KeychainTests 哨兵（9a/9b）编译零警告，运行时断言需签名宿主执行（沙盒/裸二进制 -34018），**以用户真机解锁复验为准**
 **证据**：代码面——`AppModel.swift:580` 仅一次 evaluatePolicy；`BiometricKeychain.swift:139` 读取绑定同一 LAContext（kSecUseAuthenticationContext，设计为不二次弹窗）；`LockView.swift` 无 onAppear 自动触发；启动路径 `openSession`/`lock()` 均跑 `refreshTouchIDStatus` → `itemExists`（AppModel.swift:351/509）碰 biometryCurrentSet 项。日志面——沙盒 diag log 2026-10-02 **零记录**（两次认证均无失败落盘，与「第二次弹窗来自 Keychain 读取自行认证且成功」假说相容）；2026-09-28 曾有 `itemExists 失败 status=-25293`（errSecAuthFailed）记录。
 
 ### 现象（预期/实际 分行写）
@@ -822,11 +822,39 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 
 ### 修复路径
 
-删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码，语义不变；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/08 §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
+删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案，实际落地因 macOS 11 弃用改用 LAContext.localizedReason）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码（错误码映射未变；**取消语义漂移已接受**——改前取消经 App 侧预认证报 4001，改后经钥匙串认证报 4002）；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/08 §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
 
 ### 复现与诊断
 
 启动 App（Touch ID 已启用态）→ 锁定页点「使用 Touch ID 解锁」→ 第 1 次指纹框授权通过后，仍出现第 2 次指纹框。
+
+---
+
+## PL-5（🟡 顺延 v0.5.1）：CrossCopySheet 目标库 Touch ID 解锁同型双弹窗——PL-4 修复后 read 带全新 context 稳定双弹
+
+**登记日期**：2026-10-02
+**发现环境**：v0.5.0 代码审查（dev-reviewer 复查 PL-4 时发现 CrossCopySheet.swift:300 亦涉 K_bio 读取，存在与 PL-4 同型的「预认证 + Keychain 读」双弹窗）
+**分级**：S3（目标库解锁体验缺陷，可降级主密码）/ P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：🟡 顺延 v0.5.1（登记时不改代码，避免与 PL-4 修复交错；修复路径已备）
+**核销记录**：未核销（登记时无修复 commit；顺延 v0.5.1）
+**证据**：代码面——`CrossCopySheet.swift:297` 保留 `authenticateWithBiometrics(context:)` 预认证（PL-4 只删了 AppModel 侧，此调用点当时判为纯 FFI 确认未动）；`:300` `BiometricKeychain.read` 现带全新 LAContext（PL-4 签名变更后的最小适配点）。
+
+### 现象（预期/实际 分行写）
+
+- 预期：CrossCopySheet 目标库 Touch ID 确认全程只弹 1 次指纹框。
+- 实际：PL-4 修复后（`read` 改带全新 LAContext），此路径在 macOS 26 上**稳定双弹**——预认证弹 1 次，Keychain 读取自行认证再弹 1 次；旧系统复用同 context 时原本单弹，修复后由单变双（回归劣化）。
+
+### 根因（已实证 / 待查）
+
+同型于 PL-4：`CrossCopySheet.swift:297` 先 `evaluatePolicy` 预认证，随后 `:300` 的 `SecItemCopyMatching` 因 PL-4 签名变更绑定**全新** LAContext，macOS 26 securityd 不认预认证结果，自行发起第二次 UI 认证。PL-4 修复只覆盖 AppModel 解锁路径，未覆盖 CrossCopySheet 目标库读取路径（当时判「不涉 Keychain 读取」有误，dev-reviewer 已纠正）。
+
+### 修复路径
+
+顺延 v0.5.1，同 PL-4 做法二选一：①删除 CrossCopySheet 侧预认证，仅保留 Keychain 自有单次认证（与 AppModel 解锁一致）；②顺序对调——先 `read` 弹唯一一次认证框，成功后凭读取结果确认目标库，删除 `evaluatePolicy` 预认证。
+
+### 复现与诊断
+
+待真机复验（登记时推断未实跑：CrossCopySheet 目标库解锁在 macOS 26 上应稳定双弹；v0.5.1 修复后回归同法核验弹窗次数 = 1）。
 
 ---
 

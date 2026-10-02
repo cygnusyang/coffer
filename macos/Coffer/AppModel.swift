@@ -554,8 +554,9 @@ final class AppModel: ObservableObject {
     }
 
     /// Touch ID 解锁（docs/08 §7.2 时序）：
-    /// LAContext 认证 → Keychain 读 K_bio → FFI unlockWithBiometric →
-    /// 与主密码解锁完全相同的收尾（D-5：一次 Touch ID 换一次 DEK 解封）。
+    /// Keychain 读 K_bio（钥匙串自有单次认证：全新 LAContext + localizedReason）→
+    /// FFI unlockWithBiometric → 与主密码解锁完全相同的收尾
+    /// （D-5：一次 Touch ID 换一次 DEK 解封）。
     ///
     /// K_bio 纪律（§7.4）：取回即用——K_bio 只作局部变量捕获进 Task 闭包，
     /// 用完即弃，不落任何 @Published / 不进全局状态（与主密码同纪律）。
@@ -575,14 +576,15 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            // ① 弹 Touch ID 认证（主线程触发，LAContext UI 纪律，docs/08 §7.4）
-            let context = LAContext()
-            try await Self.authenticateWithBiometrics(context: context)
-
-            // ② 认证通过 → 同一 context 读 K_bio（不再二次弹窗）。
-            //    读取失败（项不存在 / biometryCurrentSet 失效）→ 4002 降级（§4.1）：
-            //    不改 header、不删项——用户主密码解锁后可在设置页「重新启用」。
-            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID, context: context)
+            // ① 钥匙串自有单次认证：read 查询带全新 LAContext（localizedReason
+            //    = 「解锁密码库」），由 Keychain 自行发起唯一一次指纹弹窗
+            //    （PL-4 修复：删除 App 侧预认证——macOS 26 上
+            //    kSecUseAuthenticationContext 复用已认证结果不生效，
+            //    预认证 + 读取再认证 = 双弹窗）。
+            // ② 读取失败（项不存在 / biometryCurrentSet 失效 / 用户取消）→ 4002
+            //    降级（docs/08 §4.1）：不改 header、不删项——用户主密码解锁后
+            //    可在设置页「重新启用」。
+            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID)
 
             // ③ 后半段走 FFI：open(K_bio, aad) → DEK → SubKeys → ItemStore。
             //    K_bio 拷贝进 Task 闭包，本函数返回后局部变量即弃。
@@ -709,26 +711,6 @@ final class AppModel: ObservableObject {
             lastErrorMessage = errText
             refreshTouchIDStatus()
             return false
-        }
-    }
-
-    /// LAContext 生物识别认证（evaluatePolicy 的 async 包装）。
-    /// 取消 / 失败 / 不可用一律 → 4001 文案（docs/08 §7.2：LA 失败显示 4001）。
-    private static func authenticateWithBiometrics(context: LAContext) async throws {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
-            context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "解锁 Coffer"
-            ) { success, error in
-                if success {
-                    continuation.resume()
-                } else {
-                    // 保留系统错误信息用于调试日志；用户面统一 4001 文案
-                    DiagLog.append("Coffer TouchID evaluatePolicy 失败: \(String(describing: error))")
-                    continuation.resume(throwing: TouchIDError.unavailable)
-                }
-            }
         }
     }
 

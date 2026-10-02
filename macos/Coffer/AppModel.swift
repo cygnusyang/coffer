@@ -296,6 +296,11 @@ final class AppModel: ObservableObject {
             } else {
                 phase = .noVault
             }
+            // 启动自动 Touch ID 引导（用户 2026-10-03 裁定，docs/08 §7.6）：
+            // 库已打开（phase == .locked）且 refreshTouchIDStatus 已跑（adoptSession
+            // 内），单库 ∧ 设备支持 ∧ 通道 enabled → 不经点击直接弹指纹认证框。
+            // 仅启动路径触发——openSession 其他调用方（切换库/恢复备份）不得自动弹。
+            maybeAutoPromptBiometricForLaunch()
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
         }
@@ -313,6 +318,24 @@ final class AppModel: ObservableObject {
             return recorded
         }
         return briefs.max { $0.createdAt < $1.createdAt }
+    }
+
+    /// 启动自动 Touch ID 引导接线（私有，用户 2026-10-03 裁定，docs/08 §7.6）：
+    /// 纯函数判定 + header 双保险后，Task 抛异步认证（unlockWithTouchID 是
+    /// async，bootstrap 为同步上下文；与 LockView 手点同一调用方式）。
+    /// 自动路径错误静默（isAutoPrompt: true 不写 lastErrorMessage）——启动时
+    /// 用户按错/取消不弹吓人错误框，落回锁定页手点即可；DiagLog 照常记录。
+    /// 自动锁定/锁屏后的再解锁不自动弹（本次范围仅启动；呼出窗口场景待用户
+    /// 后续裁定，不实现）。
+    private func maybeAutoPromptBiometricForLaunch() {
+        guard phase == .locked,
+              AutoPromptBiometric.shouldAutoPromptBiometric(
+                  vaultCount: vaultBriefs.count,
+                  isSupported: BiometricKeychain.isBiometricsAvailable(),
+                  status: touchIDStatus
+              ),
+              let session, session.hasBiometricWrap() else { return }
+        Task { await unlockWithTouchID(isAutoPrompt: true) }
     }
 
     // MARK: - 会话管理
@@ -560,7 +583,11 @@ final class AppModel: ObservableObject {
     /// K_bio 纪律（§7.4）：取回即用——K_bio 只作局部变量捕获进 Task 闭包，
     /// 用完即弃，不落任何 @Published / 不进全局状态（与主密码同纪律）。
     /// isBusy 互斥与主密码解锁共用。
-    func unlockWithTouchID() async {
+    ///
+    /// - Parameter isAutoPrompt: 是否启动自动引导路径（用户 2026-10-03 裁定，
+    ///   docs/08 §7.6）。true 时 catch 分支不写 lastErrorMessage（错误静默，
+    ///   DiagLog 照常记录），手动路径行为不变；取消/失败均落回锁定页，按钮可再点。
+    func unlockWithTouchID(isAutoPrompt: Bool = false) async {
         guard let session, !isBusy, phase == .locked else { return }
 
         // 前置门禁（Swift 侧先行判定，避免无谓跨桥；Rust 侧同语义兜底 4001，D-8）：
@@ -606,7 +633,12 @@ final class AppModel: ObservableObject {
             // FfiError（1002 / 4001 / 5999）各自语义化呈现
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
-            lastErrorMessage = errText
+            // 自动引导路径（isAutoPrompt）错误静默：启动时用户按错/取消不弹
+            // 吓人错误框（用户 2026-10-03 裁定，docs/08 §7.6）；手动路径不变。
+            // 两种路径都落回锁定页（phase 未变），按钮可再点。
+            if !isAutoPrompt {
+                lastErrorMessage = errText
+            }
             // FR-12.5 兜底：unlockWithBiometric 完全豁免退避（不门禁也不
             // 计数，见 vault.rs「bio解锁不受退避门禁且不计数」单测），本
             // 路径 1002 只会是 K_bio 不匹配 / 篡改（AEAD open 失败），正常

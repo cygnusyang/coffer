@@ -322,13 +322,13 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-9（🟡 判据修正待回填 docs/15）：socket 清点判据命令 `lsof -i -p <pid>` 缺 `-a`——OR 语义下「空输出断言」结构性不可满足
+## BUG-9（✅ 已核销：#19 发版回归 TC-G5 四步程序）：socket 清点判据命令 `lsof -i -p <pid>` 缺 `-a`——OR 语义下「空输出断言」结构性不可满足
 
 **登记日期**：2026-09-29
 **发现环境**：v0.4.0 发版回归（任务 #8）TC2-B 实跑，带阳性对照
 **分级**：S3（测试判据）/ P2 / 来源版本 docs/15 r1.1（0 socket 判据映射引入时） / 发现版本 v0.4.0（发版回归）
-**状态**：🟡 docs/16 已按正确口径落条（r1.6）；docs/15 §3.3.2 原文待 architect 同工单修正
-**核销记录**：docs/15 §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）
+**状态**：✅ 已核销（2026-09-30 实跑 / 2026-10-02 登记闭环，#19 发版回归 TC-G5 四步程序：① docs/15 内容锚实核通过——§3.3.2/§3.3.6 现行文本均为 `lsof -a -i -p` 修正口径；② 实跑零命中——关窗驻留态 Coffer 0 行；③ 阳性对照命中——python 本地监听 2 行；④ 登记闭环 + docs/16 TC2-B 声明闭环）
+**核销记录**：docs/15 §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）→ **核销闭环（#19 发版回归 TC-G5，2026-09-30 实跑 / 2026-10-02 登记）**：关窗驻留态 Coffer PID 47042 `lsof -a -i -p` = 0 行；阳性对照 python http.server PID 47244 = 2 行（TCP LISTEN 命中）；四步齐备核销
 **证据**：本轮实跑读数——`lsof -i -p <Coffer_pid>` 402 行、同命令对本地 python 监听进程 330 行（两读数均被系统级 socket 集主导，进程间不可区分）；改 `lsof -a -i -p` 后 Coffer 0 行、python 监听 2 行（LISTEN 条目命中）
 
 ### 现象（预期/实际 分行写）
@@ -735,13 +735,13 @@ grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` �
 
 ---
 
-## PL-1（🟡 MEDIUM，待修）：passkey 域 L-2 哨兵测试缺失——「改 reason 文案分类不变」无独立变换断言
+## PL-1（✅ 已修复：adda134 哨兵单测合入）：passkey 域 L-2 哨兵测试缺失——「改 reason 文案分类不变」无独立变换断言
 
 **登记日期**：2026-09-30
 **发现环境**：#18 增量审查补审（dev-reviewer 专项 L-2 落点核验，结论：结构已落地、哨兵测试待补）
 **分级**：S3（回归警戒缺口——调用侧若改回文本分类且当前文案未变，现有测试全部测不出）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
-**状态**：🟡 待修（已派 dev-coder-passkey-import 补哨兵单测）
-**核销记录**：待回填
+**状态**：✅ 已修复（dev-coder-passkey-import，commit `adda134`，2026-09-30）
+**核销记录**：commit `adda134` 补哨兵 `同分类异reason文案分类不变`（lib 单测，mapping.rs `#[cfg(test)] mod tests`，+72 行）——经分类唯一入口 `map_passkey_row` 构造同 kind 异 reason 输入（keyCurve p384/p521 → 均 KeyCurveMismatch、keyAlgorithm eddsa/rsa → 均 KeyAlgorithmMismatch、缺 rpId → MissingRpId），`assert_ne!(reason)` 自检文案确实不同 + 非空转实证（临时改名称特异分类 → 哨兵 FAIL，已还原）；门禁 `cargo test -p cf-importer` = lib 77 + 集成 49 = 126 passed / 0 failed；`cargo clippy -p cf-importer -- -D warnings` 干净
 **证据**：`core/cf-importer/src/bitwarden/mapping.rs:636-641`（`非es256族按枚举判定`）、`core/cf-importer/tests/bitwarden_import.rs:204-260`、`core/cf-ffi/tests/v05_ffi_semantics.rs` 三处均只固定枚举 kind 与列表归属，无一独立变换 reason 文案再断言分类不变。
 
 ### 现象（预期/实际 分行写）

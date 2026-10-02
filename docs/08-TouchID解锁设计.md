@@ -298,7 +298,8 @@ enable / disable 时序见 §4.1，不再画。
 ```swift
 enum BiometricKeychainError: Error {
     case itemNotFound      // → 4002（指纹集变更 / 项被删）
-    case authFailed        // → 4001（Touch ID 取消/失败/不可用）
+    case authFailed        // → 4002（Touch ID 取消/失败/指纹集变更；PL-4 后
+                           //    取消亦经钥匙串认证 → 4002，取消语义漂移已接受）
     case unexpected(OSStatus)
 }
 struct BiometricKeychain {

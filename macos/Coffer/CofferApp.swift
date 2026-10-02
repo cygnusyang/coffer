@@ -169,8 +169,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.orderOut(nil)
             return
         }
+        // 呼出场景自动 Touch ID 引导（用户 2026-10-03 裁定，docs/08 §7.6）：
+        // 窗口确从隐藏恢复（关窗驻留后重新呼出）才考虑——窗口本就可见
+        // （自动锁定后直接手点解锁）不自动弹。判定与防重入（同一次锁定态
+        // 只弹一次）在 AppModel.maybeAutoPromptBiometric。
+        let wasHidden = !window.isVisible
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        if wasHidden {
+            model?.maybeAutoPromptBiometric()
+        }
         guard focusText else { return }
         scheduleTextInputFocus(window: window)
     }

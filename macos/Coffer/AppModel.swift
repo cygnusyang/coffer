@@ -32,7 +32,20 @@ enum AppPhase: Equatable {
 final class AppModel: ObservableObject {
     // MARK: - Published 状态
 
-    @Published var phase: AppPhase = .booting
+    /// 启动/呼出自动引导一次性旗标：同一次锁定态内只弹一次（用户 2026-10-03
+    /// 裁定，docs/08 §7.6）。发起自动认证时置位；phase 离开 .locked（解锁
+    /// 成功 / 手动锁定 / 切库 / 无库）时复位——下一锁定态允许再次自动弹。
+    private var autoPromptBiometricFired = false
+
+    @Published var phase: AppPhase = .booting {
+        didSet {
+            // 复位时机（docs/08 §7.6）：phase 离开锁定态即复位；同一次锁定态
+            // 内多次呼出不重复弹（取消后仍置位，避免启动/呼出反复骚扰用户）。
+            if phase != .locked {
+                autoPromptBiometricFired = false
+            }
+        }
+    }
     @Published private(set) var vaultName: String = ""
     /// 当前库 UUID 文本（Keychain bio 项的 account，docs/08 §3.2；非密钥材料）。
     @Published private(set) var vaultUUID: String = ""
@@ -300,7 +313,7 @@ final class AppModel: ObservableObject {
             // 库已打开（phase == .locked）且 refreshTouchIDStatus 已跑（adoptSession
             // 内），单库 ∧ 设备支持 ∧ 通道 enabled → 不经点击直接弹指纹认证框。
             // 仅启动路径触发——openSession 其他调用方（切换库/恢复备份）不得自动弹。
-            maybeAutoPromptBiometricForLaunch()
+            maybeAutoPromptBiometric()
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
         }
@@ -320,22 +333,34 @@ final class AppModel: ObservableObject {
         return briefs.max { $0.createdAt < $1.createdAt }
     }
 
-    /// 启动自动 Touch ID 引导接线（私有，用户 2026-10-03 裁定，docs/08 §7.6）：
-    /// 纯函数判定 + header 双保险后，Task 抛异步认证（unlockWithTouchID 是
-    /// async，bootstrap 为同步上下文；与 LockView 手点同一调用方式）。
-    /// 自动路径错误静默（isAutoPrompt: true 不写 lastErrorMessage）——启动时
-    /// 用户按错/取消不弹吓人错误框，落回锁定页手点即可；DiagLog 照常记录。
-    /// 自动锁定/锁屏后的再解锁不自动弹（本次范围仅启动；呼出窗口场景待用户
-    /// 后续裁定，不实现）。
-    private func maybeAutoPromptBiometricForLaunch() {
+    /// 自动 Touch ID 引导统一入口（启动 / 菜单栏呼出共用，用户 2026-10-03
+    /// 裁定，docs/08 §7.6）：
+    ///   - 判定：`phase == .locked` 状态前置 + 纯函数
+    ///     shouldAutoPromptBiometric（含一次性旗标与 isBusy 判重）+ header
+    ///     双保险。同一次锁定态只弹一次（旗标 phase 离开 .locked 复位）；
+    ///     自动认证进行中（isBusy）不重复触发。
+    ///   - 发起：置旗标后 Task 抛异步认证（unlockWithTouchID 是 async，
+    ///     bootstrap / summon 均为同步上下文；与 LockView 手点同一调用方式）。
+    ///     自动路径错误静默（isAutoPrompt: true 不写 lastErrorMessage）——
+    ///     用户按错/取消不弹吓人错误框，落回锁定页手点即可；DiagLog 照常。
+    ///   - 呼出场景的「窗口确从隐藏恢复」由 AppDelegate.summonMainWindow 先行
+    ///     判定（wasHidden）后再调用本方法；窗口开着时自动锁定后再解锁
+    ///     不自动弹（用户未裁定，不实现）。
+    /// - Returns: 是否发起了自动认证（调用方可据此判重）。
+    @discardableResult
+    func maybeAutoPromptBiometric() -> Bool {
         guard phase == .locked,
               AutoPromptBiometric.shouldAutoPromptBiometric(
                   vaultCount: vaultBriefs.count,
                   isSupported: BiometricKeychain.isBiometricsAvailable(),
-                  status: touchIDStatus
+                  status: touchIDStatus,
+                  firedInLockState: autoPromptBiometricFired,
+                  isBusy: isBusy
               ),
-              let session, session.hasBiometricWrap() else { return }
+              let session, session.hasBiometricWrap() else { return false }
+        autoPromptBiometricFired = true
         Task { await unlockWithTouchID(isAutoPrompt: true) }
+        return true
     }
 
     // MARK: - 会话管理

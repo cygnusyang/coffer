@@ -81,7 +81,7 @@ check(true, "接口枚举：isBiometricsAvailable 可调用")
 
 // 7e. 未启用时 read → itemNotFound（读接口错误路径）
 do {
-    _ = try keychain.read(vaultUUID: uuid + "-nonexistent", context: LAContext(), useDataProtection: false)
+    _ = try keychain.read(vaultUUID: uuid + "-nonexistent", useDataProtection: false)
     check(false, "接口枚举：读不存在项应抛错")
 } catch BiometricKeychainError.itemNotFound {
     check(true, "接口枚举：读不存在项 → itemNotFound")
@@ -94,7 +94,7 @@ print("—— Keychain 探针通过，开始断言 ——")
 // ---- 1. save → read 往返 ----
 let key1 = randomKey()
 try keychain.save(key: key1, vaultUUID: uuid, requireBiometry: false, useDataProtection: false)
-let read1 = try keychain.read(vaultUUID: uuid, context: LAContext(), useDataProtection: false)
+let read1 = try keychain.read(vaultUUID: uuid, useDataProtection: false)
 check(read1 == key1, "save → read 往返（32B 一致）")
 
 // ---- 2. itemExists（属性查询，无数据返回）----
@@ -104,7 +104,7 @@ check(keychain.itemExists(vaultUUID: uuid), "itemExists → true")
 let key2 = randomKey()
 check(key1 != key2, "两次随机 K_bio 不同（sanity）")
 try keychain.save(key: key2, vaultUUID: uuid, requireBiometry: false, useDataProtection: false)
-let read2 = try keychain.read(vaultUUID: uuid, context: LAContext(), useDataProtection: false)
+let read2 = try keychain.read(vaultUUID: uuid, useDataProtection: false)
 check(read2 == key2, "DuplicateItem 覆盖后读到新值")
 
 // ---- 4. delete 幂等 ----
@@ -114,7 +114,7 @@ check(try keychain.delete(vaultUUID: uuid, useDataProtection: false) == false, "
 
 // ---- 5. 删除后读取 → itemNotFound ----
 do {
-    _ = try keychain.read(vaultUUID: uuid, context: LAContext(), useDataProtection: false)
+    _ = try keychain.read(vaultUUID: uuid, useDataProtection: false)
     check(false, "删除后读取应抛 itemNotFound")
 } catch BiometricKeychainError.itemNotFound {
     check(true, "删除后读取 → itemNotFound")
@@ -131,8 +131,8 @@ defer { _ = try? keychain.delete(vaultUUID: uuidA) }
 defer { _ = try? keychain.delete(vaultUUID: uuidB) }
 try keychain.save(key: keyA, vaultUUID: uuidA, requireBiometry: false, useDataProtection: false)
 try keychain.save(key: keyB, vaultUUID: uuidB, requireBiometry: false, useDataProtection: false)
-check(try keychain.read(vaultUUID: uuidA, context: LAContext(), useDataProtection: false) == keyA, "多库隔离：A 读回 A")
-check(try keychain.read(vaultUUID: uuidB, context: LAContext(), useDataProtection: false) == keyB, "多库隔离：B 读回 B")
+check(try keychain.read(vaultUUID: uuidA, useDataProtection: false) == keyA, "多库隔离：A 读回 A")
+check(try keychain.read(vaultUUID: uuidB, useDataProtection: false) == keyB, "多库隔离：B 读回 B")
 try keychain.delete(vaultUUID: uuidA, useDataProtection: false)
 check(
     !keychain.itemExists(vaultUUID: uuidA, useDataProtection: false) && keychain.itemExists(vaultUUID: uuidB, useDataProtection: false),
@@ -167,6 +167,24 @@ if BiometricKeychain.isBiometricsAvailable() {
 } else {
     print("SKIP：本机无 Touch ID，biometryCurrentSet 真路径留 T05 真机验证（docs/08 Q-3）。")
 }
+
+// ---- 9. PL-4 哨兵（2026-10-02）：钥匙串自有单次认证 ----
+// 9a. 新签名：read 不再接收已认证 LAContext（编译期即证明调用方无需预认证）；
+//     未预认证直读无 ACL 项（useDataProtection=false）应成功。
+let sentinelKey = randomKey()
+try keychain.save(key: sentinelKey, vaultUUID: uuid, requireBiometry: false, useDataProtection: false)
+let sentinelRead = try keychain.read(vaultUUID: uuid, useDataProtection: false)
+check(sentinelRead == sentinelKey, "哨兵：未预认证直读无 ACL 项成功（读取不依赖 evaluatePolicy）")
+try keychain.delete(vaultUUID: uuid, useDataProtection: false)
+
+// 9b. 读取查询带全新 LAContext 且 localizedReason = unlockPrompt
+//     （最小可测 seam：queryForRead 内部可见；kSecUseOperationPrompt 自
+//     macOS 11 弃用，改用 LAContext.localizedReason）
+let readQuery = BiometricKeychain.queryForRead(vaultUUID: uuid, useDataProtection: false)
+let readCtx = readQuery[kSecUseAuthenticationContext as String] as? LAContext
+check(readCtx?.localizedReason == BiometricKeychain.unlockPrompt,
+      "哨兵：读取查询带全新 LAContext 且 localizedReason = unlockPrompt")
+check(BiometricKeychain.unlockPrompt == "解锁密码库", "哨兵：解锁提示文案为「解锁密码库」")
 
 print("")
 print(failed == 0

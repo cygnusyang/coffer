@@ -295,9 +295,11 @@ struct CrossCopySheet: View {
             do {
                 let context = LAContext()
                 try await Self.authenticateWithBiometrics(context: context)
-                // 认证通过 → 同一 context 读目标库 K_bio（不再二次弹窗）；
-                // 读取失败 → 4002 降级文案（docs/08 §4.1），不改目标库 header。
-                let kBio = try BiometricKeychain().read(vaultUUID: targetUUID, context: context)
+                // 认证通过 → 读目标库 K_bio（PL-4 后 read 自带全新 LAContext +
+                // localizedReason 单次认证；此 sheet 的预认证仅作 FFI 确认，read
+                // 侧不再复用其 context）；读取失败 → 4002 降级文案（docs/08 §4.1），
+                // 不改目标库 header。
+                let kBio = try BiometricKeychain().read(vaultUUID: targetUUID)
                 try await Task.detached(priority: .userInitiated) {
                     _ = try target.unlockWithBiometric(kBio: kBio) // 返回 FfiVaultInfo，复制页无需
                 }.value

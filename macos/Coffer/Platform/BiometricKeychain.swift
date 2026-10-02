@@ -8,6 +8,11 @@
 //     强制主密码降级）
 //   - 本封装只搬运随机字节（K_bio），不做任何加解密——加解密统一在 Rust
 //     （docs/08 D-7）；K_bio 是「受门禁保护的随机字节保险柜」里的内容物
+//   - 解锁认证（PL-4 修复后）：读取即钥匙串自有单次认证——查询带全新
+//     LAContext（localizedReason 为提示文案，kSecUseOperationPrompt 自 macOS 11
+//     起弃用），由 Keychain 自行发起唯一一次弹窗；调用方不再预认证
+//     （macOS 26 实测 kSecUseAuthenticationContext 复用已认证结果不生效，
+//     App 侧预认证 + 读取再认证 = 双弹窗，docs/KNOWN-ISSUES.md PL-4）
 //
 // K_bio 纪律（docs/08 §7.4）：取回即用，不落 @Published / 不进全局状态。
 
@@ -38,6 +43,11 @@ struct BiometricKeychain {
 
     /// K_bio 标准长度（Rust CSPRNG 生成 32 字节，docs/08 D-3）。
     static let keyLength = 32
+
+    /// 解锁认证提示文案（LAContext.localizedReason，与既有中文文案风格一致；
+    /// kSecUseOperationPrompt 自 macOS 11 起弃用，改用本字段）。
+    /// PL-4 修复后读取由钥匙串自有单次认证发起，本文案即该唯一一次弹窗的提示。
+    static let unlockPrompt = "解锁密码库"
 
     // MARK: - 生物识别可用性（只检测，不弹窗）
 
@@ -130,13 +140,14 @@ struct BiometricKeychain {
         }
     }
 
-    /// 读取 K_bio。认证与读取绑定同一 LAContext：调用方在 `evaluatePolicy`
-    /// 成功后传入同一 context，读取时复用认证结果、不再二次弹窗（docs/08 §3.2）。
-    func read(vaultUUID: String, context: LAContext,
-              useDataProtection: Bool = true) throws -> Data {
-        var query = Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
-        query[kSecReturnData as String] = true
-        query[kSecUseAuthenticationContext as String] = context
+    /// 读取 K_bio。钥匙串自有单次认证（PL-4 修复后）：查询带全新 LAContext
+    /// （localizedReason 见 unlockPrompt，kSecUseOperationPrompt 自 macOS 11 起
+    /// 弃用），由 Keychain 自行发起唯一一次认证弹窗；调用方无需预认证
+    /// （删除 App 侧 evaluatePolicy——macOS 26 上 kSecUseAuthenticationContext
+    /// 复用已认证结果不生效，预认证 + 读取再认证 = 双弹窗）。
+    /// 取消 / 指纹集失效 → .authFailed → 4002 降级（docs/08 §4.1，语义不变）。
+    func read(vaultUUID: String, useDataProtection: Bool = true) throws -> Data {
+        let query = Self.queryForRead(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -169,6 +180,21 @@ struct BiometricKeychain {
     }
 
     // MARK: - 内部
+
+    /// 读取查询构造（内部可见的最小可测 seam）：定位 + 返回数据 + 全新
+    /// LAContext（localizedReason = unlockPrompt）。不含密钥材料，单测据此
+    /// 断言查询携带由 Keychain 自有单次认证所需的 LAContext。
+    static func queryForRead(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {
+        var query = baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
+        query[kSecReturnData as String] = true
+        // 全新未认证 LAContext：不携带任何已认证结果，由 Keychain 自行发起
+        // 唯一一次认证；localizedReason 即弹窗提示文案（kSecUseOperationPrompt
+        // 自 macOS 11 起弃用，改用此字段）。
+        let context = LAContext()
+        context.localizedReason = Self.unlockPrompt
+        query[kSecUseAuthenticationContext as String] = context
+        return query
+    }
 
     /// 定位查询（service + account，不含返回数据开关与认证上下文）。
     private static func baseQuery(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {

@@ -74,6 +74,45 @@ for count in counts {
     }
 }
 
+// ---- 5. 防重入判重（docs/08 §7.6 呼出场景：同一次锁定态只弹一次）----
+// 完整判定 = 基础条件 ∧ !firedInLockState（同锁定态未弹过）∧ !isBusy（无
+// 认证进行中）。基础条件取「全满足」组合（count=1 ∧ supported ∧ .enabled）。
+
+let satisfied = AutoPromptBiometric.shouldAutoPromptBiometric(
+    vaultCount: 1, isSupported: true, status: .enabled)
+check(satisfied, "基础条件全满足（sanity，供判重组对照）")
+
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: true, isBusy: false) == false,
+    "同锁定态已弹过（fired）→ 不重复弹"
+)
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: false, isBusy: true) == false,
+    "自动认证进行中（isBusy）→ 不重复触发"
+)
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: true, isBusy: true) == false,
+    "fired ∧ isBusy → 不弹"
+)
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: false, isBusy: false) == true,
+    "未弹过 ∧ 非忙碌 ∧ 基础满足 → 弹（呼出/启动首次）"
+)
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 2, isSupported: true, status: .enabled,
+        firedInLockState: false, isBusy: false) == false,
+    "多库 + 未弹 + 非忙碌 → 不弹（基础条件优先短路）"
+)
+
 print("")
 print(failed == 0
       ? "AUTO PROMPT BIOMETRIC TESTS OK —— \(passed) 项断言全部通过"

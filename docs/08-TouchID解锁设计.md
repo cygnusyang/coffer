@@ -306,7 +306,8 @@ struct BiometricKeychain {
     static let service = "cn.coffer.biometric"
     static func isBiometricsAvailable() -> Bool          // LAContext.canEvaluatePolicy（只检测，不弹窗）
     func itemExists(vaultUUID: String) -> Bool           // 只查属性不取数据（kSecReturnData=false），
-                                                         // 注意：不应触发认证弹窗——实现后真机确认
+                                                         // 探测禁止弹 UI（LAContext.interactionNotAllowed=true）——
+                                                         // 2026-10-03 真机实证元数据查询亦触发认证弹窗（PL-4 双源①）
     func save(key: Data, vaultUUID: String) throws       // Add → DuplicateItem 则 Update
     func read(vaultUUID: String, useDataProtection: Bool = true) throws -> Data  // 钥匙串自有单次认证（PL-4）
     func delete(vaultUUID: String) throws                // 幂等：item 不存在视为成功
@@ -377,7 +378,7 @@ struct BiometricKeychain {
 | # | 事项 | 影响 | 建议 |
 | --- | --- | --- | --- |
 | Q-1 | 沙盒 App 的 Keychain ACL 对「其他进程读取」的精确行为（拒绝 vs 弹允许框 vs errSecInteractionNotAllowed） | T-1 结论与 §5 回填 | T05-④ 真机实测；若存在允许框路径，评估在 ACL 中固化（`SecAccess` 旧 API 已弃用，可能需接受拒绝语义即可） |
-| Q-2 | `itemExists()` 仅查属性是否会触发认证弹窗 | LockView 按钮显隐的静默判定 | T03 实现时用 `kSecReturnAttributes` 验证；若仍触发，改为信任 `has_biometric_wrap()` + 首次 read 失败降级 |
+| Q-2 | `itemExists()` 仅查属性是否会触发认证弹窗 | LockView 按钮显隐的静默判定 | ✅ 已闭环（2026-10-03 真机 log stream 实证）：**会**——macOS 26 上对挂 biometryCurrentSet ACL 的项做元数据查询亦触发完整认证 UI（启动路径 `refreshTouchIDStatus → itemExists` 致启动后 ~1s 自动弹窗，PL-4 双源①）。修复：探测查询带 `LAContext.interactionNotAllowed = true`（`kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` 自 macOS 11 弃用，改用此字段），需认证时立即返回 `errSecInteractionNotAllowed` / `errSecAuthFailed`，由调用方按三态语义解释（存在 / 存在但认证锁定 / 不存在，docs/KNOWN-ISSUES.md PL-4） |
 | Q-3 | `.biometryCurrentSet` 在「用户从未录入指纹但创建 item」时 macOS 的具体行为（创建成功/失败） | 无指纹设备的启用路径 | T05 验证；无论如何 UI 侧已被 canEvaluatePolicy 门禁挡住，属双保险 |
 | Q-4 | enable 时 1s Argon2id 重派生（D-6）是否影响体验 | 设置页开关延迟 | 可接受（一次性操作）；若反馈差，v0.3.0 可改「解锁态下用内存中……」——不可行，DEK 已 drop，维持现状 |
 | Q-5 | `LAContext.evaluatePolicy` 与 `kSecUseAuthenticationContext` 的弹窗时序（两次弹窗 vs 合一） | UX | T05 实测已闭环（2026-10-02）：macOS 26 上复用已认证 context **不生效** → 双弹窗（docs/KNOWN-ISSUES.md PL-4）；设计已改为钥匙串自有单次认证（全新 LAContext + localizedReason），单弹窗 |

@@ -333,6 +333,33 @@ struct BiometricKeychain {
 | 「重新启用」 | 仅在 BioStale 态显示，同 enable |
 | 降级说明 | 无 Touch ID 硬件/未录入指纹：整节隐藏，并注明「当前设备不支持生物识别解锁」 |
 
+### 7.6 启动自动引导（用户 2026-10-03 口头裁定，feat）
+
+启动 Coffer 后，若**工作目录仅一个密码库** 且 **Touch ID 通道可用**，则不经点击直接弹指纹认证框——单库用户启动 → 一次授权 → 直达主界面。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant A as App（bootstrap 末尾）
+    participant KC as Keychain
+    A->>A: 枚举库列表（vaultBriefs）+ openSession + refreshTouchIDStatus
+    alt 单库 ∧ 设备支持 ∧ touchIDStatus == .enabled
+        A->>A: shouldAutoPromptBiometric 判定通过 → Task 抛异步
+        A->>KC: read(K_bio) 钥匙串自有单次认证（全新 LAContext + localizedReason）
+        KC-->>U: 弹指纹认证框（唯一一次，PL-4 纪律）
+        U-->>KC: 指纹匹配
+        KC-->>A: K_bio 返回
+        A->>A: FFI unlockWithBiometric → phase = .unlocked（直达主界面）
+    else 多库 / 未启用 / 设备不支持 / 自动路径取消或失败
+        A-->>U: 落回锁定页（错误静默：不写 lastErrorMessage，DiagLog 照常）；
+                手点「使用 Touch ID 解锁」或主密码
+    end
+```
+
+- 判定条件抽为纯函数 `AutoPromptBiometric.shouldAutoPromptBiometric(vaultCount:isSupported:status:)`：`vaultCount == 1 ∧ isSupported ∧ status == .enabled`（`macos/Coffer/Support/AutoPromptBiometric.swift`，单测穷举 3×2×3 边界——`tools/run_auto_prompt_biometric_tests.sh`，同 §9 T04 纯函数纪律）。
+- 触发范围**仅启动路径**（`bootstrap()` 末尾接线）：`openSession` 的其他调用方（切换库/恢复备份/解锁）不自动弹；自动锁定/锁屏后的再解锁不自动弹（本次范围仅启动，呼出窗口场景待用户后续裁定，不实现）。
+- 错误静默：自动路径 `unlockWithTouchID(isAutoPrompt: true)` 的 catch 分支不写 `lastErrorMessage`（启动时用户按错/取消不弹吓人错误框），`DiagLog` 照常记录；手动路径行为不变。取消/失败均落回锁定页，按钮可再点。
+
 ---
 
 ## 8. 降级矩阵

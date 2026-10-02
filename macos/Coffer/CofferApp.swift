@@ -50,6 +50,10 @@ struct CofferMainApp: App {
                 Button("导入 1Password (.1pux)…") { model.showImportPux = true }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                     .disabled(model.phase != .unlocked)
+                // Bitwarden 导入（v0.5.0 PK3）：import_bitwarden_json 有 1001
+                // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
+                Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
+                    .disabled(model.phase != .unlocked)
                 Button("导出…") { model.showExport = true }
                     .keyboardShortcut("e", modifiers: .command)
                     .disabled(model.phase != .unlocked)

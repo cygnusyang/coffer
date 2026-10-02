@@ -802,6 +802,34 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 
 ---
 
+## PL-4（🟡 待真机复验）：Touch ID 解锁链路弹两次指纹框——「启动到拿到密码一次授权」被破坏
+
+**登记日期**：2026-10-02
+**发现环境**：#19 发版回归真机陪跑（用户实跑报告，AskUserQuestion 确认：第①次=启动后触控 ID 指纹框，第②次=又弹一次指纹框）
+**分级**：S3（主解锁路径体验缺陷，非阻断，可降级主密码）/ P1 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：🟡 待真机复验（代码已修 commit `e04070b`：删除 App 侧预认证，Keychain 自有单次认证 + LAContext.localizedReason；真机复验弹窗次数 = 1）
+**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）；复验 = 待真机（#19 回归同法：启动 → 锁定页「使用 Touch ID 解锁」→ 确认仅 1 次指纹框）
+**证据**：代码面——`AppModel.swift:580` 仅一次 evaluatePolicy；`BiometricKeychain.swift:139` 读取绑定同一 LAContext（kSecUseAuthenticationContext，设计为不二次弹窗）；`LockView.swift` 无 onAppear 自动触发；启动路径 `openSession`/`lock()` 均跑 `refreshTouchIDStatus` → `itemExists`（AppModel.swift:351/509）碰 biometryCurrentSet 项。日志面——沙盒 diag log 2026-10-02 **零记录**（两次认证均无失败落盘，与「第二次弹窗来自 Keychain 读取自行认证且成功」假说相容）；2026-09-28 曾有 `itemExists 失败 status=-25293`（errSecAuthFailed）记录。
+
+### 现象（预期/实际 分行写）
+
+- 预期：Touch ID 解锁全程只弹 1 次指纹框（docs/08 §3.2「读取时复用认证结果、不再二次弹窗」；用户裁定基线：启动到拿到密码一次授权）。
+- 实际：用户报告弹了 2 次指纹框才完成解锁。
+
+### 根因（已实证 / 待查）
+
+**已实证（2026-10-02 真机 log stream 取证，/tmp/coffer-pl4-repro.log）**：`kSecUseAuthenticationContext` 复用在本机 macOS 26 上未生效。时序：①用户点按钮 → App 主动 `evaluatePolicy`（rid 30292）→ 指纹匹配 ✓（22:16:40.37）；②200ms 后 `BiometricKeychain.read` 的 `SecItemCopyMatching`（BiometricKeychain.swift:139 绑定同一已认证 context）→ securityd **不认该认证结果**，自行发起 1008 策略认证（传感器监听，无 UI）；③securityd 经 Coffer 进程内 LAContext 驱动第二次 UI 认证（rid 30295，22:16:51.5 弹出）→ 匹配后 **`externalizedContextWithReply` rid:30296**（22:16:53.35，认证结果外化交钥匙串）→ 读取成功。两次认证均无失败落盘（diag log 10-02 零记录），与「第二次为钥匙串重认证且成功」完全相容。排除项：代码无启动自动触发（unlockWithTouchID 仅 LockView 按钮/CrossCopySheet 两个调用点）；itemExists 元数据查询未触发弹窗；首次弹窗于启动后约 1 秒出现系用户点击快，非自动弹。
+
+### 修复路径
+
+删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码，语义不变；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/08 §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
+
+### 复现与诊断
+
+启动 App（Touch ID 已启用态）→ 锁定页点「使用 Touch ID 解锁」→ 第 1 次指纹框授权通过后，仍出现第 2 次指纹框。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

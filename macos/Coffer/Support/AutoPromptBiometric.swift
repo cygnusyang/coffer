@@ -28,4 +28,19 @@ enum AutoPromptBiometric {
     ) -> Bool {
         vaultCount == 1 && isSupported && status == .enabled
     }
+
+    /// 完整判定（含防重入判重，docs/08 §7.6）：在基础条件之上追加一次性旗标
+    /// 与 isBusy——`firedInLockState = false`（同一次锁定态未弹过）∧ `!isBusy`
+    /// （无自动认证进行中）才放行。供 `AppModel.maybeAutoPromptBiometric()`
+    /// 使用；`phase == .locked` 属 AppModel 状态前置，不在此纯函数内。
+    static func shouldAutoPromptBiometric(
+        vaultCount: Int,
+        isSupported: Bool,
+        status: TouchIDStatus,
+        firedInLockState: Bool,
+        isBusy: Bool
+    ) -> Bool {
+        !firedInLockState && !isBusy && shouldAutoPromptBiometric(
+            vaultCount: vaultCount, isSupported: isSupported, status: status)
+    }
 }

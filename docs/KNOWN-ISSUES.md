@@ -807,8 +807,8 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 **登记日期**：2026-10-02
 **发现环境**：#19 发版回归真机陪跑（用户实跑报告，AskUserQuestion 确认：第①次=启动后触控 ID 指纹框，第②次=又弹一次指纹框）
 **分级**：S3（主解锁路径体验缺陷，非阻断，可降级主密码）/ P1 / 来源版本 v0.5.0 / 发现版本 v0.5.0
-**状态**：🟡 待真机复验（代码已修 commit `e04070b`：删除 App 侧预认证，Keychain 自有单次认证 + LAContext.localizedReason；真机复验弹窗次数 = 1）
-**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）。**取消语义漂移已接受**：错误码映射未变，但改前取消 = App 侧预认证报 4001，改后取消 = 钥匙串认证报 4002（文案「凭据已失效」对单纯取消有误导）；`errSecUserCanceled` 独立呈现改登记为顺延项（v0.5.1，本次不改代码）。复验 = 待真机（#19 回归同法：启动 → 锁定页「使用 Touch ID 解锁」→ 确认仅 1 次指纹框）。KeychainTests 哨兵（9a/9b）编译零警告，运行时断言需签名宿主执行（沙盒/裸二进制 -34018），**以用户真机解锁复验为准**
+**状态**：🟡 待真机复验（代码已修 commit `e04070b`——删除 App 侧预认证，read 改钥匙串自有单次认证；commit `4f05139`——itemExists 探测加 LAContext.interactionNotAllowed 禁弹 UI，消启动自动弹窗。真机复验：启动零弹窗 + 点击解锁单弹窗）
+**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）+ commit `4f05139`（2026-10-03：itemExists 探测查询加 LAContext.interactionNotAllowed=true 禁弹 UI——macOS 26 上元数据查询亦触发完整 ACL 认证 UI，消启动 ~1s 自动弹窗；`kSecUseAuthenticationUIFail` 自 macOS 11 弃用改用本字段；返回语义改三态：存在 / 存在但认证锁定返 true / 不存在）。**取消语义漂移已接受**：错误码映射未变，但改前取消 = App 侧预认证报 4001，改后取消 = 钥匙串认证报 4002（文案「凭据已失效」对单纯取消有误导）；`errSecUserCanceled` 独立呈现改登记为顺延项（v0.5.1，本次不改代码）。复验 = 待真机（#19 回归同法：启动零弹窗 + 点击解锁单弹窗）。KeychainTests 哨兵（9a/9b/9c）编译零警告，运行时断言需签名宿主执行（沙盒/裸二进制 -34018），**以用户真机解锁复验为准**
 **证据**：代码面——`AppModel.swift:580` 仅一次 evaluatePolicy；`BiometricKeychain.swift:139` 读取绑定同一 LAContext（kSecUseAuthenticationContext，设计为不二次弹窗）；`LockView.swift` 无 onAppear 自动触发；启动路径 `openSession`/`lock()` 均跑 `refreshTouchIDStatus` → `itemExists`（AppModel.swift:351/509）碰 biometryCurrentSet 项。日志面——沙盒 diag log 2026-10-02 **零记录**（两次认证均无失败落盘，与「第二次弹窗来自 Keychain 读取自行认证且成功」假说相容）；2026-09-28 曾有 `itemExists 失败 status=-25293`（errSecAuthFailed）记录。
 
 ### 现象（预期/实际 分行写）
@@ -820,9 +820,13 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 
 **已实证（2026-10-02 真机 log stream 取证，/tmp/coffer-pl4-repro.log）**：`kSecUseAuthenticationContext` 复用在本机 macOS 26 上未生效。时序：①用户点按钮 → App 主动 `evaluatePolicy`（rid 30292）→ 指纹匹配 ✓（22:16:40.37）；②200ms 后 `BiometricKeychain.read` 的 `SecItemCopyMatching`（BiometricKeychain.swift:139 绑定同一已认证 context）→ securityd **不认该认证结果**，自行发起 1008 策略认证（传感器监听，无 UI）；③securityd 经 Coffer 进程内 LAContext 驱动第二次 UI 认证（rid 30295，22:16:51.5 弹出）→ 匹配后 **`externalizedContextWithReply` rid:30296**（22:16:53.35，认证结果外化交钥匙串）→ 读取成功。两次认证均无失败落盘（diag log 10-02 零记录），与「第二次为钥匙串重认证且成功」完全相容。排除项：代码无启动自动触发（unlockWithTouchID 仅 LockView 按钮/CrossCopySheet 两个调用点）；itemExists 元数据查询未触发弹窗；首次弹窗于启动后约 1 秒出现系用户点击快，非自动弹。
 
+**补证（2026-10-03 真机 log stream 取证，新构建已无 App 侧预认证）**：仍有两次弹窗，且第一次是**自动弹**——①**启动路径**：`refreshTouchIDStatus → itemExists`（AppModel.swift:351/509，openSession/lock 均调用）对挂 biometryCurrentSet ACL 的 DP 钥匙串项做元数据查询（SecItemCopyMatching 不带 kSecReturnData），macOS 26 亦触发完整 ACL 认证 UI（rid 30354，进程启动 +1.3s 弹出，无任何用户点击）；授权结果被 App 丢弃（纯探测）。docs/08 Q-2「itemExists 不触发弹窗」结论作废——09-28 的 `itemExists 失败 status=-25293` 静默形态与今日弹 UI 系同一机制两态。②**点击解锁**：`read` 钥匙串自有单次认证 = 正常唯一一次（rid 30360，externalize/import 机械可证）——e04070b 这半已修好。**结论：PL-4 = 双源**（启动自动弹：itemExists 元数据查询；点击双弹：预认证 + 读取再认证），e04070b 消后者，`4f05139` 消前者。
+
 ### 修复路径
 
 删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案，实际落地因 macOS 11 弃用改用 LAContext.localizedReason）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码（错误码映射未变；**取消语义漂移已接受**——改前取消经 App 侧预认证报 4001，改后经钥匙串认证报 4002）；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/08 §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
+
+补（2026-10-03，commit `4f05139`，双源①）：`itemExists` 探测查询加全新 LAContext + interactionNotAllowed=true（`kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` 自 macOS 11 弃用，改用本字段），需认证时立即返回 `errSecInteractionNotAllowed` / `errSecAuthFailed`，不打扰用户；返回语义改三态——success → true、authFailed/interactionNotAllowed → true（项物理存在但认证锁定，可读性终判以 read 失败为准，docs/08 §4.1；TouchIDStatus 保持 .enabled，LockView 按钮不消失，点按后由 read 弹单次认证）、itemNotFound → false。
 
 ### 复现与诊断
 

@@ -12,7 +12,6 @@
 
 import AppKit
 import Foundation
-import LocalAuthentication
 import SwiftUI
 
 /// 应用阶段状态机。

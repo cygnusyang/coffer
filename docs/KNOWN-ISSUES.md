@@ -774,13 +774,13 @@ N/A（测试缺口，非运行期缺陷）。
 
 ---
 
-## PL-3（🟡 待修）：菜单栏「数据」菜单缺「导入 Bitwarden (.json)…」入口——Bitwarden 向导仅工具栏可达
+## PL-3（✅ 已修复：b459f6e）：菜单栏「数据」菜单缺「导入 Bitwarden (.json)…」入口——Bitwarden 向导仅工具栏可达
 
 **登记日期**：2026-10-02
 **发现环境**：#19 发版回归真机陪跑 TC-M5-8（用户实跑发现：菜单栏「数据」菜单无 Bitwarden 项）
 **分级**：S3（功能可达但主入口缺失/双入口不一致）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
-**状态**：🟡 待修（修复待用户裁定 FR-10.1 Bitwarden 数据源需求存留后执行——若需求裁撤则本条随需求变更一并处置）
-**核销记录**：待回填
+**状态**：✅ 已修复（commit `b459f6e`，2026-10-02：菜单栏「数据」补「导入 Bitwarden (.json)…」，与工具栏三格式并列；构建验证 `tools/build_macos_app.sh` 退出 0）
+**核销记录**：修复 = commit `b459f6e`（2026-10-02：`CofferApp.swift` `CommandMenu("数据")` 在 1PUX 项后补 Bitwarden 项，复用 `model.showImportBitwarden` 旗标，同 CSV/1PUX 锁态禁用纪律）；复验 = `tools/build_macos_app.sh` 退出 0（swiftc 编译 41 源文件零警告，产物 `macos/build/Coffer.app`）
 **证据**：`macos/Coffer/CofferApp.swift:44-60` CommandMenu("数据") 仅 导入 CSV… / 导入 1Password (.1pux)… / 导出… / 设置…；`macos/Coffer/Views/MainView.swift:148-155` 工具栏「导入」菜单三项齐全（CSV / 1PUX / Bitwarden）。a25acf4 接线只覆盖工具栏菜单。
 
 ### 现象（预期/实际 分行写）

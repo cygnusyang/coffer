@@ -774,6 +774,34 @@ N/A（测试缺口，非运行期缺陷）。
 
 ---
 
+## PL-3（🟡 待修）：菜单栏「数据」菜单缺「导入 Bitwarden (.json)…」入口——Bitwarden 向导仅工具栏可达
+
+**登记日期**：2026-10-02
+**发现环境**：#19 发版回归真机陪跑 TC-M5-8（用户实跑发现：菜单栏「数据」菜单无 Bitwarden 项）
+**分级**：S3（功能可达但主入口缺失/双入口不一致）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：🟡 待修（修复待用户裁定 FR-10.1 Bitwarden 数据源需求存留后执行——若需求裁撤则本条随需求变更一并处置）
+**核销记录**：待回填
+**证据**：`macos/Coffer/CofferApp.swift:44-60` CommandMenu("数据") 仅 导入 CSV… / 导入 1Password (.1pux)… / 导出… / 设置…；`macos/Coffer/Views/MainView.swift:148-155` 工具栏「导入」菜单三项齐全（CSV / 1PUX / Bitwarden）。a25acf4 接线只覆盖工具栏菜单。
+
+### 现象（预期/实际 分行写）
+
+- 预期：两个导入入口三格式并列——菜单栏「数据」（⌘I 主路径，v0.3 起即导入主入口）与工具栏「导入」菜单均含 Bitwarden (.json)…。
+- 实际：菜单栏「数据」菜单无 Bitwarden 项；用户（TC-M5-8 实跑）在菜单栏找不到 Bitwarden 导入，向导仅可经工具栏「导入」菜单触达。
+
+### 根因（已实证 / 待查）
+
+已实证：a25acf4 接线范围只含 MainView 工具栏菜单 + AppModel 旗标 + sheet；CofferApp.swift 的 CommandMenu("数据") 未同步。两入口共用 AppModel.showImportBitwarden 旗标，sheet 本身无缺。
+
+### 修复路径
+
+CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }.disabled(model.phase != .unlocked)`（同 CSV/1PUX 锁定态禁用纪律；import_bitwarden_json 有 1001 门禁）。
+
+### 复现与诊断
+
+菜单栏「数据」→ 仅两项导入；工具栏「导入」→ 三项。二进制字符串实核含 "Bitwarden (.json)"（工具栏项在包内），排除构建遗漏。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

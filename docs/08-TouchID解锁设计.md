@@ -297,8 +297,12 @@ enable / disable 时序见 §4.1，不再画。
 
 ```swift
 enum BiometricKeychainError: Error {
-    case itemNotFound      // → 4002（指纹集变更 / 项被删）
-    case authFailed        // → 4002（指纹集变更后 ACL 拒绝 / 锁定态读取——凭据失效）
+    case itemNotFound      // → 4002（指纹集变更 / 项被删）——持久失效，恒置 stale
+    case authFailed        // -25293，瞬时/持久分道（PL-7，2026-10-03 用户反馈）：
+                           //   瞬时（锁屏/刚唤醒/传感器未就绪/biometry lockout，
+                           //   失败瞬间 isBiometricsAvailable()==false）→ 温和
+                           //   文案、按钮保留；持久（指纹集变更 ACL 失效，
+                           //   canEvaluatePolicy 通过仍读失败）→ 4002 + stale
     case userCanceled      // 用户取消认证——取消 ≠ 失效：静默不弹错误（reviewer
                            //    HIGH 处置 2026-10-03：errSecUserCanceled 自
                            //    authFailed 拆出独立 case，取消/失效分道呈现）
@@ -307,6 +311,8 @@ enum BiometricKeychainError: Error {
 // mapStatus（docs/08 §4.1 / §7.3）：errSecItemNotFound → .itemNotFound；
 //   errSecAuthFailed / errSecInteractionNotAllowed → .authFailed；
 //   errSecUserCanceled → .userCanceled；其余 → .unexpected
+// authFailed 瞬时/持久分道判定抽成纯函数 TouchIDAuthFailure.disposition
+// （Support/TouchIDAuthFailure.swift，独立单测 run_touchid_auth_failure_tests.sh）
 struct BiometricKeychain {
     static let service = "cn.coffer.biometric"
     static func isBiometricsAvailable() -> Bool          // LAContext.canEvaluatePolicy（只检测，不弹窗）
@@ -366,7 +372,8 @@ sequenceDiagram
 - 防重入与判重：一次性旗标 `autoPromptBiometricFired`——发起时置位，`phase` 离开 `.locked`（解锁成功 / 手动锁定 / 切库）时复位；同一次锁定态内多次呼出只弹一次（取消后不重复骚扰）。完整判定（含旗标与 `!isBusy`）抽为 `shouldAutoPromptBiometric(vaultCount:isSupported:status:firedInLockState:isBusy:)` 重载，判重组合纳入纯函数单测；`unlockWithTouchID` 内部另有 `!isBusy` guard 兜底。
 - 错误分道（reviewer HIGH 处置，2026-10-03 裁定；`unlockWithTouchID` catch 按错误类型分派，手动/自动路径一致）：
   - **取消静默**：`.userCanceled`（用户取消认证）→ 不写 `lastErrorMessage`（取消不是失败），`DiagLog` 记诊断；落回锁定页按钮可再点。
-  - **失效可见**：`.itemNotFound` / `.authFailed`（凭据失效）→ 呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码，设置页显示「重新启用」）。此处置**不调 `refreshTouchIDStatus`**——refresh 以 `itemExists` 判定，authFailed 场景项仍「存在」会被翻回 `.enabled`，此处以 read 失败为终判。
+  - **失效可见（持久）**：`.itemNotFound`（项不存在）→ 呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码，设置页显示「重新启用」）。此处置**不调 `refreshTouchIDStatus`**——refresh 以 `itemExists` 判定，authFailed 场景项仍「存在」会被翻回 `.enabled`，此处以 read 失败为终判。
+  - **authFailed 瞬时/持久分道（PL-7，2026-10-03 用户反馈）**：`.authFailed`（errSecAuthFailed -25293）不再一律判死——失败瞬间 `isBiometricsAvailable() == false`（锁屏/刚唤醒/传感器未就绪/biometry lockout）→ **瞬时**：不置 stale、`touchIDStatus` 不变、按钮保留可再点，呈现 Swift-only 温和文案 `TouchIDError.transientUnavailable`（「Touch ID 暂时不可用，请稍后重试…」，无错误码，docs/17 §5 冻结零新增）；`isBiometricsAvailable() == true` 仍读失败（指纹集变更/ACL 失效）→ **持久**：维持 4002 + 置 stale（§4.1 语义不变）。分道判定抽成纯函数 `TouchIDAuthFailure.disposition`（`Support/TouchIDAuthFailure.swift`，独立单测）。
   - **其余可见**：`unexpected` / FfiError（1002/4001/5999）→ 照常呈现（自动路径也呈现）并刷新状态行。
   - 此前的 `isAutoPrompt` 参数已移除：静默语义改由错误类型驱动，不再区分调用路径（ErrorPresenter 对 `.userCanceled` 返回空串，`FfiErrorAlert` 对空串不弹，双保险）。
 

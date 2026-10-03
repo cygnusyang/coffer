@@ -14,6 +14,10 @@ enum TouchIDError: Error, Equatable {
     case unavailable
     /// 4002：生物识别凭据已失效（指纹集变更 / Keychain 项不可读）
     case stale
+    /// Swift-only（无错误码，docs/17 §5 冻结零新增）：瞬时不可用——传感器
+    /// 未就绪 / biometry lockout / 系统刚唤醒，非持久失效（PL-7）。温和文案，
+    /// LockView 按钮保留可再点，不置 stale。
+    case transientUnavailable
 
     /// 规范化中文文案（docs/08 T03 验收②）。
     var userText: String {
@@ -22,6 +26,10 @@ enum TouchIDError: Error, Equatable {
             return "错误 4001：生物识别解锁不可用（设备不支持或认证未通过），请使用主密码解锁。"
         case .stale:
             return "错误 4002：生物识别凭据已失效（可能因指纹变更），请使用主密码解锁后在设置中重新启用 Touch ID。"
+        case .transientUnavailable:
+            // PL-7（2026-10-03 用户反馈）：瞬时判定用静态温和文案，不加错误
+            // 码（M-5：静态文案，不回显外部输入；docs/17 §5 冻结零新增）
+            return "Touch ID 暂时不可用，请稍后重试或使用主密码解锁。"
         }
     }
 }

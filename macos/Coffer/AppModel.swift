@@ -291,6 +291,24 @@ final class AppModel: ObservableObject {
         guard phase == .booting else { return }
         try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
 
+        // 官方许可装配（契约 #2，docs/03 §14.9）：任何 vault 操作之前注入。
+        //   - 公开构建（无 OFFICIAL_LICENSE）：本块不编译，行为 = PermitAll
+        //     全功能免费版（TC-BLD-02）；
+        //   - 官方构建：Rust 侧 installOfficialLicense 注入 gate + Q-17a 试用
+        //     起点预热；Swift 侧 LicenseAssembly.shared 换入官方适配。装配失败
+        //     （构建期不变量破坏，理论不可达）→ 保持 PermitAll 免费版语义
+        //     （契约 #2 fallback：闭源侧缺失时公开仓保持可用）并落诊断日志。
+        //   同步执行与既有 listVaults 同纪律（bootstrap 主线程一次性的短路径；
+        //   若实测 Keychain 访问过慢，改 Task.detached 并在 openSession 前等待）。
+        #if OFFICIAL_LICENSE
+        do {
+            try factory.installOfficialLicense()
+            LicenseAssembly.shared = try OfficialLicenseService()
+        } catch {
+            DiagLog.append("official license assembly failed: \(error)")
+        }
+        #endif
+
         // 自动锁定监视（持弱引用，无循环）
         let monitor = AutoLockMonitor()
         monitor.start(model: self)

@@ -14,18 +14,25 @@
 
 import Foundation
 
-/// 激活错误（docs/03 §14.9 activate「任何失败统一 6001」）：单 case、零细节，
-/// 保证不可区分（FR-15.6）。
+/// 激活错误（docs/03 §14.9 activate 失败面）：6001 不可区分（FR-15.6）+ 6004
+/// 存储暂不可用。均不携带失败原因字段——按码本地化、零细节。
 enum LicenseActivationError: Error, Equatable {
     /// 序列号无效（6001）。不携带失败原因字段——不可区分纪律。
     case serialInvalid
+    /// 许可信息存储暂不可用（6004，docs/03 §14.8 / §12）：可稍后重试。
+    case storageUnavailable
 
-    /// 激活错误文案（6001，docs/03 §12）。纯函数——视图与 ErrorPresenter 共用，
+    /// 激活错误文案（docs/03 §12）。纯函数——视图与 ErrorPresenter 共用，
     /// 可独立单测（本文件零 CoreBindings 依赖）。文案单一来源取
-    /// `LicenseErrorText.serialInvalid`（6001 恒在映射中，不做 ?? 兜底——
+    /// `LicenseErrorText` 常量（6001 / 6004 恒在映射中，不做 ?? 兜底——
     /// 兜底是死代码，reviewer LOW-2）。
     var userText: String {
-        LicenseErrorText.serialInvalid
+        switch self {
+        case .serialInvalid:
+            return LicenseErrorText.serialInvalid
+        case .storageUnavailable:
+            return LicenseErrorText.storageUnavailable
+        }
     }
 }
 
@@ -35,6 +42,10 @@ enum LicenseErrorText {
     /// （FR-15.6 不可区分纪律）。`text(forCode: 6001)` 映射与
     /// `LicenseActivationError.userText` 均经此常量取文案，杜绝重复字面量。
     static let serialInvalid = "序列号无效"
+    /// 6004 统一文案（单一来源）：许可信息存储暂不可用（docs/03 §14.8），
+    /// 可稍后重试。`text(forCode: 6004)` 映射与
+    /// `LicenseActivationError.userText` 均经此常量取文案，杜绝重复字面量。
+    static let storageUnavailable = "许可信息存储暂不可用，请稍后重试。"
 
     /// 6xxx 码 → 规范化中文文案；非 6xxx 返回 nil（调用方走默认直出）。
     static func text(forCode code: Int) -> String? {
@@ -50,7 +61,7 @@ enum LicenseErrorText {
             return "当前许可状态不允许此操作。许可状态异常已进入只读保护，请重启应用后重试；若问题持续，请重装应用或联系支持。"
         case 6004:
             // 许可信息存储暂不可用（§14.8）：可稍后重试
-            return "许可信息存储暂不可用，请稍后重试。"
+            return storageUnavailable
         default:
             return nil
         }

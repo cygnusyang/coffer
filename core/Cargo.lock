@@ -440,6 +440,7 @@ dependencies = [
  "cf-store",
  "rusqlite",
  "thiserror",
+ "tracing",
  "uniffi",
  "uuid",
  "zxcvbn",

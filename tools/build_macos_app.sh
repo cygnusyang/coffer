@@ -70,11 +70,13 @@ swiftc -O \
 
 # ---- 3/4 组装 bundle ----
 step "3/4 组装 Coffer.app bundle"
+# 先建 Contents/Resources：icns 拷贝目标目录须先存在（全新 build 目录首次
+# 构建时 Resources 尚不存在，若后建则 cp 失败中止——v0.6.0 批次发现）
+mkdir -p "${APP_DIR}/Contents/Resources"
 cp "${SRC_DIR}/Info.plist" "${APP_DIR}/Contents/Info.plist"
 if [[ -f "${SRC_DIR}/Resources/Coffer.icns" ]]; then
   cp "${SRC_DIR}/Resources/Coffer.icns" "${APP_DIR}/Contents/Resources/Coffer.icns"
 fi
-mkdir -p "${APP_DIR}/Contents/Resources"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 
 # ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----

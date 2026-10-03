@@ -24,6 +24,10 @@ cf-importer = { workspace = true }
 cf-exporter = { workspace = true }
 uniffi = { workspace = true }
 thiserror = { workspace = true }
+# 官方装配预热结果落日志（M2，见 src/official.rs）：仅官方 feature 下使用，故
+# optional + 随 official-license 启用，公开构建依赖闭包不引入（TC-BLD-02 纪律）。
+# 与 cf-mcp 同 workspace tracing，非新依赖。
+tracing = { workspace = true, optional = true }
 # strength_estimate：zxcvbn 评估 + feedback（建议/告警文案）
 zxcvbn = { workspace = true }
 # open_vault：vault uuid 合法性校验（防路径拼接逃逸）
@@ -47,7 +51,7 @@ default = []
 # 并编译 src/official.rs 的 install_official_license 导出。需要 vendor 目录已
 # bootstrap（tools/bootstrap_official_license.sh）。Swift 侧配 `-D OFFICIAL_LICENSE`
 # 编译官方适配（见 OfficialLicenseService.swift）。
-official-license = ["dep:cf-assemble", "dep:cf-license", "dep:cf-keychain"]
+official-license = ["dep:cf-assemble", "dep:cf-license", "dep:cf-keychain", "dep:tracing"]
 # Swift/Kotlin 绑定生成器入口（tools/build_swift_bindings.sh 专用；
 # 运行时与测试不需要）。启用后 `cargo run --features bindgen-cli --bin uniffi-bindgen`。
 bindgen-cli = ["uniffi/cli"]

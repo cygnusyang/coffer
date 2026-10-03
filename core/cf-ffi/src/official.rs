@@ -40,7 +40,7 @@ use cf_assemble::{OFFICIAL_PUBKEY_VER, OFFICIAL_VERIFY_KEY};
 use cf_keychain::MacKeychainStore;
 use cf_license::clock::SystemTimeSource;
 use cf_license::fingerprint::MacFingerprintSource;
-use cf_license::state::ConservativeDataPresence;
+use cf_license::state::{ConservativeDataPresence, LicenseState};
 
 use crate::api::CofferApp;
 use crate::error::FfiError;
@@ -51,16 +51,25 @@ impl CofferApp {
     /// 不含本方法，TC-BLD-02）。
     ///
     /// 执行契约 #2 序列：`build_official_assembly`（真实 KeychainStore / 机器
-    /// 指纹 / 系统时钟 / 数据存在性探针）→ `state()` 预热（Q-17a：首次判定
-    /// 写入 trial 起始记录，锚定试用起点）→ `set_license_gate` 注入只读门禁。
+    /// 指纹 / 系统时钟 / 数据存在性探针）→ `state()` best-effort 预热（Q-17a：
+    /// 首次判定写入 trial 起始记录，锚定试用起点）→ `set_license_gate` 注入只读
+    /// 门禁。
     /// 门禁注入后，应用级写操作（create_vault / export_backup / restore_backup）
     /// 与全部 `open_vault` 会话共用官方判定源（`docs/03` §14.6 拒绝面）。
     ///
     /// # Errors
     ///
-    /// 失败仅发生在构建期不变量破坏（`OFFICIAL_VERIFY_KEY` 无法解析为
-    /// Ed25519 公钥），映射为既有 6xxx 码位（6004，许可模块不可用），
-    /// 无新增码位。
+    /// 返回错误的路径只有一个：`build_official_assembly` 装配失败（构建期
+    /// 不变量破坏——`OFFICIAL_VERIFY_KEY` 无法解析为 Ed25519 公钥），映射为
+    /// 既有 6xxx 码位（6004，许可模块不可用），无新增码位。
+    ///
+    /// `state()` 预热**不可失败**（返回 [`LicenseState`] 而非 `Result`）——
+    /// 运行时 Keychain IO 失败按 §14.8 折入 `LicenseState` 退化变体
+    /// （`StateUnavailable` / 试用退化），不作为错误返回，也不阻断启动；
+    /// 预热结果落 `tracing::debug!`/`warn!` 日志（当前 app 未挂 subscriber，
+    /// 事件静默丢弃，机制与私有仓内部日志一致）。门禁已注入，下一次
+    /// `licenseStatus()` 会重试同一判定（瞬时故障自愈；持续故障在 Swift UI
+    /// 侧显形，与失败推迟到状态呈现一致）。
     pub fn install_official_license(&self) -> Result<(), FfiError> {
         let asm = build_official_assembly(
             OFFICIAL_VERIFY_KEY,
@@ -71,8 +80,19 @@ impl CofferApp {
             Arc::new(ConservativeDataPresence),
         )
         .map_err(license_error_to_ffi)?;
-        // Q-17a：首次判定（state() 有副作用：无记录时写入 trial 起始）
-        let _ = asm.service.state();
+        // Q-17a：首次判定（state() 有副作用：无记录时写入 trial 起始）。
+        // state() 不可失败（返回 LicenseState，Keychain IO 失败按 §14.8 折入
+        // 退化变体 StateUnavailable / 试用退化；trial 写失败已在 cf-license
+        // 内部 tracing::warn! 落日志「下次启动重试」，自愈语义——与私有仓同
+        // 机制）。装配侧仅落 tracing 日志作诊断勾稽（当前 app 未挂 subscriber，
+        // 事件静默丢弃；若将来接 DiagLog 即生效），不传播、不阻断启动——门禁
+        // 已注入，预热退化由下一次 licenseStatus() 重新判定显形（或 UI 侧呈现）。
+        let warmup = asm.service.state();
+        if let LicenseState::StateUnavailable = warmup {
+            tracing::warn!(state = ?warmup, "official license warmup degraded (StateUnavailable); self-heals on next licenseStatus()");
+        } else {
+            tracing::debug!(state = ?warmup, "official license warmup ok");
+        }
         // 门禁注入（Rust 装配 API，刻意不进 `#[uniffi::export]`，TC-BLD-02）
         self.set_license_gate(asm.gate);
         Ok(())

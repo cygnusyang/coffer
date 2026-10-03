@@ -59,10 +59,14 @@ check(LicenseErrorText.text(forCode: 6004) == "许可信息存储暂不可用，
 check(LicenseErrorText.text(forCode: 5001) == nil, "非 6xxx 码 → nil（调用方走默认直出）")
 check(LicenseErrorText.text(forCode: 0) == nil, "未知码 → nil")
 
-// ---- 4. LicenseActivationError（docs/03 §14.9 activate「任何失败统一 6001」）----
+// ---- 4. LicenseActivationError（docs/03 §14.9 activate 失败面：
+//         6001 不可区分（FR-15.6）+ 6004 存储暂不可用）----
 
 check(LicenseActivationError.serialInvalid.userText == "序列号无效", "激活错误 userText = 6001「序列号无效」")
-check(LicenseActivationError.serialInvalid == .serialInvalid, "激活错误仅一态（不可区分）")
+check(LicenseActivationError.serialInvalid == .serialInvalid, "6001 不可区分：无失败原因字段（FR-15.6）")
+check(LicenseActivationError.storageUnavailable.userText == "许可信息存储暂不可用，请稍后重试。", "激活错误 userText = 6004「存储暂不可用」")
+check(LicenseActivationError.storageUnavailable == .storageUnavailable, "6004 存储暂不可用独立成态")
+check(LicenseActivationError.serialInvalid != .storageUnavailable, "6001 / 6004 两态按码区分（docs/03 §12）")
 
 // ---- 5. PermitAllLicenseService 公开产物桩（docs/03 §14.9：未激活 / 全功能免费版）----
 

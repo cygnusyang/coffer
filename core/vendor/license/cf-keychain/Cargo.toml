@@ -1,0 +1,21 @@
+[package]
+name = "cf-keychain"
+description = "Coffer 官方判定器的真实 macOS KeychainStore（unsafe FFI 独立 crate，lead 裁定 #2）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# 依赖闭包（lead 裁定 #2，docs/03 §14.4）：
+#   cf-keychain 仅依赖 cf-license（KeychainStore trait / KeychainError）+
+#   Security.framework 原始 FFI 层（security-framework-sys / core-foundation-sys）。
+#   实现 cf-license 的 KeychainStore trait：trial/activation 双记录以 service+account
+#   定位 GenericPassword，accessibility = AfterFirstUnlockThisDeviceOnly（TC-CRD-06）。
+#   无任何网络依赖 crate（C-01 / NFR-SEC-07 零网络判据对官方产物照常成立）。
+#
+# 本 crate 含 unsafe FFI（构造 CFDictionary + 调 SecItem*），刻意独立于
+# cf-license（其 #![forbid(unsafe_code)] 不接受 unsafe）——lead 裁定 #2。
+[dependencies]
+cf-license.workspace = true
+security-framework-sys = "2.17.0"
+core-foundation-sys = "0.8.7"

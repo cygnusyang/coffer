@@ -1,0 +1,33 @@
+[package]
+name = "cf-license"
+description = "Coffer 官方许可判定器（闭源）：验签 / 机器指纹 / 试用期时钟 / Keychain 双记录 / LicenseGate。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# 依赖闭包（TC-SEC-01，docs/02 §10.2）：
+#   cf-license 仅依赖 cf-domain（LicenseGate trait / CfError 6xxx 码位）+
+#   Ed25519 / SHA-256 / Keychain 基础库；禁依赖 cf-store / cf-crypto / cf-session。
+#   无任何网络依赖 crate（C-01 / NFR-SEC-07 零网络判据对官方产物照常成立）。
+[dependencies]
+cf-domain.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# 注：真实 macOS Keychain 实现（security-framework）推迟到装配阶段引入——
+#   需设置 kSecAttrAccessible = AfterFirstUnlockThisDeviceOnly（TC-CRD-06），
+#   走 sys 常量需 unsafe，与本 crate 的 #![forbid(unsafe_code)] 冲突；
+#   装配阶段以独立实现 crate 或局部 allow 承接（待 lead 裁定，见 README）。
+#   本任务交付 KeychainStore trait + 双记录 + mock 单元测试。
+
+[features]
+# mock = 测试 / 诊断用内存 Keychain（InMemoryKeychain）。默认开启保证
+# `cargo test --workspace` 全量跑通；**装配侧官方二进制须 `--no-default-features`
+# 排除 mock**——真实 Keychain 实现（MacKeychainStore）在装配阶段注入
+# （TC-SEC-01 依赖闭包不因 mock 变宽，mock 仅为本 crate 内部代码）。
+default = ["mock"]
+mock = []

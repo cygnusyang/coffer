@@ -28,9 +28,26 @@ thiserror = { workspace = true }
 zxcvbn = { workspace = true }
 # open_vault：vault uuid 合法性校验（防路径拼接逃逸）
 uuid = { workspace = true }
+# 官方许可装配（vendored，闭源）：feature `official-license` 门控。默认关闭——
+# 公开仓自编译不含任何许可符号（TC-BLD-02），行为 = PermitAll 免费版；
+# 官方构建先跑 tools/bootstrap_official_license.sh（vendor 覆盖为真实副本）
+# 再 `--features official-license` 构建。依赖方向纪律：cf-ffi 默认不感知
+# cf-license（单向依赖 cf-license → cf-domain 只在官方 feature 下出现）。
+cf-assemble = { workspace = true, optional = true }
+# 官方装配模块（src/official.rs）直接构造真实依赖：cf-keychain 的真实
+# KeychainStore（MacKeychainStore）+ cf-license 的指纹 / 时钟 / 数据存在性
+# 探针。default-features = false 机制性排除 mock（InMemoryKeychain，MEDIUM-2
+# 同纪律：真实 Keychain 只能经 cf-keychain 注入）。
+cf-license = { workspace = true, optional = true, default-features = false }
+cf-keychain = { workspace = true, optional = true }
 
 [features]
 default = []
+# 官方许可装配（闭源 vendored）：启用 cf-assemble（含 cf-license/cf-keychain）
+# 并编译 src/official.rs 的 install_official_license 导出。需要 vendor 目录已
+# bootstrap（tools/bootstrap_official_license.sh）。Swift 侧配 `-D OFFICIAL_LICENSE`
+# 编译官方适配（见 OfficialLicenseService.swift）。
+official-license = ["dep:cf-assemble", "dep:cf-license", "dep:cf-keychain"]
 # Swift/Kotlin 绑定生成器入口（tools/build_swift_bindings.sh 专用；
 # 运行时与测试不需要）。启用后 `cargo run --features bindgen-cli --bin uniffi-bindgen`。
 bindgen-cli = ["uniffi/cli"]

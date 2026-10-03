@@ -39,6 +39,10 @@ use std::panic::{self, AssertUnwindSafe};
 pub mod api;
 pub mod error;
 pub mod types;
+// 官方许可装配（feature `official-license` 门控，TC-BLD-02）：默认不编译，
+// 公开产物不含任何许可符号（详见模块文档）。
+#[cfg(feature = "official-license")]
+mod official;
 
 pub use error::FfiError;
 

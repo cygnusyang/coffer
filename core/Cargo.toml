@@ -141,6 +141,21 @@ cf-audit    = { path = "cf-audit" }
 cf-session  = { path = "cf-session" }
 cf-ffi      = { path = "cf-ffi" }
 
+# ---------- 官方许可模块（vendored，闭源，feature `official-license` 门控） ----------
+# 依赖闭包：cf-assemble（装配壳）→ cf-license（判定器）+ cf-keychain（真实
+# KeychainStore）→ cf-domain（公开仓核心，统一同包）。vendored 副本位于
+# `core/vendor/license/`：**占位 stub 随仓库提交**（空 lib，保证裸 clone 离线
+# 可解析路径——Cargo 对 path 依赖的 manifest 是急切校验的）；官方构建由
+# `tools/bootstrap_official_license.sh` 从私有仓复制真实源码覆盖 stub 后构建。
+# 特性未开启（默认）时这些 crate 不进构建图、不产生任何符号（TC-BLD-02：
+# 公开二进制无 LicenseService/activate，自编译 = PermitAll 免费版）。
+ed25519-dalek = "2"
+security-framework-sys = "2.17.0"
+core-foundation-sys = "0.8.7"
+cf-license = { path = "vendor/license/cf-license", default-features = false }
+cf-keychain = { path = "vendor/license/cf-keychain" }
+cf-assemble = { path = "vendor/license/cf-assemble" }
+
 # ---------- Release 配置 ----------
 # 密码学场景下宁可慢一点也要保证行为正确，但 LTO 对最终二进制体积
 # 与性能都有明显收益，故 release 启用。

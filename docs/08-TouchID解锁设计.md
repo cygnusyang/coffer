@@ -98,13 +98,17 @@ kSecAttrAccessControl:  SecAccessControlCreateWithFlags(
 kSecValueData:          <K_bio 32 字节>
 ```
 
-读取（解锁时）：
+读取（解锁时）——钥匙串自有单次认证（PL-4 修复后，2026-10-02）：
 
 ```swift
-// 认证与读取绑定在同一个 LAContext 上：
-query[kSecUseAuthenticationContext as String] = laContext
-// laContext 须先 evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)
-// （提前弹窗可控制时机与取消语义；读取时复用同一 context 不再二次弹窗）
+// 全新 LAContext（localizedReason 即弹窗提示文案；kSecUseOperationPrompt
+// 自 macOS 11 起弃用，改用此字段）：
+let context = LAContext()
+context.localizedReason = "解锁密码库"
+query[kSecUseAuthenticationContext as String] = context
+// 由 Keychain 自行发起唯一一次认证弹窗；调用方不再预认证。
+// 原因：macOS 26 实测 kSecUseAuthenticationContext 复用「已认证结果」不生效
+// ——App 侧预认证 + 读取再认证 = 双弹窗（docs/KNOWN-ISSUES.md PL-4）。
 ```
 
 属性选型说明：
@@ -275,10 +279,10 @@ sequenceDiagram
 
     UI->>AM: unlockWithTouchID()
     AM->>AM: session.hasBiometricWrap() 且 canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)
-    AM->>LA: evaluatePolicy("解锁 Coffer")
-    LA-->>AM: 成功（或取消/失败 → 显示 4001 文案，结束）
-    AM->>KC: read(vaultUUID, context: LA)
-    KC-->>AM: K_bio（同一 context，不再二次弹窗）
+    AM->>KC: read(vaultUUID)（查询带全新 LAContext + localizedReason）
+    KC->>LA: SecItemCopyMatching 钥匙串自有单次认证（localizedReason="解锁密码库"）
+    LA-->>KC: 成功（或取消/失败 → 4002 降级文案，结束）
+    KC-->>AM: K_bio（单次弹窗，不二次认证）
     Note over KC: item 失效 → errSecItemNotFound/AuthFailed<br/>→ 显示 4002「凭据已变更，请用主密码」，结束
     AM->>S: Task.detached { unlockWithBiometric(k_bio) }
     S->>R: open(K_bio, aad=uuid‖"wrapped_dek_bio", wrapped_dek_bio)
@@ -293,17 +297,30 @@ enable / disable 时序见 §4.1，不再画。
 
 ```swift
 enum BiometricKeychainError: Error {
-    case itemNotFound      // → 4002（指纹集变更 / 项被删）
-    case authFailed        // → 4001（Touch ID 取消/失败/不可用）
+    case itemNotFound      // → 4002（指纹集变更 / 项被删）——持久失效，恒置 stale
+    case authFailed        // -25293，瞬时/持久分道（PL-7，2026-10-03 用户反馈）：
+                           //   瞬时（锁屏/刚唤醒/传感器未就绪/biometry lockout，
+                           //   失败瞬间 isBiometricsAvailable()==false）→ 温和
+                           //   文案、按钮保留；持久（指纹集变更 ACL 失效，
+                           //   canEvaluatePolicy 通过仍读失败）→ 4002 + stale
+    case userCanceled      // 用户取消认证——取消 ≠ 失效：静默不弹错误（reviewer
+                           //    HIGH 处置 2026-10-03：errSecUserCanceled 自
+                           //    authFailed 拆出独立 case，取消/失效分道呈现）
     case unexpected(OSStatus)
 }
+// mapStatus（docs/08 §4.1 / §7.3）：errSecItemNotFound → .itemNotFound；
+//   errSecAuthFailed / errSecInteractionNotAllowed → .authFailed；
+//   errSecUserCanceled → .userCanceled；其余 → .unexpected
+// authFailed 瞬时/持久分道判定抽成纯函数 TouchIDAuthFailure.disposition
+// （Support/TouchIDAuthFailure.swift，独立单测 run_touchid_auth_failure_tests.sh）
 struct BiometricKeychain {
     static let service = "cn.coffer.biometric"
     static func isBiometricsAvailable() -> Bool          // LAContext.canEvaluatePolicy（只检测，不弹窗）
     func itemExists(vaultUUID: String) -> Bool           // 只查属性不取数据（kSecReturnData=false），
-                                                         // 注意：不应触发认证弹窗——实现后真机确认
+                                                         // 探测禁止弹 UI（LAContext.interactionNotAllowed=true）——
+                                                         // 2026-10-03 真机实证元数据查询亦触发认证弹窗（PL-4 双源①）
     func save(key: Data, vaultUUID: String) throws       // Add → DuplicateItem 则 Update
-    func read(vaultUUID: String, context: LAContext) throws -> Data
+    func read(vaultUUID: String, useDataProtection: Bool = true) throws -> Data  // 钥匙串自有单次认证（PL-4）
     func delete(vaultUUID: String) throws                // 幂等：item 不存在视为成功
 }
 ```
@@ -311,9 +328,9 @@ struct BiometricKeychain {
 ### 7.4 AppModel 增量
 
 - `unlockWithTouchID() async`（§7.2）；`isBusy` 互斥与主密码解锁共用。
-- Keychain read 在主线程触发 LAContext（LAContext 的 UI 要求主线程回调上下文），
-  K_bio 作为局部变量捕获进 Task 闭包后即弃——不落任何 `@Published`（与主密码
-  同纪律，docs/07 §2.4）。
+- 无 App 侧预认证：Keychain read 自带钥匙串自有单次认证（全新 LAContext +
+  localizedReason，PL-4 修复后）；K_bio 作为局部变量捕获进 Task 闭包后即弃——
+  不落任何 `@Published`（与主密码同纪律，docs/07 §2.4）。
 - 锁定（`lock()`）与 `lock_all()` 路径**不变**——Touch ID 解锁获得的密钥与主密码
   路径同生共死，无需新增清理逻辑。
 
@@ -326,6 +343,40 @@ struct BiometricKeychain {
 | 开关（开→关） | 二次确认 → disable 流程（§4.1） |
 | 「重新启用」 | 仅在 BioStale 态显示，同 enable |
 | 降级说明 | 无 Touch ID 硬件/未录入指纹：整节隐藏，并注明「当前设备不支持生物识别解锁」 |
+
+### 7.6 启动 / 呼出自动引导（用户 2026-10-03 口头裁定，feat）
+
+**启动场景**：启动 Coffer 后，若**工作目录仅一个密码库** 且 **Touch ID 通道可用**，则不经点击直接弹指纹认证框——单库用户启动 → 一次授权 → 直达主界面。**呼出场景**（同日裁定追加）：关窗驻留后从菜单栏重新呼出主窗口（「打开主窗口」/「快速搜索…」/ ⌥⌘P，均经 `summonMainWindow`）时，若窗口确从隐藏恢复且处于锁定态，同样自动弹指纹。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant A as App（bootstrap 末尾 / summonMainWindow 恢复可见后）
+    participant KC as Keychain
+    A->>A: 枚举库列表（vaultBriefs）+ openSession + refreshTouchIDStatus（或呼出恢复）
+    alt 单库 ∧ 设备支持 ∧ touchIDStatus == .enabled ∧ 旗标未置（同锁定态首弹）
+        A->>A: maybeAutoPromptBiometric 判定通过 → 置旗标 → Task 抛异步
+        A->>KC: read(K_bio) 钥匙串自有单次认证（全新 LAContext + localizedReason）
+        KC-->>U: 弹指纹认证框（唯一一次，PL-4 纪律）
+        U-->>KC: 指纹匹配
+        KC-->>A: K_bio 返回
+        A->>A: FFI unlockWithBiometric → phase = .unlocked（直达主界面）
+    else 多库 / 未启用 / 设备不支持 / 旗标已置 / 自动路径取消或失败
+        A-->>U: 落回锁定页（取消 → 静默；凭据失效 → 4002 + 置 stale，
+                §7.6 错误分道）；手点「使用 Touch ID 解锁」或主密码
+    end
+```
+
+- 判定条件抽为纯函数 `AutoPromptBiometric.shouldAutoPromptBiometric(vaultCount:isSupported:status:)`：`vaultCount == 1 ∧ isSupported ∧ status == .enabled`（`macos/Coffer/Support/AutoPromptBiometric.swift`，单测穷举 3×2×3 边界——`tools/run_auto_prompt_biometric_tests.sh`，同 §9 T04 纯函数纪律）。
+- 触发范围：**启动**（`bootstrap()` 末尾接线）+ **呼出**（`summonMainWindow` 中 `wasHidden` 判定后调同一 `AppModel.maybeAutoPromptBiometric()`）。`openSession` 的其他调用方（切换库/恢复备份/解锁）不自动弹；**窗口开着时自动锁定/锁屏后再解锁不自动弹**（用户未裁定，不实现）；呼出的「快速搜索…」与「打开主窗口」共用 `summonMainWindow` 入口，无遗漏分支。
+- 防重入与判重：一次性旗标 `autoPromptBiometricFired`——发起时置位，`phase` 离开 `.locked`（解锁成功 / 手动锁定 / 切库）时复位；同一次锁定态内多次呼出只弹一次（取消后不重复骚扰）。完整判定（含旗标与 `!isBusy`）抽为 `shouldAutoPromptBiometric(vaultCount:isSupported:status:firedInLockState:isBusy:)` 重载，判重组合纳入纯函数单测；`unlockWithTouchID` 内部另有 `!isBusy` guard 兜底。
+- 错误分道（reviewer HIGH 处置，2026-10-03 裁定；`unlockWithTouchID` catch 按错误类型分派，手动/自动路径一致）：
+  - **取消静默**：`.userCanceled`（用户取消认证）→ 不写 `lastErrorMessage`（取消不是失败），`DiagLog` 记诊断；落回锁定页按钮可再点。
+  - **失效可见（持久）**：`.itemNotFound`（项不存在）→ 呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码，设置页显示「重新启用」）。此处置**不调 `refreshTouchIDStatus`**——refresh 以 `itemExists` 判定，authFailed 场景项仍「存在」会被翻回 `.enabled`，此处以 read 失败为终判。
+  - **authFailed 瞬时/持久分道（PL-7，2026-10-03 用户反馈）**：`.authFailed`（errSecAuthFailed -25293）不再一律判死——失败瞬间 `isBiometricsAvailable() == false`（锁屏/刚唤醒/传感器未就绪/biometry lockout）→ **瞬时**：不置 stale、`touchIDStatus` 不变、按钮保留可再点，呈现 Swift-only 温和文案 `TouchIDError.transientUnavailable`（「Touch ID 暂时不可用，请稍后重试…」，无错误码，docs/17 §5 冻结零新增）；`isBiometricsAvailable() == true` 仍读失败（指纹集变更/ACL 失效）→ **持久**：维持 4002 + 置 stale（§4.1 语义不变）。分道判定抽成纯函数 `TouchIDAuthFailure.disposition`（`Support/TouchIDAuthFailure.swift`，独立单测）。
+  - **其余可见**：`unexpected` / FfiError（1002/4001/5999）→ 照常呈现（自动路径也呈现）并刷新状态行。
+  - 此前的 `isAutoPrompt` 参数已移除：静默语义改由错误类型驱动，不再区分调用路径（ErrorPresenter 对 `.userCanceled` 返回空串，`FfiErrorAlert` 对空串不弹，双保险）。
+  - 分道统一实现（2026-10-03 PL-5）：错误→呈现分道的映射收敛为纯函数 `TouchIDUnlockPresentation.resolve(error:biometryAvailable:)`（`Support/TouchIDError.swift`——TouchIDError 自 ErrorPresenter.swift 拆出独立文件，零 CoreBindings 依赖可独立单测，`tools/run_touchid_error_presentation_tests.sh`）。**CrossCopySheet 目标库 `unlockWithBiometric` 与主解锁路径共用同一分道**——PL-5 删除该 sheet 侧 `evaluatePolicy` 预认证（与 PL-4 同型双弹源，KNOWN-ISSUES PL-5）后，错误呈现改由 `read` 的错误分道驱动：取消静默（不写 localError，避免空白「解锁失败」框）、瞬时温和文案、持久 4002、其余（FfiError 1002 等）回退 `ErrorPresenter.text`，留在解锁步可重试（docs/15 §3.2.3）。
 
 ---
 
@@ -372,10 +423,10 @@ struct BiometricKeychain {
 | # | 事项 | 影响 | 建议 |
 | --- | --- | --- | --- |
 | Q-1 | 沙盒 App 的 Keychain ACL 对「其他进程读取」的精确行为（拒绝 vs 弹允许框 vs errSecInteractionNotAllowed） | T-1 结论与 §5 回填 | T05-④ 真机实测；若存在允许框路径，评估在 ACL 中固化（`SecAccess` 旧 API 已弃用，可能需接受拒绝语义即可） |
-| Q-2 | `itemExists()` 仅查属性是否会触发认证弹窗 | LockView 按钮显隐的静默判定 | T03 实现时用 `kSecReturnAttributes` 验证；若仍触发，改为信任 `has_biometric_wrap()` + 首次 read 失败降级 |
+| Q-2 | `itemExists()` 仅查属性是否会触发认证弹窗 | LockView 按钮显隐的静默判定 | ✅ 已闭环（2026-10-03 真机 log stream 实证）：**会**——macOS 26 上对挂 biometryCurrentSet ACL 的项做元数据查询亦触发完整认证 UI（启动路径 `refreshTouchIDStatus → itemExists` 致启动后 ~1s 自动弹窗，PL-4 双源①）。修复：探测查询带 `LAContext.interactionNotAllowed = true`（`kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` 自 macOS 11 弃用，改用此字段），需认证时立即返回 `errSecInteractionNotAllowed` / `errSecAuthFailed`，由调用方按三态语义解释（存在 / 存在但认证锁定 / 不存在，docs/KNOWN-ISSUES.md PL-4） |
 | Q-3 | `.biometryCurrentSet` 在「用户从未录入指纹但创建 item」时 macOS 的具体行为（创建成功/失败） | 无指纹设备的启用路径 | T05 验证；无论如何 UI 侧已被 canEvaluatePolicy 门禁挡住，属双保险 |
 | Q-4 | enable 时 1s Argon2id 重派生（D-6）是否影响体验 | 设置页开关延迟 | 可接受（一次性操作）；若反馈差，v0.3.0 可改「解锁态下用内存中……」——不可行，DEK 已 drop，维持现状 |
-| Q-5 | `LAContext.evaluatePolicy` 与 `kSecUseAuthenticationContext` 的弹窗时序在 macOS 14 的细节（两次弹窗 vs 合一） | UX | T05 实测；文档示例已按「提前 evaluate + 复用 context」写，若系统自动合并弹窗则更简 |
+| Q-5 | `LAContext.evaluatePolicy` 与 `kSecUseAuthenticationContext` 的弹窗时序（两次弹窗 vs 合一） | UX | T05 实测已闭环（2026-10-02）：macOS 26 上复用已认证 context **不生效** → 双弹窗（docs/KNOWN-ISSUES.md PL-4）；设计已改为钥匙串自有单次认证（全新 LAContext + localizedReason），单弹窗 |
 | R-1 | cf-format `write_header` 原子替换对「启用态字段」的既有覆盖是否完备 | T01-⑥ | 现有原子写已覆盖，补启用态用例即可，风险低 |
 | R-2 | UniFFI `Vec<u8>` ↔ Swift `Data` 转换的拷贝语义（K_bio 在桥上被复制，Swift 侧副本不可清零） | 与 v0.1 明文跨桥同性质的已知局限（docs/07 §4.2），K_bio 是随机密钥非用户凭据，暴露窗口毫秒级 | 接受并记录；不做缓冲区体操 |
 

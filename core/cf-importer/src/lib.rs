@@ -1,13 +1,14 @@
 //! # cf-importer —— 导入器
 //!
-//! 1PUX / CSV / opvault 三种格式的解析、字段映射与预检报告。
+//! 1PUX / CSV / Bitwarden JSON / opvault 等格式的解析、字段映射与预检报告。
 //!
 //! ## 对应设计文档
 //!
 //! - `docs/07-macOS纵切设计.md` §3（CSV 导入设计）与 §7 T03 条目
 //! - `docs/03-详细设计.md` §6（导入器设计）
 //! - `docs/03-详细设计.md` §6.4（分类码与字段映射表）
-//! - `docs/01-需求分析.md` §5-G（FR-7 数据导入）
+//! - `docs/01-需求分析.md` §5-G（FR-7 数据导入）/ §5-J（FR-10 passkey）
+//! - `docs/17-v0.5实现方案.md` §4.2（PK2 双格式导入，v0.5.0）
 //!
 //! ## 职责边界
 //!
@@ -35,7 +36,10 @@
 //! 支持格式：
 //! - CSV —— 已实现（1Password 9 列，docs/07 §7 T03）
 //! - 1PUX（ZIP + 明文 JSON，含 `files/` 附件）—— **v0.3.0 已实现**
-//!   （[`pux`] 模块，FR-7.1 / FR-7.4~7.7，docs/09 v0.3.0-T01）
+//!   （[`pux`] 模块，FR-7.1 / FR-7.4~7.7，docs/09 v0.3.0-T01）；
+//!   passkey 字段为恒空快速路径（docs/17 §4.2 PK2，[`pux::passkey`]）
+//! - Bitwarden JSON（含 `fido2Credentials` passkey）—— **v0.5.0 已实现**
+//!   （[`bitwarden`] 模块，FR-10.1 / FR-10.6，docs/17 §4.2 PK2）
 //! - opvault —— 未定
 //! - KeePass KDBX —— 读取链路冒烟已验证（见下方测试），实现推后
 //!
@@ -58,16 +62,21 @@ use cf_domain::CfError;
 use cf_store::rows::{FieldRow, TagRow, UrlRow};
 use cf_store::{ItemRow, ItemStore, Repos};
 
+pub mod bitwarden;
 pub mod csv;
 pub mod precheck;
 pub mod pux;
 pub mod risk;
 
+pub use bitwarden::{
+    BwImportResult, BwItemModel, BwPasskeyFailure, BwPasskeyFailureKind, BwPasskeyModel,
+    BwPrecheckReport,
+};
 pub use csv::mapping::{ImportModel, OtpauthData};
 pub use precheck::{analyze_csv, read_and_analyze, CsvAnalysis, CsvPrecheckReport};
 pub use pux::{
     import_1pux, import_1pux_with_options, precheck_1pux, NotImportedItem, PuxAnalysis,
-    PuxFieldModel, PuxFileRef, PuxImportResult, PuxItemModel, PuxPrecheckReport,
+    PuxFieldModel, PuxFileRef, PuxImportResult, PuxItemModel, PuxPasskeyRef, PuxPrecheckReport,
 };
 pub use risk::{advise_csv_source_deletion, advise_pux_source_deletion, SourceDeletionAdvice};
 
@@ -281,6 +290,62 @@ pub(crate) fn unix_now() -> Result<i64, CfError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| CfError::StorageError("system clock before unix epoch".into()))?
         .as_secs() as i64)
+}
+
+/// 预检一个 Bitwarden JSON 导出文件（只读、可反复调用、无解锁门禁；
+/// docs/17 §4.2 / docs/18 TCB-1④——预检不触密钥）。
+///
+/// # Errors
+///
+/// 文件不可读 / 超上限 → [`CfError::Io`] / [`CfError::ImportFailed`]；
+/// 非 JSON / 缺 `items` → [`CfError::ImportUnknownFormat`]；加密导出 →
+/// [`CfError::ImportFailed`]。
+pub fn precheck_bitwarden_json(path: &Path) -> Result<BwPrecheckReport, CfError> {
+    bitwarden::precheck::read_and_analyze(path).map(|a| a.report)
+}
+
+/// 导入一个 Bitwarden JSON 导出文件（每条目单事务；docs/17 §4.2 PK2）。
+///
+/// 流程：解析 → 映射 + 预检 → 逐条目 `with_tx` 写入（items / fields /
+/// urls / tags / totp / **passkeys 行**——passkey 经
+/// `repos.passkeys.add` 与条目同事务挂靠，D-6）。坏 passkey 行在预检
+/// 已显式列出、导入时跳过该行不丢条目（TCB-7）；任一条目事务失败回滚
+/// 该条（含其 passkey 行），已成功条目保留。
+///
+/// 策略固定「全部新建（UUIDv7）」；D-6：passkey 挂靠不读写
+/// login/password 字段——含 passkey 的条目照常携带密码字段入库。
+///
+/// # Errors
+///
+/// 解析 / 预检层整体拒绝（坏 JSON / 超上限 / 加密导出）或任一条目事务
+/// 失败时返回错误；失败条目回滚，已成功条目保留。
+pub fn import_bitwarden_json(
+    path: &Path,
+    store: &mut ItemStore,
+) -> Result<BwImportResult, CfError> {
+    import_bitwarden_json_with_options(path, store, &ImportOptions::default())
+}
+
+/// [`import_bitwarden_json`] 的显式选项版本（测试注入回滚用）。
+///
+/// `fail_after_rows = Some(n)`：第 n（0 起）个条目的事务在**全部行（含
+/// passkey）写入之后**注入失败 → 该条目连同其 passkey 行整体回滚；
+/// 之前的条目已提交保留。生产路径恒用 [`ImportOptions::default`]。
+///
+/// # Errors
+///
+/// 同 [`import_bitwarden_json`]。
+pub fn import_bitwarden_json_with_options(
+    path: &Path,
+    store: &mut ItemStore,
+    options: &ImportOptions,
+) -> Result<BwImportResult, CfError> {
+    let analysis = bitwarden::precheck::read_and_analyze(path)?;
+    let imported = bitwarden::write_all(&analysis.models, store, options)?;
+    Ok(BwImportResult {
+        imported_items: imported,
+        report: analysis.report,
+    })
 }
 
 #[cfg(test)]

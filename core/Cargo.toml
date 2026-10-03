@@ -25,6 +25,8 @@ members = [
     "cf-session",
     # 绑定层
     "cf-ffi",
+    "cf-module-a",
+    "cf-mcp",
     # 测试支持
     "cf-testkit",
 ]

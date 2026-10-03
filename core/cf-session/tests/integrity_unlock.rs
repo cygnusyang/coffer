@@ -11,6 +11,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cf_crypto::kdf::KdfParams;
 use cf_session::unlock::{create_vault_with_kdf, open_vault};
@@ -23,16 +24,12 @@ fn fast_kdf() -> KdfParams {
     KdfParams::new(8 * 1024, 1, 1).unwrap()
 }
 
-/// 唯一临时目录（pid + 纳秒）。
+/// 唯一临时目录（pid + 进程内原子计数器）。
 fn temp_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-session-mac-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("cf-session-mac-{tag}-{}-{seq}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     dir
 }

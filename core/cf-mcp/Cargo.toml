@@ -1,0 +1,40 @@
+[package]
+name = "cf-mcp"
+description = "MCP（Model Context Protocol）服务——Agent 凭据网关（docs/20-MCP设计.md）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# 依赖方向（docs/20 §2.2，硬约束）：
+#   MVP 只依赖 cf-domain（CfError / SecretString / item 模型）+ 序列化 + thiserror + zeroize。
+#   不依赖 cf-session / cf-store / cf-ffi；审计轨迹不复用 cf-audit（§2.3 分层语义违规）。
+#   hmac / sha2（§2.2 replay challenge 指纹）为 --uds 传输所需；MVP 只 stdio（D-4），
+#   故本版不引入，`--uds` 上架时补（文档：docs/20 §3.1 / §3.6）。
+[dependencies]
+cf-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+tracing = { workspace = true }
+
+# CofferStoreProvider（骨架，docs/20 §4.5）经 `coffer-store` feature 才引入
+# cf-session（→ cf-store → cf-crypto / cf-format / cf-domain，单向）。
+# MVP 默认关闭：不启用该 feature 时，cf-mcp 依赖树不含 cf-session/cf-store。
+cf-session = { workspace = true, optional = true }
+
+[features]
+# 启用 Coffer 自家 Secret Store provider（v2.x 存储模型扩展落定前仅骨架）。
+# 启用后 workspace 依赖树新增 cf-mcp → cf-session 边（docs/20 §9.2 互斥核对）。
+coffer-store = ["dep:cf-session"]
+
+# `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
+# 沿用 cf-ffi `uniffi-bindgen` 先例），未来 `coffer list/run/…` 扩进同一 bin 或
+# 独立 cf-cli crate（届时再裁，本版只管 `mcp` 子命令）。
+[[bin]]
+name = "coffer"
+path = "src/main.rs"
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -12,7 +12,7 @@
 //!
 //! 测试约定与 `ffi_contract.rs` 一致。
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cf_crypto::kdf::KdfParams;
 use cf_ffi::api::{CofferApp, VaultSession};
@@ -36,13 +36,11 @@ const STRONG_PASSWORD: &str = "correct-horse-battery-staple-42!";
 /// 换成的新强密码。
 const NEW_PASSWORD: &str = "portable-copper-drift-lantern-77#";
 
-/// 每测试独立的临时工作目录。
+/// 每测试独立的临时工作目录（pid + 进程内原子计数器）。
 fn temp_base(tag: &str) -> std::path::PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("cf-ffi-v02-{tag}-{}-{nanos}", std::process::id()));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("cf-ffi-v02-{tag}-{}-{seq}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

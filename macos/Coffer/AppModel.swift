@@ -12,7 +12,6 @@
 
 import AppKit
 import Foundation
-import LocalAuthentication
 import SwiftUI
 
 /// 应用阶段状态机。
@@ -33,7 +32,20 @@ enum AppPhase: Equatable {
 final class AppModel: ObservableObject {
     // MARK: - Published 状态
 
-    @Published var phase: AppPhase = .booting
+    /// 启动/呼出自动引导一次性旗标：同一次锁定态内只弹一次（用户 2026-10-03
+    /// 裁定，docs/08 §7.6）。发起自动认证时置位；phase 离开 .locked（解锁
+    /// 成功 / 手动锁定 / 切库 / 无库）时复位——下一锁定态允许再次自动弹。
+    private var autoPromptBiometricFired = false
+
+    @Published var phase: AppPhase = .booting {
+        didSet {
+            // 复位时机（docs/08 §7.6）：phase 离开锁定态即复位；同一次锁定态
+            // 内多次呼出不重复弹（取消后仍置位，避免启动/呼出反复骚扰用户）。
+            if phase != .locked {
+                autoPromptBiometricFired = false
+            }
+        }
+    }
     @Published private(set) var vaultName: String = ""
     /// 当前库 UUID 文本（Keychain bio 项的 account，docs/08 §3.2；非密钥材料）。
     @Published private(set) var vaultUUID: String = ""
@@ -48,6 +60,8 @@ final class AppModel: ObservableObject {
     @Published var showImport = false
     /// 导入 1PUX sheet（工具栏「导入」菜单 + 菜单 ⌘⇧I，v0.3.0-T05 FR-7.1）。
     @Published var showImportPux = false
+    /// 导入 Bitwarden JSON sheet（工具栏「导入」菜单，v0.5.0 PK3 FR-10.1）。
+    @Published var showImportBitwarden = false
     /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
     @Published var showExport = false
     /// 统一设置 sheet（工具栏 + 菜单 ⌘,）。
@@ -295,6 +309,11 @@ final class AppModel: ObservableObject {
             } else {
                 phase = .noVault
             }
+            // 启动自动 Touch ID 引导（用户 2026-10-03 裁定，docs/08 §7.6）：
+            // 库已打开（phase == .locked）且 refreshTouchIDStatus 已跑（adoptSession
+            // 内），单库 ∧ 设备支持 ∧ 通道 enabled → 不经点击直接弹指纹认证框。
+            // 仅启动路径触发——openSession 其他调用方（切换库/恢复备份）不得自动弹。
+            maybeAutoPromptBiometric()
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
         }
@@ -312,6 +331,37 @@ final class AppModel: ObservableObject {
             return recorded
         }
         return briefs.max { $0.createdAt < $1.createdAt }
+    }
+
+    /// 自动 Touch ID 引导统一入口（启动 / 菜单栏呼出共用，用户 2026-10-03
+    /// 裁定，docs/08 §7.6）：
+    ///   - 判定：`phase == .locked` 状态前置 + 纯函数
+    ///     shouldAutoPromptBiometric（含一次性旗标与 isBusy 判重）+ header
+    ///     双保险。同一次锁定态只弹一次（旗标 phase 离开 .locked 复位）；
+    ///     自动认证进行中（isBusy）不重复触发。
+    ///   - 发起：置旗标后 Task 抛异步认证（unlockWithTouchID 是 async，
+    ///     bootstrap / summon 均为同步上下文；与 LockView 手点同一调用方式）。
+    ///     错误分派统一在 unlockWithTouchID（reviewer HIGH 处置，docs/08 §7.6）：
+    ///     用户取消（.userCanceled）静默、凭据失效（.itemNotFound/.authFailed）
+    ///     呈现 4002 并置 stale——手动/自动路径语义一致。
+    ///   - 呼出场景的「窗口确从隐藏恢复」由 AppDelegate.summonMainWindow 先行
+    ///     判定（wasHidden）后再调用本方法；窗口开着时自动锁定后再解锁
+    ///     不自动弹（用户未裁定，不实现）。
+    /// - Returns: 是否发起了自动认证（调用方可据此判重）。
+    @discardableResult
+    func maybeAutoPromptBiometric() -> Bool {
+        guard phase == .locked,
+              AutoPromptBiometric.shouldAutoPromptBiometric(
+                  vaultCount: vaultBriefs.count,
+                  isSupported: BiometricKeychain.isBiometricsAvailable(),
+                  status: touchIDStatus,
+                  firedInLockState: autoPromptBiometricFired,
+                  isBusy: isBusy
+              ),
+              let session, session.hasBiometricWrap() else { return false }
+        autoPromptBiometricFired = true
+        Task { await unlockWithTouchID() }
+        return true
     }
 
     // MARK: - 会话管理
@@ -552,12 +602,21 @@ final class AppModel: ObservableObject {
     }
 
     /// Touch ID 解锁（docs/08 §7.2 时序）：
-    /// LAContext 认证 → Keychain 读 K_bio → FFI unlockWithBiometric →
-    /// 与主密码解锁完全相同的收尾（D-5：一次 Touch ID 换一次 DEK 解封）。
+    /// Keychain 读 K_bio（钥匙串自有单次认证：全新 LAContext + localizedReason）→
+    /// FFI unlockWithBiometric → 与主密码解锁完全相同的收尾
+    /// （D-5：一次 Touch ID 换一次 DEK 解封）。
     ///
     /// K_bio 纪律（§7.4）：取回即用——K_bio 只作局部变量捕获进 Task 闭包，
     /// 用完即弃，不落任何 @Published / 不进全局状态（与主密码同纪律）。
     /// isBusy 互斥与主密码解锁共用。
+    ///
+    /// 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6；authFailed 瞬时/持久
+    /// 分道为 PL-7）：catch 按错误类型分道——用户取消（.userCanceled）完全
+    /// 静默；.itemNotFound 持久失效 → 4002 + 置 touchIDStatus = .stale；
+    /// .authFailed 按失败瞬间 isBiometricsAvailable() 分道（瞬时 → 温和文案
+    /// 按钮保留；持久 → 4002 + stale，§4.1 终判落地）；其余错误照常呈现
+    /// （自动路径也呈现）。手动/自动路径语义一致。取消/失效均落回锁定页
+    /// （phase 未变），按钮可再点。
     func unlockWithTouchID() async {
         guard let session, !isBusy, phase == .locked else { return }
 
@@ -573,14 +632,16 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            // ① 弹 Touch ID 认证（主线程触发，LAContext UI 纪律，docs/08 §7.4）
-            let context = LAContext()
-            try await Self.authenticateWithBiometrics(context: context)
-
-            // ② 认证通过 → 同一 context 读 K_bio（不再二次弹窗）。
-            //    读取失败（项不存在 / biometryCurrentSet 失效）→ 4002 降级（§4.1）：
-            //    不改 header、不删项——用户主密码解锁后可在设置页「重新启用」。
-            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID, context: context)
+            // ① 钥匙串自有单次认证：read 查询带全新 LAContext（localizedReason
+            //    = 「解锁密码库」），由 Keychain 自行发起唯一一次指纹弹窗
+            //    （PL-4 修复：删除 App 侧预认证——macOS 26 上
+            //    kSecUseAuthenticationContext 复用已认证结果不生效，
+            //    预认证 + 读取再认证 = 双弹窗）。
+            // ② 读取失败分道（catch 分派，reviewer HIGH 处置，docs/08 §7.3）：
+            //    .userCanceled（用户取消）→ 静默；.itemNotFound / .authFailed
+            //    （凭据失效）→ 4002 + 置 stale——不改 header、不删项，用户主
+            //    密码解锁后可在设置页「重新启用」（docs/08 §4.1）。
+            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID)
 
             // ③ 后半段走 FFI：open(K_bio, aad) → DEK → SubKeys → ItemStore。
             //    K_bio 拷贝进 Task 闭包，本函数返回后局部变量即弃。
@@ -599,11 +660,53 @@ final class AppModel: ObservableObject {
             // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
             evaluateBackupReminder()
         } catch {
-            // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
-            // FfiError（1002 / 4001 / 5999）各自语义化呈现
-            let errText = ErrorPresenter.text(error)
-            DiagLog.append(errText)
-            lastErrorMessage = errText
+            // 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6，用户 2026-10-03
+            // 裁定；authFailed 瞬时/持久分道为 PL-7，2026-10-03 用户反馈）：
+            //   - .userCanceled（用户取消认证）：完全静默——手动/自动路径一致。
+            //     取消不是失败，不写 lastErrorMessage（ErrorPresenter 对该 case
+            //     返回空串，写入也会弹空白框，故显式跳过），DiagLog 记诊断；
+            //     落回锁定页按钮可再点。
+            //   - .itemNotFound（项不存在）：持久失效——呈现 4002 + 置 stale。
+            //     §4.1 以 read 失败为 stale 终判落地：LockView 按钮消失引导
+            //     主密码，设置页可重新启用。
+            //   - .authFailed（errSecAuthFailed）：瞬时/持久分道（PL-7）——
+            //     失败瞬间 isBiometricsAvailable()==false（锁屏/刚唤醒/传感器
+            //     未就绪/biometry lockout）→ 瞬时：不置 stale、touchIDStatus
+            //     不变、按钮保留可再点，呈现温和文案；==true（canEvaluatePolicy
+            //     通过仍读失败，指纹集变更/ACL 失效）→ 持久：维持 4002 + 置
+            //     stale（§4.1 语义不变）。分道判定抽成纯函数
+            //     TouchIDAuthFailure.disposition（独立单测）。
+            //   - 其余（unexpected / FfiError 1002 / 4001 / 5999）：照常呈现
+            //     （自动路径也呈现）并刷新状态行，与设置页/LockView 一致。
+            switch error {
+            case BiometricKeychainError.userCanceled:
+                DiagLog.append("Touch ID 解锁已取消（用户取消认证，静默，docs/08 §7.6）")
+            case BiometricKeychainError.itemNotFound:
+                let errText = ErrorPresenter.text(error)
+                DiagLog.append(errText)
+                touchIDStatus = .stale
+                lastErrorMessage = errText
+            case BiometricKeychainError.authFailed:
+                // 不调 refreshTouchIDStatus：refresh 以 itemExists 判定，authFailed
+                // 场景项仍「存在」会被翻回 .enabled，此处以 read 失败为终判。
+                switch TouchIDAuthFailure.disposition(
+                    biometryAvailable: BiometricKeychain.isBiometricsAvailable()
+                ) {
+                case .transient:
+                    DiagLog.append("Touch ID 解锁失败判定为瞬时不可用（isBiometricsAvailable=false，docs/08 §7.3 PL-7），按钮保留可再点")
+                    lastErrorMessage = ErrorPresenter.text(TouchIDError.transientUnavailable)
+                case .persistent:
+                    let errText = ErrorPresenter.text(error)
+                    DiagLog.append(errText)
+                    touchIDStatus = .stale
+                    lastErrorMessage = errText
+                }
+            default:
+                let errText = ErrorPresenter.text(error)
+                DiagLog.append(errText)
+                lastErrorMessage = errText
+                refreshTouchIDStatus()
+            }
             // FR-12.5 兜底：unlockWithBiometric 完全豁免退避（不门禁也不
             // 计数，见 vault.rs「bio解锁不受退避门禁且不计数」单测），本
             // 路径 1002 只会是 K_bio 不匹配 / 篡改（AEAD open 失败），正常
@@ -612,8 +715,6 @@ final class AppModel: ObservableObject {
             if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
                 refreshBackoffDeadline()
             }
-            // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
-            refreshTouchIDStatus()
         }
     }
 
@@ -707,26 +808,6 @@ final class AppModel: ObservableObject {
             lastErrorMessage = errText
             refreshTouchIDStatus()
             return false
-        }
-    }
-
-    /// LAContext 生物识别认证（evaluatePolicy 的 async 包装）。
-    /// 取消 / 失败 / 不可用一律 → 4001 文案（docs/08 §7.2：LA 失败显示 4001）。
-    private static func authenticateWithBiometrics(context: LAContext) async throws {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
-            context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "解锁 Coffer"
-            ) { success, error in
-                if success {
-                    continuation.resume()
-                } else {
-                    // 保留系统错误信息用于调试日志；用户面统一 4001 文案
-                    DiagLog.append("Coffer TouchID evaluatePolicy 失败: \(String(describing: error))")
-                    continuation.resume(throwing: TouchIDError.unavailable)
-                }
-            }
         }
     }
 

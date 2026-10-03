@@ -11,9 +11,9 @@
 //   - 打开主窗口 / 快速搜索…（⌥⌘P）→ AppDelegate.summonMainWindow
 //   - 锁定全部 → model.factory.lockAll() + model.lock()（既有 API 双保险）
 //   - 退出 Coffer → NSApp.terminate(nil)
-//   - 图标：程序化绘制的 template 单色图案（品牌 = 金库/保险箱：圆角方形 +
-//     钥匙孔；锁态圆形钥匙孔，解锁态门开表示——钥匙孔随门移开、右侧留门缝），
-//     随 phase 切换。禁用彩色——菜单栏图标必须 template，由系统按深浅色自适应渲染。
+//   - 图标：程序化绘制的 template 单色图案（品牌 = 经典挂锁轮廓；锁态 U 形
+//     锁梁 + 实心锁体，解锁态锁梁向左上旋开、右腿抬离锁体顶边），随 phase
+//     切换。禁用彩色——菜单栏图标必须 template，由系统按深浅色自适应渲染。
 //
 // 切片纪律（docs/15 §6.1 S3）：只读消费 AppModel（Combine 订阅 $phase /
 // $vaultName）+ 调既有 API，不新增不改 AppModel 状态机。
@@ -196,45 +196,82 @@ final class StatusItemController: NSObject {
 
     /// 程序化绘制菜单栏 template 图标（纯函数；black+alpha，isTemplate=true）。
     ///
-    /// 品牌 = 金库/保险箱（圆角方形）：锁态 = 实心 + 居中圆形钥匙孔（门关着）；
-    /// 解锁态 = 门开表示——钥匙孔随门移开，右侧留一道竖向缝隙（门已开）。
-    /// 两变体轮廓明显不同且分块够大，低分辨率也清晰可辨；锁定相位切换即换图。
+    /// 品牌 = 经典挂锁轮廓（lead 返工规格，替代旧「圆角方形 + 钥匙孔」——
+    /// 后者 1x 下钥匙孔仅 ~4.8pt，观感如霉斑）。两态共用同一锁体，仅锁梁姿态不同：
+    ///   - 锁态：锁梁 U 形拱在锁体顶边，两腿沉入锁体被覆盖；锁体实心（无钥匙孔，
+    ///     1x 下体宽 ~9×7pt，内部细节一律糊成点）
+    ///   - 解锁态：锁梁绕左腿底端（锁体顶边）向左上旋转 ~40°；右腿随之抬离
+    ///     锁体顶边 ≥0.18×glyph，一眼可辨。大色块、无细特征，1x 清晰。
     nonisolated static func icon(phase: AppPhase) -> NSImage {
         let glyph = NSRect(
             x: Self.glyphInset, y: Self.glyphInset,
             width: Self.imageSize.width - Self.glyphInset * 2,
             height: Self.imageSize.height - Self.glyphInset * 2
         )
-        let corner = glyph.height * 0.22
 
-        // 圆角方形（保险箱体）作外轮廓，洞以 evenOdd 挖除
-        let body = NSBezierPath(roundedRect: glyph, xRadius: corner, yRadius: corner)
-        let hole = NSBezierPath()
+        // —— 锁体：实心圆角矩形，底对齐 glyph 底（flipped:false 即 y-up，
+        //     glyph.minY = 底部）。宽 ≈0.64×glyph、高 ≈0.52×glyph、圆角 ≈0.12×体宽。
+        let bodyWidth = glyph.width * 0.64
+        let bodyHeight = glyph.height * 0.52
+        let bodyTopY = glyph.minY + bodyHeight
+        let body = NSBezierPath(
+            roundedRect: NSRect(
+                x: glyph.midX - bodyWidth / 2, y: glyph.minY,
+                width: bodyWidth, height: bodyHeight
+            ),
+            xRadius: bodyWidth * 0.12, yRadius: bodyWidth * 0.12
+        )
 
-        if phase == .unlocked {
-            // 门开表示：右侧竖向缝隙（门已开，钥匙孔随门移开不画）。
-            // 宽度 ≥0.2×glyph：保证 1x 下至少一条像素列被完整挖透，缝隙清晰。
-            let gapWidth = glyph.width * 0.2
-            let gap = NSRect(
-                x: glyph.maxX - gapWidth - glyph.width * 0.02,
-                y: glyph.minY + glyph.height * 0.18,
-                width: gapWidth, height: glyph.height * 0.64
+        // —— 锁梁：U 形开放描边（圆头线帽），弧顶距 glyph 顶 ≈0.02×glyph，
+        //    两腿下端沉入锁体顶边内（被锁体填充覆盖即可）。y-up 下弧线自左
+        //    (180°) 经顶 (90°) 到右 (0°) 为顺时针（角度递减）。
+        let lineWidth = glyph.height * 0.15
+        let arcRadius = glyph.height * 0.22
+        let legX = glyph.midX - arcRadius
+        let arcCenterY = glyph.maxY - glyph.height * 0.02 - arcRadius
+
+        func makeShackle(legBottomY: CGFloat) -> NSBezierPath {
+            let p = NSBezierPath()
+            p.lineWidth = lineWidth
+            p.lineCapStyle = .round
+            p.lineJoinStyle = .round
+            p.move(to: NSPoint(x: legX, y: legBottomY))
+            p.line(to: NSPoint(x: legX, y: arcCenterY))
+            p.appendArc(
+                withCenter: NSPoint(x: glyph.midX, y: arcCenterY), radius: arcRadius,
+                startAngle: 180, endAngle: 360, clockwise: true
             )
-            hole.appendRect(gap)
-        } else {
-            // 锁态：居中圆形钥匙孔
-            let holeDiameter = glyph.height * 0.34
-            let center = NSPoint(x: glyph.midX, y: glyph.midY)
-            hole.appendOval(in: NSRect(
-                x: center.x - holeDiameter / 2, y: center.y - holeDiameter / 2,
-                width: holeDiameter, height: holeDiameter
-            ))
+            p.line(to: NSPoint(x: glyph.midX + arcRadius, y: legBottomY))
+            return p
         }
-        body.append(hole)
-        body.windingRule = .evenOdd
+
+        let shackle: NSBezierPath
+        if phase == .unlocked {
+            // 解锁态：锁梁两腿端平齐锁体顶边（不再沉入，呈「脱扣搁在锁体上」），
+            // 整体绕左腿底端（= 锁体顶边左腿处）向左上旋转 ~40°。右腿底端随之
+            // 抬离锁体顶边：路径端点 ≈0.28×glyph，含圆头仍 ≥0.2×glyph——
+            // 高于 0.18×glyph 硬性阈值且留抗锯齿余量，悬空一目可辨。
+            let anchor = NSPoint(x: legX, y: bodyTopY)
+            var tf = AffineTransform()
+            tf.translate(x: anchor.x, y: anchor.y)
+            tf.rotate(byDegrees: 40)   // y-up 下正角 = 逆时针：右侧上抬
+            tf.translate(x: -anchor.x, y: -anchor.y)
+            let rotated = NSBezierPath()
+            rotated.append(makeShackle(legBottomY: bodyTopY))
+            rotated.lineWidth = lineWidth
+            rotated.lineCapStyle = .round
+            rotated.lineJoinStyle = .round
+            rotated.transform(using: tf)
+            shackle = rotated
+        } else {
+            // 锁态：两腿下端沉入锁体顶边内（≈0.11×glyph），被锁体填充覆盖
+            shackle = makeShackle(legBottomY: bodyTopY - glyph.height * 0.11)
+        }
 
         let image = NSImage(size: Self.imageSize, flipped: false) { _ in
             NSColor.black.setFill()
+            // 先锁梁后锁体：锁体实心覆盖锁梁沉入的腿端
+            shackle.stroke()
             body.fill()
             return true
         }

@@ -839,8 +839,8 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 **登记日期**：2026-10-02
 **发现环境**：v0.5.0 代码审查（dev-reviewer 复查 PL-4 时发现 CrossCopySheet.swift:300 亦涉 K_bio 读取，存在与 PL-4 同型的「预认证 + Keychain 读」双弹窗）
 **分级**：S3（目标库解锁体验缺陷，可降级主密码）/ P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
-**状态**：🟡 顺延 v0.5.1（登记时不改代码，避免与 PL-4 修复交错；修复路径已备）
-**核销记录**：未核销（登记时无修复 commit；顺延 v0.5.1）
+**状态**：🟡 已修复待真机复验（v0.5.1 修复路径①落地；真机复验由 lead 与用户组织）
+**核销记录**：未核销（登记时无修复 commit；v0.5.1 修复 commit 后待真机弹窗次数 = 1 复验核销）
 **证据**：代码面——`CrossCopySheet.swift:297` 保留 `authenticateWithBiometrics(context:)` 预认证（PL-4 只删了 AppModel 侧，此调用点当时判为纯 FFI 确认未动）；`:300` `BiometricKeychain.read` 现带全新 LAContext（PL-4 签名变更后的最小适配点）。
 
 ### 现象（预期/实际 分行写）

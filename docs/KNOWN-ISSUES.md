@@ -890,13 +890,13 @@ AppKit NSStatusItem + 程序化 template 图标（StatusItemController.swift）�
 
 ---
 
-## PL-7（🔴 当版修复中）：瞬时 errSecAuthFailed 被判持久凭据失效——长时间空闲自动锁定后 Touch ID 按钮消失只剩主密码
+## PL-7（✅ 已修复：eca2186）：瞬时 errSecAuthFailed 被判持久凭据失效——长时间空闲自动锁定后 Touch ID 按钮消失只剩主密码
 
 **登记日期**：2026-10-03
 **发现环境**：v0.5.0 发版回归真机陪跑（用户报告「很久没有操作后 touch id 失效了 只能输入密码 这是不应该的」）
 **分级**：S2（生物识别解锁通道被瞬时故障整段关闭，降级路径仅剩主密码；恢复依赖主密码解锁）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
-**状态**：🔴 当版修复中（已派发 dev-coder-pl4-biometric）
-**核销记录**：未核销（修复 commit 回填）
+**状态**：✅ 已核销
+**核销记录**：修复 commit eca2186（瞬时/持久双分道 + TouchIDError.transientUnavailable Swift-only 文案 + TouchIDAuthFailure.disposition 纯函数）；复验测试 run_touchid_auth_failure_tests.sh 6/6、run_touchid_status_tests.sh 19/19、run_auto_prompt_biometric_tests.sh 30/30；用户真机复验通过（2026-10-03「可以了 正常了」）
 **证据**：诊断日志 `~/Library/Containers/app.coffer.Coffer/Data/Library/Logs/Coffer-diag.log`：
 ```
 2026-10-03 10:11:00 +0000 Keychain.read 失败 status=-25293（01a0e023…）

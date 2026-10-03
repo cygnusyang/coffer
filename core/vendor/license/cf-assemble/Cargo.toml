@@ -1,0 +1,46 @@
+[package]
+name = "cf-assemble"
+description = "Coffer 官方装配壳：组合 cf-license（服务+gate）+ cf-keychain，经 UniFFI 导出 LicenseService 三方法（docs/03 §14.9）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# 依赖闭包（docs/02 §10.5 方案 A，官方装配 crate）：
+#   cf-assemble 仅依赖 cf-license（判定器）+ cf-keychain（真实 KeychainStore）+
+#   uniffi（绑定层）。**不依赖 cf-ffi / cf-store / cf-session**——gate 注入
+#   cf-ffi 的 CofferApp 由官方接线 crate（构建环境）承担，本 crate 只暴露
+#   LicenseService 三方法（UniFFI 面）+ Rust 装配 API（gate 构造）。
+#   无任何网络依赖 crate（C-01 / NFR-SEC-07 零网络判据对官方产物照常成立）。
+#
+# MEDIUM-2 闭合（硬要求）：对 cf-license 的依赖 **default-features = false**——
+# 机制性排除 mock（InMemoryKeychain），真实 Keychain 只能经 cf-keychain 注入，
+# 官方二进制不可能编译进内存 mock。
+[dependencies]
+cf-license = { workspace = true, default-features = false }
+cf-keychain.workspace = true
+# cf-domain（LicenseGate trait / CfError 6xxx 码位）显式依赖理由：本 crate 直接
+# 构造 `Arc<dyn LicenseGate>` 并映射 CfError，须 `use cf_domain::...` 引用 trait
+# 类型（Rust extern prelude 只允许 import 直接依赖）；vendored、零网络，与
+# cf-license 同源（经其传递引入）。
+cf-domain.workspace = true
+uniffi.workspace = true
+# 装配构造：验证公钥解析（VerifyingKey::from_bytes）、错误映射、诊断日志。
+ed25519-dalek.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Swift/Kotlin 绑定生成器入口（与公开仓 cf-ffi 同纪律：版本与 uniffi runtime
+# 锁死，防绑定物漂移，docs/07 R-1）。官方构建经
+# `cargo run -p cf-assemble --features bindgen-cli --bin uniffi-bindgen` 调用。
+[features]
+default = []
+bindgen-cli = ["uniffi/cli"]
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen-cli"]

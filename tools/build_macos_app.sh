@@ -17,6 +17,13 @@
 #   ./tools/build_macos_app.sh                    # 产物 → macos/build/Coffer.app
 #   ./tools/build_macos_app.sh --rebuild-bindings # 强制重跑 build_swift_bindings.sh
 #
+# 官方模式（OFFICIAL_LICENSE=1，Task 4c）：
+#   透传 OFFICIAL_LICENSE 给 build_swift_bindings.sh（--features official-license
+#   + 双 namespace 绑定），编译双绑定文件、加 -D OFFICIAL_LICENSE 编译宏
+#   （官方适配 OfficialLicenseService.swift 与 AppModel bootstrap 装配点由该宏
+#   门控）。前置：tools/bootstrap_official_license.sh 已跑。
+#   OFFICIAL_LICENSE=1 ./tools/build_macos_app.sh --rebuild-bindings
+#
 # 验收（docs/07 §7 T05 ⑤）：
 #   codesign -d --entitlements - macos/build/Coffer.app   # 确认无 network.*
 set -euo pipefail
@@ -31,6 +38,8 @@ REBUILD_BINDINGS=0
 if [[ "${1:-}" == "--rebuild-bindings" ]]; then
   REBUILD_BINDINGS=1
 fi
+# 官方模式开关（Task 3/4c）：透传 build_swift_bindings.sh + 双 namespace 编译
+OFFICIAL_LICENSE="${OFFICIAL_LICENSE:-0}"
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$1"; }
@@ -39,8 +48,8 @@ command -v swiftc >/dev/null 2>&1 || die "未找到 swiftc，请安装完整版 
 
 # ---- 1/4 Rust 静态库 + Swift 绑定 ----
 if [[ ! -f "${CORE_TARGET}/release/libcf_ffi.a" || ! -f "${SRC_DIR}/CoreBindings/cf_ffi.swift" || "${REBUILD_BINDINGS}" == "1" ]]; then
-  step "1/4 生成 Rust 静态库与 Swift 绑定（build_swift_bindings.sh）"
-  "${ROOT_DIR}/tools/build_swift_bindings.sh" || die "绑定生成失败。"
+  step "1/4 生成 Rust 静态库与 Swift 绑定（build_swift_bindings.sh，OFFICIAL_LICENSE=${OFFICIAL_LICENSE}）"
+  OFFICIAL_LICENSE="${OFFICIAL_LICENSE}" "${ROOT_DIR}/tools/build_swift_bindings.sh" || die "绑定生成失败。"
 else
   step "1/4 复用已有 libcf_ffi.a 与 CoreBindings（--rebuild-bindings 可强制重生成）"
 fi
@@ -55,13 +64,30 @@ while IFS= read -r f; do
 done < <(find "${SRC_DIR}" -name '*.swift' ! -path '*SmokeTest*' ! -path '*CoreBindings*' | sort)
 SOURCES+=("${SRC_DIR}/CoreBindings/cf_ffi.swift")
 
-printf '编译 %d 个 Swift 源文件\n' "${#SOURCES[@]}"
+CLANG_INCLUDES=()
+if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then
+  # 官方模式：LicenseService 绑定（cf_assemble.swift）+ 适配宏。
+  # bridging header 用 Support/UniffiBridging.h（组合头 #include 两个 FFI 头）——
+  # swiftc 只认最后一个 -import-objc-header，两个头并列传会被后一个覆盖（实测）。
+  [[ -f "${SRC_DIR}/CoreBindings/cf_assemble.swift" ]] || die "官方模式缺 cf_assemble.swift——先跑 OFFICIAL_LICENSE=1 tools/build_swift_bindings.sh。"
+  SOURCES+=("${SRC_DIR}/CoreBindings/cf_assemble.swift")
+  COMPILE_DEFS+=("-D" "OFFICIAL_LICENSE")
+  IMPORT_HEADERS=("-import-objc-header" "${SRC_DIR}/Support/UniffiBridging.h")
+  # -I 供组合头里的 #include "cf_*FFI.h" 解析（clang 侧）
+  CLANG_INCLUDES+=("-I" "${SRC_DIR}/CoreBindings")
+else
+  IMPORT_HEADERS=("-import-objc-header" "${SRC_DIR}/CoreBindings/cf_ffiFFI.h")
+fi
+
+printf '编译 %d 个 Swift 源文件%s\n' "${#SOURCES[@]}" "$([[ "${OFFICIAL_LICENSE}" == "1" ]] && echo '（官方模式）' || echo '（公开模式）')"
 
 swiftc -O \
   -swift-version 5 \
   -target arm64-apple-macos14.0 \
   -parse-as-library \
-  -import-objc-header "${SRC_DIR}/CoreBindings/cf_ffiFFI.h" \
+  "${IMPORT_HEADERS[@]}" \
+  "${CLANG_INCLUDES[@]}" \
+  "${COMPILE_DEFS[@]}" \
   "${SOURCES[@]}" \
   -L "${CORE_TARGET}/release" \
   -lcf_ffi \

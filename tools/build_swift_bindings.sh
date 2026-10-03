@@ -55,6 +55,13 @@ if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then
   if grep -rq "占位替身" "${CORE_DIR}/vendor/license/cf-assemble/src" 2>/dev/null; then
     die "core/vendor/license 仍是占位 stub——先跑 tools/bootstrap_official_license.sh 再进官方模式。"
   fi
+  # 私有内容保护纪律（reviewer L3 阻断项）：官方构建全程（无论成败）把
+  # core/vendor/license/ 恢复为公开仓提交的占位 stub 并逐字节核验，杜绝
+  # 真源在构建结束后残留、一次 `git add` 失误即泄漏进公开仓。trap 必须在
+  # 构建驱动这里（本脚本是所有官方构建的公共咽喉：直接调用 + build_macos_app.sh
+  # 委派），bootstrap 脚本在构建前就退出、挂不到构建结束。
+  # _rc 保留构建原始退出码：restore 失败强制 1，restore 成功不得掩盖构建失败。
+  trap '_rc=$?; bash "${SCRIPT_DIR}/restore_license_vendor_stub.sh" || _rc=1; exit "${_rc}"' EXIT
   CARGO_FEATURES="--features official-license"
 else
   CARGO_FEATURES=""

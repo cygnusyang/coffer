@@ -85,7 +85,11 @@ impl McpChild {
         );
         let v: Value = serde_json::from_str(line.trim())
             .unwrap_or_else(|e| panic!("stdout must be pure JSON-RPC frames, got {line:?}: {e}"));
-        assert_eq!(v["jsonrpc"], json!("2.0"), "stdout frame must be JSON-RPC 2.0");
+        assert_eq!(
+            v["jsonrpc"],
+            json!("2.0"),
+            "stdout frame must be JSON-RPC 2.0"
+        );
         v
     }
 
@@ -94,7 +98,9 @@ impl McpChild {
         drop(self.stdin); // EOF → serve_stdio 干净返回
         let status = self.child.wait().expect("wait for coffer to exit");
         let mut stderr = String::new();
-        self.stderr.read_to_string(&mut stderr).expect("read stderr");
+        self.stderr
+            .read_to_string(&mut stderr)
+            .expect("read stderr");
         (status.code(), stderr)
     }
 }
@@ -158,7 +164,10 @@ fn uds_flag_reports_unimplemented_exit_1() {
     let out = run_coffer(&["mcp", "--uds", "/tmp/coffer-test.sock"], &[]);
     assert_eq!(out.status.code(), Some(1), "--uds（D-4）→ §5.3 退出码 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("not implemented"), "须注明未实现，stderr: {stderr}");
+    assert!(
+        stderr.contains("not implemented"),
+        "须注明未实现，stderr: {stderr}"
+    );
 }
 
 // ===========================================================================
@@ -169,7 +178,11 @@ fn uds_flag_reports_unimplemented_exit_1() {
 fn provider_unavailable_exits_1() {
     let missing = std::env::temp_dir().join("definitely-not-an-op-binary-xyz");
     let out = run_coffer(&["mcp"], &[("COFFER_OP_BIN", missing.to_str().unwrap())]);
-    assert_eq!(out.status.code(), Some(1), "provider 不可用（7001）→ 退出码 1");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "provider 不可用（7001）→ 退出码 1"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("provider unavailable") || stderr.contains("7001"),
@@ -188,7 +201,11 @@ fn unsupported_provider_exits_1() {
 #[test]
 fn provider_defaults_from_env_when_flag_absent() {
     let out = run_coffer(&["mcp"], &[("COFFER_MCP_PROVIDER", "op")]);
-    assert_eq!(out.status.code(), Some(0), "缺省 provider=op（env）→ 干净退出");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "缺省 provider=op（env）→ 干净退出"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("provider=op"), "stderr: {stderr}");
 }
@@ -221,7 +238,10 @@ fn vault_flag_is_used_for_provider() {
     let out = run_coffer(&["mcp", "--vault", "Personal"], &[]);
     assert_eq!(out.status.code(), Some(0), "合法 vault → 干净退出");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("vault=Personal"), "启动日志须反映 --vault，stderr: {stderr}");
+    assert!(
+        stderr.contains("vault=Personal"),
+        "启动日志须反映 --vault，stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -229,7 +249,10 @@ fn vault_defaults_to_env_when_flag_absent() {
     let out = run_coffer(&["mcp"], &[("COFFER_OP_VAULT", "Personal")]);
     assert_eq!(out.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("vault=Personal"), "$COFFER_OP_VAULT 缺省须生效，stderr: {stderr}");
+    assert!(
+        stderr.contains("vault=Personal"),
+        "$COFFER_OP_VAULT 缺省须生效，stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -240,7 +263,10 @@ fn vault_flag_overrides_env_default() {
     );
     assert_eq!(out.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("vault=Personal"), "--vault 须覆盖 env 缺省，stderr: {stderr}");
+    assert!(
+        stderr.contains("vault=Personal"),
+        "--vault 须覆盖 env 缺省，stderr: {stderr}"
+    );
     assert!(
         !stderr.contains("OtherVault"),
         "env 缺省 vault 不得在 --vault 给定时生效，stderr: {stderr}"
@@ -256,7 +282,10 @@ fn no_audit_flag_is_observable() {
     let out = run_coffer(&["mcp", "--no-audit"], &[]);
     assert_eq!(out.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("audit: off"), "--no-audit 须在日志可见，stderr: {stderr}");
+    assert!(
+        stderr.contains("audit: off"),
+        "--no-audit 须在日志可见，stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -306,13 +335,21 @@ fn stdio_lifecycle_initialize_list_call_and_clean_exit() {
     c.send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_secret_names","arguments":{}}}"#);
     let call = c.read_frame();
     assert_eq!(call["id"], json!(3));
-    let text = call["result"]["content"][0]["text"].as_str().expect("content text");
-    assert!(text.contains("OPENAI_API_KEY"), "fixture 名须出现在 list，got {text}");
+    let text = call["result"]["content"][0]["text"]
+        .as_str()
+        .expect("content text");
+    assert!(
+        text.contains("OPENAI_API_KEY"),
+        "fixture 名须出现在 list，got {text}"
+    );
 
     // EOF → 干净退出 0；默认日志落 stderr
     let (code, stderr) = c.finish();
     assert_eq!(code, Some(0), "EOF 干净退出 → §5.3 退出码 0");
-    assert!(stderr.contains("serving on stdio"), "默认日志落 stderr，stderr: {stderr}");
+    assert!(
+        stderr.contains("serving on stdio"),
+        "默认日志落 stderr，stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -325,7 +362,9 @@ fn run_with_secret_works_end_to_end_through_stdio() {
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_with_secret","arguments":{"secret":"op://Personal/OPENAI_API_KEY/password","env_name":"MY_KEY","cmd":"sh","args":["-c","test \"$MY_KEY\" = \"fixture-secret-value-openai\""]}}}"#,
     );
     let call = c.read_frame();
-    let text = call["result"]["content"][0]["text"].as_str().expect("content text");
+    let text = call["result"]["content"][0]["text"]
+        .as_str()
+        .expect("content text");
     assert!(
         text.contains("\"exit_code\":0"),
         "子进程验证注入值后须退出 0，got {text}"

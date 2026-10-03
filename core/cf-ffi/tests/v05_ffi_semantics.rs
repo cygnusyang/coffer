@@ -45,10 +45,7 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-ffi-v05-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cf-ffi-v05-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -262,14 +259,19 @@ fn bw预检报告跨ffi计数与非es256列表() {
 
     // 锁定态预检可执行（预检不触密钥）——先锁再调
     session.lock();
-    let report = session.precheck_bitwarden_json(path.to_string_lossy().into_owned()).unwrap();
+    let report = session
+        .precheck_bitwarden_json(path.to_string_lossy().into_owned())
+        .unwrap();
 
     assert_eq!(report.total_items, 2);
     assert_eq!(report.importable_items, 2);
     assert_eq!(report.passkey_total, 2);
     assert_eq!(report.passkey_importable, 1);
     assert_eq!(report.passkey_item_count, 1);
-    assert_eq!(report.items_with_password_and_passkey, 1, "FR-10.6 证据计数");
+    assert_eq!(
+        report.items_with_password_and_passkey, 1,
+        "FR-10.6 证据计数"
+    );
     assert_eq!(report.non_es256.len(), 1, "非 ES256 显式列表（TCB-7）");
     assert_eq!(report.non_es256[0].item_id, "bw-2");
     assert_eq!(report.non_es256[0].index, 0);
@@ -331,7 +333,10 @@ fn bw导入list删除端到端回环() {
     assert_eq!(result.imported_items, 1);
     assert_eq!(result.report.passkey_total, 1);
     assert_eq!(result.report.passkey_importable, 1);
-    assert_eq!(result.report.items_with_password_and_passkey, 1, "FR-10.6 证据");
+    assert_eq!(
+        result.report.items_with_password_and_passkey, 1,
+        "FR-10.6 证据"
+    );
     assert!(result.report.non_es256.is_empty());
     assert!(result.report.bad_passkeys.is_empty());
 
@@ -372,7 +377,10 @@ fn bw导入list删除端到端回环() {
     // remove → 行消失；再删 → 1011
     session.remove_passkey(pk.passkey_uuid.clone()).unwrap();
     assert!(session.list_passkeys(item_id.clone()).unwrap().is_empty());
-    assert_eq!(err_code(session.remove_passkey(pk.passkey_uuid.clone())), 1011);
+    assert_eq!(
+        err_code(session.remove_passkey(pk.passkey_uuid.clone())),
+        1011
+    );
 }
 
 /// 锁定态导入 → 1001（导入有解锁门禁，与预检的无门禁形成对照）。

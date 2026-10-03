@@ -66,7 +66,10 @@ fn rejects_out_of_order_id() {
     assert!(s.handle_line(&ping(5)).is_some(), "id 5 must succeed");
     let resp = s.handle_line(&ping(3)).expect("must respond");
     let v = response(resp, "out-of-order response");
-    assert_eq!(v["error"]["code"], -32600, "out-of-order id must be rejected");
+    assert_eq!(
+        v["error"]["code"], -32600,
+        "out-of-order id must be rejected"
+    );
 }
 
 #[test]
@@ -78,7 +81,10 @@ fn notifications_do_not_affect_id_tracking() {
             .is_none(),
         "notification must not produce a response"
     );
-    assert!(s.handle_line(&ping(1)).is_some(), "id 1 after notification must succeed");
+    assert!(
+        s.handle_line(&ping(1)).is_some(),
+        "id 1 after notification must succeed"
+    );
     assert!(s.handle_line(&ping(2)).is_some(), "id 2 must succeed");
 }
 
@@ -87,11 +93,13 @@ fn string_ids_are_not_monotonic_checked() {
     // §3.6：字符串 id 无法排序，不做单调校验（不拒绝）。
     let s = server();
     assert!(
-        s.handle_line(r#"{"jsonrpc":"2.0","id":"a","method":"ping"}"#).is_some(),
+        s.handle_line(r#"{"jsonrpc":"2.0","id":"a","method":"ping"}"#)
+            .is_some(),
         "string id a must succeed"
     );
     assert!(
-        s.handle_line(r#"{"jsonrpc":"2.0","id":"b","method":"ping"}"#).is_some(),
+        s.handle_line(r#"{"jsonrpc":"2.0","id":"b","method":"ping"}"#)
+            .is_some(),
         "string id b must succeed"
     );
 }
@@ -99,14 +107,24 @@ fn string_ids_are_not_monotonic_checked() {
 #[test]
 fn numeric_id_mixed_with_string_id_is_checked_against_numeric_only() {
     let s = server();
-    assert!(s.handle_line(&ping(7)).is_some(), "numeric id 7 must succeed");
     assert!(
-        s.handle_line(r#"{"jsonrpc":"2.0","id":"x","method":"ping"}"#).is_some(),
+        s.handle_line(&ping(7)).is_some(),
+        "numeric id 7 must succeed"
+    );
+    assert!(
+        s.handle_line(r#"{"jsonrpc":"2.0","id":"x","method":"ping"}"#)
+            .is_some(),
         "string id must not break tracking"
     );
     // 数字 8 > 7 仍合法；数字 6 <= 7 拒绝
-    assert!(s.handle_line(&ping(8)).is_some(), "numeric id 8 must succeed");
+    assert!(
+        s.handle_line(&ping(8)).is_some(),
+        "numeric id 8 must succeed"
+    );
     let resp = s.handle_line(&ping(6)).expect("must respond");
     let v = response(resp, "out-of-order response");
-    assert_eq!(v["error"]["code"], -32600, "numeric id 6 after 8 must be rejected");
+    assert_eq!(
+        v["error"]["code"], -32600,
+        "numeric id 6 after 8 must be rejected"
+    );
 }

@@ -137,7 +137,10 @@ mod tests {
             (McpError::AuthRequired(String::new()), 7002),
             (McpError::SecretNotFound(String::new()), 7003),
             (
-                McpError::SubprocessFailed { exit_code: None, detail: String::new() },
+                McpError::SubprocessFailed {
+                    exit_code: None,
+                    detail: String::new(),
+                },
                 7004,
             ),
             (McpError::InvalidParameter(String::new()), 7005),
@@ -159,7 +162,10 @@ mod tests {
             McpError::ProviderUnavailable(String::new()),
             McpError::AuthRequired(String::new()),
             McpError::SecretNotFound(String::new()),
-            McpError::SubprocessFailed { exit_code: None, detail: String::new() },
+            McpError::SubprocessFailed {
+                exit_code: None,
+                detail: String::new(),
+            },
             McpError::InvalidParameter(String::new()),
             McpError::InternalError(String::new()),
         ]

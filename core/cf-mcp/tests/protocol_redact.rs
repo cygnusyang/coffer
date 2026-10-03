@@ -62,7 +62,10 @@ fn handles_empty_input() {
 fn handles_token_adjacent_to_punctuation() {
     // 标点（逗号）是 token 边界，保留；token 本体替换。
     let r = SecretRedactor::new();
-    assert_eq!(r.redact("prefix sk-abc123456789,"), "prefix [COFFER_SECRET_REDACTED],");
+    assert_eq!(
+        r.redact("prefix sk-abc123456789,"),
+        "prefix [COFFER_SECRET_REDACTED],"
+    );
 }
 
 #[test]

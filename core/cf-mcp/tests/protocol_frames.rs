@@ -28,7 +28,10 @@ impl FakeProvider {
         }
     }
     fn failing(err: ProviderError) -> Self {
-        Self { names: vec![], fail: Some(err) }
+        Self {
+            names: vec![],
+            fail: Some(err),
+        }
     }
 }
 
@@ -132,7 +135,9 @@ fn parse_rejects_missing_method() {
 fn initialize_returns_protocol_version_and_capabilities() {
     let s = server();
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#;
-    let resp = s.handle_line(line).expect("initialize must produce a response");
+    let resp = s
+        .handle_line(line)
+        .expect("initialize must produce a response");
     let v = parse_resp(&resp);
     assert_eq!(v["id"], json!(1), "response must echo request id");
     assert_eq!(v["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
@@ -145,31 +150,51 @@ fn initialize_returns_protocol_version_and_capabilities() {
 fn initialized_notification_gets_no_response() {
     let s = server();
     let line = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    assert!(s.handle_line(line).is_none(), "notification must not be answered");
+    assert!(
+        s.handle_line(line).is_none(),
+        "notification must not be answered"
+    );
 }
 
 #[test]
 fn tools_list_returns_exactly_four_mvp_tools() {
     let s = server();
-    let resp = s.handle_line(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).expect("response");
+    let resp = s
+        .handle_line(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
+        .expect("response");
     let v = parse_resp(&resp);
-    let tools = v["result"]["tools"].as_array().expect("tools must be an array");
+    let tools = v["result"]["tools"]
+        .as_array()
+        .expect("tools must be an array");
     assert_eq!(tools.len(), 4, "MVP 只注册 4 工具（docs/20 §3.3）");
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        vec!["list_secret_names", "list_secrets", "run_with_secret", "get_secret_metadata"]
+        vec![
+            "list_secret_names",
+            "list_secrets",
+            "run_with_secret",
+            "get_secret_metadata"
+        ]
     );
     for t in tools {
-        assert!(t["inputSchema"].is_object(), "each tool must declare inputSchema");
-        assert!(t["description"].is_string(), "each tool must carry a description");
+        assert!(
+            t["inputSchema"].is_object(),
+            "each tool must declare inputSchema"
+        );
+        assert!(
+            t["description"].is_string(),
+            "each tool must carry a description"
+        );
     }
 }
 
 #[test]
 fn ping_returns_empty_result() {
     let s = server();
-    let resp = s.handle_line(r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#).expect("response");
+    let resp = s
+        .handle_line(r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#)
+        .expect("response");
     let v = parse_resp(&resp);
     assert_eq!(v["result"], json!({}));
 }
@@ -177,7 +202,9 @@ fn ping_returns_empty_result() {
 #[test]
 fn unknown_method_returns_method_not_found() {
     let s = server();
-    let resp = s.handle_line(r#"{"jsonrpc":"2.0","id":4,"method":"bogus/method"}"#).expect("response");
+    let resp = s
+        .handle_line(r#"{"jsonrpc":"2.0","id":4,"method":"bogus/method"}"#)
+        .expect("response");
     let v = parse_resp(&resp);
     assert_eq!(v["error"]["code"], -32601);
 }
@@ -185,7 +212,9 @@ fn unknown_method_returns_method_not_found() {
 #[test]
 fn parse_error_response_has_null_id() {
     let s = server();
-    let resp = s.handle_line("### not json ###").expect("must respond with parse error");
+    let resp = s
+        .handle_line("### not json ###")
+        .expect("must respond with parse error");
     let v = parse_resp(&resp);
     assert_eq!(v["error"]["code"], -32700);
     assert!(v["id"].is_null(), "parse error response id must be null");
@@ -216,7 +245,10 @@ fn tools_call_redacts_secret_like_tokens_in_output() {
     let text = v["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("OPENAI_API_KEY"), "非 sk- 前缀的名称须保留");
     assert!(text.contains(REDACTION_TOKEN), "sk- 指纹名称须被脱敏");
-    assert!(!text.contains("sk-abc123xxxxxxxx"), "sk- 指纹名称不得原样出现在输出");
+    assert!(
+        !text.contains("sk-abc123xxxxxxxx"),
+        "sk- 指纹名称不得原样出现在输出"
+    );
 }
 
 #[test]
@@ -226,7 +258,10 @@ fn tools_call_run_with_secret_returns_exit_code() {
     let resp = s.handle_line(line).expect("response");
     let v = parse_resp(&resp);
     let text = v["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("\"exit_code\":42"), "run_with_secret 须返回子进程退出码");
+    assert!(
+        text.contains("\"exit_code\":42"),
+        "run_with_secret 须返回子进程退出码"
+    );
 }
 
 #[test]
@@ -266,7 +301,10 @@ fn tools_call_provider_error_maps_to_7xxx() {
     let line = r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"get_secret_metadata","arguments":{"secret":"nope"}}}"#;
     let resp = s.handle_line(line).expect("response");
     let v = parse_resp(&resp);
-    assert_eq!(v["error"]["code"], 7003, "SecretNotFound 须映射到 7003（§3.4）");
+    assert_eq!(
+        v["error"]["code"], 7003,
+        "SecretNotFound 须映射到 7003（§3.4）"
+    );
 }
 
 #[test]
@@ -292,7 +330,10 @@ fn tools_call_get_secret_metadata_returns_lifecycle_envelope() {
         "last_used_at",
         "last_rotated_at",
     ] {
-        assert!(text.contains(field), "metadata 必须携带 AS-9 生命周期字段 {field:?}");
+        assert!(
+            text.contains(field),
+            "metadata 必须携带 AS-9 生命周期字段 {field:?}"
+        );
     }
 }
 
@@ -307,7 +348,10 @@ fn error_code_constants_match_section_34() {
     assert_eq!(McpError::ProviderUnavailable(String::new()).code(), 7001);
     assert_eq!(McpError::AuthRequired(String::new()).code(), 7002);
     assert_eq!(McpError::SecretNotFound(String::new()).code(), 7003);
-    let sub = McpError::SubprocessFailed { exit_code: None, detail: String::new() };
+    let sub = McpError::SubprocessFailed {
+        exit_code: None,
+        detail: String::new(),
+    };
     assert_eq!(sub.code(), 7004);
     assert_eq!(McpError::InvalidParameter(String::new()).code(), 7005);
     assert_eq!(McpError::InternalError(String::new()).code(), 7006);

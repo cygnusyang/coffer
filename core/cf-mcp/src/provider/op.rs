@@ -112,7 +112,9 @@ pub struct OpProvider {
 /// 委托 [`OpProviderConfig`] 的掩码 `Debug`（session token 不打入日志）。
 impl std::fmt::Debug for OpProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpProvider").field("config", &self.config).finish()
+        f.debug_struct("OpProvider")
+            .field("config", &self.config)
+            .finish()
     }
 }
 
@@ -162,9 +164,8 @@ impl OpProvider {
 
     /// 运行 op 命令。spawn 失败（op 消失/不可执行）→ 7001。
     fn spawn_op(&self, cmd: &mut Command) -> Result<Output, ProviderError> {
-        cmd.output().map_err(|e| {
-            ProviderError::Unavailable(format!("failed to run op: {e}"))
-        })
+        cmd.output()
+            .map_err(|e| ProviderError::Unavailable(format!("failed to run op: {e}")))
     }
 
     /// `op item list [--vault <v>] --format json` → 条目元数据（无值）。
@@ -195,7 +196,11 @@ impl SecretProvider for OpProvider {
     }
 
     fn list_secrets(&self, vault: Option<&str>) -> Result<Vec<SecretMeta>, ProviderError> {
-        Ok(self.op_item_list(vault)?.into_iter().map(OpItem::into_meta).collect())
+        Ok(self
+            .op_item_list(vault)?
+            .into_iter()
+            .map(OpItem::into_meta)
+            .collect())
     }
 
     fn get_secret_metadata(&self, secret_ref: &str) -> Result<SecretMeta, ProviderError> {
@@ -268,11 +273,15 @@ impl SecretProvider for OpProvider {
 /// env（静默注入错误"值"，H-1/dev-reviewer）。故 run 面只接受 `op://` 引用。
 fn validate_run_spec(spec: &RunSpec) -> Result<(), ProviderError> {
     if spec.secret_ref.trim().is_empty() {
-        return Err(ProviderError::InvalidParameter("secret_ref is empty".to_string()));
+        return Err(ProviderError::InvalidParameter(
+            "secret_ref is empty".to_string(),
+        ));
     }
     if spec.secret_ref.contains('\n') {
         // dotenv 注入防护：`\n` 会插入额外的环境变量行。
-        return Err(ProviderError::InvalidParameter("secret_ref contains newline".to_string()));
+        return Err(ProviderError::InvalidParameter(
+            "secret_ref contains newline".to_string(),
+        ));
     }
     if !spec.secret_ref.starts_with("op://") {
         // H-1：裸 item id / 明文不属于 run 面——`op run` 对其不解析，注入的是字面量。
@@ -344,7 +353,9 @@ fn is_valid_secret_ref(secret_ref: &str) -> bool {
     } else {
         // item id：安全字符集（无空白/控制字符）。明文值通常含空格 → 被拒，
         // 由此把「secret_ref 非明文」从不变量约定升为结构约束。
-        secret_ref.chars().all(|c| !c.is_control() && !c.is_whitespace())
+        secret_ref
+            .chars()
+            .all(|c| !c.is_control() && !c.is_whitespace())
     }
 }
 
@@ -440,7 +451,10 @@ fn classify_run_failure(stderr: &str) -> ProviderError {
     {
         ProviderError::NotFound("secret not found".to_string())
     } else if stderr.contains("error while starting process") {
-        ProviderError::SubprocessFailed { exit_code: None, detail: "op could not start the child command".to_string() }
+        ProviderError::SubprocessFailed {
+            exit_code: None,
+            detail: "op could not start the child command".to_string(),
+        }
     } else {
         ProviderError::Internal("op output classification failed".into())
     }
@@ -448,8 +462,10 @@ fn classify_run_failure(stderr: &str) -> ProviderError {
 
 /// 解析 op 的 JSON 输出；非 UTF-8 或结构不符 → 7006（内部错误，不泄露细节）。
 fn parse_op_json<T: serde::de::DeserializeOwned>(stdout: &[u8]) -> Result<T, ProviderError> {
-    let text = String::from_utf8(stdout.to_vec()).map_err(|_| ProviderError::Internal("op output is not UTF-8".into()))?;
-    serde_json::from_str(&text).map_err(|_| ProviderError::Internal("op output is not valid JSON".into()))
+    let text = String::from_utf8(stdout.to_vec())
+        .map_err(|_| ProviderError::Internal("op output is not UTF-8".into()))?;
+    serde_json::from_str(&text)
+        .map_err(|_| ProviderError::Internal("op output is not valid JSON".into()))
 }
 
 // ===========================================================================
@@ -508,13 +524,16 @@ impl TempDotenv {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            let mut f = opts.open(&path).map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
+            let mut f = opts
+                .open(&path)
+                .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
             writeln!(f, "{}={}", spec.env_name, spec.secret_ref)
                 .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
         }
         #[cfg(not(unix))]
         {
-            let mut f = std::fs::File::create(&path).map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
+            let mut f = std::fs::File::create(&path)
+                .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
             writeln!(f, "{}={}", spec.env_name, spec.secret_ref)
                 .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
         }
@@ -625,11 +644,20 @@ mod tests {
 
     #[test]
     fn parses_rfc3339_utc_z_form() {
-        assert_eq!(parse_rfc3339_utc("2026-08-01T12:30:00Z"), Some(1_785_587_400));
-        assert_eq!(parse_rfc3339_utc("2026-08-01T12:30:00.000Z"), Some(1_785_587_400));
+        assert_eq!(
+            parse_rfc3339_utc("2026-08-01T12:30:00Z"),
+            Some(1_785_587_400)
+        );
+        assert_eq!(
+            parse_rfc3339_utc("2026-08-01T12:30:00.000Z"),
+            Some(1_785_587_400)
+        );
         assert_eq!(parse_rfc3339_utc("1970-01-01T00:00:00Z"), Some(0));
         // 大小写容差（op 实测输出大写 Z）
-        assert_eq!(parse_rfc3339_utc("2026-08-01T12:30:00z"), Some(1_785_587_400));
+        assert_eq!(
+            parse_rfc3339_utc("2026-08-01T12:30:00z"),
+            Some(1_785_587_400)
+        );
     }
 
     #[test]
@@ -697,7 +725,10 @@ mod tests {
             session_token: Some(SecretString::from_exposed("supersecrettoken")),
         };
         let dbg = format!("{config:?}");
-        assert!(!dbg.contains("supersecrettoken"), "session token must be masked");
+        assert!(
+            !dbg.contains("supersecrettoken"),
+            "session token must be masked"
+        );
         assert!(dbg.contains("***"));
     }
 
@@ -706,7 +737,9 @@ mod tests {
         // M1（dev-reviewer）：op 层错误行 = `[ERROR] YYYY/MM/DD HH:MM:SS …`。
         // 子进程透传的日志若只是含 `[ERROR]` 字样（无时间戳形态），**不**判为
         // op 层失败——否则子进程非零退出会被误报 Err，违反 mcp_acceptance 契约。
-        assert!(is_op_level_error("[ERROR] 2026/09/30 15:45:51 account is not signed in"));
+        assert!(is_op_level_error(
+            "[ERROR] 2026/09/30 15:45:51 account is not signed in"
+        ));
         assert!(is_op_level_error("  [ERROR] 2026/09/30 15:45:51 boom"));
         // 子进程日志：`[ERROR]` 开头但非 op 时间戳形态 → 非 op 层错误。
         assert!(!is_op_level_error("[ERROR] something went wrong"));
@@ -720,7 +753,9 @@ mod tests {
         // M3（dev-reviewer）：secret_ref 结构面校验——`op://` 引用或安全字符集
         // item id；明文值/含空白/控制字符一律 7005，保证「明文不落临时 dotenv」。
         assert!(is_valid_secret_ref("op://Personal/OPENAI_API_KEY/password"));
-        assert!(is_valid_secret_ref("op://Personal/item with / slash/password"));
+        assert!(is_valid_secret_ref(
+            "op://Personal/item with / slash/password"
+        ));
         assert!(is_valid_secret_ref("abc123_-./:"));
         assert!(!is_valid_secret_ref(""));
         assert!(!is_valid_secret_ref("op:///item/password"));

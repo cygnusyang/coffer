@@ -60,7 +60,9 @@ pub enum CliError {
     #[error("flag `{0}` requires a value")]
     MissingValue(String),
     /// flag 在本版未实现（D-4 暂缓）。
-    #[error("{0} is not implemented in this version (docs/20 D-4): only stdio transport is supported")]
+    #[error(
+        "{0} is not implemented in this version (docs/20 D-4): only stdio transport is supported"
+    )]
     Unimplemented(String),
     /// `--log` 文件无法打开。
     #[error("cannot open log file `{path}`: {source}")]
@@ -135,7 +137,12 @@ pub fn parse_args(args: &[String]) -> Result<McpCliOptions, CliError> {
         .or_else(|| std::env::var("COFFER_MCP_PROVIDER").ok())
         .unwrap_or_else(|| "op".to_string());
 
-    Ok(McpCliOptions { provider, log_path, vault, no_audit })
+    Ok(McpCliOptions {
+        provider,
+        log_path,
+        vault,
+        no_audit,
+    })
 }
 
 /// 取 flag 的下一个取值；缺值 → [`CliError::MissingValue`]。推进 `i` 越过取值。
@@ -169,7 +176,9 @@ impl Logger {
     /// 按选项构造日志器；打开 `--log` 文件失败 → [`CliError::LogOpen`]。
     pub fn new(options: &McpCliOptions) -> Result<Self, CliError> {
         match &options.log_path {
-            None => Ok(Self { sink: LogSink::Stderr }),
+            None => Ok(Self {
+                sink: LogSink::Stderr,
+            }),
             Some(path) => {
                 let file = OpenOptions::new()
                     .create(true)
@@ -179,7 +188,9 @@ impl Logger {
                         path: path.display().to_string(),
                         source: e,
                     })?;
-                Ok(Self { sink: LogSink::File(file) })
+                Ok(Self {
+                    sink: LogSink::File(file),
+                })
             }
         }
     }
@@ -229,9 +240,7 @@ pub fn run(args: &[String]) -> i32 {
         return exit_code::CONFIG_ERROR;
     };
     if subcommand != "mcp" {
-        eprintln!(
-            "error: unknown subcommand `{subcommand}`; expected `coffer mcp` (docs/20 §5.2)"
-        );
+        eprintln!("error: unknown subcommand `{subcommand}`; expected `coffer mcp` (docs/20 §5.2)");
         return exit_code::CONFIG_ERROR;
     }
 
@@ -350,7 +359,10 @@ mod tests {
         .expect("valid flag set must parse");
         assert_eq!(o.provider, "op");
         assert_eq!(o.vault.as_deref(), Some("Personal"));
-        assert_eq!(o.log_path.as_deref(), Some(PathBuf::from("/tmp/coffer.log").as_path()));
+        assert_eq!(
+            o.log_path.as_deref(),
+            Some(PathBuf::from("/tmp/coffer.log").as_path())
+        );
         assert!(o.no_audit);
     }
 
@@ -378,8 +390,7 @@ mod tests {
     fn parse_flag_overrides_env_default() {
         let _g = env_guard();
         std::env::set_var("COFFER_MCP_PROVIDER", "op");
-        let o = parse_args(&arg(&["--provider", "op"]))
-            .expect("explicit --provider must parse");
+        let o = parse_args(&arg(&["--provider", "op"])).expect("explicit --provider must parse");
         assert_eq!(o.provider, "op");
         std::env::remove_var("COFFER_MCP_PROVIDER");
     }

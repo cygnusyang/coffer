@@ -96,7 +96,9 @@ fn run_with_secret_injects_fixture_value_into_child() {
     ];
     spec.cwd = Some(dir.clone());
 
-    let code = provider().run_with_secret(&spec).expect("run must not error");
+    let code = provider()
+        .run_with_secret(&spec)
+        .expect("run must not error");
     assert_eq!(code, 0, "child must exit 0 when value injected");
     assert!(
         marker.exists(),
@@ -109,7 +111,9 @@ fn run_with_secret_propagates_child_exit_code() {
     let _g = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut spec = api_key_spec();
     spec.args = vec!["-c".to_string(), "exit 42".to_string()];
-    let code = provider().run_with_secret(&spec).expect("run must not error");
+    let code = provider()
+        .run_with_secret(&spec)
+        .expect("run must not error");
     assert_eq!(code, 42, "child exit code must be propagated, got {code}");
 }
 
@@ -136,7 +140,9 @@ fn run_with_secret_uses_cwd() {
     spec.args = vec!["-c".to_string(), format!("pwd > {}", out.display())];
     spec.cwd = Some(dir.clone());
 
-    let code = provider().run_with_secret(&spec).expect("run must not error");
+    let code = provider()
+        .run_with_secret(&spec)
+        .expect("run must not error");
     assert_eq!(code, 0);
     let pwd = std::fs::read_to_string(&out).expect("child must write pwd to cwd");
     // macOS 上 `/var` → `/private/var` 为符号链接：`temp_dir()` 给别名路径，

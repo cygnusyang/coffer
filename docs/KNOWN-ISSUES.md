@@ -862,6 +862,66 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 
 ---
 
+## PL-6（✅ 已修复：134f9b5→da24a5d 两轮 + 接线返工 8045557）：macOS 26 MenuBarExtra 图标空白 + AppDelegate 接线临时实例陷阱
+
+**登记日期**：2026-10-03
+**发现环境**：v0.5.0 发版回归真机陪跑（用户报告「系统的状态栏上需要一个常驻的图标」，菜单栏上看不到 Coffer 图标）
+**分级**：S2（FR-13.3 菜单栏常驻入口不可见）/ P2 / 来源版本 v0.4 引入（v0.5.0 回归发现）
+**状态**：✅ 已核销
+**核销记录**：134f9b5（NSStatusItem 取代 MenuBarExtra）+ 8045557（接线返工：strong model + RootView.onAppear attach）+ da24a5d（图标返工：经典挂锁轮廓）；复验方式 = 用户真机目视（图标可见、菜单弹出、样式「先这样」接受）
+**证据**：AX 取证（旧版状态项存在但像素级前景像素=0）；返工前 AX 查无 menu bar 2；启动日志 SwiftUI 运行时警告「Accessing StateObject's object without being installed on a View」
+
+### 现象（预期/实际 分行写）
+
+- 预期：菜单栏常驻图标（FR-13.3），锁定/解锁两态可辨，点击弹出五项菜单。
+- 实际：两段式故障——①旧 MenuBarExtra 在 macOS 26 上图标渲染空白（AX 存在、像素=0）；②首轮 NSStatusItem 修复后状态项根本未创建（AX 查无 menu bar 2）。
+
+### 根因（已实证）
+
+①macOS 26 SwiftUI MenuBarExtra(.menu) 图标不渲染（同屏其他 App 的 AppKit NSStatusItem 全部正常，本机实证）；②首轮修复踩中既有接线陷阱：`CofferMainApp.init()` 访问未安装的 `@StateObject` 产生临时 AppModel 实例（运行时警告实证），赋给 weak `appDelegate.model` 随即释放归 nil，`applicationDidFinishLaunching` 的 `if let model` 静默跳过 start()——同陷阱连坐 applicationWillTerminate 的 lockAllForTermination 与呼出自动引导。
+
+### 修复路径
+
+AppKit NSStatusItem + 程序化 template 图标（StatusItemController.swift）；接线改 strong model + RootView.onAppear 幂等 attach；图标返工为经典挂锁轮廓（用户验收）。AX 对 Coffer 进程在 macOS 26 上存在系统性失明（三个构建均复现，app 本体前台菜单完好时仍报 0），真机验证以用户目视+像素扫描为准。
+
+### 复现与诊断
+
+复现：macOS 26 上运行 v0.5.0 构建观察菜单栏。诊断：AX 枚举 + screencapture 像素扫描（注意 System Events 失明干扰，需以像素/目视为准）。
+
+---
+
+## PL-7（🔴 当版修复中）：瞬时 errSecAuthFailed 被判持久凭据失效——长时间空闲自动锁定后 Touch ID 按钮消失只剩主密码
+
+**登记日期**：2026-10-03
+**发现环境**：v0.5.0 发版回归真机陪跑（用户报告「很久没有操作后 touch id 失效了 只能输入密码 这是不应该的」）
+**分级**：S2（生物识别解锁通道被瞬时故障整段关闭，降级路径仅剩主密码；恢复依赖主密码解锁）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：🔴 当版修复中（已派发 dev-coder-pl4-biometric）
+**核销记录**：未核销（修复 commit 回填）
+**证据**：诊断日志 `~/Library/Containers/app.coffer.Coffer/Data/Library/Logs/Coffer-diag.log`：
+```
+2026-10-03 10:11:00 +0000 Keychain.read 失败 status=-25293（01a0e023…）
+2026-10-03 10:11:00 +0000 错误 4002：生物识别凭据已失效（可能因指纹变更），请使用主密码解锁后在设置中重新启用 Touch ID。
+```
+
+### 现象（预期/实际 分行写）
+
+- 预期：长时间空闲自动锁定后回来，Touch ID 解锁按钮可用（或因传感器未就绪/系统锁定暂时不可用时给出「稍后重试」类提示，按钮保留）。
+- 实际：自动锁定后 Touch ID「失效」，LockView 只剩主密码输入；伴随 4002 弹窗（「可能因指纹变更」文案在瞬时场景下误导）。
+
+### 根因（已实证 / 待查）
+
+AppModel.unlockWithTouchID 的 catch 把 `.authFailed`（read 返回 errSecAuthFailed -25293）一律按持久凭据失效处置：`touchIDStatus = .stale` 终判（docs/08 §4.1）+ 4002 → LockView 按钮 `touchIDStatus == .enabled` 条件不满足，整段隐藏直至主密码解锁后 openSession 刷新。但 -25293 成因有两类：持久（指纹集变更 biometryCurrentSet 失效，现行处置正确）与瞬时（系统锁屏/刚唤醒传感器未就绪/系统级 biometry lockout——本日多次无人应答的启动自动引导弹框超时可能累计失败计数触发）。瞬时被误判为持久。
+
+### 修复路径
+
+catch 的 `.authFailed` 分支按失败瞬间 `BiometricKeychain.isBiometricsAvailable()` 双分道：false → 瞬时（不置 stale，按钮保留，静态温和文案「暂时不可用请稍后重试」，DiagLog 记判定依据）；true → 维持 4002 + .stale 终判。.itemNotFound 分支不动。判定抽纯函数补单测；docs/08 §7.3 补两行。
+
+### 复现与诊断
+
+复现：长时间空闲（自动锁定触发 + 系统锁屏/传感器暂不可用）→ 回来点 Touch ID（或呼出自动引导）→ read 返回 -25293 → 4002 + 按钮消失。诊断：诊断日志 `Keychain.read 失败 status=-25293` + 4002 记录对时。核验：修复后同场景按钮保留且提示为「暂时不可用」文案；持久场景（删指纹重录）仍走 4002+stale。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

@@ -376,6 +376,7 @@ sequenceDiagram
   - **authFailed 瞬时/持久分道（PL-7，2026-10-03 用户反馈）**：`.authFailed`（errSecAuthFailed -25293）不再一律判死——失败瞬间 `isBiometricsAvailable() == false`（锁屏/刚唤醒/传感器未就绪/biometry lockout）→ **瞬时**：不置 stale、`touchIDStatus` 不变、按钮保留可再点，呈现 Swift-only 温和文案 `TouchIDError.transientUnavailable`（「Touch ID 暂时不可用，请稍后重试…」，无错误码，docs/17 §5 冻结零新增）；`isBiometricsAvailable() == true` 仍读失败（指纹集变更/ACL 失效）→ **持久**：维持 4002 + 置 stale（§4.1 语义不变）。分道判定抽成纯函数 `TouchIDAuthFailure.disposition`（`Support/TouchIDAuthFailure.swift`，独立单测）。
   - **其余可见**：`unexpected` / FfiError（1002/4001/5999）→ 照常呈现（自动路径也呈现）并刷新状态行。
   - 此前的 `isAutoPrompt` 参数已移除：静默语义改由错误类型驱动，不再区分调用路径（ErrorPresenter 对 `.userCanceled` 返回空串，`FfiErrorAlert` 对空串不弹，双保险）。
+  - 分道统一实现（2026-10-03 PL-5）：错误→呈现分道的映射收敛为纯函数 `TouchIDUnlockPresentation.resolve(error:biometryAvailable:)`（`Support/TouchIDError.swift`——TouchIDError 自 ErrorPresenter.swift 拆出独立文件，零 CoreBindings 依赖可独立单测，`tools/run_touchid_error_presentation_tests.sh`）。**CrossCopySheet 目标库 `unlockWithBiometric` 与主解锁路径共用同一分道**——PL-5 删除该 sheet 侧 `evaluatePolicy` 预认证（与 PL-4 同型双弹源，KNOWN-ISSUES PL-5）后，错误呈现改由 `read` 的错误分道驱动：取消静默（不写 localError，避免空白「解锁失败」框）、瞬时温和文案、持久 4002、其余（FfiError 1002 等）回退 `ErrorPresenter.text`，留在解锁步可重试（docs/15 §3.2.3）。
 
 ---
 

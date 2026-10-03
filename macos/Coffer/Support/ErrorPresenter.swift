@@ -67,6 +67,11 @@ enum ErrorPresenter {
             // docs/08 §4.1：认证通过后的 Keychain 读取失败（项不存在 /
             // biometryCurrentSet 失效）→ 凭据失效降级，引导主密码 + 重新启用
             return TouchIDError.stale.userText
+        case .userCanceled:
+            // 用户取消认证不是失败（reviewer HIGH 处置，docs/08 §7.3/§7.6）：
+            // 不弹吓人错误框。空串 = 不呈现；unlockWithTouchID 的 catch 对该
+            // case 显式跳过 lastErrorMessage（空串也会弹空白框，故调用侧不写入）。
+            return ""
         case .invalidKeyLength:
             return "内部错误：生物识别密钥长度非法。"
         case .unexpected(let status):
@@ -86,7 +91,9 @@ struct FfiErrorAlert: ViewModifier {
         content.alert(
             "操作失败",
             isPresented: Binding(
-                get: { errorMessage != nil },
+                // 空串视为无错误（BiometricKeychainError.userCanceled → ""，不弹
+                // 空白框兜底；见 text(of:) 注释），仅非空错误文案才呈现。
+                get: { (errorMessage ?? "").isEmpty == false },
                 set: { if !$0 { errorMessage = nil } }
             )
         ) {

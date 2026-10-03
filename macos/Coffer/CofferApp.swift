@@ -4,9 +4,11 @@
 // 因此本文件的入口结构体命名为 `CofferMainApp`，避免类型名冲突。
 //
 // v0.4 MC-1（docs/15 §3.3.1 / §3.3.2；选型 docs/research-v0.4-menubar-hotkey.md）：
-//   - MenuBarExtra(.menu) 菜单栏常驻（FR-13.3）：状态行 + 打开主窗口 +
-//     快速搜索 + 锁定全部 + 退出。只放状态与动作，不放文本输入
-//     （research §2：.window 样式有键盘焦点缺陷，不采用）。
+//   - 菜单栏常驻（FR-13.3）：状态行 + 打开主窗口 + 快速搜索 + 锁定全部 +
+//     退出。只放状态与动作，不放文本输入（research §2：.window 样式有键盘
+//     焦点缺陷，不采用）。v0.5.0 起由 AppKit NSStatusItem 实现
+//     （Platform/StatusItemController.swift；PL-6：macOS 26 MenuBarExtra
+//     图标空白，仅占位不渲染）。
 //   - 全局快捷键 ⌥⌘P 呼出/聚焦主窗口（FR-4.5 HK-1；注册失败静默降级，
 //     见 Platform/HotKeyMonitor.swift）。
 //   - 关窗驻留：applicationShouldTerminateAfterLastWindowClosed = false
@@ -64,52 +66,8 @@ struct CofferMainApp: App {
             }
         }
 
-        // 菜单栏常驻（FR-13.3，docs/15 §3.3.1 菜单项路由表）。S3 切片
-        // 纪律（docs/15 §6.1）：只读消费 AppModel + 调既有 API，不新增
-        // 不改 AppModel 状态机。
-        MenuBarExtra("Coffer", systemImage: menuBarIcon) {
-            Section {
-                // 状态行（只读）：库名 + 锁定/已解锁（锁定态显式「已锁定」）
-                Text(menuStatusLine)
-            }
-            Divider()
-            Button("打开主窗口") { appDelegate.summonMainWindow(focusText: false) }
-            // 快速搜索…：呼出/聚焦主窗口搜索框（research §6 判据①落主窗口
-            // 聚焦，不建独立面板）；锁定态可用——窗口内先展示解锁页
-            Button("快速搜索…") { appDelegate.summonMainWindow(focusText: true) }
-                .keyboardShortcut("p", modifiers: [.command, .option])
-            Divider()
-            Button("锁定全部") {
-                // 既有 API 双保险（docs/15 §3.3.1）：factory 全局锁所有会话
-                // + model.lock() 清 UI 状态与剪贴板；均幂等，锁定态可用
-                model.factory.lockAll()
-                model.lock()
-            }
-            Divider()
-            Button("退出 Coffer") { NSApp.terminate(nil) }
-        }
-        .menuBarExtraStyle(.menu)
-    }
-
-    /// 菜单栏状态行文案（只读派生，不改 AppModel）。
-    private var menuStatusLine: String {
-        switch model.phase {
-        case .booting:
-            return "正在打开…"
-        case .noVault:
-            return "未创建密码库"
-        case .locked:
-            return model.vaultName.isEmpty ? "已锁定" : "\(model.vaultName)（已锁定）"
-        case .unlocked:
-            return model.vaultName.isEmpty ? "已解锁" : "\(model.vaultName)（已解锁）"
-        case .fatal:
-            return "启动失败"
-        }
-    }
-
-    /// 菜单栏图标随锁定相位切换（只读派生）。
-    private var menuBarIcon: String {
-        model.phase == .unlocked ? "lock.open.square" : "lock.square"
+        // 菜单栏常驻（FR-13.3）已迁往 Platform/StatusItemController.swift
+        // （v0.5.0 PL-6：NSStatusItem 取代 MenuBarExtra，菜单结构与语义一致）。
     }
 }
 
@@ -124,6 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 全局快捷键监视（FR-4.5 HK-1；注册失败静默降级为仅菜单栏入口）。
     private let hotKeyMonitor = HotKeyMonitor()
 
+    /// 菜单栏常驻 NSStatusItem 控制器（v0.5.0 PL-6：NSStatusItem 取代
+    /// MenuBarExtra，macOS 26 MenuBarExtra 图标空白）。
+    private let statusItemController = StatusItemController()
+
     /// 关窗驻留（v0.4 出口判据②，2026-09-29 裁定采纳）：关主窗口后 App
     /// 驻留菜单栏，退出只经菜单「退出」/⌘Q。自动锁定语义不受影响——会话
     /// 按空闲超时/锁屏锁定，与窗口可见性解耦（docs/15 §3.3.1）。
@@ -137,12 +99,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeyMonitor.start { [weak self] action in
             self?.handleHotKeyAction(action)
         }
+        // 菜单栏常驻（v0.5.0 PL-6：NSStatusItem 取代 MenuBarExtra）：
+        // 状态行 + 打开主窗口 + 快速搜索 + 锁定全部 + 退出
+        // （docs/15 §3.3.1 路由表，语义见 StatusItemController.swift）。
+        // model 未接线（理论不可达）时静默跳过，不阻塞启动。
+        if let model {
+            statusItemController.start(model: model) { [weak self] focusText in
+                self?.summonMainWindow(focusText: focusText)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // 先反注册热键（清理 Carbon 资源），再锁定全部会话触发 Rust 侧
-        // 密钥清零（docs/07 R-4）
+        // 先反注册热键（清理 Carbon 资源）、移除状态栏项，再锁定全部会话
+        // 触发 Rust 侧密钥清零（docs/07 R-4）
         hotKeyMonitor.stop()
+        statusItemController.stop()
         model?.lockAllForTermination()
     }
 

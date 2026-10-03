@@ -40,6 +40,16 @@ if [[ "${1:-}" == "--rebuild-bindings" ]]; then
 fi
 # 官方模式开关（Task 3/4c）：透传 build_swift_bindings.sh + 双 namespace 编译
 OFFICIAL_LICENSE="${OFFICIAL_LICENSE:-0}"
+if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then
+  # 官方 FFI 表面保护纪律（lead 裁定 2026-10-04）：官方 app 构建会重生成
+  # CoreBindings（cf_ffi.swift 被官方版覆盖 M 态 + 新增未跟踪 cf_assemble.*——
+  # 私有 crate 生成的官方许可 FFI 表面）。披露边界不由构建产物隐式决定：
+  # 官方构建产物 = build artifact 永不入库，公开仓 CoreBindings 只保持公开模式
+  # 版本。trap 装在本脚本（官方 app 构建的收口处：构建 / 签名全程结束后恢复），
+  # build_swift_bindings.sh 不动（它生成后 Swift 编译还要用 cf_assemble.swift）。
+  # _rc 保留构建原始退出码：restore 失败强制 1，restore 成功不得掩盖构建失败。
+  trap '_rc=$?; bash "${SCRIPT_DIR}/restore_corebindings_public.sh" || _rc=1; exit "${_rc}"' EXIT
+fi
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$1"; }

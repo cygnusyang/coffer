@@ -8,6 +8,16 @@
 //     强制主密码降级）
 //   - 本封装只搬运随机字节（K_bio），不做任何加解密——加解密统一在 Rust
 //     （docs/08 D-7）；K_bio 是「受门禁保护的随机字节保险柜」里的内容物
+//   - 解锁认证（PL-4 修复后）：读取即钥匙串自有单次认证——查询带全新
+//     LAContext（localizedReason 为提示文案，kSecUseOperationPrompt 自 macOS 11
+//     起弃用），由 Keychain 自行发起唯一一次弹窗；调用方不再预认证
+//     （macOS 26 实测 kSecUseAuthenticationContext 复用已认证结果不生效，
+//     App 侧预认证 + 读取再认证 = 双弹窗，docs/KNOWN-ISSUES.md PL-4）
+//   - 存在性探测（PL-4 双源修复）：itemExists 查询带 kSecUseAuthenticationUIFail
+//     ——2026-10-03 真机实证 macOS 26 上元数据查询亦触发完整 ACL 认证 UI（启动
+//     路径 refreshTouchIDStatus → itemExists 曾致启动后 ~1s 自动弹窗），探测
+//     禁止弹 UI，失败直接返回状态码由调用方按三态语义解释（docs/KNOWN-ISSUES.md
+//     PL-4 双源①）
 //
 // K_bio 纪律（docs/08 §7.4）：取回即用，不落 @Published / 不进全局状态。
 
@@ -16,12 +26,15 @@ import LocalAuthentication
 import Security
 
 /// Keychain 操作错误（docs/08 §7.3 错误语义表）。
-/// 解锁流程中的呈现语义见 ErrorPresenter：itemNotFound / authFailed → 4002。
+/// 解锁流程中的呈现语义见 ErrorPresenter：itemNotFound / authFailed → 4002；
+/// userCanceled（用户取消认证）→ 静默不弹错误（reviewer HIGH 处置，docs/08 §7.6）。
 enum BiometricKeychainError: Error, Equatable {
     /// 项不存在（未启用 / 已删 / biometryCurrentSet 失效的清理路径）→ 4002
     case itemNotFound
-    /// 认证拒绝（用户取消 / 指纹集变更后 ACL 拒绝 / 锁定态读取）→ 4002
+    /// 认证拒绝（指纹集变更后 ACL 拒绝 / 锁定态读取，凭据已失效）→ 4002
     case authFailed
+    /// 用户取消认证——取消 ≠ 失效：静默不弹错误，落回锁定页可再点（docs/08 §7.3）
+    case userCanceled
     /// K_bio 长度非法（应为 32B，docs/08 D-3）——程序员错误，写入路径防御
     case invalidKeyLength(Int)
     /// 其他未预期 OSStatus
@@ -39,6 +52,11 @@ struct BiometricKeychain {
     /// K_bio 标准长度（Rust CSPRNG 生成 32 字节，docs/08 D-3）。
     static let keyLength = 32
 
+    /// 解锁认证提示文案（LAContext.localizedReason，与既有中文文案风格一致；
+    /// kSecUseOperationPrompt 自 macOS 11 起弃用，改用本字段）。
+    /// PL-4 修复后读取由钥匙串自有单次认证发起，本文案即该唯一一次弹窗的提示。
+    static let unlockPrompt = "解锁密码库"
+
     // MARK: - 生物识别可用性（只检测，不弹窗）
 
     /// 当前设备是否支持生物识别解锁（Touch ID 硬件 + 已录入指纹）。
@@ -52,19 +70,35 @@ struct BiometricKeychain {
 
     // MARK: - 项查询 / 存取
 
-    /// 项是否存在。只查属性不取数据（kSecReturnData=false），
-    /// 预期不触发认证弹窗（docs/08 Q-2，T05 真机复核）。
-    /// 注意：biometryCurrentSet 失效后项通常仍存在（读取时才报 AuthFailed），
-    /// 「存在」≠「可读」，stale 终判以 read 失败为准（docs/08 §4.1）。
+    /// 项是否存在。只查属性不取数据（kSecReturnData=false），且探测禁止弹认证
+    /// UI（全新 LAContext + interactionNotAllowed=true——2026-10-03 真机 log
+    /// stream 实证：macOS 26 上对挂 biometryCurrentSet ACL 的项做元数据查询亦
+    /// 触发完整认证 UI，见 docs/KNOWN-ISSUES.md PL-4 双源①；此处「不弹窗」由
+    /// interactionNotAllowed 显式保证，Q-2 已闭环。kSecUseAuthenticationUI =
+    /// kSecUseAuthenticationUIFail 自 macOS 11 弃用，改用本字段）。返回语义三态：
+    ///   - 查询成功 → true（项存在）
+    ///   - errSecAuthFailed / errSecInteractionNotAllowed → true（项物理存在但
+    ///     认证被锁；探测无 UI 直接返回该码）。「存在」≠「可读」，stale 终判
+    ///     以 read 失败为准（docs/08 §4.1）。返回 true 使 TouchIDStatus 保持
+    ///     .enabled——LockView 按钮不消失，用户点按后由 read 弹单次认证。
+    ///   - errSecItemNotFound → false（项不存在 / 指纹集变更清理路径）
+    /// 其他未预期状态码 → 记日志并返回 false（保守：不把未知错误当「存在」）。
     func itemExists(vaultUUID: String, useDataProtection: Bool = true) -> Bool {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(
-            Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection) as CFDictionary,
+            Self.queryForExists(vaultUUID: vaultUUID, useDataProtection: useDataProtection) as CFDictionary,
             &item)
-        if status != errSecSuccess && status != errSecItemNotFound {
+        switch status {
+        case errSecSuccess:
+            return true
+        case errSecAuthFailed, errSecInteractionNotAllowed:
+            return true
+        case errSecItemNotFound:
+            return false
+        default:
             DiagLog.append("Keychain.itemExists 失败 status=\(status)（\(vaultUUID.prefix(8))…）")
+            return false
         }
-        return status == errSecSuccess
     }
 
     /// 写入 K_bio。SecItemAdd → DuplicateItem 则删旧重写（幂等覆盖，docs/08 §4.1）。
@@ -130,13 +164,14 @@ struct BiometricKeychain {
         }
     }
 
-    /// 读取 K_bio。认证与读取绑定同一 LAContext：调用方在 `evaluatePolicy`
-    /// 成功后传入同一 context，读取时复用认证结果、不再二次弹窗（docs/08 §3.2）。
-    func read(vaultUUID: String, context: LAContext,
-              useDataProtection: Bool = true) throws -> Data {
-        var query = Self.baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
-        query[kSecReturnData as String] = true
-        query[kSecUseAuthenticationContext as String] = context
+    /// 读取 K_bio。钥匙串自有单次认证（PL-4 修复后）：查询带全新 LAContext
+    /// （localizedReason 见 unlockPrompt，kSecUseOperationPrompt 自 macOS 11 起
+    /// 弃用），由 Keychain 自行发起唯一一次认证弹窗；调用方无需预认证
+    /// （删除 App 侧 evaluatePolicy——macOS 26 上 kSecUseAuthenticationContext
+    /// 复用已认证结果不生效，预认证 + 读取再认证 = 双弹窗）。
+    /// 取消 / 指纹集失效 → .authFailed → 4002 降级（docs/08 §4.1，语义不变）。
+    func read(vaultUUID: String, useDataProtection: Bool = true) throws -> Data {
+        let query = Self.queryForRead(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -170,6 +205,38 @@ struct BiometricKeychain {
 
     // MARK: - 内部
 
+    /// 读取查询构造（内部可见的最小可测 seam）：定位 + 返回数据 + 全新
+    /// LAContext（localizedReason = unlockPrompt）。不含密钥材料，单测据此
+    /// 断言查询携带由 Keychain 自有单次认证所需的 LAContext。
+    static func queryForRead(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {
+        var query = baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
+        query[kSecReturnData as String] = true
+        // 全新未认证 LAContext：不携带任何已认证结果，由 Keychain 自行发起
+        // 唯一一次认证；localizedReason 即弹窗提示文案（kSecUseOperationPrompt
+        // 自 macOS 11 起弃用，改用此字段）。
+        let context = LAContext()
+        context.localizedReason = Self.unlockPrompt
+        query[kSecUseAuthenticationContext as String] = context
+        return query
+    }
+
+    /// 存在性探测查询构造（内部可见的最小可测 seam）：定位 + 禁止认证弹 UI
+    /// （全新 LAContext + interactionNotAllowed=true——探测不得打扰用户，需认证
+    /// 时立即返回 errSecInteractionNotAllowed / errSecAuthFailed，由 itemExists
+    /// 按三态语义解释）。kSecUseAuthenticationUI = kSecUseAuthenticationUIFail
+    /// 自 macOS 11 弃用，改用本字段（与 PL-4 弃用 kSecUseOperationPrompt 改
+    /// localizedReason 同式）。2026-10-03 真机 log stream 实证：macOS 26 上
+    /// 元数据查询亦触发完整 ACL 认证 UI（PL-4 双源①，启动路径
+    /// refreshTouchIDStatus → itemExists 曾致启动后 ~1s 自动弹窗）。不含密钥
+    /// 材料，单测据此断言查询携带 interactionNotAllowed 的 LAContext。
+    static func queryForExists(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {
+        var query = baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        return query
+    }
+
     /// 定位查询（service + account，不含返回数据开关与认证上下文）。
     private static func baseQuery(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {
         var query: [String: Any] = [
@@ -188,13 +255,20 @@ struct BiometricKeychain {
         return query
     }
 
-    /// OSStatus → 语义错误（docs/08 §4.1：NotFound / AuthFailed 均为降级信号）。
+    /// OSStatus → 语义错误（docs/08 §4.1 / §7.3）：
+    ///   - errSecItemNotFound → .itemNotFound（未启用 / 已删 / 清理路径，4002）
+    ///   - errSecAuthFailed / errSecInteractionNotAllowed → .authFailed（ACL 失效 /
+    ///     锁定态读取，凭据已失效，4002）
+    ///   - errSecUserCanceled → .userCanceled（用户取消——非失效，静默呈现分道，
+    ///     见 ErrorPresenter 与 AppModel.unlockWithTouchID 的 catch 分派）
     private static func mapStatus(_ status: OSStatus) -> BiometricKeychainError {
         switch status {
         case errSecItemNotFound:
             return .itemNotFound
-        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
+        case errSecAuthFailed, errSecInteractionNotAllowed:
             return .authFailed
+        case errSecUserCanceled:
+            return .userCanceled
         default:
             return .unexpected(status)
         }

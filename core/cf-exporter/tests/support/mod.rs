@@ -45,6 +45,10 @@ pub const WRONG_PASSWORD: &str = "definitely-not-the-password";
 /// docs/03 §2.6：verifier 明文常量。
 pub const VERIFIER_PLAINTEXT: &[u8] = b"coffer-verifier-v1";
 
+/// 夹具库固定 DEK（make_header 写入 wrapped_dek 的同一值；种子追加用
+/// reopen_store 依赖本常量，防两处漂移）。
+pub const TEST_DEK: [u8; 32] = [0x5Au8; 32];
+
 /// 测试用快速 KDF（Argon2id 下限，约几十毫秒）。
 pub fn fast_kdf() -> KdfParams {
     KdfParams::new(8 * 1024, 1, 1).unwrap()
@@ -59,16 +63,8 @@ pub fn test_salt() -> [u8; SALT_LEN] {
 pub fn temp_dir(tag: &str) -> PathBuf {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "cf-exporter-{}-{}-{}-{}",
-        tag,
-        std::process::id(),
-        n,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("cf-exporter-{}-{}-{}", tag, std::process::id(), n));
     fs::create_dir_all(&dir).expect("创建临时目录成功");
     dir
 }
@@ -106,7 +102,7 @@ fn seal_with_kek(
 ///
 /// DEK 用固定测试值——测试库，确定性优先；AAD/子密钥派生路径与生产一致。
 pub fn make_header(vault_uuid: &str) -> (Header, [u8; 32]) {
-    let dek = [0x5Au8; 32];
+    let dek = TEST_DEK;
     let kek = derive_kek(PASSWORD);
     let (wd_nonce, wd_ct) = seal_with_kek(&kek, vault_uuid, "wrapped_dek", &dek);
     let (vf_nonce, vf_ct) = seal_with_kek(&kek, vault_uuid, "verifier", VERIFIER_PLAINTEXT);
@@ -551,4 +547,12 @@ pub fn unlock_store(vault_dir: &Path, password: &str) -> Option<(Header, ItemSto
 /// 递归删除目录（测试清理；不存在视为已清理）。
 pub fn remove_dir_all_quiet(dir: &Path) {
     let _ = fs::remove_dir_all(dir);
+}
+
+/// 用夹具固定 DEK（[`TEST_DEK`]）重新打开已建库（种子数据追加用；
+/// build_vault 返回后连接已关闭，重开须用同一密钥材料）。
+pub fn reopen_store(vault_dir: &Path, vault_uuid: &str) -> ItemStore {
+    let conn = rusqlite::Connection::open(vault_dir.join("db.sqlite")).expect("打开 db 成功");
+    let subkeys = SubKeys::derive(&TEST_DEK, &uuid_bytes(vault_uuid)).expect("派生子密钥成功");
+    ItemStore::open(conn, subkeys).expect("重开库成功")
 }

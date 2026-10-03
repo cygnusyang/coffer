@@ -18,6 +18,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine as _;
 use cf_crypto::kdf::KdfParams;
@@ -36,14 +37,10 @@ fn fast_kdf() -> KdfParams {
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "cf-session-qa-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("cf-session-qa-{tag}-{}-{seq}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     dir
 }

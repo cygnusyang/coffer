@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine as _;
 use cf_crypto::aead::SessionKey;
@@ -71,13 +72,14 @@ pub(crate) fn other_key() -> SessionKey {
     SessionKey::new([0x43u8; 32])
 }
 
-/// 创建唯一临时目录（不引入 tempfile 依赖，用 pid + 纳秒时间戳保证唯一）。
+/// 创建唯一临时目录（pid + 进程内原子计数器，不引入 tempfile 依赖）。
+///
+/// BUG-12 同型修复：原 pid+纳秒 在粗时钟下同 pid 同 tick 撞名；
+/// 计数器按构造保证进程内唯一，跨进程由 pid 保证。
 pub(crate) fn temp_vault_dir(name: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("系统时钟在 1970 之后")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("cf-format-{name}-{}-{nanos}", std::process::id()));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("cf-format-{name}-{}-{seq}", std::process::id()));
     fs::create_dir_all(&dir).expect("创建临时目录成功");
     dir
 }

@@ -18,7 +18,6 @@
 // Argon2id 解锁 + copyItem）Task.detached 包裹。
 
 import AppKit
-import LocalAuthentication
 import SwiftUI
 
 struct CrossCopySheet: View {
@@ -283,27 +282,30 @@ struct CrossCopySheet: View {
         }
     }
 
-    /// 目标库 Touch ID 解锁：LAContext 认证 → 同 context 读 K_bio（按
-    /// 目标库 vault_uuid）→ FFI unlockWithBiometric。认证取消/失败 →
-    /// 4001 文案，留在解锁步（与 AppModel.unlockWithTouchID 同纪律，
-    /// docs/08 §7.2；此为局部实现——AppModel 的同名编排绑定当前会话，
-    /// S2 切片不改 AppModel）。
+    /// 目标库 Touch ID 解锁：Keychain 自有单次认证（read 带全新 LAContext +
+    /// localizedReason，弹窗即认证——与 AppModel.unlockWithTouchID 完全同构，
+    /// docs/08 §7.2；此为局部实现——AppModel 的同名编排绑定当前会话，S2 切片
+    /// 不改 AppModel）→ FFI unlockWithBiometric → 复制页。
+    ///
+    /// PL-5 修复：删除本 sheet 侧 evaluatePolicy 预认证——旧路径「预认证 +
+    /// read 再认证」在 macOS 26 上稳定双弹（KNOWN-ISSUES PL-5），删除后
+    /// Keychain read 成为唯一弹窗（弹窗次数 = 1，与主解锁路径同构）。
+    /// 错误呈现同步改由 read 的错误分道驱动（取消静默 / 瞬时温和 / 持久 4002，
+    /// 见 presentUnlockBiometricError）。
     private func unlockWithBiometric() {
         guard let target = targetSession, let targetUUID = targetVaultUUID, !isBusy else { return }
         isBusy = true
         Task {
             do {
-                let context = LAContext()
-                try await Self.authenticateWithBiometrics(context: context)
-                // 认证通过 → 同一 context 读目标库 K_bio（不再二次弹窗）；
-                // 读取失败 → 4002 降级文案（docs/08 §4.1），不改目标库 header。
-                let kBio = try BiometricKeychain().read(vaultUUID: targetUUID, context: context)
+                // 认证即弹窗（read 自带全新 LAContext + localizedReason）；
+                // 读取失败 → 4002 降级文案（docs/08 §4.1），不改目标库 header
+                let kBio = try BiometricKeychain().read(vaultUUID: targetUUID)
                 try await Task.detached(priority: .userInitiated) {
                     _ = try target.unlockWithBiometric(kBio: kBio) // 返回 FfiVaultInfo，复制页无需
                 }.value
                 startCopy()
             } catch {
-                presentStepError(ErrorPresenter.text(error))
+                presentUnlockBiometricError(error)
             }
             isBusy = false
         }
@@ -367,6 +369,27 @@ struct CrossCopySheet: View {
         localError = text
     }
 
+    /// 目标库 Touch ID 解锁错误呈现——与 AppModel.unlockWithTouchID 同一分道
+    /// （TouchIDUnlockPresentation.resolve，docs/08 §7.3/§7.6，PL-5/PL-7）：
+    ///   - 用户取消 → 静默（不写 localError，避免空白「解锁失败」框）
+    ///   - authFailed 瞬时（isBiometricsAvailable=false）→ 温和文案
+    ///   - itemNotFound / authFailed 持久 → 4002
+    ///   - 其余（unexpected / FfiError 1002 等）→ ErrorPresenter.text 照常
+    /// 均留在解锁步可重试（§3.2.3）。
+    private func presentUnlockBiometricError(_ error: Error) {
+        switch TouchIDUnlockPresentation.resolve(
+            error: error,
+            biometryAvailable: BiometricKeychain.isBiometricsAvailable()
+        ) {
+        case .silent:
+            DiagLog.append("CrossCopy 目标库 Touch ID 解锁已取消（用户取消认证，静默，docs/08 §7.6）")
+        case .text(let text):
+            presentStepError(text)
+        case .fallback:
+            presentStepError(ErrorPresenter.text(error))
+        }
+    }
+
     /// 锁定目标会话并清引用（复制即锁兜底；幂等）。
     private func lockTargetSession() {
         targetSession?.lock()
@@ -378,25 +401,5 @@ struct CrossCopySheet: View {
     /// onDisappear 兜底，这里只推进 dismiss。
     private func close() {
         dismiss()
-    }
-
-    /// LAContext 生物识别认证（evaluatePolicy 的 async 包装；取消/失败/
-    /// 不可用一律 → 4001 文案，docs/08 §7.2。与 AppModel 同模式局部实现，
-    /// 理由见 unlockWithBiometric 注）。
-    private static func authenticateWithBiometrics(context: LAContext) async throws {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
-            context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "解锁目标密码库以复制条目"
-            ) { success, error in
-                if success {
-                    continuation.resume()
-                } else {
-                    DiagLog.append("Coffer CrossCopy evaluatePolicy 失败: \(String(describing: error))")
-                    continuation.resume(throwing: TouchIDError.unavailable)
-                }
-            }
-        }
     }
 }

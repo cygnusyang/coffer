@@ -38,6 +38,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cf_domain::CfError;
@@ -267,17 +268,19 @@ fn finalize_and_verify(
     })
 }
 
-/// 同目录的唯一临时兄弟路径（`.coffer` → `.coffer.tmp-<pid>-<nanos>`）。
+/// 同目录的唯一临时兄弟路径（`.coffer` → `.coffer.tmp-<pid>-<seq>`）。
+///
+/// BUG-12 同型修复：原 pid+纳秒 在粗时钟下同 pid 同 tick 撞名；改为
+/// 进程内原子计数器（进程内唯一由构造保证，跨进程由 pid 保证），
+/// 创建/重命名/清理语义不变。
 fn temp_sibling_path(out_path: &Path) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
     let mut name = out_path.file_name().map_or_else(
         || "backup.coffer".to_owned(),
         |n| n.to_string_lossy().to_string(),
     );
-    name.push_str(&format!(".tmp-{}-{nanos}", std::process::id()));
+    name.push_str(&format!(".tmp-{}-{seq}", std::process::id()));
     out_path.with_file_name(name)
 }
 
@@ -384,12 +387,13 @@ fn verify_db_schema_at(dir: &Path, db_bytes: &[u8]) -> Result<(), CfError> {
 }
 
 /// 校验用临时目录（进程级唯一；调用方负责清理）。
+///
+/// BUG-12 同型修复：原 pid+纳秒 在粗时钟下同 pid 同 tick 撞名；改为
+/// 进程内原子计数器（进程内唯一由构造保证，跨进程由 pid 保证）。
 fn temp_dir_for_verify() -> Result<PathBuf, CfError> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("coffer-verify-{}-{nanos}", std::process::id()));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("coffer-verify-{}-{seq}", std::process::id()));
     fs::create_dir_all(&dir).map_err(|e| CfError::Io(format!("创建临时目录失败：{e}")))?;
     Ok(dir)
 }

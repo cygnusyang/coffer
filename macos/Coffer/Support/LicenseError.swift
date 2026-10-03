@@ -21,20 +21,27 @@ enum LicenseActivationError: Error, Equatable {
     case serialInvalid
 
     /// 激活错误文案（6001，docs/03 §12）。纯函数——视图与 ErrorPresenter 共用，
-    /// 可独立单测（本文件零 CoreBindings 依赖）。
+    /// 可独立单测（本文件零 CoreBindings 依赖）。文案单一来源取
+    /// `LicenseErrorText.serialInvalid`（6001 恒在映射中，不做 ?? 兜底——
+    /// 兜底是死代码，reviewer LOW-2）。
     var userText: String {
-        LicenseErrorText.text(forCode: 6001) ?? "序列号无效"
+        LicenseErrorText.serialInvalid
     }
 }
 
 /// 6xxx 错误文案映射（纯函数，docs/03 §12 6xxx 段 / §14.5）。
 enum LicenseErrorText {
+    /// 6001 统一文案（单一来源）：序列号验证的全部失败原因合并为同一文案
+    /// （FR-15.6 不可区分纪律）。`text(forCode: 6001)` 映射与
+    /// `LicenseActivationError.userText` 均经此常量取文案，杜绝重复字面量。
+    static let serialInvalid = "序列号无效"
+
     /// 6xxx 码 → 规范化中文文案；非 6xxx 返回 nil（调用方走默认直出）。
     static func text(forCode code: Int) -> String? {
         switch code {
         case 6001:
             // 统一文案、零细节：不区分格式 / 签名 / 他机 / 版本（FR-15.6）
-            return "序列号无效"
+            return serialInvalid
         case 6002:
             // 试用到期只读：引导去激活（正常路径，§14.5）
             return "试用期已结束，当前处于只读模式。激活后可恢复写入。"

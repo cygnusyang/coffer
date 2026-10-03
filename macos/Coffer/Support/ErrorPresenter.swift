@@ -22,6 +22,9 @@ enum ErrorPresenter {
             return touchIDError.userText
         case let keychainError as BiometricKeychainError:
             return text(of: keychainError)
+        case let activationError as LicenseActivationError:
+            // 激活失败统一 6001「序列号无效」（docs/03 §14.9 / FR-15.6）
+            return activationError.userText
         default:
             return String(describing: error)
         }
@@ -38,6 +41,13 @@ enum ErrorPresenter {
                 // Rust 不产生 4002（docs/08 C-6）；此分支仅为防御性兜底
                 return TouchIDError.stale.userText
             default:
+                // 6xxx 许可域（docs/03 §12/§14.5）：按 code 直出规范化文案
+                // （6001 统一序列号无效——FR-15.6 不可区分；6002/6003 拆分引导）。
+                // 纯函数映射见 Support/LicenseError.swift（零 CoreBindings 可单测，
+                // 签名为 Int——FFI 侧 code 为 UInt16，边界处转换）。
+                if let licenseText = LicenseErrorText.text(forCode: Int(code)) {
+                    return licenseText
+                }
                 // 业务错误：code + message 直出（Rust 层已脱敏）
                 return "错误 \(code)：\(message)"
             }

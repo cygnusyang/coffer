@@ -8,9 +8,11 @@
 //   ④ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
 //   ⑤ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
-//   ⑥ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
+//   ⑥ 许可：「许可…」（FR-15.7：LicenseSettingsView，许可状态 / 激活入口 /
+//      机器指纹；自包含不触 AppModel，docs/03 §14）
+//   ⑦ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
 //      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
-//   ⑦ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
+//   ⑧ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
 //   - autoLockMinutes：0 = 从不（运行态；落盘为 -1，见 AppModel）
@@ -33,6 +35,8 @@ struct SettingsView: View {
     @State private var showRestore = false
     /// 「审计日志」sheet（T-I：AuditLogView 只读审计日志查看，FR-12.6）。
     @State private var showAuditLog = false
+    /// 「许可」sheet（FR-15.7：LicenseSettingsView 许可状态 / 激活入口）。
+    @State private var showLicense = false
 
     var body: some View {
         NavigationStack {
@@ -42,6 +46,7 @@ struct SettingsView: View {
                 backupReminderSection
                 securitySection
                 dataSection
+                licenseSection
                 mcpSection
                 doneSection
             }
@@ -66,6 +71,11 @@ struct SettingsView: View {
             // 审计日志查看（FR-12.6，T-I）：只读最近 200 条，Rust 侧倒序返回
             AuditLogView()
                 .environmentObject(model)
+        }
+        .sheet(isPresented: $showLicense) {
+            // 许可信息（FR-15.7，docs/03 §14）：自包含，不依赖 AppModel
+            // （许可域与密码库会话无关，v0.4 §6.1 切片纪律，同 McpSettingsSection）
+            LicenseSettingsView()
         }
     }
 
@@ -168,7 +178,26 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑥ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
+    // MARK: - ⑥ 许可（FR-15.7，docs/03 §14）
+
+    /// 独立的 LicenseSettingsView（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
+    /// 许可域与密码库会话无关，docs/03 §14.9）。
+    private var licenseSection: some View {
+        Section {
+            Button {
+                showLicense = true
+            } label: {
+                Label("许可…", systemImage: "checkmark.seal")
+            }
+            // FR-15.7：弹出 LicenseSettingsView（见 body 的 showLicense sheet）
+        } header: {
+            Text("许可")
+        } footer: {
+            Text("查看许可状态、激活或申请序列号（开源免费版无需激活）。")
+        }
+    }
+
+    // MARK: - ⑦ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
 
     /// 独立的 McpSettingsSection（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
     /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。
@@ -176,7 +205,7 @@ struct SettingsView: View {
         McpSettingsSection()
     }
 
-    // MARK: - ⑦ 完成
+    // MARK: - ⑧ 完成
 
     private var doneSection: some View {
         Section {

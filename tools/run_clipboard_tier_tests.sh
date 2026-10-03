@@ -43,4 +43,39 @@ swiftc -O \
 #   不传 --vault-dir 时跳过 T8（打印 SKIP），其余段不受影响。
 DEFAULT_VAULT_DIR="${HOME}/Library/Containers/app.coffer.Coffer/Data/Documents/Coffer"
 ARGS=()
-"${OUT_DIR}/ClipboardTierTests" "${ARGS[@]+"${ARGS[@]}"}" "$@"
+
+# BUG-10 复发协议（docs/KNOWN-ISSUES.md BUG-10，2026-10-03 加固）：
+# 真实库回环 T8 二进制外层套 timeout，防无人值守在 listVaults 的 open() 上
+# 再挂 6 分钟（2026-09-29 两次复现，仅无人值守环境出现）。超时打印警示行并
+# SKIP（不算 FAIL、不阻断后续段）。疑似复发时按协议取四件套证据：
+#   ① /usr/bin/sample <pid> 2（栈）  ② 同路径 ls（对照）
+#   ③ 新编译无关二进制同路径对照（区分按路径 vs 按客户端介导）
+#   ④ 无人值守状态记录（GUI 会话/屏幕锁定）。
+# 超时值：正常全流程实测 81.5s（26 项 ALL GREEN，2026-10-03 本机），默认
+# 240s ≈ 3 倍余量（兼顾负载/慢机）；可用环境变量 T8_TIMEOUT_SECS 覆盖。
+# 缺 GNU coreutils（timeout 命令不存在）时降级为无超时直跑并打印提示。
+T8_TIMEOUT_SECS="${T8_TIMEOUT_SECS:-240}"
+
+run_t8_with_timeout() {
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "WARN  未找到 timeout（GNU coreutils），T8 段无超时保护，无人值守仍可能挂起" >&2
+    "${OUT_DIR}/ClipboardTierTests" "${ARGS[@]+"${ARGS[@]}"}" "$@"
+    return
+  fi
+  # 注意：timeout 的非零退出（超时 124 / 测试失败）必须经 `|| status=$?` 捕获——
+  # 直接裸跑会触发 set -e 提前退出；用 `if timeout; then` 包裹则 $? 会变成 if
+  # 语句的 0 而非 timeout 的 124（WARN 永不打、真实失败被静默吞掉）。
+  local status=0
+  timeout "${T8_TIMEOUT_SECS}" "${OUT_DIR}/ClipboardTierTests" "${ARGS[@]+"${ARGS[@]}"}" "$@" || status=$?
+  if [[ $status -eq 0 ]]; then
+    return
+  fi
+  if [[ $status -eq 124 ]]; then
+    echo "WARN  BUG-10 疑似复发：T8 段超时被跳过，按 KNOWN-ISSUES BUG-10 复发协议取证（timeout ${T8_TIMEOUT_SECS}s）" >&2
+    return 0
+  fi
+  # 非超时退出：保留原退出码（测试失败/异常），脚本按既有语义结束
+  exit "$status"
+}
+
+run_t8_with_timeout "$@"

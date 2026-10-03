@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+#
+# fake `op` —— 1Password CLI 的测试替身（docs/20 §4.2 OpProvider 的协议承载）。
+#
+# 目的
+#   让 `core/cf-mcp` 的 provider 测试（tests/provider_op_*.rs）不依赖真机 `op` /
+#   真实 1Password 会话即可驱动 OpProvider 的 op 协议路径：
+#     list_secret_names / list_secrets / run_with_secret / get_secret_metadata。
+#
+# 行为基线
+#   本脚本按真机 `op` 2.32.1（macOS）实测形态仿写（docs/20 §10 风险 1 记录）：
+#   - `op item list [--vault <vault>] --format json`：输出 item 元数据数组（无值）；
+#   - `op item get <id|title> [--vault <vault>] --format json`：输出单条目元数据
+#     （含 fields，仅元数据面被 provider 解析；**不接受 `op://` 引用**，
+#     与实测一致——引用须先拆出 vault + item）；
+#   - `op run --env-file <file> -- <cmd> [args…]`：读 dotenv，把 `KEY=op://…`
+#     解析为明文并 export 后 `exec` 目标命令；子进程退出码**原样传播**；
+#     op 自身失败（引用解析失败 / 命令不存在）时 stderr 打
+#     `[ERROR] YYYY/MM/DD HH:MM:SS …` 并退出 1（子进程失败**不**打 [ERROR]）——
+#     这是 provider 区分「子进程退出码」与「op 层错误」的信号。
+#   - `op --version`：打印版本并退出 0（provider 构造时的可用性探测）。
+#
+# 数据
+#   内嵌 fake vault（全部合成数据，真实凭据不进仓库）。与 provider 测试用例
+#   中引用的标识**必须一致**，改动需同步 tests/provider_op_*.rs 的断言。
+#   兼容 macOS bash 3.2 / CI bash 5：不依赖关联数组（`declare -A`）。
+#
+#   条目（<id> / <title> → <vault>|<category>|<updated_at>）：
+#     fixture-item-api-key / OPENAI_API_KEY → Personal|LOGIN      |2026-08-01T12:30:00Z
+#     fixture-item-github  / GITHUB_TOKEN   → Personal|SECURE_NOTE|2026-07-15T08:00:00Z
+#   字段（<id>::<field> → 明文）：
+#     fixture-item-api-key::password  → fixture-secret-value-openai
+#     fixture-item-github::notesPlain → fixture-secret-value-github
+#
+# 身份模拟
+#   当环境变量 `OP_SESSION` 等于哨兵值 `COFFER_FAKE_OP_EXPIRED_SESSION` 时，
+#   所有 item/run 操作按「账号未登录」失败（7002）——用于验证 provider 把
+#   `COFFER_OP_SESSION_TOKEN` 透传为 `OP_SESSION`（docs/20 §4.2）。
+
+set -u
+
+FAKE_OP_EXPIRED_SESSION="COFFER_FAKE_OP_EXPIRED_SESSION"
+FAKE_OP_VAULT_NAME="Personal"
+FAKE_OP_VAULT_ID="fixture-vault-personal"
+
+# —— 数据查找（case 驱动，兼容 macOS bash 3.2） ——
+
+# <id> 或 <title> → "<title>|<vault>|<category>|<updated_at>"；未知名返回非零。
+item_record() {
+  case "$1" in
+    fixture-item-api-key|OPENAI_API_KEY)
+      echo "OPENAI_API_KEY|Personal|LOGIN|2026-08-01T12:30:00Z" ;;
+    fixture-item-github|GITHUB_TOKEN)
+      echo "GITHUB_TOKEN|Personal|SECURE_NOTE|2026-07-15T08:00:00Z" ;;
+    *) return 1 ;;
+  esac
+}
+
+# <title> → <id>；未知名返回非零。
+item_id_of() {
+  case "$1" in
+    OPENAI_API_KEY) echo "fixture-item-api-key" ;;
+    GITHUB_TOKEN) echo "fixture-item-github" ;;
+    *) return 1 ;;
+  esac
+}
+
+# <id>::<field> → 明文；未知名返回非零。
+field_value() {
+  case "$1::$2" in
+    "fixture-item-api-key::password") echo "fixture-secret-value-openai" ;;
+    "fixture-item-github::notesPlain") echo "fixture-secret-value-github" ;;
+    *) return 1 ;;
+  esac
+}
+
+# 所有条目 id（每行一个，供 item list 输出）。
+item_ids() {
+  echo "fixture-item-api-key"
+  echo "fixture-item-github"
+}
+
+# —— 工具函数 ——
+
+# 真机 op 的错误日志前缀：`[ERROR] YYYY/MM/DD HH:MM:SS `
+op_error() {
+  echo "[ERROR] $(date '+%Y/%m/%d %H:%M:%S') $*" >&2
+}
+
+# 未登录模拟：OP_SESSION 为哨兵值时失败（7002 判据）。
+is_expired_session() {
+  [ "${OP_SESSION:-}" = "$FAKE_OP_EXPIRED_SESSION" ]
+}
+
+# 解析 `op://<vault>/<item>/<field>`（item 可为 title）。输出 `id|field|value`，
+# 任一部分解析失败返回非零（2=vault 不存在 / 3=item 不存在 / 4=field 不存在）。
+resolve_ref() {
+  local ref="$1"
+  local rest="${ref#op://}"
+  local vault item field
+  IFS='/' read -r vault item field _rest <<<"$rest"
+  [ -n "$vault" ] && [ -n "$item" ] && [ -n "$field" ] || return 1
+  [ "$vault" = "$FAKE_OP_VAULT_NAME" ] || return 2
+  local id
+  id="$(item_id_of "$item")" || return 3
+  local value
+  value="$(field_value "$id" "$field")" || return 4
+  echo "$id|$field|$value"
+}
+
+# 输出 item 记录 JSON。入参 <id>；`GET_MODE=1` 时输出含 fields 的 get 形态。
+emit_item_json() {
+  local id="$1"
+  local rec
+  rec="$(item_record "$id")" || return 1
+  local title vault category updated_at
+  IFS='|' read -r title vault category updated_at <<<"$rec"
+  if [ "${GET_MODE:-0}" = "1" ]; then
+    local label value first=1
+    cat <<EOF
+{
+  "id": "$id",
+  "title": "$title",
+  "version": 1,
+  "vault": { "id": "$FAKE_OP_VAULT_ID", "name": "$vault" },
+  "category": "$category",
+  "last_edited_by": "FAKE_OP",
+  "created_at": "2026-07-01T00:00:00Z",
+  "updated_at": "$updated_at",
+  "fields": [
+EOF
+    for label in password notesPlain; do
+      value="$(field_value "$id" "$label" 2>/dev/null)" || continue
+      if [ -n "$first" ]; then first=""; else echo ","; fi
+      printf '    { "id": "%s", "type": "CONCEALED", "purpose": "", "label": "%s", "value": "%s" }' \
+        "$label" "$label" "$value"
+    done
+    echo
+    echo "  ],"
+    echo '  "urls": []'
+    echo "}"
+  else
+    cat <<EOF
+  {
+    "id": "$id",
+    "title": "$title",
+    "version": 1,
+    "vault": { "id": "$FAKE_OP_VAULT_ID", "name": "$vault" },
+    "category": "$category",
+    "last_edited_by": "FAKE_OP",
+    "created_at": "2026-07-01T00:00:00Z",
+    "updated_at": "$updated_at",
+    "additional_information": "",
+    "urls": []
+  }
+EOF
+  fi
+}
+
+# —— 子命令 ——
+
+do_item_list() {
+  local vault="" fmt="json"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --vault) vault="$2"; shift 2 ;;
+      --format) fmt="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  is_expired_session && { op_error "account is not signed in"; return 1; }
+  [ "$fmt" = "json" ] || { op_error "unsupported format"; return 1; }
+  if [ -n "$vault" ] && [ "$vault" != "$FAKE_OP_VAULT_NAME" ]; then
+    op_error "\"$vault\" isn't a vault in this account. Specify the vault with its ID or name."
+    return 1
+  fi
+  local id ids count i
+  ids="$(item_ids | sort)"
+  count="$(printf '%s\n' "$ids" | grep -c . || true)"
+  i=0
+  echo "["
+  while IFS= read -r id; do
+    i=$((i + 1))
+    emit_item_json "$id"
+    [ "$i" -lt "$count" ] && echo ","
+  done <<<"$ids"
+  echo "]"
+}
+
+do_item_get() {
+  local target="" vault="" fmt="json"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --vault) vault="$2"; shift 2 ;;
+      --format) fmt="$2"; shift 2 ;;
+      *) [ -z "$target" ] && target="$1"; shift ;;
+    esac
+  done
+  is_expired_session && { op_error "account is not signed in"; return 1; }
+  case "$target" in
+    op://*)
+      op_error "\"$target\" isn't an item. Specify the item with its UUID, name, or domain."
+      return 1
+      ;;
+  esac
+  # title → id
+  local id
+  if ! id="$(item_id_of "$target" 2>/dev/null)"; then
+    id="$target"
+  fi
+  if ! GET_MODE=1 emit_item_json "$id" >/dev/null 2>&1; then
+    op_error "\"$target\" isn't an item. Specify the item with its UUID, name, or domain."
+    return 1
+  fi
+  if [ -n "$vault" ] && [ "$vault" != "$FAKE_OP_VAULT_NAME" ]; then
+    op_error "\"$vault\" isn't a vault in this account. Specify the vault with its ID or name."
+    return 1
+  fi
+  GET_MODE=1 emit_item_json "$id"
+}
+
+do_run() {
+  local env_file=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --env-file) env_file="$2"; shift 2 ;;
+      --) shift; break ;;
+      *) shift ;;
+    esac
+  done
+  is_expired_session && { op_error "account is not signed in"; return 1; }
+  if [ -z "$env_file" ] || [ ! -f "$env_file" ]; then
+    op_error "open $env_file: no such file or directory"
+    return 1
+  fi
+  # 读 dotenv：`KEY=VAL`，VAL 为 `op://…` 则解析为明文，否则原样（op run 语义）。
+  local line key val resolved code
+  while IFS= read -r line; do
+    case "$line" in
+      *=*)
+        key="${line%%=*}"
+        val="${line#*=}"
+        if [ "${val#op://}" != "$val" ]; then
+          resolved="$(resolve_ref "$val")"
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            local vault_part="${val#op://}"
+            vault_part="${vault_part%%/*}"
+            case "$code" in
+              2) op_error "\"$vault_part\" isn't a vault in this account. Specify the vault with its ID or name." ;;
+              3|4) op_error "could not resolve item UUID for item ${val}: could not find item or field in vault $FAKE_OP_VAULT_ID" ;;
+              *) op_error "could not resolve secret reference ${val}" ;;
+            esac
+            return 1
+          fi
+          IFS='|' read -r _ _ rvalue <<<"$resolved"
+          export "$key=$rvalue"
+        else
+          export "$key=$val"
+        fi
+        ;;
+    esac
+  done < "$env_file"
+  if [ "$#" -eq 0 ]; then
+    op_error "no command specified"
+    return 1
+  fi
+  local child="$1"
+  if ! command -v "$child" >/dev/null 2>&1; then
+    op_error "error while starting process: exec: \"$child\": executable file not found in \$PATH"
+    return 1
+  fi
+  # `exec` 替换进程：子进程 stdout/stderr 透传，退出码原样传播（真机 op 行为）。
+  exec "$@"
+}
+
+# —— 入口 ——
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  --version)
+    echo "2.32.1 (fake op fixture)"
+    ;;
+  item)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      list) do_item_list "$@" ;;
+      get) do_item_get "$@" ;;
+      *) op_error "unknown item subcommand: $sub"; exit 1 ;;
+    esac
+    ;;
+  run)
+    do_run "$@"
+    ;;
+  *)
+    op_error "unknown command: $cmd"
+    exit 1
+    ;;
+esac

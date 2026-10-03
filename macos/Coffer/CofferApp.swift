@@ -4,9 +4,11 @@
 // 因此本文件的入口结构体命名为 `CofferMainApp`，避免类型名冲突。
 //
 // v0.4 MC-1（docs/15 §3.3.1 / §3.3.2；选型 docs/research-v0.4-menubar-hotkey.md）：
-//   - MenuBarExtra(.menu) 菜单栏常驻（FR-13.3）：状态行 + 打开主窗口 +
-//     快速搜索 + 锁定全部 + 退出。只放状态与动作，不放文本输入
-//     （research §2：.window 样式有键盘焦点缺陷，不采用）。
+//   - 菜单栏常驻（FR-13.3）：状态行 + 打开主窗口 + 快速搜索 + 锁定全部 +
+//     退出。只放状态与动作，不放文本输入（research §2：.window 样式有键盘
+//     焦点缺陷，不采用）。v0.5.0 起由 AppKit NSStatusItem 实现
+//     （Platform/StatusItemController.swift；PL-6：macOS 26 MenuBarExtra
+//     图标空白，仅占位不渲染）。
 //   - 全局快捷键 ⌥⌘P 呼出/聚焦主窗口（FR-4.5 HK-1；注册失败静默降级，
 //     见 Platform/HotKeyMonitor.swift）。
 //   - 关窗驻留：applicationShouldTerminateAfterLastWindowClosed = false
@@ -22,19 +24,16 @@ struct CofferMainApp: App {
     @StateObject
     private var model = AppModel()
 
-    init() {
-        // AppDelegate.model 接线：applicationWillTerminate 的 lockAll 兜底
-        // 此前从未生效（weak model 无人赋值——docs/15 §3.3.1 引用的「兜底
-        // lockAll 已有」实为死路径，MC-1 修复）。delegate 由 adaptor 在
-        // App init 前创建，此处是唯一赋值点。
-        appDelegate.model = model
-    }
-
     var body: some Scene {
         WindowGroup("Coffer") {
+            // AppDelegate.model 接线点：必须在 RootView.onAppear 而非 App.init——
+            // @StateObject 在 App.init 阶段尚未安装，访问它会新建临时实例且随即
+            // 释放（SwiftUI 运行时警告实证，PL-6 复验打回根因），weak 引用随之
+            // 归 nil。onAppear 时 model 是已安装的真实实例；attach 幂等。
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 820, minHeight: 540)
+                .onAppear { appDelegate.attach(model: model) }
         }
         .windowToolbarStyle(.unified)
         .commands {
@@ -50,6 +49,10 @@ struct CofferMainApp: App {
                 Button("导入 1Password (.1pux)…") { model.showImportPux = true }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                     .disabled(model.phase != .unlocked)
+                // Bitwarden 导入（v0.5.0 PK3）：import_bitwarden_json 有 1001
+                // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
+                Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
+                    .disabled(model.phase != .unlocked)
                 Button("导出…") { model.showExport = true }
                     .keyboardShortcut("e", modifiers: .command)
                     .disabled(model.phase != .unlocked)
@@ -60,65 +63,45 @@ struct CofferMainApp: App {
             }
         }
 
-        // 菜单栏常驻（FR-13.3，docs/15 §3.3.1 菜单项路由表）。S3 切片
-        // 纪律（docs/15 §6.1）：只读消费 AppModel + 调既有 API，不新增
-        // 不改 AppModel 状态机。
-        MenuBarExtra("Coffer", systemImage: menuBarIcon) {
-            Section {
-                // 状态行（只读）：库名 + 锁定/已解锁（锁定态显式「已锁定」）
-                Text(menuStatusLine)
-            }
-            Divider()
-            Button("打开主窗口") { appDelegate.summonMainWindow(focusText: false) }
-            // 快速搜索…：呼出/聚焦主窗口搜索框（research §6 判据①落主窗口
-            // 聚焦，不建独立面板）；锁定态可用——窗口内先展示解锁页
-            Button("快速搜索…") { appDelegate.summonMainWindow(focusText: true) }
-                .keyboardShortcut("p", modifiers: [.command, .option])
-            Divider()
-            Button("锁定全部") {
-                // 既有 API 双保险（docs/15 §3.3.1）：factory 全局锁所有会话
-                // + model.lock() 清 UI 状态与剪贴板；均幂等，锁定态可用
-                model.factory.lockAll()
-                model.lock()
-            }
-            Divider()
-            Button("退出 Coffer") { NSApp.terminate(nil) }
-        }
-        .menuBarExtraStyle(.menu)
-    }
-
-    /// 菜单栏状态行文案（只读派生，不改 AppModel）。
-    private var menuStatusLine: String {
-        switch model.phase {
-        case .booting:
-            return "正在打开…"
-        case .noVault:
-            return "未创建密码库"
-        case .locked:
-            return model.vaultName.isEmpty ? "已锁定" : "\(model.vaultName)（已锁定）"
-        case .unlocked:
-            return model.vaultName.isEmpty ? "已解锁" : "\(model.vaultName)（已解锁）"
-        case .fatal:
-            return "启动失败"
-        }
-    }
-
-    /// 菜单栏图标随锁定相位切换（只读派生）。
-    private var menuBarIcon: String {
-        model.phase == .unlocked ? "lock.open.square" : "lock.square"
+        // 菜单栏常驻（FR-13.3）已迁往 Platform/StatusItemController.swift
+        // （v0.5.0 PL-6：NSStatusItem 取代 MenuBarExtra，菜单结构与语义一致）。
     }
 }
 
 /// 应用生命周期回调：全局快捷键注册（MC-1）+ 关窗驻留 + 主窗口呼出 +
-/// 退出前锁定全部会话。
+/// 菜单栏常驻（PL-6）+ 退出前锁定全部会话。
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// AppModel 在 App init 时注册自己，供退出回调与呼出焦点判定使用
+    /// AppModel 引用（strong）。供退出回调、呼出焦点判定与菜单栏状态行使用
     /// （只读 phase；呼出动作本身不经 AppModel——docs/15 §6.1 S3 切片）。
-    weak var model: AppModel?
+    ///
+    /// 必须 strong：AppDelegate 生命周期 = App 生命周期，AppModel 不反向持有
+    /// AppDelegate，无循环。原 weak 实现被 PL-6 复验打穿——App.init 里用未安装
+    /// 的 @StateObject 临时实例赋值，实例随即释放，weak 归 nil；接线改由
+    /// RootView.onAppear 的 attach(model:) 完成（幂等）。
+    private(set) var model: AppModel?
+
+    /// 菜单栏状态项已启动标志（attach 幂等：onAppear 可能重复触发，只启一次）。
+    private var statusItemStarted = false
 
     /// 全局快捷键监视（FR-4.5 HK-1；注册失败静默降级为仅菜单栏入口）。
     private let hotKeyMonitor = HotKeyMonitor()
+
+    /// 菜单栏常驻 NSStatusItem 控制器（v0.5.0 PL-6：NSStatusItem 取代
+    /// MenuBarExtra，macOS 26 MenuBarExtra 图标空白）。
+    private let statusItemController = StatusItemController()
+
+    /// 接线真实 AppModel 并启动菜单栏常驻（RootView.onAppear 调用；幂等）。
+    /// 首次调用同时启动 StatusItemController（PL-6：NSStatusItem 取代
+    /// MenuBarExtra）；后续重复 onAppear 仅刷新 model 引用，不重复启动。
+    func attach(model: AppModel) {
+        self.model = model
+        guard !statusItemStarted else { return }
+        statusItemStarted = true
+        statusItemController.start(model: model) { [weak self] focusText in
+            self?.summonMainWindow(focusText: focusText)
+        }
+    }
 
     /// 关窗驻留（v0.4 出口判据②，2026-09-29 裁定采纳）：关主窗口后 App
     /// 驻留菜单栏，退出只经菜单「退出」/⌘Q。自动锁定语义不受影响——会话
@@ -129,16 +112,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 全局快捷键注册：失败静默降级（不阻塞启动、不崩溃，菜单栏入口
-        // 仍可用），原因与 OSStatus 写诊断日志（HotKeyMonitor 内部处理）
+        // 仍可用），原因与 OSStatus 写诊断日志（HotKeyMonitor 内部处理）。
+        // 菜单栏常驻不在此启动：model 此刻尚未接线（@StateObject 未安装，
+        // App.init 访问会造临时实例），由 RootView.onAppear 的 attach(model:)
+        // 幂等启动（见 attach 与 body 注释）。
         hotKeyMonitor.start { [weak self] action in
             self?.handleHotKeyAction(action)
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // 先反注册热键（清理 Carbon 资源），再锁定全部会话触发 Rust 侧
-        // 密钥清零（docs/07 R-4）
+        // 先反注册热键（清理 Carbon 资源）、移除状态栏项，再锁定全部会话
+        // 触发 Rust 侧密钥清零（docs/07 R-4）
         hotKeyMonitor.stop()
+        statusItemController.stop()
         model?.lockAllForTermination()
     }
 
@@ -165,8 +152,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.orderOut(nil)
             return
         }
+        // 呼出场景自动 Touch ID 引导（用户 2026-10-03 裁定，docs/08 §7.6）：
+        // 窗口确从隐藏恢复（关窗驻留后重新呼出）才考虑——窗口本就可见
+        // （自动锁定后直接手点解锁）不自动弹。判定与防重入（同一次锁定态
+        // 只弹一次）在 AppModel.maybeAutoPromptBiometric。
+        let wasHidden = !window.isVisible
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        if wasHidden {
+            model?.maybeAutoPromptBiometric()
+        }
         guard focusText else { return }
         scheduleTextInputFocus(window: window)
     }

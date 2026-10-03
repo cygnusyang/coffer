@@ -17,8 +17,8 @@
 //!
 //! - [`schema`]：docs/03 §3.1 全部 11 张表的幂等 DDL + PRAGMA + 版本记录
 //! - [`tx`]：`with_tx` 事务框架（失败自动回滚，NFR-REL-01）
-//! - [`repo`]：九个仓库（items / fields / urls / tags / meta / totp / history /
-//!   audit / attachment）与 [`Repos`] 聚合
+//! - [`repo`]：十个仓库（items / fields / urls / tags / meta / totp / history /
+//!   audit / attachment / passkey）与 [`Repos`] 聚合
 //! - [`error`]：错误统一（C-6）——cf-store 不自持错误类型，全部用
 //!   [`cf_domain::CfError`]
 //! - [`ItemStore`]：仓库集合门面（持连接 + `SubKeys`），供 cf-session
@@ -58,6 +58,10 @@ pub use repo::item::{ItemListFilter, ItemRow, ItemWithTitle, ItemsRepo, COLUMN_I
 pub use repo::meta::{
     MetaRepo, KEY_ITEM_COUNT, KEY_LAST_BACKUP_AT, KEY_RECORD_COUNT, KEY_ROOT_MAC,
     KEY_SCHEMA_VERSION,
+};
+pub use repo::passkey::{
+    PasskeyMeta, PasskeyRecord, PasskeyRepo, COLUMN_PASSKEY_CREDENTIAL_ID,
+    COLUMN_PASSKEY_PRIVATE_KEY, COLUMN_PASSKEY_RP_ID, COSE_ALG_ES256,
 };
 pub use repo::totp::{
     TotpMeta, TotpRepo, TotpStore, COLUMN_TOTP_ACCOUNT, COLUMN_TOTP_ISSUER, COLUMN_TOTP_SECRET,

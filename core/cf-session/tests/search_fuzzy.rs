@@ -7,7 +7,8 @@
 //! 走真实建库 / 解锁 / 会话 API（docs/10 §0.4：临时目录、真实路径）。
 
 use std::path::PathBuf;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use cf_crypto::kdf::KdfParams;
 use cf_domain::category::ItemCategory;
@@ -23,16 +24,11 @@ fn fast_kdf() -> KdfParams {
 /// 主密码 P1。
 const P1: &str = "correct-horse-battery-staple-42!";
 
-/// 唯一临时目录（docs/10 §0.4：测试间零共享）。
+/// 唯一临时目录（docs/10 §0.4：测试间零共享；pid + 进程内原子计数器）。
 fn temp_base(tag: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    std::env::temp_dir().join(format!(
-        "cf-session-srh-{tag}-{}-{nanos}",
-        std::process::id()
-    ))
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("cf-session-srh-{tag}-{}-{seq}", std::process::id()))
 }
 
 /// 建库 + 解锁，返回会话。

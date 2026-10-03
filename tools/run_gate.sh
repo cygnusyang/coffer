@@ -47,5 +47,5 @@ echo "log    : $LOG"
 if [ $((R_TEST + R_CLIPPY + R_BUILD + R_SIGN)) -eq 0 ]; then
   echo "GATE: ✅ 全绿"; exit 0
 else
-  echo "GATE: ❌ 有失败（详见 $LOG）"; exit 1
+  echo "GATE: ❌ 有失败（详见 ${LOG} ）"; exit 1
 fi

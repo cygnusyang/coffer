@@ -8,7 +8,9 @@
 //   ④ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
 //   ⑤ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
-//   ⑥ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
+//   ⑥ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
+//      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
+//   ⑦ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
 //   - autoLockMinutes：0 = 从不（运行态；落盘为 -1，见 AppModel）
@@ -40,6 +42,7 @@ struct SettingsView: View {
                 backupReminderSection
                 securitySection
                 dataSection
+                mcpSection
                 doneSection
             }
             .formStyle(.grouped)
@@ -165,7 +168,15 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑥ 完成
+    // MARK: - ⑥ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
+
+    /// 独立的 McpSettingsSection（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
+    /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。
+    private var mcpSection: some View {
+        McpSettingsSection()
+    }
+
+    // MARK: - ⑦ 完成
 
     private var doneSection: some View {
         Section {

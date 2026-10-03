@@ -322,13 +322,13 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-9（🟡 判据修正待回填 docs/15）：socket 清点判据命令 `lsof -i -p <pid>` 缺 `-a`——OR 语义下「空输出断言」结构性不可满足
+## BUG-9（✅ 已核销：#19 发版回归 TC-G5 四步程序）：socket 清点判据命令 `lsof -i -p <pid>` 缺 `-a`——OR 语义下「空输出断言」结构性不可满足
 
 **登记日期**：2026-09-29
 **发现环境**：v0.4.0 发版回归（任务 #8）TC2-B 实跑，带阳性对照
 **分级**：S3（测试判据）/ P2 / 来源版本 docs/15 r1.1（0 socket 判据映射引入时） / 发现版本 v0.4.0（发版回归）
-**状态**：🟡 docs/16 已按正确口径落条（r1.6）；docs/15 §3.3.2 原文待 architect 同工单修正
-**核销记录**：docs/15 §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）
+**状态**：✅ 已核销（2026-09-30 实跑 / 2026-10-02 登记闭环，#19 发版回归 TC-G5 四步程序：① docs/15 内容锚实核通过——§3.3.2/§3.3.6 现行文本均为 `lsof -a -i -p` 修正口径；② 实跑零命中——关窗驻留态 Coffer 0 行；③ 阳性对照命中——python 本地监听 2 行；④ 登记闭环 + docs/16 TC2-B 声明闭环）
+**核销记录**：docs/15 §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）→ **核销闭环（#19 发版回归 TC-G5，2026-09-30 实跑 / 2026-10-02 登记）**：关窗驻留态 Coffer PID 47042 `lsof -a -i -p` = 0 行；阳性对照 python http.server PID 47244 = 2 行（TCP LISTEN 命中）；四步齐备核销
 **证据**：本轮实跑读数——`lsof -i -p <Coffer_pid>` 402 行、同命令对本地 python 监听进程 330 行（两读数均被系统级 socket 集主导，进程间不可区分）；改 `lsof -a -i -p` 后 Coffer 0 行、python 监听 2 行（LISTEN 条目命中）
 
 ### 现象（预期/实际 分行写）
@@ -352,14 +352,14 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-10（🟡 处置中：T8 已改 opt-in，根因待查）：真实库回环段无人值守执行挂起——`listVaults` 于容器路径 `opendir` 阻塞
+## BUG-10（🟡 处置基本完成：根因排查收口 + T8 timeout 加固，触发态待查）：真实库回环段无人值守执行挂起——`listVaults` 于容器路径 `opendir` 阻塞
 
 **登记日期**：2026-09-29
 **发现环境**：v0.4.0 发版回归（任务 #8），`run_clipboard_tier_tests.sh` 无人值守实跑（两次复现）
 **分级**：S3（测试基建）/ P2 / 来源版本 早期（T8 默认指向容器路径的行为先于 docs/14 §5 禁令） / 发现版本 v0.4.0（发版回归）
-**状态**：🟡 T8 改显式 opt-in（回归批内已改脚本）；挂起根因待查
-**核销记录**：脚本修订即视为处置完成（T8 转用户陪跑/真机清单）；根因查清后可另行关闭
-**证据**：`~/.claude/jobs/dc7a41d3/tmp/regress_clipboard2.log` / `regress_clipboard3.log`（二进制零输出挂起）；`/usr/bin/sample` 栈——`main → listVaults(baseDir:) → uniffi…list_vaults → std fs read_dir → opendir → open$NOCANCEL` 单点阻塞（2 秒采样 1550 样本全在该栈）；同路径 shell `ls` 实测正常（阳性对照：`~/.cargo/bin` 与容器路径均秒回）
+**状态**：🟡 处置基本完成（2026-10-03 v0.5.1 循环排查收口）：①根因排查三档结论（见下）；②T8 段 timeout 加固 `6cce031`；③复发协议留档。挂起为环境/状态相关瞬态，今日三路实证不复现；彻底关闭需触发态再现时实证（dtruss/fs_usage 需关 SIP）
+**核销记录**：加固 commit `6cce031`（T8 二进制外层套 `timeout`，默认 `T8_TIMEOUT_SECS=240`——实测正常全流程 81.5s 的 ~3 倍余量；超时 WARN+SKIP 不算 FAIL、真实失败退出码原样传播；含 `|| status=$?` 退出码捕获修正与三路用例验证；复跑 20/20 ALL GREEN；**加固后全路径（T8 opt-in 带容器路径）复跑 26/26 ALL GREEN、exit 0、WARN 0 行——timeout 包裹下无回归无误报**）。脚本修订 + 加固 = 处置完成口径；根因查清后可另行关闭
+**证据**：09-29 挂起 `~/.claude/jobs/dc7a41d3/tmp/regress_clipboard2.log` / `regress_clipboard3.log`；2026-10-03 排查 `/tmp/bug10_probe/`——原生产二进制 T8 opt-in 全流程 26/26 ALL GREEN、忠实 FFI 探针 listVaults 55ms、纯 Rust read_dir 556µs（同机 uptime 20 天未重启，同内核状态）；根因结论：**已实证不复现；高度可疑（未实证）= macOS TCC/沙盒对容器路径的按客户端首访介导在无人值守下阻塞**（shell `ls` 正常 vs 测试二进制阻塞 ⇒ 按客户端区分；open$NOCANCEL+CPU≈0 介导形态；容器路径每进程首访 ~36-55ms 佐证）；FileProvider/iCloud/libcurl 均排除。**复发协议四件套**：sample 栈 + 同路径 ls 对照 + 新编译无关二进制同路径对照 + 无人值守状态记录
 
 ### 现象（预期/实际 分行写）
 
@@ -381,6 +381,544 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 ### 复现与诊断
 
 无人值守跑 `./tools/run_clipboard_tier_tests.sh`（修订前版本，容器目录存在即自动进 T8）→ 二进制挂起于 listVaults；`/usr/bin/sample <pid> 2` 可见单点 `opendir` 栈；修订后同命令 → SKIP T8，其余段全绿。
+
+---
+
+## BUG-11（🟡 显式顺延，缓解已内置）：Bitwarden 真实导出的 passkey 私钥恒为 EncString 加密形态——当前导入路径对真实导出「passkey 全部不可导入」
+
+**登记日期**：2026-09-29
+**发现环境**：v0.5.0 降级版 #18 增量审查（dev-reviewer 第一轮，PK2 批 4268f23 声明范围核查）
+**分级**：严重级 S3（功能弱于宣称——导入通道存在但真实世界 passkey 导入面 ≈ 0，条目本体与密码导入不受影响）/ P2 / 来源版本 v0.5.0-PK2（`4268f23`） / 发现版本 v0.5.0（审查阶段）
+**状态**：🟡 未来待办（2026-10-04 用户裁定：不排入任何版本，转 backlog；缓解已内置：预检将此类行逐条列入 bad_passkeys/不可导入清单，用户可见、不静默丢弃；条目本体照常导入。**注意**：下方「发版文案约束」第 3 条继续生效——真实样本核对关闭前，README/docs/16 不得声称「Bitwarden passkey 导入可用」）
+**核销记录**：待回填（修复版本 + 测试名）
+
+### 现象（预期/实际 分行写）
+
+- 预期：FR-10.1 降级导入——Bitwarden JSON 导出中的 passkey（fido2Credentials）可导入为库内 passkey 行。
+- 实际：Bitwarden **真实未加密导出**中 passkey 私钥字段 `encryptedPrivateKey` 恒为 EncString 加密形态（attach key 不随导出解包）——PK2 解析器将其列入 bad_passkeys，passkey 行实际全部不可导入；仅合成/手工构造的明文 PKCS#8 JSON 可导入。调研 v2「Bitwarden JSON 导出含 passkey」的【文档】级结论对私钥字段不成立（导出含条目、不含可用私钥）。
+
+### 根因（已实证 / 待查）
+
+已实证：EncString 形态由 Bitwarden 客户端导出模型决定（非 Coffer 解析缺陷）。修复需支持 Bitwarden **密码保护导出格式**（EncString 经用户主密码解密）——独立特性面（KDF + AES 解密链），非小改。
+
+### 修复路径
+
+1. 支持 Bitwarden password-protected export 解密（用户输入导出密码 → 解出 fido2Credentials 私钥 → 归一化 PKCS#8）——目标版本待定（ADP/后续版本卡均可，量级 ≈ 1 周内）；
+2. 或接受现状并显式声明（UI 预检已逐条列出不可导入原因）；
+3. **发版文案约束（审查裁定，即时生效）**：TCB-1 真实样本核对关闭前，README/docs/16 判据不得声称「Bitwarden passkey 导入可用」。
+
+### 复现与诊断
+
+真实 Bitwarden 未加密导出（含 passkey 条目）→ `precheck_bitwarden_json` → fido2Credentials 行全部进 bad_passkeys（EncString 形态拒收）。
+
+---
+
+## BUG-12（✅ 已修复）：cf-store `attachment_repo` 测试基建并行时序 flake——`temp_vault_dir()` pid+纳秒命名可撞名
+
+**登记日期**：2026-09-29
+**发现环境**：v0.5.0 PW 批门禁（workspace 并行满载首跑 FAIL、复跑全绿；日志 `/tmp/coffer-gate-084749.log`（FAIL）/ `/tmp/coffer-gate-085126.log`（全绿）——dev-coder-ffi 发现上报，lead 按源码与日志复核证实）
+**分级**：严重级 S3（测试基建缺陷，BUG-4 同族——具门禁否决力：并行满载下偶发假红）/ P1 / 来源版本 v0.1（fixture 自入库即带病） / 发现版本 v0.5.0-PW 批门禁
+**状态**：✅ 已修复（2026-09-30，commit `97be64b`）
+**核销记录**：修复 = commit `97be64b`（`attachment_repo.rs` 的 `temp_vault_dir()` 改 pid + 进程内 `AtomicU64` 计数器，进程内唯一由构造保证）；复验 = `temp_vault_dir并行不撞名`（`core/cf-store/tests/attachment_repo.rs` 回归警戒：32 线程 × 16 次 = 512 次并行调用断言全异；commit 消息记录 cf-store 6 轮 + workspace 3 轮全绿）。**遗留跟进 → 已开批量工单 B-1（用户 2026-09-30 裁定）**：commit 同批全仓 `pid+nanos` 同型扫描命中 `cf-format/src/testutil.rs` 等 22 处，超出 `cf-store/tests/**` 闭集。lead 复扫定位全部命中点（`cf-format`/`cf-session`/`cf-ffi`/`cf-exporter` 的测试支持代码 + `cf-exporter/src/backup.rs` 生产临时文件命名），**批量工单 B-1** 已开并派发 dev-coder 逐处改为 BUG-12 同款「pid + 进程内原子计数器」模式；cf-mcp 同型命中（本版新增）随 MCP 收尾统一对齐（本条只核销 cf-store 闭集内 flake）。
+
+### 现象（预期/实际 分行写）
+
+- 预期：`cargo test --workspace --no-fail-fast` 并行满载下 `cf-store --test attachment_repo` 稳定全绿。
+- 实际：偶发 `密文跨附件搬运解密失败` / `content_mac篡改检出` 两用例 FAILED（8 passed / 2 failed），单跑即过、复跑全绿——非产品缺陷（本批代码不涉 cf-store）。
+
+### 根因（已实证）
+
+`attachment_repo.rs:29` `temp_vault_dir()` 用 `pid + SystemTime 纳秒` 命名临时目录：同进程（同 pid）内两个并行测试在同一时钟 tick 内调用即撞名；某用例收尾 `remove_dir_all` 拆掉另一用例的现场 → 密文/结构断言失败。macOS 时钟分辨率粗于测试步进使撞名窗口实际存在。
+
+### 修复路径
+
+目录名加入测试名（或进程内原子计数器）消除同 pid 撞名；同时检查全仓 `tests/` 内同型 `pid+nanos` 命名模式一并修复（BUG-4「测试基建门禁否决力」同族，修后按其复验口径连续多次全量门禁验证）。
+
+### 复现与诊断
+
+并行满载重复跑 `cargo test --workspace --no-fail-fast`（或 `./tools/run_gate.sh --skip-build`）至偶发 attachment_repo 2 用例失败 → 单跑该 target 即过 → 对照 `/tmp/coffer-gate-084749.log`。
+
+---
+
+## BUG-13（✅ 已修复，属 v0.5 工作线）：CI 在仓库根跑 cargo 必失败——根无 Cargo.toml（workspace 在 `core/`），且 `Run acceptance tests` 步骤的 `acceptance_v05` 测试是孤儿（在根 `tests/`，无 manifest 归属）
+
+**登记日期**：2026-09-30
+**发现环境**：G-G（mcp-e2e）新增 CI 冒烟步骤时发现既有 CI 在根执行 cargo 必败（根无 Cargo.toml），其 smoke 步骤实际走不到；lead 复核确认
+**分级**：严重级 S2（CI 对 main 分支形同虚设）/ 优先级 P2 / 来源版本 v0.5.0（CI 既定缺陷，非 MCP 引入）/ 发现版本 v2.0.0（G-G 集成）
+**状态**：✅ 已修复（2026-09-30 核销）
+**核销记录**：2026-09-30 核销——裁定=用户「删孤儿+撤专用步骤」（删除根 `tests/acceptance_v05.rs` + 移除 rust.yml「Run acceptance tests」「Upload acceptance test log」两步）；修复=commit `ebaa66d`（原 `4eaa393` 经 amend 并入本登记后改名落位，dev-coder-ffi；reviewer 2026-09-30 指出 `4eaa393` 为悬空对象，已改引）；复验=CI `Run tests` 步骤（working-directory: core）跑全量测试含 `v05_ffi_semantics`（v0.5 验收真身，8 用例全绿）。
+**证据**：`.github/workflows/rust.yml` 原 Build/Run tests/Run acceptance 均在仓库根跑 `cargo`（根无 Cargo.toml，workspace 在 `core/`）；`tests/acceptance_v05.rs` 位于根 `tests/` 且无根 manifest 归属。
+
+### 现象（预期/实际 分行写）
+
+- 预期：main 分支 push/PR 时 CI 执行构建、全量测试、v0.5 验收、MCP 冒烟。
+- 实际：既有三个 cargo 步骤在根执行必报 `could not find Cargo.toml`；`acceptance_v05` 无 manifest 归属，任何工作目录下 `cargo test --test acceptance_v05` 都找不到 target。
+
+### 处置（用户 2026-09-30 两轮裁定：先「加 working-directory: core」、后「删孤儿+撤专用步骤」）
+
+- Build / Run tests 已补 `working-directory: core`（随 `33a9e27` 后的 lead CI 修复落地）；
+- MCP smoke 步骤自包含（脚本内部 cd 到 `core/`）保持在根执行；
+- `Run acceptance tests` / `Upload acceptance test log` 两步已移除、根 `tests/acceptance_v05.rs` 已删除（随 `ebaa66d`）——用户 2026-09-30 再裁定「删孤儿+撤专用步骤」；v0.5 验收真身 = `core/cf-ffi/tests/v05_ffi_semantics.rs`，由 `Run tests`（working-directory: core）覆盖，无需专用步骤。
+- 注：workspace `cargo test` 含 MCP D-1 基线的 23 条预期红灯（v2.x 存根），CI 全绿需等 v2.0.0 MCP 存根补齐。
+
+---
+
+## M-1（🟡 登记待后续处理）：run_with_secret 目标子进程 stderr 整体吞掉 + 子进程继承 OP_SESSION（blast-radius 未文档化）
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C（mcp-op）审查发现，非阻断项（docs/20 §9.1 G-F 登记）
+**分级**：严重级 S3（dev-reviewer 判 MEDIUM——子进程 stderr 对调用方不可见，且 OP_SESSION 落入目标子进程 env 的 blast-radius 未明示）/ 优先级 P2 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（G-C 审查）
+**状态**：🟡 登记待后续处理（MVP 保持现状可接受，需架构裁定透传/日志化取舍）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` run_with_secret（`cmd.stdout(Stdio::null())` + `output()` 捕获 stderr 仅作 op 层分类，不向调用方透出）；`op_command()` 设 `OP_SESSION`，经 `op run` spawn 的目标子进程继承之
+
+### 现象（预期/实际 分行写）
+
+- 预期：目标子进程 stderr 可被 Agent/用户排查；OP_SESSION 的暴露面（blast-radius）在文档中明示。
+- 实际：run_with_secret 丢弃子进程 stdout（协议帧纪律，§3.1），stderr 仅在 op 层错误分类时被消费、其余整体吞掉——子进程输出对调用方不可见；目标子进程经 `op run` 继承含 `OP_SESSION` 的完整环境（若子进程打印 env 或经 `/proc` 泄露，会话 token 暴露半径含任意被注入 secret 的进程）。
+
+### 根因（已实证）
+
+stderr 捕获后归一为稳定错误文案（剥离敏感值，§3.5-4 日志禁值纪律），**无向调用方透传子进程 stderr 的通道**；`OP_SESSION` 继承是进程环境语义（非缺陷，属设计），但 blast-radius 未文档化。
+
+### 修复路径（候选，未拍板）
+
+1. 文档明示 blast-radius（docs/20 §3.5/§4.4 补一句：`op run` 启动的目标子进程继承 `OP_SESSION`，须视为凭据暴露半径的一部分）；
+2. 子进程 stderr 透传/日志化取舍：stdout 恒为协议帧不可让渡，stderr 可经日志文件（`COFFER_MCP_LOG`）落盘或加开关透传——泄露面 vs 可诊断性，需架构裁定；
+3. 不动作（MVP 保持吞掉）亦可接受——登记留档。
+
+### 复现与诊断
+
+fake op fixture + 子进程写 stderr（`sh -c 'echo oops >&2; exit 1'`）→ run_with_secret 返回 `Ok(1)`，stderr 对调用方不可见；目标子进程内 `printenv | grep OP_SESSION` 可见 token 已注入。
+
+---
+
+## M-4（🟡 登记待协商）：run_with_secret 缺省 env_name 取整个 secret 串——`op://` 引用必 7005
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查发现，跨层联动（G-B `tools.rs` 缺省 vs G-C `op.rs` 校验），非阻断项（docs/20 §9.1 G-F 登记）
+**分级**：严重级 S3（dev-reviewer 判 MEDIUM——带 `op://` 引用且省略 env_name 的 run_with_secret 调用恒 7005，功能面缺口）/ 优先级 P2 / 来源版本 v2.0.0（MCP，G-B/G-C 契约） / 发现版本 v2.0.0（G-C 审查）
+**状态**：🟡 登记待协商（属 G-B/G-C 契约联动，需协商确定 env_name 缺省语义；改 API 签名触 D-1 冻结契约需用户确认）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/tools.rs:218` `optional_string(args, "env_name").unwrap_or_else(|| secret.clone())`（缺省取整个 secret 串）；`core/cf-mcp/src/provider/op.rs` `is_valid_env_name`（`[A-Za-z_][A-Za-z0-9_]*`）——`op://vault/item/field` 含 `/`/`:` 必不匹配 → 7005
+
+### 现象（预期/实际 分行写）
+
+- 预期：缺省 env_name 时注入到合理的默认变量名（或明确要求必填）。
+- 实际：tools.rs 缺省取**整个 secret 串**作 env_name——对 `op://vault/item/field` 引用恒 7005（`InvalidParameter`）。run_with_secret 的 inputSchema 标注「default: the secret name」，对 `op://` 形态不成立。
+
+### 根因（已实证）
+
+G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用的「名字」理解与 G-C 的 env 名合法性校验不一致——`op://vault/item/field` 整串不是合法环境变量名。跨层契约缺口。
+
+### 修复路径（候选，需协商）
+
+1. env_name 改必填（inputSchema `required` 增 env_name）——API 签名变更，触 D-1 冻结契约，需用户确认；
+2. 缺省取 `op://` 引用末段（field/item 名）作默认变量名——需定义「从引用提取默认变量名」规则（field 歧义，见 L-3）；
+3. 文档明示：`op://` 形态必须显式给 env_name（最小改动）。
+
+### 复现与诊断
+
+`run_with_secret {secret: "op://Personal/OPENAI_API_KEY/password", cmd: "env"}`（省略 env_name）→ 7005 InvalidParameter。
+
+---
+
+## L-1（🟡 LOW）：临时 dotenv 非 unix 分支无 0600 权限约束
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（G-C 审查）
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write`——`#[cfg(unix)]` 分支 `OpenOptionsExt::mode(0o600)`，`#[cfg(not(unix))]` 分支 `File::create` 无权限约束
+
+`TempDotenv` 内容仅 `ENV_NAME=op://…` 引用（无明文值，§4.4），cf-mcp 目标平台 macOS（unix）故当前无实际暴露；非 unix 分支权限缺口登记留档。修复 = 非 unix 分支补平台权限 API，或随不支持的平台一并拒编译。
+
+---
+
+## L-2（🟡 LOW）：临时 dotenv `create_new` 撞名直接 7006，无重试
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write` 用 `create_new(true)`——文件已存在则直接 `Internal`（7006）
+
+路径含 pid + 进程内原子计数器（`temp_env_path`），跨进程由 pid 隔离、进程内由计数器保证，实际碰撞面 ≈ 0；无重试可接受，登记留档。
+
+---
+
+## L-3（🟡 LOW）：`op://vault/item/field` 末段恒判为 field——item 名含 `/` 的无 field 引用无法表达
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理（与 M-4 缺省 env_name 规则联动）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `parse_secret_ref`——`op://vault/item/field` 剥除末段作 field；item 名本身含 `/`（op 允许）且无 field 时歧义（`op://vault/a/b` 被解析为 item="a"、field="b"）
+
+当前 `get_secret_metadata` 用其取 item，歧义会解析错 item；op 实测语义（末段 = field）与「item 名含 /」冲突面小，登记留档。必要时引入显式 field designation 语法。
+
+---
+
+## L-4（✅ 已接受）：`CofferStoreProvider` 骨架方法 `unimplemented!` 占位——v2.x 建模前调用即 panic
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：✅ 已接受（设计内占位：feature `coffer-store` 默认关闭不进入普通构建；docs/20 §4.5 明示本版仅骨架，v2.x 存储模型落定后替换）
+**核销记录**：随 v2.x CofferStoreProvider 落地核销
+**证据**：`core/cf-mcp/src/provider/coffer.rs` 各 `SecretProvider` 方法 `unimplemented!("CofferStoreProvider 骨架：v2.x Secret 实体未建模")`
+
+编译通过、调用即 panic 属显式占位（docs/20 §4.5 明示），非隐藏缺陷。已接受，不设修复工单。
+
+---
+
+## BUG-14（✅ 已修复）：run_with_secret 接受裸 item id——被 op run 当字面量注入子进程 env（静默注入错误"值"）
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（H-1，HIGH——合并前应修复）
+**分级**：严重级 S2（主要功能受损——run 面静默注入错误"值"至子进程 env，行为不可预期且极难排查）/ 优先级 P1 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（MCP 终审）
+**状态**：✅ 已修复（2026-09-30）
+**核销记录**：修复 = commit `6585218`；复验 = `run_with_secret_rejects_bare_item_id`（core/cf-mcp/tests/provider_op_run.rs，裸 id → 7005）+ cf-mcp 全测试 / clippy `-D warnings` 绿
+**证据**：`core/cf-mcp/src/provider/op.rs` 原 `validate_run_spec`（裸 id 经 `is_valid_secret_ref` 放行）→ `TempDotenv::write` 写 `ENV_NAME=<裸 id>` → `op run` 不解析、原样 export 字面量
+
+### 现象（预期/实际 分行写）
+
+- 预期：run_with_secret 的临时 dotenv 只承载 `op://` 引用（docs/20 §4.2），子进程 env 拿到的是 op 解析出的真实 secret 值。
+- 实际：secret_ref 传裸 item id（如 `fixture-item-api-key`，`is_valid_secret_ref` 明确放行）时，dotenv 写 `MY_KEY=fixture-item-api-key`，`op run` 当字面量透传——子进程 env 注入的是 **id 字符串本身，不是 secret 明文**；子进程以为注入了真凭据，静默产生错误行为。`provider_op_run.rs` 全部用例只用 `op://` 引用，此路径无测试覆盖。
+
+### 根因（已实证）
+
+run 面把「secret_ref 非明文」校验与元数据面共用 `is_valid_secret_ref`（`op://` 引用与裸 id 两种形态皆可），未约束 run 必须为 `op://` 引用形态——与 docs/20 §4.2「dotenv 内容为 `ENV_NAME=op://vault/item/field`」协议不一致。
+
+### 修复路径（2026-09-30 已落地）
+
+1. `validate_run_spec` 要求 secret_ref 必须 `op://` 前缀 + 结构校验（vault/item 非空、无控制字符）；裸 id / 明文 → 7005（与 §4.2 run 协议对齐）。
+2. 错误消息去掉入参回显（§3.4 载荷禁值纪律，联动 M-5）。
+3. `get_secret_metadata` 补同口径边界校验（联动 L-6）；元数据面仍兼容裸 id（list 返回的稳定标识）。
+
+### 复现与诊断
+
+`run_with_secret {secret_ref: "fixture-item-api-key", cmd: "env"}` → 修复前子进程 env 得字面量 id；修复后 7005 InvalidParameter。
+
+---
+
+## M-5（✅ 已修复）：7xxx 错误载荷回显外部输入——违反 §3.4「载荷不得含 Secret 值」不变量
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 M-1，MEDIUM）
+**分级**：S3（安全纪律——错误帧不经 SecretRedactor，回显可污染 Agent 侧显示/日志）/ P2 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：✅ 已修复（2026-09-30）
+**核销记录**：修复 = commit `6585218`（validate_run_spec / get_secret_metadata 错误消息全部去入参回显，改通用文案）；复验 = provider_op_* 错误码用例全绿（测试不断言消息文本，仅码值）
+**证据**：`core/cf-mcp/src/provider/op.rs` 原 `InvalidParameter(format!("…{:?}", spec.secret_ref))` 等三处回显；`lib.rs::error_frame` 不经 SecretRedactor（仅 `content[0].text` 过 redact）
+
+### 现象（预期/实际 分行写）
+
+- 预期：§3.4「7xxx 消息载荷不得含 Secret 值」；§3.5-2 redact 只覆盖 `content[0].text`，错误帧天然绕开。
+- 实际：Agent 误把明文值当作 secret 入参（§3.3 要防的场景）时，InvalidParameter 载荷原样回显该串且未经脱敏——值虽来自发起方，但进入 Agent 侧错误显示/日志，污染协议面。
+
+### 根因（已实证）
+
+错误归一消息直接 `format!` 拼接外部入参；错误帧不经 Redactor。
+
+### 修复路径（2026-09-30 已落地）
+
+全部错误消息改通用文案（`secret_ref must be an op:// reference` / `not a valid op:// reference` / `env_name is not a valid environment variable name` / `cwd is not a directory`），不携带任意外部串。
+
+### 复现与诊断
+
+`run_with_secret {secret_ref: "<含敏感串的明文>", …}` → 修复前 7005 载荷回显该串；修复后通用文案。
+
+---
+
+## M-6（🟡 登记待后续）：op/子进程 stderr 共缓冲——子进程日志「时间戳形态 + 命中关键字」可被误判为 op 层失败
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 M-2，MEDIUM）
+**分级**：S3（错误归类误判——目标子进程非零退出可能被归一为 7003/7004/7006，违背「退出码原样返回」契约）/ P2 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理（MVP 接受启发式边界；`is_op_level_error` 注释已明示残余边界）
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/provider/op.rs` `is_op_level_error` / `classify_run_failure`——`op run` 把 op 与子进程 stderr 汇入同一缓冲；`op_error_detection_requires_timestamp_shape` 只覆盖「无时间戳形态」反例
+
+### 现象（预期/实际 分行写）
+
+- 预期：子进程非零退出码原样返回（mcp_acceptance 契约），不误报 Err。
+- 实际：子进程日志若**恰好**为 `[ERROR] YYYY/MM/DD HH:MM:SS …` 时间戳形态（不少 CLI 工具正是此格式）**且**含 `could not find` / `could not resolve` 等关键字，`is_op_level_error` 返回 true → 归一为 7003/7004/7006，违背退出码原样返回契约。
+
+### 根因（已实证）
+
+`op run` 无原生开关分隔 op 与子进程 stderr；时间戳形态是唯一的近似判据，对「恰好同形态」的子进程日志存在误伤。
+
+### 修复路径（候选）
+
+1. 补该形态用例并文档明示边界（已部分落地：注释）；2. 后续若引入 wrapper 层可分隔两路 stderr；3. 不动作（MVP 接受，子进程输出不受控属 §3.5-3 诚实边界延伸）。
+
+### 复现与诊断
+
+`sh -c 'echo "[ERROR] 2026/09/30 15:45:51 could not find X" >&2; exit 7'` 经 op run → 当前被归类为 7003 而非返回 7。
+
+---
+
+## M-7（🟡 登记待后续）：`redact_known_values`（精确已知值脱敏）是生产死代码——更强的纵深防御面未接线
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 M-3，MEDIUM）
+**分级**：S3（安全纪律——精确值替换强于前缀指纹 `sk-`，却仅被测试引用）/ P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/redact.rs:89-98` 仅 `protocol_redact.rs:90-100` 引用；生产路径 `tools.rs:153` 的 `redact()` 只做前缀指纹（`sk-` + 阈值 8）
+
+### 现象（预期/实际 分行写）
+
+- 预期：docs/20 §3.5-2 输出 Redactor 管道（AS-11）为纵深防御；精确已知值替换是更强防御面。
+- 实际：`redact_known_values` 从未被生产路径调用——已知值清单未接线到 `McpServer`。
+
+### 修复路径（候选）
+
+1. 接入 `McpServer`（持有 provider 已知值清单）；2. 明确标注为未来 `reveal_for_broker()` 配套；3. 删除避免误导。注意方法内 `replace` 对多个已知值存在级联/子串误伤隐患，接入前需定义语义。
+
+### 复现与诊断
+
+grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` 有测试、生产无接线。
+
+---
+
+## L-5（🟡 LOW）：tools.rs `tracing::warn!` 无 subscriber——审计失败告警恒被丢弃
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-1，LOW）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/tools.rs:242` `tracing::warn!(error = ?e, secret = %secret, "audit record failed")`——仓库从未初始化 tracing subscriber
+
+当前 NoopAudit 不会失败（不可达），但 D-3 JSONL 落地后审计失败将**静默**（违反「错误不静默吞」纪律）。修复 = 改用 `cli::Logger` 或初始化 subscriber / 文档化。
+
+---
+
+## L-6（✅ 已修复）：get_secret_metadata 无边界校验——畸形 op:// 引用落到 op item get 按 7003 归类
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-2，LOW）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：✅ 已修复（2026-09-30）
+**核销记录**：修复 = commit `6585218`（get_secret_metadata 前置 `is_valid_secret_ref`，畸形引用入界即拒 7005）；复验 = `get_secret_metadata_rejects_malformed_op_reference` / `get_secret_metadata_rejects_plaintext_value`（provider_op_list.rs）
+**证据**：`core/cf-mcp/src/provider/op.rs` 原 `get_secret_metadata` 不调用 `is_valid_secret_ref`；`\n` 校验也只在 run 面
+
+### 现象（预期/实际 分行写）
+
+- 预期：get_secret_metadata 与 run 面同口径边界校验（畸形引用 7005）。
+- 实际：`op://Personal`（无 item）等畸形引用落到 `op item get "op://Personal"` → 7003，与 run 面 7005 不一致。
+
+### 修复路径（2026-09-30 已落地）
+
+入口补 `is_valid_secret_ref`（空 / 换行 / 控制字符 / 明文值 → 7005）；元数据面仍兼容裸 item id（list 返回的稳定标识）。
+
+### 复现与诊断
+
+`get_secret_metadata("op://Personal")` → 修复前 7003；修复后 7005。
+
+---
+
+## L-7（🟡 LOW）：parse_frame 对单行长度无上限——恶意/失控客户端可发超大单行造成内存压力
+
+**登记日期**：2026-09-30
+**发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-3，LOW）
+**分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
+**状态**：🟡 登记待后续处理
+**核销记录**：待回填
+**证据**：`core/cf-mcp/src/protocol.rs:89-103` `parse_frame` 对单行长度无上限
+
+本地 stdio 传输，影响面小；可选按行长度截断（超限报 7005/连接拒绝）。
+
+---
+
+## PL-1（✅ 已修复：adda134 哨兵单测合入）：passkey 域 L-2 哨兵测试缺失——「改 reason 文案分类不变」无独立变换断言
+
+**登记日期**：2026-09-30
+**发现环境**：#18 增量审查补审（dev-reviewer 专项 L-2 落点核验，结论：结构已落地、哨兵测试待补）
+**分级**：S3（回归警戒缺口——调用侧若改回文本分类且当前文案未变，现有测试全部测不出）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已修复（dev-coder-passkey-import，commit `adda134`，2026-09-30）
+**核销记录**：commit `adda134` 补哨兵 `同分类异reason文案分类不变`（lib 单测，mapping.rs `#[cfg(test)] mod tests`，+72 行）——经分类唯一入口 `map_passkey_row` 构造同 kind 异 reason 输入（keyCurve p384/p521 → 均 KeyCurveMismatch、keyAlgorithm eddsa/rsa → 均 KeyAlgorithmMismatch、缺 rpId → MissingRpId），`assert_ne!(reason)` 自检文案确实不同 + 非空转实证（临时改名称特异分类 → 哨兵 FAIL，已还原）；门禁 `cargo test -p cf-importer` = lib 77 + 集成 49 = 126 passed / 0 failed；`cargo clippy -p cf-importer -- -D warnings` 干净
+**证据**：`core/cf-importer/src/bitwarden/mapping.rs:636-641`（`非es256族按枚举判定`）、`core/cf-importer/tests/bitwarden_import.rs:204-260`、`core/cf-ffi/tests/v05_ffi_semantics.rs` 三处均只固定枚举 kind 与列表归属，无一独立变换 reason 文案再断言分类不变。
+
+### 现象（预期/实际 分行写）
+
+- 预期：L-2 纪律（docs/17 r2.4 §9.1 / docs/19 §7）「按数据不按文案」有回归哨兵——同分类数据、不同 reason 文案 → 分类不变。
+- 实际：哨兵测试按字面不存在。现有三处最近测试只锁枚举 kind 与列表归属（`BwPasskeyFailureKind::is_non_es256()` 枚举→bool、fixture→kind、跨 FFI 计数），无「同数据两条不同 reason → kind/is_non_es256 一致」的独立变换断言；调用侧若改回文本分类且当前文案未变，三处全测不出来。
+
+### 根因（已实证 / 待查）
+
+分类唯一调用点 `mapping.rs:290` `failure.kind.is_non_es256()`，全仓 grep 零 reason 文本参与分类——**结构要求已满足**；缺口纯在测试层（无哨兵）。编号说明：docs/19 原以「L-2」引用（passkey 域），与 MCP 域 L 系列（L-1~L-7）撞号，本次以 `PL-` 前缀再登记。
+
+### 修复路径
+
+补哨兵单测：经 `map_passkey_row`（或预检路径）构造同 kind、异 reason 的两输入（如 keyCurve `p384` 与 `p521` 均 → KeyCurveMismatch、reason 文案不同），断言 kind 一致 + is_non_es256 反映枚举。或由 lead 将 docs/19 验收口径改为与现有功能断言对齐（本条目按补测处理）。
+
+### 复现与诊断
+
+N/A（测试缺口，非运行期缺陷）。
+
+---
+
+## PL-2（✅ 已接受，不改）：FFI From 映射的 `try_from().unwrap_or(哨兵值)` 饱和转换
+
+**登记日期**：2026-09-30
+**发现环境**：#18 增量审查补审（dev-reviewer 其 LOW 建议 3）
+**分级**：S4 / P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已接受（遵循仓库既有 saturating convention，L-3/L-4 同款先例）
+**核销记录**：接受不改——`types.rs:1426` 已文档化「usize → u32 饱和转换」既有纪律（`u32::try_from().unwrap_or(u32::MAX)` 同款）；新映射（algorithm / sign_count 等）同构。库内契约下不可达（algorithm 恒 -7 ES256、sign_count 非负，上游由 `BwPasskeyFailureKind` 枚举强制）。
+**证据**：`core/cf-ffi/src/types.rs`（`i32::try_from(...).unwrap_or(i32::MIN)` 等）
+
+---
+
+## PL-3（✅ 已修复：b459f6e）：菜单栏「数据」菜单缺「导入 Bitwarden (.json)…」入口——Bitwarden 向导仅工具栏可达
+
+**登记日期**：2026-10-02
+**发现环境**：#19 发版回归真机陪跑 TC-M5-8（用户实跑发现：菜单栏「数据」菜单无 Bitwarden 项）
+**分级**：S3（功能可达但主入口缺失/双入口不一致）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已修复（commit `b459f6e`，2026-10-02：菜单栏「数据」补「导入 Bitwarden (.json)…」，与工具栏三格式并列；构建验证 `tools/build_macos_app.sh` 退出 0）
+**核销记录**：修复 = commit `b459f6e`（2026-10-02：`CofferApp.swift` `CommandMenu("数据")` 在 1PUX 项后补 Bitwarden 项，复用 `model.showImportBitwarden` 旗标，同 CSV/1PUX 锁态禁用纪律）；复验 = `tools/build_macos_app.sh` 退出 0（swiftc 编译 41 源文件零警告，产物 `macos/build/Coffer.app`）
+**证据**：`macos/Coffer/CofferApp.swift:44-60` CommandMenu("数据") 仅 导入 CSV… / 导入 1Password (.1pux)… / 导出… / 设置…；`macos/Coffer/Views/MainView.swift:148-155` 工具栏「导入」菜单三项齐全（CSV / 1PUX / Bitwarden）。a25acf4 接线只覆盖工具栏菜单。
+
+### 现象（预期/实际 分行写）
+
+- 预期：两个导入入口三格式并列——菜单栏「数据」（⌘I 主路径，v0.3 起即导入主入口）与工具栏「导入」菜单均含 Bitwarden (.json)…。
+- 实际：菜单栏「数据」菜单无 Bitwarden 项；用户（TC-M5-8 实跑）在菜单栏找不到 Bitwarden 导入，向导仅可经工具栏「导入」菜单触达。
+
+### 根因（已实证 / 待查）
+
+已实证：a25acf4 接线范围只含 MainView 工具栏菜单 + AppModel 旗标 + sheet；CofferApp.swift 的 CommandMenu("数据") 未同步。两入口共用 AppModel.showImportBitwarden 旗标，sheet 本身无缺。
+
+### 修复路径
+
+CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }.disabled(model.phase != .unlocked)`（同 CSV/1PUX 锁定态禁用纪律；import_bitwarden_json 有 1001 门禁）。
+
+### 复现与诊断
+
+菜单栏「数据」→ 仅两项导入；工具栏「导入」→ 三项。二进制字符串实核含 "Bitwarden (.json)"（工具栏项在包内），排除构建遗漏。
+
+---
+
+## PL-4（✅ 已核销）：Touch ID 解锁链路弹两次指纹框——「启动到拿到密码一次授权」被破坏
+
+**登记日期**：2026-10-02
+**发现环境**：#19 发版回归真机陪跑（用户实跑报告，AskUserQuestion 确认：第①次=启动后触控 ID 指纹框，第②次=又弹一次指纹框）
+**分级**：S3（主解锁路径体验缺陷，非阻断，可降级主密码）/ P1 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已核销（2026-10-04 用户真机复验全部通过，见核销记录末尾复验确认；代码修复 commit `e04070b` + `4f05139`）
+**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）+ commit `4f05139`（2026-10-03：itemExists 探测查询加 LAContext.interactionNotAllowed=true 禁弹 UI——macOS 26 上元数据查询亦触发完整 ACL 认证 UI，消启动 ~1s 自动弹窗；`kSecUseAuthenticationUIFail` 自 macOS 11 弃用改用本字段；返回语义改三态：存在 / 存在但认证锁定返 true / 不存在）。**取消语义漂移已接受 → 本轮彻底修（reviewer HIGH 处置选 B，2026-10-03）**：改前取消 = App 侧预认证报 4001，改后取消 = 钥匙串认证报 4002（文案「凭据已失效」对单纯取消有误导）——顺延项「`errSecUserCanceled` 独立呈现」本轮核销关闭：`BiometricKeychainError` 增 `.userCanceled`（`mapStatus` 拆分 `errSecUserCanceled`，不再归入 `authFailed`）；`ErrorPresenter` 对 `.userCanceled` 返回空串不弹（`FfiErrorAlert` 空串不弹双保险）；`unlockWithTouchID` catch 改按错误类型分派——取消完全静默（手动/自动一致）、失效（itemNotFound/authFailed）呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码）、其余照常呈现；`isAutoPrompt` 参数移除，静默语义改由错误类型驱动（docs/08 §7.3/§7.6 + KeychainTests 7c1 哨兵同步；build 退出 0，TouchIDStatus 19/19 + AutoPrompt 30/30 回归无损）。复验 = 待真机（#19 回归同法：启动零弹窗 + 点击解锁单弹窗 + 取消静默无 4002 + 指纹变更后按钮消失）。KeychainTests 哨兵（9a/9b/9c + 7c1）编译零警告，运行时断言需签名宿主执行（沙盒/裸二进制 -34018），**以用户真机解锁复验为准**。**真机复验确认（lead 落档 2026-10-04）**：①启动单弹/正常解锁——2026-10-03 用户确认「可以了 正常了」（4f05139 后）；②取消静默——2026-10-04 用户确认「取消自动引导指纹框 没有问题」（自动弹出的指纹框点取消 → 无错误框、按钮可再点，userCanceled 静默路径真机走通）；③持久失效 4002 → stale 路径 2026-10-03 真机事件已走通（诊断日志 -25293→4002 + 主密码恢复）。「指纹变更后按钮消失」子项未单独演练，由 ②③ 的 stale 终判机制与真机 4002 事件覆盖。
+**证据**：代码面——`AppModel.swift:580` 仅一次 evaluatePolicy；`BiometricKeychain.swift:139` 读取绑定同一 LAContext（kSecUseAuthenticationContext，设计为不二次弹窗）；`LockView.swift` 无 onAppear 自动触发；启动路径 `openSession`/`lock()` 均跑 `refreshTouchIDStatus` → `itemExists`（AppModel.swift:351/509）碰 biometryCurrentSet 项。日志面——沙盒 diag log 2026-10-02 **零记录**（两次认证均无失败落盘，与「第二次弹窗来自 Keychain 读取自行认证且成功」假说相容）；2026-09-28 曾有 `itemExists 失败 status=-25293`（errSecAuthFailed）记录。
+
+### 现象（预期/实际 分行写）
+
+- 预期：Touch ID 解锁全程只弹 1 次指纹框（docs/08 §3.2「读取时复用认证结果、不再二次弹窗」；用户裁定基线：启动到拿到密码一次授权）。
+- 实际：用户报告弹了 2 次指纹框才完成解锁。
+
+### 根因（已实证 / 待查）
+
+**已实证（2026-10-02 真机 log stream 取证，/tmp/coffer-pl4-repro.log）**：`kSecUseAuthenticationContext` 复用在本机 macOS 26 上未生效。时序：①用户点按钮 → App 主动 `evaluatePolicy`（rid 30292）→ 指纹匹配 ✓（22:16:40.37）；②200ms 后 `BiometricKeychain.read` 的 `SecItemCopyMatching`（BiometricKeychain.swift:139 绑定同一已认证 context）→ securityd **不认该认证结果**，自行发起 1008 策略认证（传感器监听，无 UI）；③securityd 经 Coffer 进程内 LAContext 驱动第二次 UI 认证（rid 30295，22:16:51.5 弹出）→ 匹配后 **`externalizedContextWithReply` rid:30296**（22:16:53.35，认证结果外化交钥匙串）→ 读取成功。两次认证均无失败落盘（diag log 10-02 零记录），与「第二次为钥匙串重认证且成功」完全相容。排除项：代码无启动自动触发（unlockWithTouchID 仅 LockView 按钮/CrossCopySheet 两个调用点）；itemExists 元数据查询未触发弹窗；首次弹窗于启动后约 1 秒出现系用户点击快，非自动弹。
+
+**补证（2026-10-03 真机 log stream 取证，新构建已无 App 侧预认证）**：仍有两次弹窗，且第一次是**自动弹**——①**启动路径**：`refreshTouchIDStatus → itemExists`（AppModel.swift:351/509，openSession/lock 均调用）对挂 biometryCurrentSet ACL 的 DP 钥匙串项做元数据查询（SecItemCopyMatching 不带 kSecReturnData），macOS 26 亦触发完整 ACL 认证 UI（rid 30354，进程启动 +1.3s 弹出，无任何用户点击）；授权结果被 App 丢弃（纯探测）。docs/08 Q-2「itemExists 不触发弹窗」结论作废——09-28 的 `itemExists 失败 status=-25293` 静默形态与今日弹 UI 系同一机制两态。②**点击解锁**：`read` 钥匙串自有单次认证 = 正常唯一一次（rid 30360，externalize/import 机械可证）——e04070b 这半已修好。**结论：PL-4 = 双源**（启动自动弹：itemExists 元数据查询；点击双弹：预认证 + 读取再认证），e04070b 消后者，`4f05139` 消前者。
+
+### 修复路径
+
+删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案，实际落地因 macOS 11 弃用改用 LAContext.localizedReason）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码（错误码映射未变；**取消语义漂移已接受**——改前取消经 App 侧预认证报 4001，改后经钥匙串认证报 4002）；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/08 §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
+
+补（2026-10-03，commit `4f05139`，双源①）：`itemExists` 探测查询加全新 LAContext + interactionNotAllowed=true（`kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` 自 macOS 11 弃用，改用本字段），需认证时立即返回 `errSecInteractionNotAllowed` / `errSecAuthFailed`，不打扰用户；返回语义改三态——success → true、authFailed/interactionNotAllowed → true（项物理存在但认证锁定，可读性终判以 read 失败为准，docs/08 §4.1；TouchIDStatus 保持 .enabled，LockView 按钮不消失，点按后由 read 弹单次认证）、itemNotFound → false。
+
+### 复现与诊断
+
+启动 App（Touch ID 已启用态）→ 锁定页点「使用 Touch ID 解锁」→ 第 1 次指纹框授权通过后，仍出现第 2 次指纹框。
+
+---
+
+## PL-5（🟡 顺延 v0.5.1）：CrossCopySheet 目标库 Touch ID 解锁同型双弹窗——PL-4 修复后 read 带全新 context 稳定双弹
+
+**登记日期**：2026-10-02
+**发现环境**：v0.5.0 代码审查（dev-reviewer 复查 PL-4 时发现 CrossCopySheet.swift:300 亦涉 K_bio 读取，存在与 PL-4 同型的「预认证 + Keychain 读」双弹窗）
+**分级**：S3（目标库解锁体验缺陷，可降级主密码）/ P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已核销（v0.5.1 修复路径①落地，2026-10-04 用户真机确认）
+**核销记录**：修复 commit `1943fd0`（fix v0.5.1——删除 CrossCopySheet 预认证 `authenticateWithBiometrics`，仅保留 Keychain 自有单次认证，与 AppModel 解锁同型；错误呈现统一走 `TouchIDUnlockPresentation.resolve`，TouchIDError 拆分至 `Support/TouchIDError.swift`）。复验 = 用户真机确认跨库复制目标库解锁步骤指纹框**只弹 1 次**。回归测试全绿：run_touchid_error_presentation_tests.sh 9/9（新增）+ run_touchid_status_tests.sh 19/19 + run_auto_prompt_biometric_tests.sh 30/30 + run_touchid_auth_failure_tests.sh 6/6（新增）。
+**证据**：代码面——`CrossCopySheet.swift:297` 保留 `authenticateWithBiometrics(context:)` 预认证（PL-4 只删了 AppModel 侧，此调用点当时判为纯 FFI 确认未动）；`:300` `BiometricKeychain.read` 现带全新 LAContext（PL-4 签名变更后的最小适配点）。
+
+### 现象（预期/实际 分行写）
+
+- 预期：CrossCopySheet 目标库 Touch ID 确认全程只弹 1 次指纹框。
+- 实际：PL-4 修复后（`read` 改带全新 LAContext），此路径在 macOS 26 上**稳定双弹**——预认证弹 1 次，Keychain 读取自行认证再弹 1 次；旧系统复用同 context 时原本单弹，修复后由单变双（回归劣化）。
+
+### 根因（已实证 / 待查）
+
+同型于 PL-4：`CrossCopySheet.swift:297` 先 `evaluatePolicy` 预认证，随后 `:300` 的 `SecItemCopyMatching` 因 PL-4 签名变更绑定**全新** LAContext，macOS 26 securityd 不认预认证结果，自行发起第二次 UI 认证。PL-4 修复只覆盖 AppModel 解锁路径，未覆盖 CrossCopySheet 目标库读取路径（当时判「不涉 Keychain 读取」有误，dev-reviewer 已纠正）。
+
+### 修复路径
+
+顺延 v0.5.1，同 PL-4 做法二选一：①删除 CrossCopySheet 侧预认证，仅保留 Keychain 自有单次认证（与 AppModel 解锁一致）；②顺序对调——先 `read` 弹唯一一次认证框，成功后凭读取结果确认目标库，删除 `evaluatePolicy` 预认证。
+
+### 复现与诊断
+
+待真机复验（登记时推断未实跑：CrossCopySheet 目标库解锁在 macOS 26 上应稳定双弹；v0.5.1 修复后回归同法核验弹窗次数 = 1）。
+
+---
+
+## PL-6（✅ 已修复：134f9b5→da24a5d 两轮 + 接线返工 8045557）：macOS 26 MenuBarExtra 图标空白 + AppDelegate 接线临时实例陷阱
+
+**登记日期**：2026-10-03
+**发现环境**：v0.5.0 发版回归真机陪跑（用户报告「系统的状态栏上需要一个常驻的图标」，菜单栏上看不到 Coffer 图标）
+**分级**：S2（FR-13.3 菜单栏常驻入口不可见）/ P2 / 来源版本 v0.4 引入（v0.5.0 回归发现）
+**状态**：✅ 已核销
+**核销记录**：134f9b5（NSStatusItem 取代 MenuBarExtra）+ 8045557（接线返工：strong model + RootView.onAppear attach）+ da24a5d（图标返工：经典挂锁轮廓）；复验方式 = 用户真机目视（图标可见、菜单弹出、样式「先这样」接受）
+**证据**：AX 取证（旧版状态项存在但像素级前景像素=0）；返工前 AX 查无 menu bar 2；启动日志 SwiftUI 运行时警告「Accessing StateObject's object without being installed on a View」
+
+### 现象（预期/实际 分行写）
+
+- 预期：菜单栏常驻图标（FR-13.3），锁定/解锁两态可辨，点击弹出五项菜单。
+- 实际：两段式故障——①旧 MenuBarExtra 在 macOS 26 上图标渲染空白（AX 存在、像素=0）；②首轮 NSStatusItem 修复后状态项根本未创建（AX 查无 menu bar 2）。
+
+### 根因（已实证）
+
+①macOS 26 SwiftUI MenuBarExtra(.menu) 图标不渲染（同屏其他 App 的 AppKit NSStatusItem 全部正常，本机实证）；②首轮修复踩中既有接线陷阱：`CofferMainApp.init()` 访问未安装的 `@StateObject` 产生临时 AppModel 实例（运行时警告实证），赋给 weak `appDelegate.model` 随即释放归 nil，`applicationDidFinishLaunching` 的 `if let model` 静默跳过 start()——同陷阱连坐 applicationWillTerminate 的 lockAllForTermination 与呼出自动引导。
+
+### 修复路径
+
+AppKit NSStatusItem + 程序化 template 图标（StatusItemController.swift）；接线改 strong model + RootView.onAppear 幂等 attach；图标返工为经典挂锁轮廓（用户验收）。AX 对 Coffer 进程在 macOS 26 上存在系统性失明（三个构建均复现，app 本体前台菜单完好时仍报 0），真机验证以用户目视+像素扫描为准。
+
+### 复现与诊断
+
+复现：macOS 26 上运行 v0.5.0 构建观察菜单栏。诊断：AX 枚举 + screencapture 像素扫描（注意 System Events 失明干扰，需以像素/目视为准）。
+
+---
+
+## PL-7（✅ 已修复：eca2186）：瞬时 errSecAuthFailed 被判持久凭据失效——长时间空闲自动锁定后 Touch ID 按钮消失只剩主密码
+
+**登记日期**：2026-10-03
+**发现环境**：v0.5.0 发版回归真机陪跑（用户报告「很久没有操作后 touch id 失效了 只能输入密码 这是不应该的」）
+**分级**：S2（生物识别解锁通道被瞬时故障整段关闭，降级路径仅剩主密码；恢复依赖主密码解锁）/ P2 / 来源版本 v0.5.0 / 发现版本 v0.5.0
+**状态**：✅ 已核销
+**核销记录**：修复 commit eca2186（瞬时/持久双分道 + TouchIDError.transientUnavailable Swift-only 文案 + TouchIDAuthFailure.disposition 纯函数）；复验测试 run_touchid_auth_failure_tests.sh 6/6、run_touchid_status_tests.sh 19/19、run_auto_prompt_biometric_tests.sh 30/30；用户真机复验通过（2026-10-03「可以了 正常了」）
+**证据**：诊断日志 `~/Library/Containers/app.coffer.Coffer/Data/Library/Logs/Coffer-diag.log`：
+```
+2026-10-03 10:11:00 +0000 Keychain.read 失败 status=-25293（01a0e023…）
+2026-10-03 10:11:00 +0000 错误 4002：生物识别凭据已失效（可能因指纹变更），请使用主密码解锁后在设置中重新启用 Touch ID。
+```
+
+### 现象（预期/实际 分行写）
+
+- 预期：长时间空闲自动锁定后回来，Touch ID 解锁按钮可用（或因传感器未就绪/系统锁定暂时不可用时给出「稍后重试」类提示，按钮保留）。
+- 实际：自动锁定后 Touch ID「失效」，LockView 只剩主密码输入；伴随 4002 弹窗（「可能因指纹变更」文案在瞬时场景下误导）。
+
+### 根因（已实证 / 待查）
+
+AppModel.unlockWithTouchID 的 catch 把 `.authFailed`（read 返回 errSecAuthFailed -25293）一律按持久凭据失效处置：`touchIDStatus = .stale` 终判（docs/08 §4.1）+ 4002 → LockView 按钮 `touchIDStatus == .enabled` 条件不满足，整段隐藏直至主密码解锁后 openSession 刷新。但 -25293 成因有两类：持久（指纹集变更 biometryCurrentSet 失效，现行处置正确）与瞬时（系统锁屏/刚唤醒传感器未就绪/系统级 biometry lockout——本日多次无人应答的启动自动引导弹框超时可能累计失败计数触发）。瞬时被误判为持久。
+
+### 修复路径
+
+catch 的 `.authFailed` 分支按失败瞬间 `BiometricKeychain.isBiometricsAvailable()` 双分道：false → 瞬时（不置 stale，按钮保留，静态温和文案「暂时不可用请稍后重试」，DiagLog 记判定依据）；true → 维持 4002 + .stale 终判。.itemNotFound 分支不动。判定抽纯函数补单测；docs/08 §7.3 补两行。
+
+### 复现与诊断
+
+复现：长时间空闲（自动锁定触发 + 系统锁屏/传感器暂不可用）→ 回来点 Touch ID（或呼出自动引导）→ read 返回 -25293 → 4002 + 按钮消失。诊断：诊断日志 `Keychain.read 失败 status=-25293` + 4002 记录对时。核验：修复后同场景按钮保留且提示为「暂时不可用」文案；持久场景（删指纹重录）仍走 4002+stale。
 
 ---
 

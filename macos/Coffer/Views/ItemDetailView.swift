@@ -18,6 +18,9 @@ struct ItemDetailView: View {
     /// 历史版本数（出现时轻量拉一次；失败显示 0 并静默——入口数字
     /// 非关键信息，不弹窗打扰）。
     @State private var historyCount = 0
+    /// 条目 Passkey 列表（FR-10.2，docs/17 §4.4 PK3）：只含元数据
+    /// （FfiPasskeyMeta 无私钥字段），删除后重载。
+    @State private var passkeys: [FfiPasskeyMeta] = []
 
     private var isTrashed: Bool {
         if case .trashed = details.state { return true }
@@ -37,6 +40,9 @@ struct ItemDetailView: View {
                 if !details.urls.isEmpty { urlSection }
                 if !details.tags.isEmpty { tagSection }
                 if let totp = details.totp { totpSection(totp) }
+                // Passkey 区（FR-10.2）：仅非空展示——降级版 passkey 只来自
+                // 导入，无 passkey 的条目不渲染空区噪音（TCB-4 无创建入口）。
+                if !passkeys.isEmpty { passkeySection }
                 if !isTrashed { historySection }
                 metaSection
                 // MA-2 挂载点约定（docs/15 §7 风险 8）：非 Document 条目的
@@ -65,6 +71,7 @@ struct ItemDetailView: View {
         }
         .task {
             refreshHistoryCount()
+            refreshPasskeys()
         }
         .onChange(of: showHistory) {
             // sheet 关闭后刷新计数（回滚会写入新版本，列表 +1）。
@@ -203,6 +210,37 @@ struct ItemDetailView: View {
     private func refreshHistoryCount() {
         guard let session = model.session else { return }
         historyCount = (try? session.listHistory(itemId: details.uuid).count) ?? 0
+    }
+
+    // MARK: - Passkey（FR-10.2 / 10.5，docs/17 §4.4 PK3）
+
+    /// Passkey 查看区：列表行由 PasskeyRowView 渲染（rpId/用户名/创建时间/
+    /// 签名计数器/凭据 ID），删除走确认对话框（FR-10.5 固定文案）。私钥
+    /// 红线的落地 = FFI 结构上无私有键字段（docs/18 TCB-2），UI 只展示元数据。
+    private var passkeySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Passkey").font(.headline)
+                Spacer()
+                Text("\(passkeys.count) 个").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(passkeys, id: \.passkeyUuid) { meta in
+                PasskeyRowView(passkey: meta) {
+                    refreshPasskeys()
+                }
+            }
+        }
+    }
+
+    /// Passkey 元数据拉取：listPasskeys 毫秒级（同 refreshHistoryCount
+    /// 纪律直接主线程调用）；失败经 handleFfiError 分流（1001 切锁定界面）。
+    private func refreshPasskeys() {
+        guard let session = model.session else { return }
+        do {
+            passkeys = try session.listPasskeys(itemId: details.uuid)
+        } catch {
+            model.handleFfiError(error)
+        }
     }
 
     private var metaSection: some View {

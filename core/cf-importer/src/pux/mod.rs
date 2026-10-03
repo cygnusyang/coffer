@@ -7,7 +7,10 @@
 //! - [`parser`]：ZIP 容器（`export.attributes` / `export.data` / `files/`）；
 //! - [`mapping`]：categoryUuid 映射表 + 类型化 value 分派 →
 //!   [`PuxItemModel`]；
-//! - [`precheck`]：预检报告（FR-7.4~7.7 冻结字段）+ 可导入模型清单。
+//! - [`passkey`]：passkey 字段检测（docs/17 §4.2 PK2——桌面导出恒空
+//!   快速路径，检出仅计数告警不落库）；
+//! - [`precheck`]：预检报告（FR-7.4~7.7 冻结字段 + `passkey_count`
+//!   增量）+ 可导入模型清单。
 //!
 //! ## 落库事务语义（设计裁决）
 //!
@@ -28,6 +31,7 @@
 pub mod mapping;
 pub mod model;
 pub mod parser;
+pub mod passkey;
 pub mod precheck;
 
 use std::path::Path;
@@ -40,6 +44,7 @@ use cf_store::{AttachmentRepo, ItemRow, ItemStore, Repos};
 
 pub use mapping::{PuxFieldModel, PuxItemModel};
 pub use model::PuxFileRef;
+pub use passkey::{passkey_refs, PuxPasskeyRef};
 pub use precheck::{NotImportedItem, PuxAnalysis, PuxPrecheckReport};
 
 /// 1PUX 导入结果（FR-7.7 导入结果页素材）。
@@ -252,8 +257,14 @@ fn write_pux_item(
     }
 
     // 附件：密文文件事务内先落盘（AttachmentRepo 先文件后行纪律）
-    if let (Some(file), Some(entry)) = (&model.file, model.zip_entry.as_deref()) {
-        let content = archive.read_entry_content(entry)?;
+    let file = model.file.as_ref();
+    let entry_name_opt = match (file, model.zip_entry.as_deref()) {
+        (Some(_), Some(entry)) => Some(entry.to_owned()),
+        (Some(f), None) => archive.resolve_file_entry(f),
+        _ => None,
+    };
+    if let (Some(file), Some(entry_name)) = (file, entry_name_opt) {
+        let content = archive.read_entry_content(&entry_name)?;
         repos
             .attachments
             .add(&item_uuid, file.filename.as_bytes(), &content, vault_dir)?;

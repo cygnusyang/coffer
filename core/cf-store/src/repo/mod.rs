@@ -1,6 +1,6 @@
 //! 仓库层（`docs/07-macOS纵切设计.md` §2.1）。
 //!
-//! 九个仓库文件 + [`Repos`] 聚合：
+//! 十个仓库文件 + [`Repos`] 聚合：
 //!
 //! | 文件 | 职责 |
 //! | --- | --- |
@@ -13,6 +13,7 @@
 //! | [`history`] | history 表（FR-2.9 条目历史版本，快照 = ItemSnapshot CBOR + `hist_key` AEAD） |
 //! | [`audit`] | audit_local 表（FR-12.6 本地审计日志，明文事件 + 非敏感 detail） |
 //! | [`attachment`] | attachments 表 + `attachments/` 旁路文件（FR-9.1/9.2 附件存储内核，docs/09 v0.3.0） |
+//! | [`passkey`] | passkeys 表（FR-10.2/10.5 内核，docs/17 §4.1 PK1：PKCS#8 私钥 + rp_id_hmac 索引） |
 //!
 //! ## 加密密钥与 AAD 映射（全仓库层统一约定，O-1 后版本）
 //!
@@ -30,6 +31,8 @@
 //! | `tags.enc_name` | `field_key` | `tags` | 标签行 uuid |
 //! | `totp.enc_secret` | `field_key` | `totp` | **totp 行** uuid（O-1 统一：原钉条目 uuid，与 enc_issuer/enc_account 语义对齐） |
 //! | `totp.enc_issuer` / `enc_account` | `field_key` | `totp` | totp 行 uuid |
+//! | `passkeys.enc_*`（全部加密列） | `field_key` | `passkeys` | passkey 行 uuid |
+//! | `passkeys.rp_id_hmac` | `passkey_idx_key`（HMAC，非 AEAD） | — | — |
 
 pub mod attachment;
 pub mod audit;
@@ -37,6 +40,7 @@ pub mod field;
 pub mod history;
 pub mod item;
 pub mod meta;
+pub mod passkey;
 pub mod tag;
 pub mod totp;
 pub mod url;
@@ -67,6 +71,8 @@ pub struct Repos<'a> {
     pub audit: audit::AuditRepo<'a>,
     /// attachments 表仓库（FR-9.1/9.2，docs/09 v0.3.0）。
     pub attachments: attachment::AttachmentRepo<'a>,
+    /// passkeys 表仓库（FR-10.2/10.5，docs/17 §4.1 PK1）。
+    pub passkeys: passkey::PasskeyRepo<'a>,
 }
 
 impl<'a> Repos<'a> {
@@ -86,6 +92,7 @@ impl<'a> Repos<'a> {
                 &subkeys.file_key,
                 &subkeys.attach_mac_key,
             ),
+            passkeys: passkey::PasskeyRepo::new(conn, subkeys),
         }
     }
 }

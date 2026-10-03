@@ -1186,6 +1186,15 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func import1pux(path: String) throws  -> FfiPuxImportResult
     
     /**
+     * Bitwarden JSON 导入（FR-10.1；锁定态 → 码 1001，门禁在 Rust 侧）。
+     *
+     * 每条目单事务，任一条目失败回滚该条、已成功条目保留；坏 passkey
+     * 行预检显式列出、导入跳过该行不丢条目（TCB-7）。返回值内的报告
+     * 与本次导入同管线产出（FR-7.4 所见即所得）。
+     */
+    func importBitwardenJson(path: String) throws  -> FfiBwImportResult
+    
+    /**
      * CSV 导入（单事务 all-or-nothing；锁定态 → 码 1001）。
      */
     func importCsv(path: String) throws  -> FfiCsvImportResult
@@ -1224,6 +1233,16 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func listItems(filter: FfiItemFilter?) throws  -> [FfiItemSummary]
     
     /**
+     * 列出条目的全部 Passkey 元数据（FR-10.2，created_at 升序）。
+     *
+     * 门禁：需解锁态（1001）；条目不存在 → 1011。元数据**无私钥字段**
+     * （FR-10.2 红线，docs/17 §4.3——结构上不存在私钥展示面）。损坏行
+     * 两级口径：密文短于 nonce+tag → 1005 Corrupted；AEAD 校验不过 →
+     * 1008 CryptoError（docs/17 r2.2 §5）。
+     */
+    func listPasskeys(itemId: String) throws  -> [FfiPasskeyMeta]
+    
+    /**
      * 锁定：立即清零内存密钥（幂等）。
      */
     func lock() 
@@ -1240,6 +1259,15 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 密钥材料，供导入向导在解锁前展示报告。
      */
     func precheck1pux(path: String) throws  -> FfiPuxPrecheckReport
+    
+    /**
+     * Bitwarden JSON 预检（FR-10.1）：纯文件只读，可反复调用。
+     *
+     * **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
+     * 不接触密钥材料，供导入向导在解锁前展示报告。非 JSON / 缺 items /
+     * 加密导出 → 2001 / 2002（docs/17 §5）。
+     */
+    func precheckBitwardenJson(path: String) throws  -> FfiBwPrecheckReport
     
     /**
      * CSV 预检（只读、可反复调用；1Password 9 列，docs/07 §3）。
@@ -1264,6 +1292,13 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 删除附件（FR-9.2）：先删行后删文件；行不存在 → 1012。锁定 → 1001。
      */
     func removeAttachment(attachmentUuid: String) throws 
+    
+    /**
+     * 删除 Passkey（FR-10.5）：纯 DB 行删除，无文件面副作用。
+     *
+     * 行不存在 → 1011；锁定 → 1001（docs/17 §5）。
+     */
+    func removePasskey(passkeyUuid: String) throws 
     
     /**
      * 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
@@ -1748,6 +1783,23 @@ open func import1pux(path: String)throws  -> FfiPuxImportResult  {
 }
     
     /**
+     * Bitwarden JSON 导入（FR-10.1；锁定态 → 码 1001，门禁在 Rust 侧）。
+     *
+     * 每条目单事务，任一条目失败回滚该条、已成功条目保留；坏 passkey
+     * 行预检显式列出、导入跳过该行不丢条目（TCB-7）。返回值内的报告
+     * 与本次导入同管线产出（FR-7.4 所见即所得）。
+     */
+open func importBitwardenJson(path: String)throws  -> FfiBwImportResult  {
+    return try  FfiConverterTypeFfiBwImportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_import_bitwarden_json(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * CSV 导入（单事务 all-or-nothing；锁定态 → 码 1001）。
      */
 open func importCsv(path: String)throws  -> FfiCsvImportResult  {
@@ -1832,6 +1884,24 @@ open func listItems(filter: FfiItemFilter?)throws  -> [FfiItemSummary]  {
 }
     
     /**
+     * 列出条目的全部 Passkey 元数据（FR-10.2，created_at 升序）。
+     *
+     * 门禁：需解锁态（1001）；条目不存在 → 1011。元数据**无私钥字段**
+     * （FR-10.2 红线，docs/17 §4.3——结构上不存在私钥展示面）。损坏行
+     * 两级口径：密文短于 nonce+tag → 1005 Corrupted；AEAD 校验不过 →
+     * 1008 CryptoError（docs/17 r2.2 §5）。
+     */
+open func listPasskeys(itemId: String)throws  -> [FfiPasskeyMeta]  {
+    return try  FfiConverterSequenceTypeFfiPasskeyMeta.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_list_passkeys(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(itemId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 锁定：立即清零内存密钥（幂等）。
      */
 open func lock()  {try! rustCall() {
@@ -1865,6 +1935,23 @@ open func precheck1pux(path: String)throws  -> FfiPuxPrecheckReport  {
     return try  FfiConverterTypeFfiPuxPrecheckReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_precheck_1pux(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Bitwarden JSON 预检（FR-10.1）：纯文件只读，可反复调用。
+     *
+     * **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
+     * 不接触密钥材料，供导入向导在解锁前展示报告。非 JSON / 缺 items /
+     * 加密导出 → 2001 / 2002（docs/17 §5）。
+     */
+open func precheckBitwardenJson(path: String)throws  -> FfiBwPrecheckReport  {
+    return try  FfiConverterTypeFfiBwPrecheckReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_precheck_bitwarden_json(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),uniffiCallStatus
     )
@@ -1923,6 +2010,20 @@ open func removeAttachment(attachmentUuid: String)throws   {try rustCallWithErro
     uniffi_cf_ffi_fn_method_vaultsession_remove_attachment(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(attachmentUuid),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 删除 Passkey（FR-10.5）：纯 DB 行删除，无文件面副作用。
+     *
+     * 行不存在 → 1011；锁定 → 1001（docs/17 §5）。
+     */
+open func removePasskey(passkeyUuid: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_remove_passkey(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(passkeyUuid),uniffiCallStatus
     )
 }
 }
@@ -2581,6 +2682,339 @@ public func FfiConverterTypeFfiBackupVerifyReport_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeFfiBackupVerifyReport_lower(_ value: FfiBackupVerifyReport) -> RustBuffer {
     return FfiConverterTypeFfiBackupVerifyReport.lower(value)
+}
+
+
+/**
+ * Bitwarden 导入结果（FR-10.1，与 1PUX 的 [`FfiPuxImportResult`] 同体裁：
+ * 结果页计数 + 与本次导入同管线产出的预检报告）。
+ */
+public struct FfiBwImportResult: Equatable, Hashable {
+    /**
+     * 实际导入（新建）的条目数。
+     */
+    public var importedItems: UInt32
+    /**
+     * 预检报告（FR-7.4 所见即所得同纪律）。
+     */
+    public var report: FfiBwPrecheckReport
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 实际导入（新建）的条目数。
+         */importedItems: UInt32, 
+        /**
+         * 预检报告（FR-7.4 所见即所得同纪律）。
+         */report: FfiBwPrecheckReport) {
+        self.importedItems = importedItems
+        self.report = report
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiBwImportResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiBwImportResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBwImportResult {
+        return
+            try FfiBwImportResult(
+                importedItems: FfiConverterUInt32.read(from: &buf), 
+                report: FfiConverterTypeFfiBwPrecheckReport.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiBwImportResult, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.importedItems, into: &buf)
+        FfiConverterTypeFfiBwPrecheckReport.write(value.report, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwImportResult_lift(_ buf: RustBuffer) throws -> FfiBwImportResult {
+    return try FfiConverterTypeFfiBwImportResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwImportResult_lower(_ value: FfiBwImportResult) -> RustBuffer {
+    return FfiConverterTypeFfiBwImportResult.lower(value)
+}
+
+
+/**
+ * 一条不可导入的 passkey 行（预检显式列出，FR-7.8 不静默丢弃）。
+ */
+public struct FfiBwPasskeyFailure: Equatable, Hashable {
+    /**
+     * 所属条目 ID（Bitwarden 原始 id）。
+     */
+    public var itemId: String
+    /**
+     * 所属条目标题。
+     */
+    public var itemTitle: String
+    /**
+     * 行在该条目 `fido2Credentials[]` 中的下标（0 起；usize 不跨 FFI → u32）。
+     */
+    public var index: UInt32
+    /**
+     * 结构化分类（程序判定唯一依据，L-2）。
+     */
+    public var kind: FfiBwPasskeyFailureKind
+    /**
+     * 拒绝原因（人类可读，面向导入结果页；**不作分类依据**）。
+     */
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 所属条目 ID（Bitwarden 原始 id）。
+         */itemId: String, 
+        /**
+         * 所属条目标题。
+         */itemTitle: String, 
+        /**
+         * 行在该条目 `fido2Credentials[]` 中的下标（0 起；usize 不跨 FFI → u32）。
+         */index: UInt32, 
+        /**
+         * 结构化分类（程序判定唯一依据，L-2）。
+         */kind: FfiBwPasskeyFailureKind, 
+        /**
+         * 拒绝原因（人类可读，面向导入结果页；**不作分类依据**）。
+         */reason: String) {
+        self.itemId = itemId
+        self.itemTitle = itemTitle
+        self.index = index
+        self.kind = kind
+        self.reason = reason
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiBwPasskeyFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiBwPasskeyFailure: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBwPasskeyFailure {
+        return
+            try FfiBwPasskeyFailure(
+                itemId: FfiConverterString.read(from: &buf), 
+                itemTitle: FfiConverterString.read(from: &buf), 
+                index: FfiConverterUInt32.read(from: &buf), 
+                kind: FfiConverterTypeFfiBwPasskeyFailureKind.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiBwPasskeyFailure, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.itemId, into: &buf)
+        FfiConverterString.write(value.itemTitle, into: &buf)
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterTypeFfiBwPasskeyFailureKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwPasskeyFailure_lift(_ buf: RustBuffer) throws -> FfiBwPasskeyFailure {
+    return try FfiConverterTypeFfiBwPasskeyFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwPasskeyFailure_lower(_ value: FfiBwPasskeyFailure) -> RustBuffer {
+    return FfiConverterTypeFfiBwPasskeyFailure.lower(value)
+}
+
+
+/**
+ * Bitwarden 预检报告（docs/17 §4.2 冻结语义镜像）。
+ *
+ * 与 1PUX 预检同纪律：**报告与导入同一条管线产出**（FR-7.4 所见即所
+ * 得），坏 passkey 行逐条列出、不静默丢弃（TCB-7）。
+ */
+public struct FfiBwPrecheckReport: Equatable, Hashable {
+    /**
+     * 条目总数（含回收站 / 降级条目）。
+     */
+    public var totalItems: UInt32
+    /**
+     * 可导入条目数（降级计入导入成功，E-4 同纪律）。
+     */
+    public var importableItems: UInt32
+    /**
+     * passkey 行总数（含不可导入行）。
+     */
+    public var passkeyTotal: UInt32
+    /**
+     * 可导入 passkey 行数。
+     */
+    public var passkeyImportable: UInt32
+    /**
+     * 含 ≥ 1 条可导入 passkey 的条目数。
+     */
+    public var passkeyItemCount: UInt32
+    /**
+     * **「含密码且含 passkey 的条目数」**（FR-10.6 可测试证据，D-6）。
+     */
+    public var itemsWithPasswordAndPasskey: UInt32
+    /**
+     * 非 ES256 passkey 行显式列表（TCB-7）。
+     */
+    public var nonEs256: [FfiBwPasskeyFailure]
+    /**
+     * 其余坏 passkey 行逐条清单（EncString / 坏 credentialId / 缺 rpId /
+     * 负 counter；导入跳过该行不丢条目）。
+     */
+    public var badPasskeys: [FfiBwPasskeyFailure]
+    /**
+     * 回收站条目数（deletedDate 非空）。
+     */
+    public var trashedCount: UInt32
+    /**
+     * 丢弃的密码历史条目数（FR-2.9 语义不同构，1PUX 同裁决）。
+     */
+    public var passwordHistoryDropped: UInt32
+    /**
+     * 告警文本（未知 fido2 键、降级、坏 totp、Linked 字段跳过等）。
+     */
+    public var warnings: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目总数（含回收站 / 降级条目）。
+         */totalItems: UInt32, 
+        /**
+         * 可导入条目数（降级计入导入成功，E-4 同纪律）。
+         */importableItems: UInt32, 
+        /**
+         * passkey 行总数（含不可导入行）。
+         */passkeyTotal: UInt32, 
+        /**
+         * 可导入 passkey 行数。
+         */passkeyImportable: UInt32, 
+        /**
+         * 含 ≥ 1 条可导入 passkey 的条目数。
+         */passkeyItemCount: UInt32, 
+        /**
+         * **「含密码且含 passkey 的条目数」**（FR-10.6 可测试证据，D-6）。
+         */itemsWithPasswordAndPasskey: UInt32, 
+        /**
+         * 非 ES256 passkey 行显式列表（TCB-7）。
+         */nonEs256: [FfiBwPasskeyFailure], 
+        /**
+         * 其余坏 passkey 行逐条清单（EncString / 坏 credentialId / 缺 rpId /
+         * 负 counter；导入跳过该行不丢条目）。
+         */badPasskeys: [FfiBwPasskeyFailure], 
+        /**
+         * 回收站条目数（deletedDate 非空）。
+         */trashedCount: UInt32, 
+        /**
+         * 丢弃的密码历史条目数（FR-2.9 语义不同构，1PUX 同裁决）。
+         */passwordHistoryDropped: UInt32, 
+        /**
+         * 告警文本（未知 fido2 键、降级、坏 totp、Linked 字段跳过等）。
+         */warnings: [String]) {
+        self.totalItems = totalItems
+        self.importableItems = importableItems
+        self.passkeyTotal = passkeyTotal
+        self.passkeyImportable = passkeyImportable
+        self.passkeyItemCount = passkeyItemCount
+        self.itemsWithPasswordAndPasskey = itemsWithPasswordAndPasskey
+        self.nonEs256 = nonEs256
+        self.badPasskeys = badPasskeys
+        self.trashedCount = trashedCount
+        self.passwordHistoryDropped = passwordHistoryDropped
+        self.warnings = warnings
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiBwPrecheckReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiBwPrecheckReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBwPrecheckReport {
+        return
+            try FfiBwPrecheckReport(
+                totalItems: FfiConverterUInt32.read(from: &buf), 
+                importableItems: FfiConverterUInt32.read(from: &buf), 
+                passkeyTotal: FfiConverterUInt32.read(from: &buf), 
+                passkeyImportable: FfiConverterUInt32.read(from: &buf), 
+                passkeyItemCount: FfiConverterUInt32.read(from: &buf), 
+                itemsWithPasswordAndPasskey: FfiConverterUInt32.read(from: &buf), 
+                nonEs256: FfiConverterSequenceTypeFfiBwPasskeyFailure.read(from: &buf), 
+                badPasskeys: FfiConverterSequenceTypeFfiBwPasskeyFailure.read(from: &buf), 
+                trashedCount: FfiConverterUInt32.read(from: &buf), 
+                passwordHistoryDropped: FfiConverterUInt32.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiBwPrecheckReport, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.totalItems, into: &buf)
+        FfiConverterUInt32.write(value.importableItems, into: &buf)
+        FfiConverterUInt32.write(value.passkeyTotal, into: &buf)
+        FfiConverterUInt32.write(value.passkeyImportable, into: &buf)
+        FfiConverterUInt32.write(value.passkeyItemCount, into: &buf)
+        FfiConverterUInt32.write(value.itemsWithPasswordAndPasskey, into: &buf)
+        FfiConverterSequenceTypeFfiBwPasskeyFailure.write(value.nonEs256, into: &buf)
+        FfiConverterSequenceTypeFfiBwPasskeyFailure.write(value.badPasskeys, into: &buf)
+        FfiConverterUInt32.write(value.trashedCount, into: &buf)
+        FfiConverterUInt32.write(value.passwordHistoryDropped, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwPrecheckReport_lift(_ buf: RustBuffer) throws -> FfiBwPrecheckReport {
+    return try FfiConverterTypeFfiBwPrecheckReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwPrecheckReport_lower(_ value: FfiBwPrecheckReport) -> RustBuffer {
+    return FfiConverterTypeFfiBwPrecheckReport.lower(value)
 }
 
 
@@ -4470,6 +4904,159 @@ public func FfiConverterTypeFfiNotImportedItem_lower(_ value: FfiNotImportedItem
 
 
 /**
+ * Passkey 元数据（docs/17 §4.1 冻结契约镜像）。
+ *
+ * **无私钥字段**——FR-10.2 红线：`enc_private_key` / `enc_user_handle`
+ * 不出现在任何查询返回中，展示面结构上就不存在私钥材料。时间戳恒
+ * `i64` Unix 秒；`usize` 不跨 FFI → 计数收窄为 `u32`。
+ */
+public struct FfiPasskeyMeta: Equatable, Hashable {
+    /**
+     * passkey 行 UUID（主键）。
+     */
+    public var passkeyUuid: String
+    /**
+     * 所属条目 UUID。
+     */
+    public var itemUuid: String
+    /**
+     * Relying Party ID（解密后明文，如 `github.com`）。
+     */
+    public var rpId: String
+    /**
+     * RP 显示名（可选，解密后）。
+     */
+    public var rpName: String?
+    /**
+     * 用户名（可选，解密后）。
+     */
+    public var userName: String?
+    /**
+     * 凭据 ID（base64；非密钥，FR-10.2 允许展示）。
+     */
+    public var credentialIdB64: String
+    /**
+     * COSE alg 编号（-7 = ES256）。
+     */
+    public var algorithm: Int32
+    /**
+     * 签名计数器。
+     */
+    public var signCount: UInt32
+    /**
+     * 创建时间（Unix 秒）。
+     */
+    public var createdAt: Int64
+    /**
+     * 最后使用时间（Unix 秒；本版无断言路径，恒 `None`）。
+     */
+    public var lastUsedAt: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * passkey 行 UUID（主键）。
+         */passkeyUuid: String, 
+        /**
+         * 所属条目 UUID。
+         */itemUuid: String, 
+        /**
+         * Relying Party ID（解密后明文，如 `github.com`）。
+         */rpId: String, 
+        /**
+         * RP 显示名（可选，解密后）。
+         */rpName: String?, 
+        /**
+         * 用户名（可选，解密后）。
+         */userName: String?, 
+        /**
+         * 凭据 ID（base64；非密钥，FR-10.2 允许展示）。
+         */credentialIdB64: String, 
+        /**
+         * COSE alg 编号（-7 = ES256）。
+         */algorithm: Int32, 
+        /**
+         * 签名计数器。
+         */signCount: UInt32, 
+        /**
+         * 创建时间（Unix 秒）。
+         */createdAt: Int64, 
+        /**
+         * 最后使用时间（Unix 秒；本版无断言路径，恒 `None`）。
+         */lastUsedAt: Int64?) {
+        self.passkeyUuid = passkeyUuid
+        self.itemUuid = itemUuid
+        self.rpId = rpId
+        self.rpName = rpName
+        self.userName = userName
+        self.credentialIdB64 = credentialIdB64
+        self.algorithm = algorithm
+        self.signCount = signCount
+        self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPasskeyMeta: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPasskeyMeta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPasskeyMeta {
+        return
+            try FfiPasskeyMeta(
+                passkeyUuid: FfiConverterString.read(from: &buf), 
+                itemUuid: FfiConverterString.read(from: &buf), 
+                rpId: FfiConverterString.read(from: &buf), 
+                rpName: FfiConverterOptionString.read(from: &buf), 
+                userName: FfiConverterOptionString.read(from: &buf), 
+                credentialIdB64: FfiConverterString.read(from: &buf), 
+                algorithm: FfiConverterInt32.read(from: &buf), 
+                signCount: FfiConverterUInt32.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf), 
+                lastUsedAt: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPasskeyMeta, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.passkeyUuid, into: &buf)
+        FfiConverterString.write(value.itemUuid, into: &buf)
+        FfiConverterString.write(value.rpId, into: &buf)
+        FfiConverterOptionString.write(value.rpName, into: &buf)
+        FfiConverterOptionString.write(value.userName, into: &buf)
+        FfiConverterString.write(value.credentialIdB64, into: &buf)
+        FfiConverterInt32.write(value.algorithm, into: &buf)
+        FfiConverterUInt32.write(value.signCount, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+        FfiConverterOptionInt64.write(value.lastUsedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPasskeyMeta_lift(_ buf: RustBuffer) throws -> FfiPasskeyMeta {
+    return try FfiConverterTypeFfiPasskeyMeta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPasskeyMeta_lower(_ value: FfiPasskeyMeta) -> RustBuffer {
+    return FfiConverterTypeFfiPasskeyMeta.lower(value)
+}
+
+
+/**
  * 密码短语生成参数（FR-3.3，docs/15 §3.3.4；镜像
  * `cf_audit::PassphraseOptions`，usize 不跨 FFI → wordCount 用 u32）。
  *
@@ -4776,6 +5363,11 @@ public struct FfiPuxPrecheckReport: Equatable, Hashable {
      */
     public var attachmentCount: UInt32
     /**
+     * 检测到的疑似 passkey 字段数（docs/17 §4.2 PK2 增量字段，向后
+     * 兼容；1PUX 桌面导出恒为 0——恒空快速路径）。
+     */
+    public var passkeyCount: UInt32
+    /**
      * 未识别类别清单。
      */
     public var unknownCategories: [FfiUnknownCategory]
@@ -4820,6 +5412,10 @@ public struct FfiPuxPrecheckReport: Equatable, Hashable {
          * 附件总数。
          */attachmentCount: UInt32, 
         /**
+         * 检测到的疑似 passkey 字段数（docs/17 §4.2 PK2 增量字段，向后
+         * 兼容；1PUX 桌面导出恒为 0——恒空快速路径）。
+         */passkeyCount: UInt32, 
+        /**
          * 未识别类别清单。
          */unknownCategories: [FfiUnknownCategory], 
         /**
@@ -4844,6 +5440,7 @@ public struct FfiPuxPrecheckReport: Equatable, Hashable {
         self.importableItems = importableItems
         self.categoryDistribution = categoryDistribution
         self.attachmentCount = attachmentCount
+        self.passkeyCount = passkeyCount
         self.unknownCategories = unknownCategories
         self.trashedCount = trashedCount
         self.passwordHistoryDropped = passwordHistoryDropped
@@ -4873,6 +5470,7 @@ public struct FfiConverterTypeFfiPuxPrecheckReport: FfiConverterRustBuffer {
                 importableItems: FfiConverterUInt32.read(from: &buf), 
                 categoryDistribution: FfiConverterSequenceTypeFfiCategoryCount.read(from: &buf), 
                 attachmentCount: FfiConverterUInt32.read(from: &buf), 
+                passkeyCount: FfiConverterUInt32.read(from: &buf), 
                 unknownCategories: FfiConverterSequenceTypeFfiUnknownCategory.read(from: &buf), 
                 trashedCount: FfiConverterUInt32.read(from: &buf), 
                 passwordHistoryDropped: FfiConverterUInt32.read(from: &buf), 
@@ -4888,6 +5486,7 @@ public struct FfiConverterTypeFfiPuxPrecheckReport: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.importableItems, into: &buf)
         FfiConverterSequenceTypeFfiCategoryCount.write(value.categoryDistribution, into: &buf)
         FfiConverterUInt32.write(value.attachmentCount, into: &buf)
+        FfiConverterUInt32.write(value.passkeyCount, into: &buf)
         FfiConverterSequenceTypeFfiUnknownCategory.write(value.unknownCategories, into: &buf)
         FfiConverterUInt32.write(value.trashedCount, into: &buf)
         FfiConverterUInt32.write(value.passwordHistoryDropped, into: &buf)
@@ -6204,6 +6803,142 @@ public func FfiConverterTypeFfiAuditEvent_lift(_ buf: RustBuffer) throws -> FfiA
 #endif
 public func FfiConverterTypeFfiAuditEvent_lower(_ value: FfiAuditEvent) -> RustBuffer {
     return FfiConverterTypeFfiAuditEvent.lower(value)
+}
+
+
+
+/**
+ * 坏 passkey 行的结构化分类（L-2：#18 审查裁定——分类按数据不按文案，
+ * reason 只是展示层，措辞漂移不迁移分类）。
+ */
+
+public enum FfiBwPasskeyFailureKind: Equatable, Hashable {
+    
+    /**
+     * `keyAlgorithm` 显式给出且 ≠ `ecdsa`。
+     */
+    case keyAlgorithmMismatch
+    /**
+     * `keyCurve` 显式给出且 ≠ `p256`。
+     */
+    case keyCurveMismatch
+    /**
+     * rpId 缺失或为空。
+     */
+    case missingRpId
+    /**
+     * credentialId 缺失或不是合法 base64。
+     */
+    case invalidCredentialId
+    /**
+     * counter 不是非负整数。
+     */
+    case invalidCounter
+    /**
+     * 缺失私钥字段 encryptedPrivateKey。
+     */
+    case missingPrivateKey
+    /**
+     * 私钥为 Bitwarden EncString 加密形态（未加密导出亦不解包）。
+     */
+    case encryptedPrivateKey
+    /**
+     * 私钥无法解析为 ES256（P-256）材料。
+     */
+    case unparseablePrivateKey
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiBwPasskeyFailureKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiBwPasskeyFailureKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiBwPasskeyFailureKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBwPasskeyFailureKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .keyAlgorithmMismatch
+        
+        case 2: return .keyCurveMismatch
+        
+        case 3: return .missingRpId
+        
+        case 4: return .invalidCredentialId
+        
+        case 5: return .invalidCounter
+        
+        case 6: return .missingPrivateKey
+        
+        case 7: return .encryptedPrivateKey
+        
+        case 8: return .unparseablePrivateKey
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiBwPasskeyFailureKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .keyAlgorithmMismatch:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .keyCurveMismatch:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .missingRpId:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .invalidCredentialId:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .invalidCounter:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .missingPrivateKey:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .encryptedPrivateKey:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .unparseablePrivateKey:
+            writeInt(&buf, Int32(8))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwPasskeyFailureKind_lift(_ buf: RustBuffer) throws -> FfiBwPasskeyFailureKind {
+    return try FfiConverterTypeFfiBwPasskeyFailureKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiBwPasskeyFailureKind_lower(_ value: FfiBwPasskeyFailureKind) -> RustBuffer {
+    return FfiConverterTypeFfiBwPasskeyFailureKind.lower(value)
 }
 
 
@@ -7667,6 +8402,31 @@ fileprivate struct FfiConverterSequenceTypeFfiAuditEntry: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiBwPasskeyFailure: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiBwPasskeyFailure]
+
+    public static func write(_ value: [FfiBwPasskeyFailure], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiBwPasskeyFailure.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiBwPasskeyFailure] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiBwPasskeyFailure]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiBwPasskeyFailure.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiCategoryCount: FfiConverterRustBuffer {
     typealias SwiftType = [FfiCategoryCount]
 
@@ -7934,6 +8694,31 @@ fileprivate struct FfiConverterSequenceTypeFfiNotImportedItem: FfiConverterRustB
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiNotImportedItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiPasskeyMeta: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPasskeyMeta]
+
+    public static func write(_ value: [FfiPasskeyMeta], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPasskeyMeta.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPasskeyMeta] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPasskeyMeta]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPasskeyMeta.read(from: &buf))
         }
         return seq
     }
@@ -8263,6 +9048,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_1pux() != 42000) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_import_bitwarden_json() != 5472) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_csv() != 58011) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8281,6 +9069,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_list_items() != 48491) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_list_passkeys() != 24927) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_lock() != 23823) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8288,6 +9079,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_1pux() != 48374) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_bitwarden_json() != 45775) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv() != 64030) {
@@ -8300,6 +9094,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_remove_attachment() != 8932) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_remove_passkey() != 51231) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_history() != 48287) {

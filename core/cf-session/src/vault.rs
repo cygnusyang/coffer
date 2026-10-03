@@ -31,7 +31,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use cf_domain::item::ItemDraft;
 use cf_domain::item::ItemSummary;
@@ -46,6 +46,7 @@ use crate::types::{ItemDetails, TotpCode, TotpDetail, VaultInfo};
 use crate::unlock_bio;
 use crate::usecase;
 use crate::{SessionResult, TotpSession};
+use cf_domain::license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
 use cf_domain::CfError;
 
 /// 默认空闲超时（FR-1.6 / docs/07 §7 T05：默认 5 分钟，可配置）。
@@ -104,6 +105,11 @@ pub struct VaultSession {
     /// （均经 `recover_dek` 验主密码，是密码 oracle）共享；`unlock_with_biometric`
     /// 不触碰。门禁判定与 KDF 经 `try_acquire` 同临界区预占（MEDIUM-2）。
     backoff: Mutex<UnlockBackoff>,
+    /// 许可只读门禁（FR-15，`docs/02` §10.3 方案 C）：写用例统一守卫
+    /// [`Self::write_guard`] 的判定来源。默认 [`PermitAllGate`]（开源
+    /// 产物「自编译 = 全功能免费版」契约）；官方装配经
+    /// [`Self::set_license_gate`] 注入 cf-license（闭源，私有仓库）。
+    license_gate: RwLock<Arc<dyn LicenseGate>>,
 }
 
 impl VaultSession {
@@ -121,6 +127,7 @@ impl VaultSession {
             idle_timeout_secs: AtomicI64::new(DEFAULT_IDLE_TIMEOUT_SECS),
             clipboard_clear_secs: AtomicI64::new(DEFAULT_CLIPBOARD_CLEAR_SECS),
             backoff: Mutex::new(UnlockBackoff::new()),
+            license_gate: RwLock::new(Arc::new(PermitAllGate)),
         })
     }
 
@@ -328,7 +335,7 @@ impl VaultSession {
         if self.backoff_guard().try_acquire().is_err() {
             return Err(CfError::UnlockFailed);
         }
-        let _guard = match self.unlocked() {
+        let _guard = match self.write_guard(LicensedOp::VaultWrite) {
             Ok(guard) => guard,
             Err(e) => {
                 // 锁定态（1001）不是密码尝试，只释放预占
@@ -364,7 +371,7 @@ impl VaultSession {
     /// 禁用态时不重写文件。Keychain 项删除在 Swift 侧先行且幂等，两侧
     /// 独立可重试；本方法失败非致命，可重试（docs/08 §8 降级矩阵）。
     pub fn disable_biometric(&self) -> SessionResult<()> {
-        let _guard = self.unlocked()?;
+        let _guard = self.write_guard(LicensedOp::VaultWrite)?;
         let header = self.header_snapshot();
         if let Some(new_header) = unlock_bio::disable_biometric_impl(&self.vault_dir, &header)? {
             *self.header_guard() = new_header;
@@ -403,7 +410,7 @@ impl VaultSession {
     /// 创建条目：`cf-domain::validate_item` 前置校验 → 单事务写库。
     /// 返回新条目 ID（UUIDv7 文本）。
     pub fn create_item(&self, draft: &ItemDraft) -> SessionResult<String> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::create_item(&mut state.store, draft)
     }
@@ -417,7 +424,7 @@ impl VaultSession {
     /// 显式控制走 [`VaultSession::update_item_with_totp`]；draft 的
     /// `totp` 字段在更新路径始终忽略。
     pub fn update_item(&self, item_id: &str, draft: &ItemDraft) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::update_item(&mut state.store, item_id, draft)
     }
@@ -431,7 +438,7 @@ impl VaultSession {
         draft: &ItemDraft,
         totp: TotpUpdate,
     ) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::update_item_with_totp(&mut state.store, item_id, draft, totp)
     }
@@ -448,7 +455,7 @@ impl VaultSession {
     /// attachment.rs「先删行后删文件」纪律一致。软删 / 恢复不动附件
     /// （回收站恢复后附件仍可用）。
     pub fn delete_item(&self, item_id: &str, hard: bool) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         let attachment_uuids = if hard {
             state
@@ -475,14 +482,14 @@ impl VaultSession {
 
     /// 从回收站恢复条目。
     pub fn restore_item(&self, item_id: &str) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::restore_item(&mut state.store, item_id)
     }
 
     /// 设置 / 取消收藏。
     pub fn set_favorite(&self, item_id: &str, favorite: bool) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::set_favorite(&mut state.store, item_id, favorite)
     }
@@ -538,7 +545,7 @@ impl VaultSession {
         filename: &str,
         content: &[u8],
     ) -> SessionResult<usecase::attachments::AttachmentInfo> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::attachments::add_attachment(
             &mut state.store,
@@ -560,7 +567,7 @@ impl VaultSession {
     /// 删除附件（FR-9.2）：先删行（事务）后删文件；旁路文件已不存在
     /// 视为删除成功。行不存在 → 1012。锁定 → 1001。
     pub fn remove_attachment(&self, attachment_uuid: &str) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::attachments::remove_attachment(&mut state.store, &self.vault_dir, attachment_uuid)
     }
@@ -661,7 +668,7 @@ impl VaultSession {
     ///
     /// 锁定态 → 1001；解析 / 映射 / 写入失败 → 2001 / 2002（docs/03 §12）。
     pub fn import_csv(&self, path: &Path) -> SessionResult<cf_importer::CsvImportResult> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ImportRestore)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         cf_importer::import_csv(path, &mut state.store)
     }
@@ -681,7 +688,7 @@ impl VaultSession {
     ///
     /// 锁定态 → 1001；解析失败 → 2001；写入失败 → 2002（docs/03 §12）。
     pub fn import_1pux(&self, path: &Path) -> SessionResult<cf_importer::PuxImportResult> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ImportRestore)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         cf_importer::import_1pux(path, &mut state.store, &self.vault_dir)
     }
@@ -724,7 +731,7 @@ impl VaultSession {
         if self.backoff_guard().try_acquire().is_err() {
             return Err(CfError::UnlockFailed);
         }
-        let guard = match self.unlocked() {
+        let guard = match self.write_guard(LicensedOp::VaultWrite) {
             Ok(guard) => guard,
             Err(e) => {
                 // 锁定态（1001）不是密码尝试，只释放预占
@@ -785,7 +792,7 @@ impl VaultSession {
     /// 回滚条目到指定历史版本（FR-2.9）：以快照走正常 update 路径，
     /// 回滚本身也是一次修改（可再回滚）。
     pub fn restore_history(&self, item_id: &str, history_uuid: &str) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::history::restore_history(&mut state.store, item_id, history_uuid)
     }
@@ -842,6 +849,49 @@ impl VaultSession {
             Ok(guard)
         } else {
             Err(CfError::VaultLocked)
+        }
+    }
+
+    /// 注入许可门禁（官方装配点，`docs/02` §10.5 方案 A）：官方装配壳
+    /// 构造会话后注入 cf-license 的 gate 实例。开源产物不调用——默认
+    /// [`PermitAllGate`] 即「自编译 = 全功能免费版」契约（TC-GATE-10）。
+    ///
+    /// 装配期调用约定：在派发任何写操作前完成注入；运行中更换 gate
+    /// 仅供测试（TC-GATE-09 激活恢复写路径用）。
+    pub fn set_license_gate(&self, gate: Arc<dyn LicenseGate>) {
+        *self
+            .license_gate
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = gate;
+    }
+
+    /// 当前 gate 快照（Arc 克隆，缩短读锁持有窗口）。
+    fn license_gate_snapshot(&self) -> Arc<dyn LicenseGate> {
+        self.license_gate
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// **写用例统一守卫**（`docs/03` §14.6 / `docs/02` §10.3 方案 C；
+    /// TC-GATE-12 审读点）：解锁门禁（1001）→ 许可门禁（6002/6003），
+    /// 判定落在任何写事务之前。
+    ///
+    /// 两道门禁叠加语义：锁定态恒 1001（许可判定不提前发生，TC-GATE-11）；
+    /// 解锁后按注入 gate 判定，拒绝即返回且**不落任何半截数据**
+    /// （TC-GATE-08）。新增写用例必须经本方法取得状态守卫——绕过即
+    /// 偏离 §14.6 门禁矩阵（矩阵外新增操作组须同步 `LicensedOp`）。
+    pub(crate) fn write_guard(
+        &self,
+        op: LicensedOp,
+    ) -> SessionResult<MutexGuard<'_, Option<UnlockedState>>> {
+        let guard = self.unlocked()?;
+        match self.license_gate_snapshot().check(op) {
+            LicenseDecision::Allow => Ok(guard),
+            LicenseDecision::Deny(deny) => Err(match deny {
+                LicenseDenial::TrialExpired => CfError::LicenseTrialExpiredWriteDenied,
+                LicenseDenial::StateUnavailable => CfError::LicenseStateWriteDenied,
+            }),
         }
     }
 

@@ -24,19 +24,16 @@ struct CofferMainApp: App {
     @StateObject
     private var model = AppModel()
 
-    init() {
-        // AppDelegate.model 接线：applicationWillTerminate 的 lockAll 兜底
-        // 此前从未生效（weak model 无人赋值——docs/15 §3.3.1 引用的「兜底
-        // lockAll 已有」实为死路径，MC-1 修复）。delegate 由 adaptor 在
-        // App init 前创建，此处是唯一赋值点。
-        appDelegate.model = model
-    }
-
     var body: some Scene {
         WindowGroup("Coffer") {
+            // AppDelegate.model 接线点：必须在 RootView.onAppear 而非 App.init——
+            // @StateObject 在 App.init 阶段尚未安装，访问它会新建临时实例且随即
+            // 释放（SwiftUI 运行时警告实证，PL-6 复验打回根因），weak 引用随之
+            // 归 nil。onAppear 时 model 是已安装的真实实例；attach 幂等。
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 820, minHeight: 540)
+                .onAppear { appDelegate.attach(model: model) }
         }
         .windowToolbarStyle(.unified)
         .commands {
@@ -72,12 +69,20 @@ struct CofferMainApp: App {
 }
 
 /// 应用生命周期回调：全局快捷键注册（MC-1）+ 关窗驻留 + 主窗口呼出 +
-/// 退出前锁定全部会话。
+/// 菜单栏常驻（PL-6）+ 退出前锁定全部会话。
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// AppModel 在 App init 时注册自己，供退出回调与呼出焦点判定使用
+    /// AppModel 引用（strong）。供退出回调、呼出焦点判定与菜单栏状态行使用
     /// （只读 phase；呼出动作本身不经 AppModel——docs/15 §6.1 S3 切片）。
-    weak var model: AppModel?
+    ///
+    /// 必须 strong：AppDelegate 生命周期 = App 生命周期，AppModel 不反向持有
+    /// AppDelegate，无循环。原 weak 实现被 PL-6 复验打穿——App.init 里用未安装
+    /// 的 @StateObject 临时实例赋值，实例随即释放，weak 归 nil；接线改由
+    /// RootView.onAppear 的 attach(model:) 完成（幂等）。
+    private(set) var model: AppModel?
+
+    /// 菜单栏状态项已启动标志（attach 幂等：onAppear 可能重复触发，只启一次）。
+    private var statusItemStarted = false
 
     /// 全局快捷键监视（FR-4.5 HK-1；注册失败静默降级为仅菜单栏入口）。
     private let hotKeyMonitor = HotKeyMonitor()
@@ -85,6 +90,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 菜单栏常驻 NSStatusItem 控制器（v0.5.0 PL-6：NSStatusItem 取代
     /// MenuBarExtra，macOS 26 MenuBarExtra 图标空白）。
     private let statusItemController = StatusItemController()
+
+    /// 接线真实 AppModel 并启动菜单栏常驻（RootView.onAppear 调用；幂等）。
+    /// 首次调用同时启动 StatusItemController（PL-6：NSStatusItem 取代
+    /// MenuBarExtra）；后续重复 onAppear 仅刷新 model 引用，不重复启动。
+    func attach(model: AppModel) {
+        self.model = model
+        guard !statusItemStarted else { return }
+        statusItemStarted = true
+        statusItemController.start(model: model) { [weak self] focusText in
+            self?.summonMainWindow(focusText: focusText)
+        }
+    }
 
     /// 关窗驻留（v0.4 出口判据②，2026-09-29 裁定采纳）：关主窗口后 App
     /// 驻留菜单栏，退出只经菜单「退出」/⌘Q。自动锁定语义不受影响——会话
@@ -95,18 +112,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 全局快捷键注册：失败静默降级（不阻塞启动、不崩溃，菜单栏入口
-        // 仍可用），原因与 OSStatus 写诊断日志（HotKeyMonitor 内部处理）
+        // 仍可用），原因与 OSStatus 写诊断日志（HotKeyMonitor 内部处理）。
+        // 菜单栏常驻不在此启动：model 此刻尚未接线（@StateObject 未安装，
+        // App.init 访问会造临时实例），由 RootView.onAppear 的 attach(model:)
+        // 幂等启动（见 attach 与 body 注释）。
         hotKeyMonitor.start { [weak self] action in
             self?.handleHotKeyAction(action)
-        }
-        // 菜单栏常驻（v0.5.0 PL-6：NSStatusItem 取代 MenuBarExtra）：
-        // 状态行 + 打开主窗口 + 快速搜索 + 锁定全部 + 退出
-        // （docs/15 §3.3.1 路由表，语义见 StatusItemController.swift）。
-        // model 未接线（理论不可达）时静默跳过，不阻塞启动。
-        if let model {
-            statusItemController.start(model: model) { [weak self] focusText in
-                self?.summonMainWindow(focusText: focusText)
-            }
         }
     }
 

@@ -18,9 +18,9 @@
 // 切片纪律（docs/15 §6.1 S3）：只读消费 AppModel（Combine 订阅 $phase /
 // $vaultName）+ 调既有 API，不新增不改 AppModel 状态机。
 //
-// 线程契约：start/stop 主线程调用（applicationDidFinishLaunching /
-// applicationWillTerminate）；@Published 在主线程变更，订阅回调经 MainActor
-// 隔离刷新（与 HotKeyMonitor 同纪律）。
+// 线程契约：start/stop 主线程调用（start 经 AppDelegate.attach，落点
+// RootView.onAppear；stop 经 applicationWillTerminate）；@Published 在主线程
+// 变更，订阅回调经 MainActor 隔离刷新（与 HotKeyMonitor 同纪律）。
 
 import AppKit
 import Combine
@@ -44,7 +44,7 @@ final class StatusItemController: NSObject {
 
     // MARK: - 生命周期
 
-    /// 创建状态栏项并开始订阅。主线程调用（applicationDidFinishLaunching）。
+    /// 创建状态栏项并开始订阅。主线程调用（AppDelegate.attach，RootView.onAppear）。
     /// - Parameters:
     ///   - model: 应用状态（只读消费 $phase / $vaultName / factory）。
     ///   - summonMainWindow: 呼出/聚焦主窗口回调（focusText: Bool）。

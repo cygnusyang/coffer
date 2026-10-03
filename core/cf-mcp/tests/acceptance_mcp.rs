@@ -94,14 +94,20 @@ impl CofferChild {
         );
         let v: Value = serde_json::from_str(line.trim())
             .unwrap_or_else(|e| panic!("stdout must be pure JSON-RPC frames, got {line:?}: {e}"));
-        assert_eq!(v["jsonrpc"], json!("2.0"), "stdout frame must be JSON-RPC 2.0");
+        assert_eq!(
+            v["jsonrpc"],
+            json!("2.0"),
+            "stdout frame must be JSON-RPC 2.0"
+        );
         v
     }
 
     /// 读 stdout 剩余全部内容（stdin 已关后调用；判据 §3.1 stdout 无日志噪声）。
     fn read_remaining_stdout(&mut self) -> String {
         let mut out = String::new();
-        self.stdout.read_to_string(&mut out).expect("read stdout to EOF");
+        self.stdout
+            .read_to_string(&mut out)
+            .expect("read stdout to EOF");
         out
     }
 
@@ -124,7 +130,9 @@ impl CofferChild {
         self.close_stdin();
         let status = self.child.wait().expect("wait for coffer to exit");
         let mut stderr = String::new();
-        self.stderr.read_to_string(&mut stderr).expect("read stderr");
+        self.stderr
+            .read_to_string(&mut stderr)
+            .expect("read stderr");
         (status.code(), stderr)
     }
 }
@@ -201,17 +209,24 @@ fn initialize_handshake_first_frame_is_protocol_frame() {
     // 首帧即协议帧：jsonrpc 2.0（read_frame 已断言）+ initialize 结果契约（§3.2）。
     assert_eq!(init["id"], json!(1));
     assert_eq!(
-        init["result"]["protocolVersion"], json!("2024-11-05"),
+        init["result"]["protocolVersion"],
+        json!("2024-11-05"),
         "initialize 须回显 MCP 协议版本"
     );
-    assert!(init["result"]["capabilities"]["tools"].is_object(), "capabilities.tools");
+    assert!(
+        init["result"]["capabilities"]["tools"].is_object(),
+        "capabilities.tools"
+    );
     assert_eq!(init["result"]["serverInfo"]["name"], json!("coffer"));
 
     // notifications/initialized 无响应（§3.2）；随后 EOF → 干净退出 0（§5.3）。
     c.send(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
     let (code, stderr) = c.finish();
     assert_eq!(code, Some(0), "EOF 干净退出 → §5.3 退出码 0");
-    assert!(stderr.contains("serving on stdio"), "默认日志落 stderr，stderr: {stderr}");
+    assert!(
+        stderr.contains("serving on stdio"),
+        "默认日志落 stderr，stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -254,12 +269,17 @@ fn tools_list_and_call_roundtrip_redacted_metadata_no_plaintext() {
     c.send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
     let list = c.read_frame();
     let tools = list["result"]["tools"].as_array().expect("tools array");
-    let names: Vec<&str> = tools
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
-    for expect in ["list_secret_names", "list_secrets", "run_with_secret", "get_secret_metadata"] {
-        assert!(names.contains(&expect), "工具 {expect} 须在 tools/list 中，got {names:?}");
+    let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+    for expect in [
+        "list_secret_names",
+        "list_secrets",
+        "run_with_secret",
+        "get_secret_metadata",
+    ] {
+        assert!(
+            names.contains(&expect),
+            "工具 {expect} 须在 tools/list 中，got {names:?}"
+        );
     }
     assert!(
         tools.iter().all(|t| t["inputSchema"].is_object()),
@@ -280,15 +300,19 @@ fn tools_list_and_call_roundtrip_redacted_metadata_no_plaintext() {
         .get("secrets")
         .and_then(Value::as_array)
         .expect("secrets array");
-    assert_eq!(secrets.len(), 2, "fake op fixture 两条元数据，got {secrets:?}");
+    assert_eq!(
+        secrets.len(),
+        2,
+        "fake op fixture 两条元数据，got {secrets:?}"
+    );
     let first = &secrets[0];
     for key in ["name", "id", "category", "vault", "updated_at"] {
-        assert!(first.get(key).is_some(), "元数据须含 {key} 键，got {first:?}");
+        assert!(
+            first.get(key).is_some(),
+            "元数据须含 {key} 键，got {first:?}"
+        );
     }
-    let names_in_meta: Vec<&str> = secrets
-        .iter()
-        .filter_map(|s| s["name"].as_str())
-        .collect();
+    let names_in_meta: Vec<&str> = secrets.iter().filter_map(|s| s["name"].as_str()).collect();
     assert!(
         names_in_meta.contains(&"OPENAI_API_KEY") && names_in_meta.contains(&"GITHUB_TOKEN"),
         "fixture 名须出现在元数据，got {names_in_meta:?}"
@@ -383,9 +407,15 @@ fn uds_unimplemented_exits_1() {
 #[test]
 fn identity_missing_exits_3() {
     // fake op 在 OP_SESSION == 哨兵值时按「账号未登录」失败 → 7002 → 退出码 3（§5.3）。
-    let (code, stderr) =
-        run_coffer(&["mcp"], &[("COFFER_OP_SESSION_TOKEN", FAKE_OP_EXPIRED_SESSION)]);
-    assert_eq!(code, Some(3), "身份缺失（7002）→ 退出码 3，stderr: {stderr}");
+    let (code, stderr) = run_coffer(
+        &["mcp"],
+        &[("COFFER_OP_SESSION_TOKEN", FAKE_OP_EXPIRED_SESSION)],
+    );
+    assert_eq!(
+        code,
+        Some(3),
+        "身份缺失（7002）→ 退出码 3，stderr: {stderr}"
+    );
     assert!(
         stderr.contains("identity missing") || stderr.contains("7002"),
         "stderr: {stderr}"
@@ -398,7 +428,10 @@ fn identity_missing_exits_3() {
 
 #[test]
 fn vault_flag_overrides_env_default() {
-    let mut c = spawn_mcp(&["mcp", "--vault", "Personal"], &[("COFFER_OP_VAULT", "OtherVault")]);
+    let mut c = spawn_mcp(
+        &["mcp", "--vault", "Personal"],
+        &[("COFFER_OP_VAULT", "OtherVault")],
+    );
     c.send(initialize_request());
     let _ = c.read_frame();
     let (code, stderr) = c.finish();
@@ -420,7 +453,10 @@ fn no_audit_flag_accepted() {
     let _ = c.read_frame();
     let (code, stderr) = c.finish();
     assert_eq!(code, Some(0), "--no-audit 为合法 flag，stderr: {stderr}");
-    assert!(stderr.contains("audit: off"), "--no-audit 须在日志可见，stderr: {stderr}");
+    assert!(
+        stderr.contains("audit: off"),
+        "--no-audit 须在日志可见，stderr: {stderr}"
+    );
 }
 
 #[test]

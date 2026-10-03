@@ -77,10 +77,16 @@ impl fmt::Display for ProviderError {
             Self::Unavailable(m) => write!(f, "provider unavailable: {m}"),
             Self::AuthRequired(m) => write!(f, "authentication required: {m}"),
             Self::NotFound(m) => write!(f, "secret not found: {m}"),
-            Self::SubprocessFailed { exit_code: Some(c), detail } => {
+            Self::SubprocessFailed {
+                exit_code: Some(c),
+                detail,
+            } => {
                 write!(f, "subprocess failed (exit {c}): {detail}")
             }
-            Self::SubprocessFailed { exit_code: None, detail } => {
+            Self::SubprocessFailed {
+                exit_code: None,
+                detail,
+            } => {
                 write!(f, "subprocess failed: {detail}")
             }
             Self::InvalidParameter(m) => write!(f, "invalid parameter: {m}"),

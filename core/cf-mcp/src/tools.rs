@@ -191,10 +191,7 @@ pub fn secret_meta_json(meta: &SecretMeta) -> Value {
     })
 }
 
-fn call_list_secret_names(
-    provider: &dyn SecretProvider,
-    args: &Value,
-) -> Result<String, McpError> {
+fn call_list_secret_names(provider: &dyn SecretProvider, args: &Value) -> Result<String, McpError> {
     let vault = optional_string(args, "vault");
     let names = provider
         .list_secret_names(vault.as_deref())
@@ -204,7 +201,9 @@ fn call_list_secret_names(
 
 fn call_list_secrets(provider: &dyn SecretProvider, args: &Value) -> Result<String, McpError> {
     let vault = optional_string(args, "vault");
-    let metas = provider.list_secrets(vault.as_deref()).map_err(McpError::from)?;
+    let metas = provider
+        .list_secrets(vault.as_deref())
+        .map_err(McpError::from)?;
     let secrets: Vec<Value> = metas.iter().map(secret_meta_json).collect();
     Ok(json!({ "secrets": secrets }).to_string())
 }
@@ -220,7 +219,12 @@ fn call_run_with_secret(
     let cmd_args: Vec<String> = args
         .get("args")
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
     let cwd = args
         .get("cwd")
@@ -249,7 +253,9 @@ fn call_get_secret_metadata(
     args: &Value,
 ) -> Result<String, McpError> {
     let secret = required_string(args, "secret")?;
-    let meta = provider.get_secret_metadata(&secret).map_err(McpError::from)?;
+    let meta = provider
+        .get_secret_metadata(&secret)
+        .map_err(McpError::from)?;
     let value = secret_meta_json(&meta);
     Ok(serde_json::to_string(&value)?)
 }

@@ -839,8 +839,8 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 **登记日期**：2026-10-02
 **发现环境**：v0.5.0 代码审查（dev-reviewer 复查 PL-4 时发现 CrossCopySheet.swift:300 亦涉 K_bio 读取，存在与 PL-4 同型的「预认证 + Keychain 读」双弹窗）
 **分级**：S3（目标库解锁体验缺陷，可降级主密码）/ P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
-**状态**：🟡 已修复待真机复验（v0.5.1 修复路径①落地；真机复验由 lead 与用户组织）
-**核销记录**：未核销（登记时无修复 commit；v0.5.1 修复 commit 后待真机弹窗次数 = 1 复验核销）
+**状态**：✅ 已核销（v0.5.1 修复路径①落地，2026-10-04 用户真机确认）
+**核销记录**：修复 commit `1943fd0`（fix v0.5.1——删除 CrossCopySheet 预认证 `authenticateWithBiometrics`，仅保留 Keychain 自有单次认证，与 AppModel 解锁同型；错误呈现统一走 `TouchIDUnlockPresentation.resolve`，TouchIDError 拆分至 `Support/TouchIDError.swift`）。复验 = 用户真机确认跨库复制目标库解锁步骤指纹框**只弹 1 次**。回归测试全绿：run_touchid_error_presentation_tests.sh 9/9（新增）+ run_touchid_status_tests.sh 19/19 + run_auto_prompt_biometric_tests.sh 30/30 + run_touchid_auth_failure_tests.sh 6/6（新增）。
 **证据**：代码面——`CrossCopySheet.swift:297` 保留 `authenticateWithBiometrics(context:)` 预认证（PL-4 只删了 AppModel 侧，此调用点当时判为纯 FFI 确认未动）；`:300` `BiometricKeychain.read` 现带全新 LAContext（PL-4 签名变更后的最小适配点）。
 
 ### 现象（预期/实际 分行写）

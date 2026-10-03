@@ -651,10 +651,7 @@ mod tests {
             "type": 1,
         }))
         .expect("哨兵条目 fixture 须可解析");
-        let entry = row
-            .as_object()
-            .expect("哨兵行须为 JSON 对象")
-            .clone();
+        let entry = row.as_object().expect("哨兵行须为 JSON 对象").clone();
         let mut signals = ItemSignals::default();
         match map_passkey_row(&entry, &item, 0, &mut signals) {
             Ok(_) => panic!("哨兵行应分类为不可导入失败"),
@@ -682,9 +679,15 @@ mod tests {
         }));
         assert_eq!(p384.kind, p521.kind, "同分类数据不同文案 → 分类一致");
         assert_eq!(p384.kind, BwPasskeyFailureKind::KeyCurveMismatch);
-        assert_ne!(p384.reason, p521.reason, "reason 须随曲线名不同，否则哨兵空转");
+        assert_ne!(
+            p384.reason, p521.reason,
+            "reason 须随曲线名不同，否则哨兵空转"
+        );
         assert_eq!(p384.kind.is_non_es256(), p521.kind.is_non_es256());
-        assert!(p384.kind.is_non_es256(), "KeyCurveMismatch 属非 ES256 族（真路径）");
+        assert!(
+            p384.kind.is_non_es256(),
+            "KeyCurveMismatch 属非 ES256 族（真路径）"
+        );
 
         // 非 ES256 族：keyAlgorithm eddsa / rsa 同理（reason 内嵌算法名）
         let eddsa = classify_row(json!({

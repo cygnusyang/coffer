@@ -206,7 +206,11 @@ impl McpServer {
         let name = match params.get("name").and_then(Value::as_str) {
             Some(n) => n.to_string(),
             None => {
-                return self.error_frame(id, -32602, "tools/call requires a string `name`".to_string())
+                return self.error_frame(
+                    id,
+                    -32602,
+                    "tools/call requires a string `name`".to_string(),
+                )
             }
         };
         let args = params.get("arguments").cloned().unwrap_or(Value::Null);
@@ -214,9 +218,10 @@ impl McpServer {
             .tools
             .call(&*self.provider, &self.redactor, &*self.audit, &name, &args)
         {
-            Ok(result) => {
-                self.result_frame(id, json!({ "content": result.content, "isError": result.is_error }))
-            }
+            Ok(result) => self.result_frame(
+                id,
+                json!({ "content": result.content, "isError": result.is_error }),
+            ),
             Err(e) => self.error_frame(id, e.code(), e.to_string()),
         }
     }
@@ -306,7 +311,9 @@ pub mod mcp {
 
     /// 列出全部 secret 名（无值）。MVP 工具（docs/20 §3.3）。
     pub fn list_secret_names() -> Result<Vec<String>, Box<dyn Error>> {
-        provider().list_secret_names(None).map_err(|e| boxed(e.into()))
+        provider()
+            .list_secret_names(None)
+            .map_err(|e| boxed(e.into()))
     }
 
     /// 列出全部 secret（名称 + 元数据 JSON；无值）。MVP 工具（docs/20 §3.3）。
@@ -325,11 +332,7 @@ pub mod mcp {
 
     /// 用 secret 运行命令（AS-5 模式 B）。注入的变量名 = secret 名；非零退出码
     /// **原样返回**（不吞、不误报 Err）。MVP 工具（docs/20 §3.3）。
-    pub fn run_with_secret(
-        secret: &str,
-        cmd: &str,
-        args: &[&str],
-    ) -> Result<i32, Box<dyn Error>> {
+    pub fn run_with_secret(secret: &str, cmd: &str, args: &[&str]) -> Result<i32, Box<dyn Error>> {
         let spec = RunSpec {
             secret_ref: secret.to_string(),
             env_name: secret.to_string(),
@@ -337,7 +340,9 @@ pub mod mcp {
             args: args.iter().map(|s| (*s).to_string()).collect(),
             cwd: None,
         };
-        provider().run_with_secret(&spec).map_err(|e| boxed(e.into()))
+        provider()
+            .run_with_secret(&spec)
+            .map_err(|e| boxed(e.into()))
     }
 
     /// 获取 secret 元数据 JSON（无值）。MVP 工具（docs/20 §3.3）。

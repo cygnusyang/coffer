@@ -131,7 +131,9 @@ fn list_secret_names_maps_not_signed_in_to_auth_required() {
 #[test]
 fn list_secrets_returns_metadata_for_fixture_items() {
     let provider = provider();
-    let entries = provider.list_secrets(None).expect("list_secrets must not error");
+    let entries = provider
+        .list_secrets(None)
+        .expect("list_secrets must not error");
 
     let api = entries
         .iter()
@@ -154,7 +156,9 @@ fn list_secrets_returns_metadata_for_fixture_items() {
 fn list_secrets_does_not_expose_secret_values() {
     // AS-14「可用不可见」：list_secrets 只返回元数据，绝不携带明文值。
     let provider = provider();
-    let entries = provider.list_secrets(None).expect("list_secrets must not error");
+    let entries = provider
+        .list_secrets(None)
+        .expect("list_secrets must not error");
     let serialized = format!("{entries:?}");
     for forbidden in ["fixture-secret-value-openai", "fixture-secret-value-github"] {
         assert!(
@@ -277,7 +281,8 @@ fn from_env_reads_coffer_env_vars() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let fake_bin = std::env::temp_dir().join(format!("coffer-op-bin-{}-{nanos}", std::process::id()));
+    let fake_bin =
+        std::env::temp_dir().join(format!("coffer-op-bin-{}-{nanos}", std::process::id()));
     std::fs::write(&fake_bin, "#!/bin/sh\nexit 0\n").unwrap();
 
     std::env::set_var("COFFER_OP_BIN", &fake_bin);
@@ -322,7 +327,11 @@ fn provider_error_codes_are_in_doc_section_34_range() {
     let mut sorted = codes.clone();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), codes.len(), "7xxx codes must be unique: {codes:?}");
+    assert_eq!(
+        sorted.len(),
+        codes.len(),
+        "7xxx codes must be unique: {codes:?}"
+    );
     assert!(
         codes.iter().all(|c| (7001..=7006).contains(c)),
         "all codes must live in the 7xxx segment: {codes:?}"

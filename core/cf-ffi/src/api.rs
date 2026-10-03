@@ -657,10 +657,7 @@ impl VaultSession {
     /// **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
     /// 不接触密钥材料，供导入向导在解锁前展示报告。非 JSON / 缺 items /
     /// 加密导出 → 2001 / 2002（docs/17 §5）。
-    pub fn precheck_bitwarden_json(
-        &self,
-        path: String,
-    ) -> Result<FfiBwPrecheckReport, FfiError> {
+    pub fn precheck_bitwarden_json(&self, path: String) -> Result<FfiBwPrecheckReport, FfiError> {
         session_call(AssertUnwindSafe(|| {
             cf_importer::precheck_bitwarden_json(Path::new(&path))
         }))
@@ -694,7 +691,9 @@ impl VaultSession {
     ///
     /// 行不存在 → 1011；锁定 → 1001（docs/17 §5）。
     pub fn remove_passkey(&self, passkey_uuid: String) -> Result<(), FfiError> {
-        session_call(AssertUnwindSafe(|| self.inner.remove_passkey(&passkey_uuid)))
+        session_call(AssertUnwindSafe(|| {
+            self.inner.remove_passkey(&passkey_uuid)
+        }))
     }
 
     // ---------------------------------------------------- 历史（FR-2.9）

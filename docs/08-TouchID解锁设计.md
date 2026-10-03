@@ -298,10 +298,15 @@ enable / disable 时序见 §4.1，不再画。
 ```swift
 enum BiometricKeychainError: Error {
     case itemNotFound      // → 4002（指纹集变更 / 项被删）
-    case authFailed        // → 4002（Touch ID 取消/失败/指纹集变更；PL-4 后
-                           //    取消亦经钥匙串认证 → 4002，取消语义漂移已接受）
+    case authFailed        // → 4002（指纹集变更后 ACL 拒绝 / 锁定态读取——凭据失效）
+    case userCanceled      // 用户取消认证——取消 ≠ 失效：静默不弹错误（reviewer
+                           //    HIGH 处置 2026-10-03：errSecUserCanceled 自
+                           //    authFailed 拆出独立 case，取消/失效分道呈现）
     case unexpected(OSStatus)
 }
+// mapStatus（docs/08 §4.1 / §7.3）：errSecItemNotFound → .itemNotFound；
+//   errSecAuthFailed / errSecInteractionNotAllowed → .authFailed；
+//   errSecUserCanceled → .userCanceled；其余 → .unexpected
 struct BiometricKeychain {
     static let service = "cn.coffer.biometric"
     static func isBiometricsAvailable() -> Bool          // LAContext.canEvaluatePolicy（只检测，不弹窗）
@@ -351,15 +356,19 @@ sequenceDiagram
         KC-->>A: K_bio 返回
         A->>A: FFI unlockWithBiometric → phase = .unlocked（直达主界面）
     else 多库 / 未启用 / 设备不支持 / 旗标已置 / 自动路径取消或失败
-        A-->>U: 落回锁定页（错误静默：不写 lastErrorMessage，DiagLog 照常）；
-                手点「使用 Touch ID 解锁」或主密码
+        A-->>U: 落回锁定页（取消 → 静默；凭据失效 → 4002 + 置 stale，
+                §7.6 错误分道）；手点「使用 Touch ID 解锁」或主密码
     end
 ```
 
 - 判定条件抽为纯函数 `AutoPromptBiometric.shouldAutoPromptBiometric(vaultCount:isSupported:status:)`：`vaultCount == 1 ∧ isSupported ∧ status == .enabled`（`macos/Coffer/Support/AutoPromptBiometric.swift`，单测穷举 3×2×3 边界——`tools/run_auto_prompt_biometric_tests.sh`，同 §9 T04 纯函数纪律）。
 - 触发范围：**启动**（`bootstrap()` 末尾接线）+ **呼出**（`summonMainWindow` 中 `wasHidden` 判定后调同一 `AppModel.maybeAutoPromptBiometric()`）。`openSession` 的其他调用方（切换库/恢复备份/解锁）不自动弹；**窗口开着时自动锁定/锁屏后再解锁不自动弹**（用户未裁定，不实现）；呼出的「快速搜索…」与「打开主窗口」共用 `summonMainWindow` 入口，无遗漏分支。
 - 防重入与判重：一次性旗标 `autoPromptBiometricFired`——发起时置位，`phase` 离开 `.locked`（解锁成功 / 手动锁定 / 切库）时复位；同一次锁定态内多次呼出只弹一次（取消后不重复骚扰）。完整判定（含旗标与 `!isBusy`）抽为 `shouldAutoPromptBiometric(vaultCount:isSupported:status:firedInLockState:isBusy:)` 重载，判重组合纳入纯函数单测；`unlockWithTouchID` 内部另有 `!isBusy` guard 兜底。
-- 错误静默：自动路径 `unlockWithTouchID(isAutoPrompt: true)` 的 catch 分支不写 `lastErrorMessage`（启动/呼出时用户按错/取消不弹吓人错误框），`DiagLog` 照常记录；手动路径行为不变。取消/失败均落回锁定页，按钮可再点。
+- 错误分道（reviewer HIGH 处置，2026-10-03 裁定；`unlockWithTouchID` catch 按错误类型分派，手动/自动路径一致）：
+  - **取消静默**：`.userCanceled`（用户取消认证）→ 不写 `lastErrorMessage`（取消不是失败），`DiagLog` 记诊断；落回锁定页按钮可再点。
+  - **失效可见**：`.itemNotFound` / `.authFailed`（凭据失效）→ 呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码，设置页显示「重新启用」）。此处置**不调 `refreshTouchIDStatus`**——refresh 以 `itemExists` 判定，authFailed 场景项仍「存在」会被翻回 `.enabled`，此处以 read 失败为终判。
+  - **其余可见**：`unexpected` / FfiError（1002/4001/5999）→ 照常呈现（自动路径也呈现）并刷新状态行。
+  - 此前的 `isAutoPrompt` 参数已移除：静默语义改由错误类型驱动，不再区分调用路径（ErrorPresenter 对 `.userCanceled` 返回空串，`FfiErrorAlert` 对空串不弹，双保险）。
 
 ---
 

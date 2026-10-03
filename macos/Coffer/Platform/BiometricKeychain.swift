@@ -26,12 +26,15 @@ import LocalAuthentication
 import Security
 
 /// Keychain 操作错误（docs/08 §7.3 错误语义表）。
-/// 解锁流程中的呈现语义见 ErrorPresenter：itemNotFound / authFailed → 4002。
+/// 解锁流程中的呈现语义见 ErrorPresenter：itemNotFound / authFailed → 4002；
+/// userCanceled（用户取消认证）→ 静默不弹错误（reviewer HIGH 处置，docs/08 §7.6）。
 enum BiometricKeychainError: Error, Equatable {
     /// 项不存在（未启用 / 已删 / biometryCurrentSet 失效的清理路径）→ 4002
     case itemNotFound
-    /// 认证拒绝（用户取消 / 指纹集变更后 ACL 拒绝 / 锁定态读取）→ 4002
+    /// 认证拒绝（指纹集变更后 ACL 拒绝 / 锁定态读取，凭据已失效）→ 4002
     case authFailed
+    /// 用户取消认证——取消 ≠ 失效：静默不弹错误，落回锁定页可再点（docs/08 §7.3）
+    case userCanceled
     /// K_bio 长度非法（应为 32B，docs/08 D-3）——程序员错误，写入路径防御
     case invalidKeyLength(Int)
     /// 其他未预期 OSStatus
@@ -252,13 +255,20 @@ struct BiometricKeychain {
         return query
     }
 
-    /// OSStatus → 语义错误（docs/08 §4.1：NotFound / AuthFailed 均为降级信号）。
+    /// OSStatus → 语义错误（docs/08 §4.1 / §7.3）：
+    ///   - errSecItemNotFound → .itemNotFound（未启用 / 已删 / 清理路径，4002）
+    ///   - errSecAuthFailed / errSecInteractionNotAllowed → .authFailed（ACL 失效 /
+    ///     锁定态读取，凭据已失效，4002）
+    ///   - errSecUserCanceled → .userCanceled（用户取消——非失效，静默呈现分道，
+    ///     见 ErrorPresenter 与 AppModel.unlockWithTouchID 的 catch 分派）
     private static func mapStatus(_ status: OSStatus) -> BiometricKeychainError {
         switch status {
         case errSecItemNotFound:
             return .itemNotFound
-        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
+        case errSecAuthFailed, errSecInteractionNotAllowed:
             return .authFailed
+        case errSecUserCanceled:
+            return .userCanceled
         default:
             return .unexpected(status)
         }

@@ -341,8 +341,9 @@ final class AppModel: ObservableObject {
     ///     自动认证进行中（isBusy）不重复触发。
     ///   - 发起：置旗标后 Task 抛异步认证（unlockWithTouchID 是 async，
     ///     bootstrap / summon 均为同步上下文；与 LockView 手点同一调用方式）。
-    ///     自动路径错误静默（isAutoPrompt: true 不写 lastErrorMessage）——
-    ///     用户按错/取消不弹吓人错误框，落回锁定页手点即可；DiagLog 照常。
+    ///     错误分派统一在 unlockWithTouchID（reviewer HIGH 处置，docs/08 §7.6）：
+    ///     用户取消（.userCanceled）静默、凭据失效（.itemNotFound/.authFailed）
+    ///     呈现 4002 并置 stale——手动/自动路径语义一致。
     ///   - 呼出场景的「窗口确从隐藏恢复」由 AppDelegate.summonMainWindow 先行
     ///     判定（wasHidden）后再调用本方法；窗口开着时自动锁定后再解锁
     ///     不自动弹（用户未裁定，不实现）。
@@ -359,7 +360,7 @@ final class AppModel: ObservableObject {
               ),
               let session, session.hasBiometricWrap() else { return false }
         autoPromptBiometricFired = true
-        Task { await unlockWithTouchID(isAutoPrompt: true) }
+        Task { await unlockWithTouchID() }
         return true
     }
 
@@ -609,10 +610,12 @@ final class AppModel: ObservableObject {
     /// 用完即弃，不落任何 @Published / 不进全局状态（与主密码同纪律）。
     /// isBusy 互斥与主密码解锁共用。
     ///
-    /// - Parameter isAutoPrompt: 是否启动自动引导路径（用户 2026-10-03 裁定，
-    ///   docs/08 §7.6）。true 时 catch 分支不写 lastErrorMessage（错误静默，
-    ///   DiagLog 照常记录），手动路径行为不变；取消/失败均落回锁定页，按钮可再点。
-    func unlockWithTouchID(isAutoPrompt: Bool = false) async {
+    /// 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6）：catch 按错误类型
+    /// 分道——用户取消（.userCanceled）完全静默；凭据失效（.itemNotFound /
+    /// .authFailed）呈现 4002 并置 touchIDStatus = .stale（§4.1 stale 终判
+    /// 落地）；其余错误照常呈现（自动路径也呈现）。手动/自动路径语义一致。
+    /// 取消/失效均落回锁定页（phase 未变），按钮可再点。
+    func unlockWithTouchID() async {
         guard let session, !isBusy, phase == .locked else { return }
 
         // 前置门禁（Swift 侧先行判定，避免无谓跨桥；Rust 侧同语义兜底 4001，D-8）：
@@ -632,9 +635,10 @@ final class AppModel: ObservableObject {
             //    （PL-4 修复：删除 App 侧预认证——macOS 26 上
             //    kSecUseAuthenticationContext 复用已认证结果不生效，
             //    预认证 + 读取再认证 = 双弹窗）。
-            // ② 读取失败（项不存在 / biometryCurrentSet 失效 / 用户取消）→ 4002
-            //    降级（docs/08 §4.1）：不改 header、不删项——用户主密码解锁后
-            //    可在设置页「重新启用」。
+            // ② 读取失败分道（catch 分派，reviewer HIGH 处置，docs/08 §7.3）：
+            //    .userCanceled（用户取消）→ 静默；.itemNotFound / .authFailed
+            //    （凭据失效）→ 4002 + 置 stale——不改 header、不删项，用户主
+            //    密码解锁后可在设置页「重新启用」（docs/08 §4.1）。
             let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID)
 
             // ③ 后半段走 FFI：open(K_bio, aad) → DEK → SubKeys → ItemStore。
@@ -654,15 +658,32 @@ final class AppModel: ObservableObject {
             // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
             evaluateBackupReminder()
         } catch {
-            // ErrorPresenter 分派：TouchIDError / BiometricKeychainError /
-            // FfiError（1002 / 4001 / 5999）各自语义化呈现
-            let errText = ErrorPresenter.text(error)
-            DiagLog.append(errText)
-            // 自动引导路径（isAutoPrompt）错误静默：启动时用户按错/取消不弹
-            // 吓人错误框（用户 2026-10-03 裁定，docs/08 §7.6）；手动路径不变。
-            // 两种路径都落回锁定页（phase 未变），按钮可再点。
-            if !isAutoPrompt {
+            // 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6，用户 2026-10-03
+            // 裁定）：
+            //   - .userCanceled（用户取消认证）：完全静默——手动/自动路径一致。
+            //     取消不是失败，不写 lastErrorMessage（ErrorPresenter 对该 case
+            //     返回空串，写入也会弹空白框，故显式跳过），DiagLog 记诊断；
+            //     落回锁定页按钮可再点。
+            //   - .itemNotFound / .authFailed（凭据失效）：呈现 4002 + 置 stale
+            //     ——§4.1 以 read 失败为 stale 终判落地：LockView 按钮消失引导
+            //     主密码，设置页可重新启用。不调 refreshTouchIDStatus（refresh
+            //     以 itemExists 判定，authFailed 场景项仍「存在」会被翻回
+            //     .enabled，此处以 read 失败为终判）。
+            //   - 其余（unexpected / FfiError 1002 / 4001 / 5999）：照常呈现
+            //     （自动路径也呈现）并刷新状态行，与设置页/LockView 一致。
+            switch error {
+            case BiometricKeychainError.userCanceled:
+                DiagLog.append("Touch ID 解锁已取消（用户取消认证，静默，docs/08 §7.6）")
+            case BiometricKeychainError.itemNotFound, BiometricKeychainError.authFailed:
+                let errText = ErrorPresenter.text(error)
+                DiagLog.append(errText)
+                touchIDStatus = .stale
                 lastErrorMessage = errText
+            default:
+                let errText = ErrorPresenter.text(error)
+                DiagLog.append(errText)
+                lastErrorMessage = errText
+                refreshTouchIDStatus()
             }
             // FR-12.5 兜底：unlockWithBiometric 完全豁免退避（不门禁也不
             // 计数，见 vault.rs「bio解锁不受退避门禁且不计数」单测），本
@@ -672,8 +693,6 @@ final class AppModel: ObservableObject {
             if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
                 refreshBackoffDeadline()
             }
-            // 4002（凭据失效）后刷新状态行，让设置页/LockView 与实际一致
-            refreshTouchIDStatus()
         }
     }
 

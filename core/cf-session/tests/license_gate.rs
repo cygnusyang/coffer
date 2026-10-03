@@ -409,3 +409,38 @@ fn locked_passkey_write_takes_priority_over_license() {
     let err = session.remove_passkey("no-uuid").unwrap_err();
     assert_eq!(err.code(), 1001, "锁定态必须 1001 优先于许可拒绝");
 }
+
+/// TC-GATE-04（会话侧补，H-1 修复）：Bitwarden JSON 导入同属
+/// ImportRestore 组——到期态 6002 / 异常退化态 6003 拒绝、拒绝不落半截
+/// 数据（对齐 import_csv / import_1pux 的 write_guard 收口与 TC-GATE-04
+/// 覆盖面；docs/03 §14.6 导入与恢复组）。
+#[test]
+fn readonly_deny_bitwarden_import() {
+    let (base, session) = seeded_session("deny-bw");
+    let count_before = session.list_items(None).unwrap().len();
+    let missing = base.join("nope.json");
+
+    // 到期态 → 6002（门禁先于文件解析，路径不必存在）
+    session.set_license_gate(expired_gate());
+    assert_deny_code(
+        session.import_bitwarden_json(&missing),
+        6002,
+        "import_bitwarden_json",
+    );
+
+    // 异常退化态 → 6003
+    session.set_license_gate(abnormal_gate());
+    assert_deny_code(
+        session.import_bitwarden_json(&missing),
+        6003,
+        "import_bitwarden_json",
+    );
+
+    // 拒绝不落半截数据：两次被拒后条目数不变
+    session.set_license_gate(Arc::new(PermitAllGate));
+    assert_eq!(
+        session.list_items(None).unwrap().len(),
+        count_before,
+        "被拒绝的 Bitwarden 导入不得落半截数据（条目数应不变）"
+    );
+}

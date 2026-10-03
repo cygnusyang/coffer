@@ -727,9 +727,11 @@ impl VaultSession {
     ///
     /// # 错误
     ///
-    /// 锁定态 → 1001；解析失败 → 2001；写入失败 → 2002（docs/03 §12）。
+    /// 锁定态 → 1001；许可拒绝态 → 6002/6003（ImportRestore 组，
+    /// docs/03 §14.6；TC-GATE-04）；解析失败 → 2001；写入失败 → 2002
+    /// （docs/03 §12）。
     pub fn import_bitwarden_json(&self, path: &Path) -> SessionResult<cf_importer::BwImportResult> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::ImportRestore)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         cf_importer::import_bitwarden_json(path, &mut state.store)
     }

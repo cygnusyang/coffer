@@ -610,11 +610,13 @@ final class AppModel: ObservableObject {
     /// 用完即弃，不落任何 @Published / 不进全局状态（与主密码同纪律）。
     /// isBusy 互斥与主密码解锁共用。
     ///
-    /// 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6）：catch 按错误类型
-    /// 分道——用户取消（.userCanceled）完全静默；凭据失效（.itemNotFound /
-    /// .authFailed）呈现 4002 并置 touchIDStatus = .stale（§4.1 stale 终判
-    /// 落地）；其余错误照常呈现（自动路径也呈现）。手动/自动路径语义一致。
-    /// 取消/失效均落回锁定页（phase 未变），按钮可再点。
+    /// 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6；authFailed 瞬时/持久
+    /// 分道为 PL-7）：catch 按错误类型分道——用户取消（.userCanceled）完全
+    /// 静默；.itemNotFound 持久失效 → 4002 + 置 touchIDStatus = .stale；
+    /// .authFailed 按失败瞬间 isBiometricsAvailable() 分道（瞬时 → 温和文案
+    /// 按钮保留；持久 → 4002 + stale，§4.1 终判落地）；其余错误照常呈现
+    /// （自动路径也呈现）。手动/自动路径语义一致。取消/失效均落回锁定页
+    /// （phase 未变），按钮可再点。
     func unlockWithTouchID() async {
         guard let session, !isBusy, phase == .locked else { return }
 
@@ -659,26 +661,46 @@ final class AppModel: ObservableObject {
             evaluateBackupReminder()
         } catch {
             // 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6，用户 2026-10-03
-            // 裁定）：
+            // 裁定；authFailed 瞬时/持久分道为 PL-7，2026-10-03 用户反馈）：
             //   - .userCanceled（用户取消认证）：完全静默——手动/自动路径一致。
             //     取消不是失败，不写 lastErrorMessage（ErrorPresenter 对该 case
             //     返回空串，写入也会弹空白框，故显式跳过），DiagLog 记诊断；
             //     落回锁定页按钮可再点。
-            //   - .itemNotFound / .authFailed（凭据失效）：呈现 4002 + 置 stale
-            //     ——§4.1 以 read 失败为 stale 终判落地：LockView 按钮消失引导
-            //     主密码，设置页可重新启用。不调 refreshTouchIDStatus（refresh
-            //     以 itemExists 判定，authFailed 场景项仍「存在」会被翻回
-            //     .enabled，此处以 read 失败为终判）。
+            //   - .itemNotFound（项不存在）：持久失效——呈现 4002 + 置 stale。
+            //     §4.1 以 read 失败为 stale 终判落地：LockView 按钮消失引导
+            //     主密码，设置页可重新启用。
+            //   - .authFailed（errSecAuthFailed）：瞬时/持久分道（PL-7）——
+            //     失败瞬间 isBiometricsAvailable()==false（锁屏/刚唤醒/传感器
+            //     未就绪/biometry lockout）→ 瞬时：不置 stale、touchIDStatus
+            //     不变、按钮保留可再点，呈现温和文案；==true（canEvaluatePolicy
+            //     通过仍读失败，指纹集变更/ACL 失效）→ 持久：维持 4002 + 置
+            //     stale（§4.1 语义不变）。分道判定抽成纯函数
+            //     TouchIDAuthFailure.disposition（独立单测）。
             //   - 其余（unexpected / FfiError 1002 / 4001 / 5999）：照常呈现
             //     （自动路径也呈现）并刷新状态行，与设置页/LockView 一致。
             switch error {
             case BiometricKeychainError.userCanceled:
                 DiagLog.append("Touch ID 解锁已取消（用户取消认证，静默，docs/08 §7.6）")
-            case BiometricKeychainError.itemNotFound, BiometricKeychainError.authFailed:
+            case BiometricKeychainError.itemNotFound:
                 let errText = ErrorPresenter.text(error)
                 DiagLog.append(errText)
                 touchIDStatus = .stale
                 lastErrorMessage = errText
+            case BiometricKeychainError.authFailed:
+                // 不调 refreshTouchIDStatus：refresh 以 itemExists 判定，authFailed
+                // 场景项仍「存在」会被翻回 .enabled，此处以 read 失败为终判。
+                switch TouchIDAuthFailure.disposition(
+                    biometryAvailable: BiometricKeychain.isBiometricsAvailable()
+                ) {
+                case .transient:
+                    DiagLog.append("Touch ID 解锁失败判定为瞬时不可用（isBiometricsAvailable=false，docs/08 §7.3 PL-7），按钮保留可再点")
+                    lastErrorMessage = ErrorPresenter.text(TouchIDError.transientUnavailable)
+                case .persistent:
+                    let errText = ErrorPresenter.text(error)
+                    DiagLog.append(errText)
+                    touchIDStatus = .stale
+                    lastErrorMessage = errText
+                }
             default:
                 let errText = ErrorPresenter.text(error)
                 DiagLog.append(errText)

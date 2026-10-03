@@ -352,14 +352,14 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## BUG-10（🟡 处置中：T8 已改 opt-in，根因待查）：真实库回环段无人值守执行挂起——`listVaults` 于容器路径 `opendir` 阻塞
+## BUG-10（🟡 处置基本完成：根因排查收口 + T8 timeout 加固，触发态待查）：真实库回环段无人值守执行挂起——`listVaults` 于容器路径 `opendir` 阻塞
 
 **登记日期**：2026-09-29
 **发现环境**：v0.4.0 发版回归（任务 #8），`run_clipboard_tier_tests.sh` 无人值守实跑（两次复现）
 **分级**：S3（测试基建）/ P2 / 来源版本 早期（T8 默认指向容器路径的行为先于 docs/14 §5 禁令） / 发现版本 v0.4.0（发版回归）
-**状态**：🟡 T8 改显式 opt-in（回归批内已改脚本）；挂起根因待查
-**核销记录**：脚本修订即视为处置完成（T8 转用户陪跑/真机清单）；根因查清后可另行关闭
-**证据**：`~/.claude/jobs/dc7a41d3/tmp/regress_clipboard2.log` / `regress_clipboard3.log`（二进制零输出挂起）；`/usr/bin/sample` 栈——`main → listVaults(baseDir:) → uniffi…list_vaults → std fs read_dir → opendir → open$NOCANCEL` 单点阻塞（2 秒采样 1550 样本全在该栈）；同路径 shell `ls` 实测正常（阳性对照：`~/.cargo/bin` 与容器路径均秒回）
+**状态**：🟡 处置基本完成（2026-10-03 v0.5.1 循环排查收口）：①根因排查三档结论（见下）；②T8 段 timeout 加固 `6cce031`；③复发协议留档。挂起为环境/状态相关瞬态，今日三路实证不复现；彻底关闭需触发态再现时实证（dtruss/fs_usage 需关 SIP）
+**核销记录**：加固 commit `6cce031`（T8 二进制外层套 `timeout`，默认 `T8_TIMEOUT_SECS=240`——实测正常全流程 81.5s 的 ~3 倍余量；超时 WARN+SKIP 不算 FAIL、真实失败退出码原样传播；含 `|| status=$?` 退出码捕获修正与三路用例验证；复跑 20/20 ALL GREEN）。脚本修订 + 加固 = 处置完成口径；根因查清后可另行关闭
+**证据**：09-29 挂起 `~/.claude/jobs/dc7a41d3/tmp/regress_clipboard2.log` / `regress_clipboard3.log`；2026-10-03 排查 `/tmp/bug10_probe/`——原生产二进制 T8 opt-in 全流程 26/26 ALL GREEN、忠实 FFI 探针 listVaults 55ms、纯 Rust read_dir 556µs（同机 uptime 20 天未重启，同内核状态）；根因结论：**已实证不复现；高度可疑（未实证）= macOS TCC/沙盒对容器路径的按客户端首访介导在无人值守下阻塞**（shell `ls` 正常 vs 测试二进制阻塞 ⇒ 按客户端区分；open$NOCANCEL+CPU≈0 介导形态；容器路径每进程首访 ~36-55ms 佐证）；FileProvider/iCloud/libcurl 均排除。**复发协议四件套**：sample 栈 + 同路径 ls 对照 + 新编译无关二进制同路径对照 + 无人值守状态记录
 
 ### 现象（预期/实际 分行写）
 

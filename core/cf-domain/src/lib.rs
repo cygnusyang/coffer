@@ -35,6 +35,8 @@
 //! - [`totp_data`]：TOTP 领域数据（不依赖 cf-totp）
 //! - [`template`]：22 类条目预设字段模板
 //! - [`error`]：统一错误类型 [`CfError`]
+//! - [`license`]：许可门禁端口 [`license::LicenseGate`] 与默认实现
+//!   [`license::PermitAllGate`]（FR-15，`02` §10.2 端口注入）
 //! - [`validate`]：条目校验规则
 //!
 //! ## 状态
@@ -56,6 +58,7 @@ pub mod category;
 pub mod error;
 pub mod field;
 pub mod item;
+pub mod license;
 pub mod secret;
 pub mod snapshot;
 pub mod template;
@@ -64,6 +67,7 @@ pub mod validate;
 pub mod vault;
 
 pub use error::CfError;
+pub use license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
 pub use snapshot::{
     AttachmentMetaSnapshot, FieldSnapshot, ItemSnapshot, SectionSnapshot, UrlEntrySnapshot,
 };

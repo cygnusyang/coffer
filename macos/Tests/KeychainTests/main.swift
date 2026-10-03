@@ -75,6 +75,14 @@ check(BiometricKeychainError.itemNotFound == BiometricKeychainError.itemNotFound
 check(BiometricKeychainError.unexpected(-34018) == BiometricKeychainError.unexpected(-34018), "接口枚举：unexpected Equatable")
 check(BiometricKeychainError.itemNotFound != BiometricKeychainError.authFailed, "接口枚举：不同 case 不相等")
 
+// 7c1. userCanceled 独立 case（reviewer HIGH 处置，docs/08 §7.3/§7.6）：
+//      用户取消 ≠ 凭据失效，两者分道呈现——取消静默、失效 4002 + 置 stale。
+//      mapStatus 拆分后 errSecUserCanceled 不再归入 authFailed，此处断言
+//      userCanceled 与 authFailed / itemNotFound 均不等（Equatable 语义）。
+check(BiometricKeychainError.userCanceled == BiometricKeychainError.userCanceled, "接口枚举：userCanceled Equatable")
+check(BiometricKeychainError.userCanceled != BiometricKeychainError.authFailed, "接口枚举：userCanceled ≠ authFailed（取消与失效分道）")
+check(BiometricKeychainError.userCanceled != BiometricKeychainError.itemNotFound, "接口枚举：userCanceled ≠ itemNotFound")
+
 // 7d. isBiometricsAvailable 返回 Bool（值随设备，不断言真假）
 _ = BiometricKeychain.isBiometricsAvailable()
 check(true, "接口枚举：isBiometricsAvailable 可调用")

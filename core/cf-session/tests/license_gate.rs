@@ -6,7 +6,9 @@
 //! 拒绝不落半截数据（08）、激活后解除（09）、开源默认 PermitAll
 //! （10）、锁定态 1001 优先（11）。
 //!
-//! TC-GATE-06（Passkey 断言白名单）随 v0.5.0 Passkey 实现补；
+//! TC-GATE-06（Passkey 写拒绝 / 断言白名单）写侧随 v0.5.0 Passkey
+//! 实现补：`remove_passkey`（delete_passkey）经 write_guard 拒绝；
+//! 断言（get_passkey_assertion）侧待断言用例实现后补白名单记账写断言；
 //! TC-GATE-04/05（应用级 import/export 包）在 cf-ffi tests；
 //! TC-GATE-12 为统一入口审读勾稽（`VaultSession::write_guard`）。
 
@@ -20,6 +22,7 @@ use cf_domain::item::{FieldDraft, ItemDraft};
 use cf_domain::license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
 use cf_session::unlock::{create_vault_with_kdf, open_vault};
 use cf_session::VaultSession;
+use rusqlite::Connection;
 
 const STRONG: &str = "correct-horse-battery-staple-42!";
 
@@ -337,5 +340,72 @@ fn locked_state_takes_priority_over_license() {
     session.set_license_gate(expired_gate());
 
     let err = session.create_item(&login_draft("x")).unwrap_err();
+    assert_eq!(err.code(), 1001, "锁定态必须 1001 优先于许可拒绝");
+}
+
+/// 直连 db.sqlite 种一条 passkey 行（加密列对测试是不透明字节；schema
+/// 明文可直插，与 tests/passkeys.rs 会话层级联用法的既定模式一致）。
+fn seed_passkey_row(db_path: &std::path::Path, item_id: &str, uuid: &str) {
+    let conn = Connection::open(db_path).unwrap();
+    conn.execute(
+        "INSERT INTO passkeys
+            (uuid, item_uuid, enc_rp_id, enc_user_handle, enc_credential_id,
+             enc_private_key, algorithm, sign_count, created_at, rp_id_hmac)
+         VALUES (?1, ?2, x'00', x'00', x'00', x'00', -7, 3, 1, x'00')",
+        rusqlite::params![uuid, item_id],
+    )
+    .unwrap();
+}
+
+fn passkey_row_count(db_path: &std::path::Path) -> i64 {
+    let conn = Connection::open(db_path).unwrap();
+    conn.query_row("SELECT COUNT(*) FROM passkeys", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// TC-GATE-06：拒绝面——Passkey 写（delete_passkey）经 write_guard 拒绝。
+/// 到期态 6002 / 异常退化态 6003（`docs/03` §14.6 Passkey 写组）；拒绝
+/// 不落半截数据（对齐 TC-GATE-08）；放行态（PermitAll）恢复不受影响。
+#[test]
+fn readonly_deny_passkey_writes() {
+    let (_base, session) = seeded_session("deny-passkey");
+    let item_id = session.list_items(None).unwrap()[0].uuid.to_string();
+    let db_path = session.vault_dir().join("db.sqlite");
+
+    seed_passkey_row(&db_path, &item_id, "pk-gate-1");
+    assert_eq!(passkey_row_count(&db_path), 1, "种子行就位");
+
+    // 到期态 → 6002（矩阵 Passkey 写组）
+    session.set_license_gate(expired_gate());
+    assert_deny_code(session.remove_passkey("pk-gate-1"), 6002, "remove_passkey");
+
+    // 异常退化态 → 6003（拒绝码区分，对齐 TC-GATE-07 语义）
+    session.set_license_gate(abnormal_gate());
+    assert_deny_code(session.remove_passkey("pk-gate-1"), 6003, "remove_passkey");
+
+    // 拒绝不落半截数据：两次被拒后行仍在（对齐 TC-GATE-08）
+    assert_eq!(
+        passkey_row_count(&db_path),
+        1,
+        "被拒绝的 passkey 删除不得落半截数据（行应保留）"
+    );
+
+    // 放行态（默认 PermitAll，对齐 TC-GATE-10）→ 删除生效
+    session.set_license_gate(Arc::new(PermitAllGate));
+    session.remove_passkey("pk-gate-1").unwrap();
+    assert_eq!(passkey_row_count(&db_path), 0, "放行后删除应生效");
+}
+
+/// TC-GATE-06/11：锁定态下 Passkey 写仍 1001 优先于许可拒绝——
+/// write_guard 先过解锁门禁（1001），再作许可判定。
+#[test]
+fn locked_passkey_write_takes_priority_over_license() {
+    let base = temp_dir("locked-passkey");
+    let brief = create_vault_with_kdf(&base, "locked-passkey", STRONG, fast_kdf()).unwrap();
+    let dir = base.join(brief.uuid.to_string());
+    let session = open_vault(&dir).unwrap();
+    session.set_license_gate(expired_gate());
+
+    let err = session.remove_passkey("no-uuid").unwrap_err();
     assert_eq!(err.code(), 1001, "锁定态必须 1001 优先于许可拒绝");
 }

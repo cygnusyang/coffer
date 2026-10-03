@@ -587,9 +587,10 @@ impl VaultSession {
     }
 
     /// 删除 Passkey（FR-10.5）：纯 DB 行删除，无文件面副作用。
-    /// 行不存在 → 1011。锁定 → 1001。
+    /// 行不存在 → 1011。锁定 → 1001。许可拒绝态 → 6002/6003
+    /// （PasskeyWrite 组，docs/03 §14.6；TC-GATE-06）。
     pub fn remove_passkey(&self, passkey_uuid: &str) -> SessionResult<()> {
-        let mut guard = self.unlocked()?;
+        let mut guard = self.write_guard(LicensedOp::PasskeyWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::passkeys::remove_passkey(&mut state.store, passkey_uuid)
     }

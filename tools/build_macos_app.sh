@@ -91,13 +91,15 @@ fi
 
 printf '编译 %d 个 Swift 源文件%s\n' "${#SOURCES[@]}" "$([[ "${OFFICIAL_LICENSE}" == "1" ]] && echo '（官方模式）' || echo '（公开模式）')"
 
+# bash 3.2 + set -u 下空数组 "${arr[@]}" 展开报 unbound variable（macOS 自带 /bin/bash），
+# 故下方用 ${arr[@]+"${arr[@]}"} 守卫：数组非空才展开（bash 3.2 兼容写法）。
 swiftc -O \
   -swift-version 5 \
   -target arm64-apple-macos14.0 \
   -parse-as-library \
   "${IMPORT_HEADERS[@]}" \
-  "${CLANG_INCLUDES[@]}" \
-  "${COMPILE_DEFS[@]}" \
+  ${CLANG_INCLUDES[@]+"${CLANG_INCLUDES[@]}"} \
+  ${COMPILE_DEFS[@]+"${COMPILE_DEFS[@]}"} \
   "${SOURCES[@]}" \
   -L "${CORE_TARGET}/release" \
   -lcf_ffi \

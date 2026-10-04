@@ -284,7 +284,12 @@ fn emit_item(
         );
         for a in &atts {
             let content = repos.attachments.read_content(&a.uuid, vault_dir)?;
-            let entry = format!("files/{doc_id}___{}", a.filename);
+            // 条目名净化：文件名段替换路径成分（`..`/`/`/`\`/`:` → `_`），
+            // 防解压 zip-slip；documentAttributes.fileName 保留原始名（回环无损）。
+            let entry = format!(
+                "files/{doc_id}___{}",
+                sanitize_attachment_entry_filename(&a.filename)
+            );
             files.push((entry, content));
             acc.attachment_count += 1;
         }
@@ -400,6 +405,35 @@ fn split_field_name(name: &str) -> (Option<String>, Option<String>) {
     match name.split_once(" / ") {
         Some((st, ft)) => (Some(st.to_owned()), Some(ft.to_owned())),
         None => (None, Some(name.to_owned())),
+    }
+}
+
+/// 1PUX 附件 ZIP 条目名的文件名段净化（MEDIUM-2 出口防御）。
+///
+/// 条目名 = `files/{documentId}___{fileName}`；`fileName` 段直嵌用户可控的
+/// 明文文件名，恶意 1PUX/opvault 导入可携带 `../`、`/`、`\`、`:` 等路径
+/// 成分，解压导出产物时可能 zip-slip / 写入异常路径。本函数**仅**净化
+/// 条目名里的文件名段：
+///
+/// - `documentAttributes.fileName` 保留原始名——导入侧以官方键为准存文件名、
+///   ZIP 条目按 `files/<documentId>` 前缀枚举定位内容（
+///   `cf-importer/src/pux/mapping.rs` `normalize_file_ref`），故回环无损；
+/// - `/` `\` `:` 替换为 `_`（替换而非剥除，保长保可读）；
+/// - 结果为空 / `.` / `..` → 回退占位名 `unnamed`（杜绝空名与父目录自指）。
+///
+/// 与 opvault 导入侧净化互不依赖（双侧防御）。
+fn sanitize_attachment_entry_filename(name: &str) -> String {
+    let out: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' => '_',
+            c => c,
+        })
+        .collect();
+    if out.is_empty() || out == "." || out == ".." {
+        "unnamed".to_owned()
+    } else {
+        out
     }
 }
 
@@ -735,5 +769,47 @@ mod tests {
         assert_eq!(report.degraded_fields.len(), 1);
         // Email designation 原样保留
         assert_eq!(grouped[1].1[0]["designation"], "email");
+    }
+
+    /// 附件条目名净化（MEDIUM-2）：路径成分全部替换、空/`.`/`..` 回退占位名、
+    /// 正常名原样保留（对既有行为零扰动）。
+    #[test]
+    fn 附件条目名净化() {
+        // 常规名原样（最小扰动）
+        assert_eq!(sanitize_attachment_entry_filename("report.pdf"), "report.pdf");
+        assert_eq!(
+            sanitize_attachment_entry_filename("报价单 2024.pdf"),
+            "报价单 2024.pdf"
+        );
+        // 路径成分替换（保长保可读）
+        assert_eq!(
+            sanitize_attachment_entry_filename("../../etc/passwd"),
+            ".._.._etc_passwd"
+        );
+        assert_eq!(sanitize_attachment_entry_filename("/etc/passwd"), "_etc_passwd");
+        assert_eq!(sanitize_attachment_entry_filename(r"a\b"), "a_b");
+        assert_eq!(sanitize_attachment_entry_filename("C:evil.txt"), "C_evil.txt");
+        assert_eq!(sanitize_attachment_entry_filename("a/b/c"), "a_b_c");
+        // 空 / `.` / `..` 回退占位名
+        assert_eq!(sanitize_attachment_entry_filename(""), "unnamed");
+        assert_eq!(sanitize_attachment_entry_filename("."), "unnamed");
+        assert_eq!(sanitize_attachment_entry_filename(".."), "unnamed");
+        // 全量断言：输出恒为单路径成分（无分隔符），且非父目录自指
+        for name in [
+            "../../etc/passwd",
+            "/etc/passwd",
+            r"..\..\win.ini",
+            "C:evil.txt",
+            "..",
+            ".",
+            "",
+        ] {
+            let out = sanitize_attachment_entry_filename(name);
+            assert!(!out.contains('/'), "{name:?} → {out:?} 含 /");
+            assert!(!out.contains('\\'), "{name:?} → {out:?} 含 \\");
+            assert!(!out.contains(':'), "{name:?} → {out:?} 含 :");
+            assert!(!out.is_empty(), "{name:?} → 空条目名");
+            assert!(out != "." && out != "..", "{name:?} → {out:?} 自指");
+        }
     }
 }

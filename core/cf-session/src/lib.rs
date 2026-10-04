@@ -59,6 +59,7 @@
 
 mod backoff;
 pub mod change_password;
+mod diag;
 mod export_gate;
 pub mod idle;
 pub mod reminder;
@@ -77,6 +78,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cf_totp::TotpConfig;
 
+pub use diag::DiagnosticSummary;
 pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
 pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
 pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};

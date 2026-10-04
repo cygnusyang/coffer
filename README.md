@@ -33,7 +33,7 @@
 | **强加密** | Argon2id（RFC 9106）+ XChaCha20-Poly1305 信封加密，主密码只封装数据密钥，换密不重加密全库 | 核心原语已实现 |
 | **22 类条目** | Login、Credit Card、Identity、Passport、SSH Key 等 22 类模板 + 自定义字段（"22 类"的口径与来源见 `docs/03-详细设计.md` §4.1） | ✅ 已实现（`cf-domain`） |
 | **TOTP** | 内置验证码生成（RFC 6238），当前支持 SHA-1 | ✅ 已实现，全链路测试绿 |
-| **从 1PUX / CSV 迁移** | 1PUX / CSV 导入，字段映射逐项可核对、未知字段不静默丢弃 | 🟡 CSV 导入已交付（`cf-importer`）；1PUX 待真实样本类别校准 |
+| **从 1PUX / CSV / opvault 迁移** | 1PUX / CSV / opvault 导入（字段映射逐项可核对、未知字段不静默丢弃）+ 1PUX 兼容导出（官方 v3 结构） | 🟡 CSV / 1PUX 导入已交付（`cf-importer`，1PUX 过 685 真实样本验收）；opvault 导入与 1PUX 导出已实现（v0.7.0，`cf-importer` / `cf-exporter`）——**尚未与真实 1Password / Bitwarden 导出完成真机交叉验证** |
 | **Passkey** | 完整能力进 v1.0.0 | 平台验证未完成 |
 | **离线安全检查** | 弱密码 / 重复密码 / 弱 URL / 陈旧密码检测 | 🟡 仅 zxcvbn 强度评估可用，检测项未实现 |
 | **原生而非 Electron** | Android = Kotlin + Compose；macOS = Swift + SwiftUI | 🟡 macOS 端 v0.1 已交付；Android 端未开始（M5） |
@@ -93,11 +93,11 @@ Rust 工作区（`core/`）11 个 crate：
 
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
-| **M0 技术预研** | UniFFI 双向打通、Argon2id 最低端设备标定、真实 1PUX 样本校准、opvault 交叉验证、Passkey 平台验证 | 🟡 **部分完成** |
+| **M0 技术预研** | UniFFI 双向打通、Argon2id 最低端设备标定、真实 1PUX 样本校准、opvault 交叉验证、Passkey 平台验证 | 🟡 **部分完成**（opvault 交叉验证已闭环 `docs/24-opvault布局交叉验证报告.md`；Argon2id 最低端设备标定待做） |
 | **M1 核心库** | Rust 核心完整可用：cf-crypto / cf-format / cf-domain / cf-store / cf-totp / cf-audit | ✅ **完成** |
-| **M2 导入器** | 1PUX 完整导入 + CSV 导入、预检报告、映射表校准 | 🟡 **部分完成**（CSV 已交付；1PUX 待样本校准） |
+| **M2 导入器** | 1PUX 完整导入 + CSV 导入、预检报告、映射表校准 | 🟡 **部分完成**（CSV / 1PUX 已交付，1PUX 过 685 真实样本验收；opvault 导入 v0.7.0 已实现） |
 | **M3 macOS MVP** | 可日常使用的 macOS 端（**首版交付目标**） | ✅ **完成**（v0.1 纵切已交付） |
-| **M4 macOS 完整** | 附件、opvault 导入、1PUX 导出、Passkey | ⬜ 未开始 |
+| **M4 macOS 完整** | 附件、opvault 导入、1PUX 导出、Passkey | 🟡 **部分完成**——opvault 导入 + 1PUX 导出已实现（v0.7.0）；Passkey 降级版已交付（v0.5.0，完整版随 ADP 重启） |
 | **M5 Android 端** | 第二交付目标 | ⬜ 未开始 |
 
 **当前进展（2026-09-29）**：

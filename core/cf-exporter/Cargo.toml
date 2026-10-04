@@ -21,12 +21,14 @@ rusqlite = { workspace = true }
 # deflate——压缩面越小攻击面越小。不使用 ZIP 自身加密（弱），内容本身已
 # 逐字段 AEAD 加密。
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# TOTP 全量导出（FR-8.2）：otpauth URI 编解码与 base32 往返校验的权威实现
+#（docs/22 §2.1.4，dev → 正式依赖）
+cf-totp = { workspace = true }
+# documentId（附件）/ 条目新建等 UUIDv7 生成（docs/22 §2.1 附件结构）
+uuid = { workspace = true }
 
 [dev-dependencies]
 # header.json 的 salt_b64 编解码（构造/读取测试夹具 header）
 base64 = "0.22"
 # 夹具 KEK 的 Zeroizing 包装（与生产密钥纪律一致）
 zeroize = { workspace = true }
-# base32 编码与 cf_totp::base32_decode 的往返一致性测试
-cf-totp = { workspace = true }
-uuid = { workspace = true }

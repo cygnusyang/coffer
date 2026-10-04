@@ -5,14 +5,17 @@
 //   ① 通用：自动锁定超时（原 MainView 工具栏 autoLockMenu 迁入）
 //   ② 剪贴板：自动清除档位（T06 / FR-14.2）
 //   ③ 备份提醒：提醒间隔档位（FR-8.5；评估逻辑 T-G 接入）
-//   ④ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
+//   ④ 生成器：生成器默认参数（FR-14.3，T08：GeneratorSettingsView）
+//   ⑤ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
-//   ⑤ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
-//   ⑥ 许可：「许可…」（FR-15.7：LicenseSettingsView，许可状态 / 激活入口 /
+//   ⑥ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
+//   ⑦ 诊断与隐私：「诊断信息…」（FR-14.4，T08：DiagnosticsView）
+//     + 「网络能力自证…」（FR-14.5，T08：NetworkSelfCertView）
+//   ⑧ 许可：「许可…」（FR-15.7：LicenseSettingsView，许可状态 / 激活入口 /
 //      机器指纹；自包含不触 AppModel，docs/03 §14）
-//   ⑦ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
+//   ⑨ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
 //      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
-//   ⑧ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
+//   ⑩ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
 //   - autoLockMinutes：0 = 从不（运行态；落盘为 -1，见 AppModel）
@@ -37,6 +40,12 @@ struct SettingsView: View {
     @State private var showAuditLog = false
     /// 「许可」sheet（FR-15.7：LicenseSettingsView 许可状态 / 激活入口）。
     @State private var showLicense = false
+    /// 「生成器默认参数」sheet（FR-14.3：GeneratorSettingsView，T08）。
+    @State private var showGeneratorDefaults = false
+    /// 「诊断信息」sheet（FR-14.4：DiagnosticsView，T08）。
+    @State private var showDiagnostics = false
+    /// 「网络能力自证」sheet（FR-14.5：NetworkSelfCertView，T08）。
+    @State private var showNetworkSelfCert = false
 
     var body: some View {
         NavigationStack {
@@ -44,8 +53,10 @@ struct SettingsView: View {
                 generalSection
                 clipboardSection
                 backupReminderSection
+                generatorSection
                 securitySection
                 dataSection
+                diagnosticsSection
                 licenseSection
                 mcpSection
                 doneSection
@@ -76,6 +87,21 @@ struct SettingsView: View {
             // 许可信息（FR-15.7，docs/03 §14）：自包含，不依赖 AppModel
             // （许可域与密码库会话无关，v0.4 §6.1 切片纪律，同 McpSettingsSection）
             LicenseSettingsView()
+        }
+        .sheet(isPresented: $showGeneratorDefaults) {
+            // 生成器默认参数（FR-14.3，T08）：编辑存档默认值，
+            // 「另存为默认」经 AppModel 校验落盘（generatorDefaultsV1）。
+            GeneratorSettingsView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showDiagnostics) {
+            // 诊断信息（FR-14.4，T08）：只读白名单字段，消费 T03 diagnostic_summary FFI。
+            DiagnosticsView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showNetworkSelfCert) {
+            // 网络能力自证（FR-14.5，T08）：静态说明页，无 AppModel 依赖。
+            NetworkSelfCertView()
         }
     }
 
@@ -140,7 +166,26 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ④ 安全（Touch ID 原样迁入 + 改密入口占位）
+    // MARK: - ④ 生成器（FR-14.3，T08）
+
+    /// 生成器默认参数入口（FR-14.3）：编辑存档默认值，供生成器面板首次
+    /// 打开预填（TC-GEN-01）；另存为默认经 AppModel 校验落盘（TC-GEN-03）。
+    private var generatorSection: some View {
+        Section {
+            Button {
+                showGeneratorDefaults = true
+            } label: {
+                Label("生成器默认参数…", systemImage: "wand.and.stars")
+            }
+            // T08：弹出 GeneratorSettingsView（见 body 的 showGeneratorDefaults sheet）
+        } header: {
+            Text("生成器")
+        } footer: {
+            Text("设置新建条目时生成器的预填参数（长度 / 字符集 / 密码短语选项）。")
+        }
+    }
+
+    // MARK: - ⑤ 安全（Touch ID 原样迁入 + 改密入口占位）
 
     @ViewBuilder
     private var securitySection: some View {
@@ -158,7 +203,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑤ 数据（T-H 恢复备份 / T-I 审计日志）
+    // MARK: - ⑥ 数据（T-H 恢复备份 / T-I 审计日志）
 
     private var dataSection: some View {
         Section("数据") {
@@ -178,7 +223,31 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑥ 许可（FR-15.7，docs/03 §14）
+    // MARK: - ⑦ 诊断与隐私（FR-14.4 诊断信息 / FR-14.5 网络自证，T08）
+
+    /// 诊断信息 + 网络能力自证入口（T08）：前者消费 diagnostic_summary FFI
+    /// 白名单字段（TC-DIAG）；后者为零网络架构静态说明页（TC-NET）。
+    private var diagnosticsSection: some View {
+        Section {
+            Button {
+                showDiagnostics = true
+            } label: {
+                Label("诊断信息…", systemImage: "stethoscope")
+            }
+            // T08：弹出 DiagnosticsView（见 body 的 showDiagnostics sheet）
+
+            Button {
+                showNetworkSelfCert = true
+            } label: {
+                Label("网络能力自证…", systemImage: "network.slash")
+            }
+            // T08：弹出 NetworkSelfCertView（见 body 的 showNetworkSelfCert sheet）
+        } header: {
+            Text("诊断与隐私")
+        }
+    }
+
+    // MARK: - ⑧ 许可（FR-15.7，docs/03 §14）
 
     /// 独立的 LicenseSettingsView（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
     /// 许可域与密码库会话无关，docs/03 §14.9）。
@@ -197,7 +266,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑦ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
+    // MARK: - ⑨ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
 
     /// 独立的 McpSettingsSection（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
     /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。
@@ -205,7 +274,7 @@ struct SettingsView: View {
         McpSettingsSection()
     }
 
-    // MARK: - ⑧ 完成
+    // MARK: - ⑩ 完成
 
     private var doneSection: some View {
         Section {

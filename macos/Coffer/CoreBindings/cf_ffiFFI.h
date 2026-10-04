@@ -269,6 +269,11 @@ RustBuffer uniffi_cf_ffi_fn_method_cofferapp_create_vault(uint64_t ptr, RustBuff
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_export_backup(uint64_t ptr, RustBuffer vault_dir, RustBuffer out_path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_FORMAT_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_FORMAT_VERSION
+RustBuffer uniffi_cf_ffi_fn_method_cofferapp_format_version(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_LIST_VAULTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_LIST_VAULTS
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_list_vaults(uint64_t ptr, RustBuffer base_dir, RustCallStatus *_Nonnull out_status
@@ -352,6 +357,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_create_item(uint64_t ptr, RustBu
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DELETE_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DELETE_ITEM
 void uniffi_cf_ffi_fn_method_vaultsession_delete_item(uint64_t ptr, RustBuffer item_id, int8_t hard, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_diagnostic_summary(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISABLE_BIOMETRIC
@@ -886,6 +896,12 @@ uint16_t uniffi_cf_ffi_checksum_method_cofferapp_export_backup(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_FORMAT_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_FORMAT_VERSION
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_format_version(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_LIST_VAULTS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_LIST_VAULTS
 uint16_t uniffi_cf_ffi_checksum_method_cofferapp_list_vaults(void
@@ -973,6 +989,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_create_item(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DELETE_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DELETE_ITEM
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_delete_item(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_diagnostic_summary(void
     
 );
 #endif

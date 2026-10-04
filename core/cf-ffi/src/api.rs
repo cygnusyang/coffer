@@ -240,6 +240,16 @@ impl CofferApp {
         }))
         .map(|dir| dir.to_string_lossy().into_owned())
     }
+
+    /// 库容器格式版本（FR-14.4 诊断，docs/22 §3.4 / docs/23 TC-DIAG-02）。
+    ///
+    /// 常量 `cf_format::FORMAT_VERSION` 经 FFI 暴露（String 形态），供
+    /// Swift 诊断页（`DiagnosticsView`）展示库格式版本；与 header 内逐库
+    /// `format_version` 语义一致（当前 = 1）。只读常量，无门禁。
+    #[must_use]
+    pub fn format_version(&self) -> String {
+        cf_format::FORMAT_VERSION.to_string()
+    }
 }
 
 /// 密码强度评估实现（zxcvbn + feedback 文案；工厂与会话两处共用）。
@@ -838,6 +848,18 @@ impl VaultSession {
             self.inner.recent_audit_events(offset, limit)
         }))
         .map(|entries| entries.into_iter().map(Into::into).collect())
+    }
+
+    // -------------------------------------------------- 诊断（FR-14.4）
+
+    /// 本地诊断摘要（FR-14.4，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
+    ///
+    /// 组合读取非敏感元数据：条目数 / 附件数 / 库创建时间 / 最后备份时间 /
+    /// 库 UUID 前缀。**字段集白名单**——结构上不含任何敏感数据（无标题 /
+    /// 无密码 / 无 secret，TC-DIAG-03）。只读允许面，无许可门禁
+    /// （6002/6003 不适用，与 `list_items` 同类）；锁定态 → 1001。
+    pub fn diagnostic_summary(&self) -> Result<FfiDiagnosticSummary, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.diagnostic_summary())).map(Into::into)
     }
 }
 

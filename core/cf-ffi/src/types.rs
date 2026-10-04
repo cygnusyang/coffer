@@ -336,6 +336,38 @@ impl From<VaultInfo> for FfiVaultInfo {
     }
 }
 
+/// FR-14.4 本地诊断摘要（FFI 镜像，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
+///
+/// **字段集白名单**（FR-14.4 红线，docs/23 §1.5 TC-DIAG-03）：只含计数 /
+/// 时间 / uuid 前缀类非敏感字段——结构上不存在密码明文 / 条目标题 /
+/// secret / 密钥材料读路径（非仅 UI 不展示）。新增字段须经
+/// `tests/diag_ffi_semantics.rs` 白名单钉住测试（编译期穷尽构造）复核。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiDiagnosticSummary {
+    /// 条目数（`meta.item_count`）
+    pub item_count: i64,
+    /// 附件数（`attachments` 表行数；纯计数）
+    pub attachment_count: i64,
+    /// 库创建时间（`header.created_at`，Unix 秒 UTC）
+    pub vault_created_at: i64,
+    /// 最后成功备份时间（Unix 秒；从未备份为 `None`）
+    pub last_backup_at: Option<i64>,
+    /// 库 UUID 前 8 字符前缀（非敏感）
+    pub vault_uuid_prefix: String,
+}
+
+impl From<cf_session::DiagnosticSummary> for FfiDiagnosticSummary {
+    fn from(s: cf_session::DiagnosticSummary) -> Self {
+        Self {
+            item_count: s.item_count,
+            attachment_count: s.attachment_count,
+            vault_created_at: s.vault_created_at,
+            last_backup_at: s.last_backup_at,
+            vault_uuid_prefix: s.vault_uuid_prefix,
+        }
+    }
+}
+
 // ============================================================ 列表过滤
 
 /// 条目列表过滤（docs/07 §2.3 `ItemFilter`）。

@@ -38,6 +38,8 @@ pub enum AuditEvent {
     BackupRestore,
     /// CSV 明文导出成功（FR-8.3）。
     CsvExport,
+    /// 1PUX 明文导出成功（FR-8.2，v0.7.0）。
+    PuxExport,
     /// 修改主密码成功（FR-1.8）。
     PasswordChange,
     /// 跨库复制条目成功（FR-2.10，v0.4.0）。源库与目标库各打一条，
@@ -53,6 +55,7 @@ impl AuditEvent {
             Self::BackupExport => "backup_export",
             Self::BackupRestore => "backup_restore",
             Self::CsvExport => "csv_export",
+            Self::PuxExport => "pux_export",
             Self::PasswordChange => "password_change",
             Self::ItemCopy => "item_copy",
         }
@@ -65,6 +68,7 @@ impl AuditEvent {
             "backup_export" => Some(Self::BackupExport),
             "backup_restore" => Some(Self::BackupRestore),
             "csv_export" => Some(Self::CsvExport),
+            "pux_export" => Some(Self::PuxExport),
             "password_change" => Some(Self::PasswordChange),
             "item_copy" => Some(Self::ItemCopy),
             _ => None,
@@ -228,6 +232,7 @@ mod tests {
             AuditEvent::BackupExport,
             AuditEvent::BackupRestore,
             AuditEvent::CsvExport,
+            AuditEvent::PuxExport,
             AuditEvent::PasswordChange,
             AuditEvent::ItemCopy,
         ] {

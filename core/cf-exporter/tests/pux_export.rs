@@ -978,20 +978,11 @@ fn tc_exp_14_unknown_fieldtype_degrades_with_report() {
     remove_dir_all_quiet(&base);
 }
 
-// ------------------------------------------------------------ 占位（门禁落点）
+// ------------------------------------------------- 门禁 / 参数校验（T04 迁出）
 
-/// TC-EXP-09 只读许可态拒绝（6002/6003）——⏸ 落点在 cf-session 门禁层
-/// （`T04`，G2 串行）。cf-exporter 以 `&ItemStore` 为入参无门禁语义。
-#[test]
-#[ignore = "TC-EXP-09：ExportData 门禁落点在 cf-session（T04），本层无门禁语义"]
-fn tc_exp_09_license_gate_pending_t04() {}
-
-/// TC-EXP-10 锁定态 1001——⏸ 落点在 cf-session（T04）。
-#[test]
-#[ignore = "TC-EXP-10：锁定态门禁落点在 cf-session（T04）"]
-fn tc_exp_10_locked_pending_t04() {}
-
-/// TC-EXP-15 FFI 参数无效 1012/5002——⏸ 落点在 cf-ffi（T04）。
-#[test]
-#[ignore = "TC-EXP-15：参数校验落点在 cf-ffi（T04）"]
-fn tc_exp_15_ffi_param_pending_t04() {}
+// TC-EXP-09/10/15 由 T04 迁至 cf-ffi（门禁落点在 cf-session / cf-ffi 边界，
+// 本层无门禁与参数校验语义；cf-exporter 不能 dev-依赖 cf-ffi 防循环）：
+//   - TC-EXP-09：只读许可态 6002/6003 + 拒绝不产生输出文件
+//   - TC-EXP-10：锁定态 1001
+//   - TC-EXP-15：out_path 参数非法 → 5002
+// 实现在 `core/cf-ffi/tests/pux_export_ffi_semantics.rs`（T04，docs/22 §6）。

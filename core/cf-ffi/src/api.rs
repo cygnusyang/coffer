@@ -835,6 +835,32 @@ impl VaultSession {
         .map(Into::into)
     }
 
+    /// 1PUX 明文导出（FR-8.2，v0.7.0-T04；docs/23 TC-EXP 组；锁定态 → 1001）。
+    ///
+    /// 输出官方 1PUX v3 结构（ZIP + 明文 JSON + `files/` 附件），走
+    /// **ExportData 许可门禁组**（`write_guard(LicensedOp::ExportData)`，
+    /// 与 [`Self::export_csv`] 同落点；只读态 → 6002/6003，TC-EXP-09）。
+    /// **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
+    /// 取得用户显式确认（1PUX 为明文导出，含密码 / TOTP secret）才可调用
+    /// 本方法——内核不提供也不应绕过该门禁（纪律同 [`Self::export_csv`]）。
+    ///
+    /// # Errors
+    ///
+    /// `out_path` 为空串 → 5002 InvalidArgument（TC-EXP-15）；只读许可态 →
+    /// 6002/6003（TC-EXP-09）；锁定态 → 1001（TC-EXP-10）；目标父目录
+    /// 不存在 / ZIP 写入失败 → 2003（TC-EXP-11）；其余透传内核错误。
+    pub fn export_one_pux(&self, out_path: String) -> Result<FfiPuxExportResult, FfiError> {
+        if out_path.trim().is_empty() {
+            return Err(FfiError::from(CfError::InvalidArgument(
+                "out_path must not be empty".into(),
+            )));
+        }
+        session_call(AssertUnwindSafe(|| {
+            self.inner.export_one_pux(Path::new(&out_path))
+        }))
+        .map(Into::into)
+    }
+
     /// 本地审计日志只读分页查询（FR-12.6；锁定态 → 1001）。
     ///
     /// 按时间倒序；`offset` / `limit` 语义与条目过滤一致（`None` 偏移

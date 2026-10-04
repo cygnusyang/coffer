@@ -1169,6 +1169,24 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func exportCsv(outPath: String) throws  -> FfiCsvExportResult
     
     /**
+     * 1PUX 明文导出（FR-8.2，v0.7.0-T04；docs/23 TC-EXP 组；锁定态 → 1001）。
+     *
+     * 输出官方 1PUX v3 结构（ZIP + 明文 JSON + `files/` 附件），走
+     * **ExportData 许可门禁组**（`write_guard(LicensedOp::ExportData)`，
+     * 与 [`Self::export_csv`] 同落点；只读态 → 6002/6003，TC-EXP-09）。
+     * **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
+     * 取得用户显式确认（1PUX 为明文导出，含密码 / TOTP secret）才可调用
+     * 本方法——内核不提供也不应绕过该门禁（纪律同 [`Self::export_csv`]）。
+     *
+     * # Errors
+     *
+     * `out_path` 为空串 → 5002 InvalidArgument（TC-EXP-15）；只读许可态 →
+     * 6002/6003（TC-EXP-09）；锁定态 → 1001（TC-EXP-10）；目标父目录
+     * 不存在 / ZIP 写入失败 → 2003（TC-EXP-11）；其余透传内核错误。
+     */
+    func exportOnePux(outPath: String) throws  -> FfiPuxExportResult
+    
+    /**
      * 生成密码短语（FR-3.3，EFF 词表不重复抽样；参数见
      * [`FfiPassphraseOptions`]）。镜像 [`VaultSession::generate_password`]
      * 的 Validation 映射：词数 3..=10、分隔符 1..=3 可打印字符，越界
@@ -1720,6 +1738,32 @@ open func exportCsv(outPath: String)throws  -> FfiCsvExportResult  {
     return try  FfiConverterTypeFfiCsvExportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_export_csv(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(outPath),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 1PUX 明文导出（FR-8.2，v0.7.0-T04；docs/23 TC-EXP 组；锁定态 → 1001）。
+     *
+     * 输出官方 1PUX v3 结构（ZIP + 明文 JSON + `files/` 附件），走
+     * **ExportData 许可门禁组**（`write_guard(LicensedOp::ExportData)`，
+     * 与 [`Self::export_csv`] 同落点；只读态 → 6002/6003，TC-EXP-09）。
+     * **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
+     * 取得用户显式确认（1PUX 为明文导出，含密码 / TOTP secret）才可调用
+     * 本方法——内核不提供也不应绕过该门禁（纪律同 [`Self::export_csv`]）。
+     *
+     * # Errors
+     *
+     * `out_path` 为空串 → 5002 InvalidArgument（TC-EXP-15）；只读许可态 →
+     * 6002/6003（TC-EXP-09）；锁定态 → 1001（TC-EXP-10）；目标父目录
+     * 不存在 / ZIP 写入失败 → 2003（TC-EXP-11）；其余透传内核错误。
+     */
+open func exportOnePux(outPath: String)throws  -> FfiPuxExportResult  {
+    return try  FfiConverterTypeFfiPuxExportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_export_one_pux(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(outPath),uniffiCallStatus
     )
@@ -5416,6 +5460,176 @@ public func FfiConverterTypeFfiPasswordGenOptions_lower(_ value: FfiPasswordGenO
 
 
 /**
+ * 1PUX 导出降级报告（`cf_exporter::PuxExportReport` 映射；TC-EXP-06/14
+ * 素材，不静默）。
+ */
+public struct FfiPuxExportReport: Equatable, Hashable {
+    /**
+     * 无 1P 承载码而降级为 Text 的字段（`条目uuid:字段名`）。
+     */
+    public var degradedFields: [String]
+    /**
+     * 非 SHA-1 TOTP 导出数（跨导入方可能不支持而降级）。
+     */
+    public var nonSha1Totp: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 无 1P 承载码而降级为 Text 的字段（`条目uuid:字段名`）。
+         */degradedFields: [String], 
+        /**
+         * 非 SHA-1 TOTP 导出数（跨导入方可能不支持而降级）。
+         */nonSha1Totp: UInt64) {
+        self.degradedFields = degradedFields
+        self.nonSha1Totp = nonSha1Totp
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPuxExportReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPuxExportReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPuxExportReport {
+        return
+            try FfiPuxExportReport(
+                degradedFields: FfiConverterSequenceString.read(from: &buf), 
+                nonSha1Totp: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPuxExportReport, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.degradedFields, into: &buf)
+        FfiConverterUInt64.write(value.nonSha1Totp, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxExportReport_lift(_ buf: RustBuffer) throws -> FfiPuxExportReport {
+    return try FfiConverterTypeFfiPuxExportReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxExportReport_lower(_ value: FfiPuxExportReport) -> RustBuffer {
+    return FfiConverterTypeFfiPuxExportReport.lower(value)
+}
+
+
+/**
+ * 1PUX 明文导出结果（`cf_exporter::PuxExportResult` 映射；usize 不跨界，
+ * 计数统一 u64，对齐 [`FfiCsvExportResult`] 先例）。
+ */
+public struct FfiPuxExportResult: Equatable, Hashable {
+    /**
+     * 实际导出条目数（不含回收站跳过）。
+     */
+    public var itemCount: UInt64
+    /**
+     * 导出附件文件数。
+     */
+    public var attachmentCount: UInt64
+    /**
+     * 因处于回收站而跳过的条目数。
+     */
+    public var skippedTrashed: UInt64
+    /**
+     * 因不支持导出而跳过的 passkey 数（显式计数，不静默）。
+     */
+    public var skippedPasskeys: UInt64
+    /**
+     * 降级 / 非 SHA-1 TOTP 的显式报告。
+     */
+    public var report: FfiPuxExportReport
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 实际导出条目数（不含回收站跳过）。
+         */itemCount: UInt64, 
+        /**
+         * 导出附件文件数。
+         */attachmentCount: UInt64, 
+        /**
+         * 因处于回收站而跳过的条目数。
+         */skippedTrashed: UInt64, 
+        /**
+         * 因不支持导出而跳过的 passkey 数（显式计数，不静默）。
+         */skippedPasskeys: UInt64, 
+        /**
+         * 降级 / 非 SHA-1 TOTP 的显式报告。
+         */report: FfiPuxExportReport) {
+        self.itemCount = itemCount
+        self.attachmentCount = attachmentCount
+        self.skippedTrashed = skippedTrashed
+        self.skippedPasskeys = skippedPasskeys
+        self.report = report
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPuxExportResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPuxExportResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPuxExportResult {
+        return
+            try FfiPuxExportResult(
+                itemCount: FfiConverterUInt64.read(from: &buf), 
+                attachmentCount: FfiConverterUInt64.read(from: &buf), 
+                skippedTrashed: FfiConverterUInt64.read(from: &buf), 
+                skippedPasskeys: FfiConverterUInt64.read(from: &buf), 
+                report: FfiConverterTypeFfiPuxExportReport.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPuxExportResult, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.itemCount, into: &buf)
+        FfiConverterUInt64.write(value.attachmentCount, into: &buf)
+        FfiConverterUInt64.write(value.skippedTrashed, into: &buf)
+        FfiConverterUInt64.write(value.skippedPasskeys, into: &buf)
+        FfiConverterTypeFfiPuxExportReport.write(value.report, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxExportResult_lift(_ buf: RustBuffer) throws -> FfiPuxExportResult {
+    return try FfiConverterTypeFfiPuxExportResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPuxExportResult_lower(_ value: FfiPuxExportResult) -> RustBuffer {
+    return FfiConverterTypeFfiPuxExportResult.lower(value)
+}
+
+
+/**
  * 1PUX 导入结果（FR-7.7 导入结果页素材）。
  *
  * `deletion_advice` 由 [`cf_importer::advise_pux_source_deletion`] 对
@@ -6877,6 +7091,10 @@ public enum FfiAuditEvent: Equatable, Hashable {
      */
     case csvExport
     /**
+     * 1PUX 明文导出成功（FR-8.2，v0.7.0）。
+     */
+    case puxExport
+    /**
      * 修改主密码成功（FR-1.8）。
      */
     case passwordChange
@@ -6911,9 +7129,11 @@ public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
         
         case 3: return .csvExport
         
-        case 4: return .passwordChange
+        case 4: return .puxExport
         
-        case 5: return .itemCopy
+        case 5: return .passwordChange
+        
+        case 6: return .itemCopy
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -6935,12 +7155,16 @@ public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
         
         
-        case .passwordChange:
+        case .puxExport:
             writeInt(&buf, Int32(4))
         
         
-        case .itemCopy:
+        case .passwordChange:
             writeInt(&buf, Int32(5))
+        
+        
+        case .itemCopy:
+            writeInt(&buf, Int32(6))
         
         }
     }
@@ -9187,6 +9411,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_export_one_pux() != 64996) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_generate_passphrase() != 47529) {

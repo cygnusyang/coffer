@@ -1077,6 +1077,55 @@ impl From<cf_exporter::CsvExportResult> for FfiCsvExportResult {
     }
 }
 
+// ------------------------------------- 1PUX 导出（FR-8.2，v0.7.0-T04）
+
+/// 1PUX 导出降级报告（`cf_exporter::PuxExportReport` 映射；TC-EXP-06/14
+/// 素材，不静默）。
+#[derive(uniffi::Record)]
+pub struct FfiPuxExportReport {
+    /// 无 1P 承载码而降级为 Text 的字段（`条目uuid:字段名`）。
+    pub degraded_fields: Vec<String>,
+    /// 非 SHA-1 TOTP 导出数（跨导入方可能不支持而降级）。
+    pub non_sha1_totp: u64,
+}
+
+impl From<cf_exporter::PuxExportReport> for FfiPuxExportReport {
+    fn from(r: cf_exporter::PuxExportReport) -> Self {
+        Self {
+            degraded_fields: r.degraded_fields,
+            non_sha1_totp: r.non_sha1_totp as u64,
+        }
+    }
+}
+
+/// 1PUX 明文导出结果（`cf_exporter::PuxExportResult` 映射；usize 不跨界，
+/// 计数统一 u64，对齐 [`FfiCsvExportResult`] 先例）。
+#[derive(uniffi::Record)]
+pub struct FfiPuxExportResult {
+    /// 实际导出条目数（不含回收站跳过）。
+    pub item_count: u64,
+    /// 导出附件文件数。
+    pub attachment_count: u64,
+    /// 因处于回收站而跳过的条目数。
+    pub skipped_trashed: u64,
+    /// 因不支持导出而跳过的 passkey 数（显式计数，不静默）。
+    pub skipped_passkeys: u64,
+    /// 降级 / 非 SHA-1 TOTP 的显式报告。
+    pub report: FfiPuxExportReport,
+}
+
+impl From<cf_exporter::PuxExportResult> for FfiPuxExportResult {
+    fn from(r: cf_exporter::PuxExportResult) -> Self {
+        Self {
+            item_count: r.item_count as u64,
+            attachment_count: r.attachment_count as u64,
+            skipped_trashed: r.skipped_trashed as u64,
+            skipped_passkeys: r.skipped_passkeys as u64,
+            report: r.report.into(),
+        }
+    }
+}
+
 // -------------------------------------------- 审计日志查询（FR-12.6，v0.2.0-T06）
 
 /// 审计事件类型（`cf_store::AuditEvent` 映射；只读——写入仅由内核动作打点）。
@@ -1088,6 +1137,8 @@ pub enum FfiAuditEvent {
     BackupRestore,
     /// CSV 明文导出成功（FR-8.3）。
     CsvExport,
+    /// 1PUX 明文导出成功（FR-8.2，v0.7.0）。
+    PuxExport,
     /// 修改主密码成功（FR-1.8）。
     PasswordChange,
     /// 跨库复制成功（FR-2.10，源库与目标库各一条）。
@@ -1100,6 +1151,7 @@ impl From<cf_store::AuditEvent> for FfiAuditEvent {
             cf_store::AuditEvent::BackupExport => Self::BackupExport,
             cf_store::AuditEvent::BackupRestore => Self::BackupRestore,
             cf_store::AuditEvent::CsvExport => Self::CsvExport,
+            cf_store::AuditEvent::PuxExport => Self::PuxExport,
             cf_store::AuditEvent::PasswordChange => Self::PasswordChange,
             cf_store::AuditEvent::ItemCopy => Self::ItemCopy,
         }

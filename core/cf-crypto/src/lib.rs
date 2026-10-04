@@ -55,6 +55,7 @@
 pub mod aead;
 pub mod error;
 pub mod kdf;
+pub mod opvault;
 pub mod subkeys;
 
 pub use aead::{
@@ -63,6 +64,10 @@ pub use aead::{
 };
 pub use error::CfCryptoError;
 pub use kdf::{derive_key, derive_subkey, normalize_password, KdfParams, KEY_LEN, SALT_LEN};
+pub use opvault::{
+    derive_vault_keys, item_keys_decrypt, opdata_decrypt, pbkdf2_derive, sha512_split, DerivedKeys,
+    ItemKeys, OpvaultCryptoError, OpvaultKeys, SplitKeys,
+};
 pub use subkeys::{
     SubKeys, LABEL_ATTACH_MAC, LABEL_FIELD, LABEL_FILE, LABEL_HISTORY, LABEL_ITEM, LABEL_MANIFEST,
     LABEL_META,

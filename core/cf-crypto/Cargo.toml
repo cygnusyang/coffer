@@ -18,6 +18,23 @@ thiserror = { workspace = true }
 # 需同时引入 sha2 提供 `Hkdf::<Sha256>` 的哈希类型。
 hkdf = { workspace = true }
 sha2 = { workspace = true }
+# OPVault 导入原语（docs/22 §2.2.4，T02）：
+# - pbkdf2：PBKDF2-HMAC-SHA512 派生（profile.js 密钥链第一步）；
+# - aes + cbc：AES-256-CBC 解密（Encrypt-then-MAC 链，docs/24 §1.2 布局）。
+#   注意：CBC 填充为「前置随机字节」，手动取末 plaintext_len 字节，
+#   不使用 PKCS#7（RustCrypto cbc 需配合 NoPadding）。
+# - hmac/sha2/subtle：HMAC-SHA256 校验 + 常量时间比较（workspace 既有）。
+pbkdf2 = { workspace = true }
+aes = { workspace = true }
+cbc = { workspace = true }
+# cipher：aes/cbc 的 trait 提供者（KeyIvInit / BlockModeDecrypt /
+#           block_padding），opvault 模块直接使用，需显式声明
+cipher = { workspace = true }
+hmac = { workspace = true }
+subtle = { workspace = true }
+# base64：opdata01 / item keys `k` 的 base64 解码（OPVault 标准 base64
+# 带 padding）。版本照抄 cf-importer 既有选择（0.22，锁 0.22.1）。
+base64 = "0.22"
 
 [dev-dependencies]
 # 基准测试（examples/bench_kdf.rs）只使用 std::time，无外部依赖

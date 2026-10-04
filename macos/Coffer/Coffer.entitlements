@@ -6,6 +6,13 @@
 	     必须且只能出现以下权限；任何 com.apple.security.network.* 都是违规。 -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- 相机权限（FR-5.3 TOTP QR 扫描，裁定 A，T09）：AVFoundation 在 App
+	     Sandbox 下须显式声明 com.apple.security.device.camera 才能访问摄像头；
+	     实际授予仍由 TCC 弹窗决定（NSCameraUsageDescription）。属裁定 A 的
+	     必要配套；不涉网络，零网络承诺不受影响。若签名/真机启动遇 profile
+	     未授权本 entitlement，需重跑 make_provisioning_profile.sh。 -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
 	<!-- CSV 导入：允许用户通过 NSOpenPanel 选择文件读取 -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>

@@ -38,6 +38,10 @@ struct ItemEditView: View {
     @State private var urlText = ""
     @State private var tagsText = ""
     @State private var otpauthText = ""
+    /// TOTP 扫码 sheet 展示旗标（FR-5.3，T09）。
+    @State private var showScan = false
+    /// otpauth URI 输入框焦点（扫码拒权降级「手动输入」后聚焦）。
+    @FocusState private var otpauthFocused: Bool
     @State private var isSaving = false
     @State private var saveError: String?
     /// 既有 TOTP 元数据（编辑模式加载；绝不含 secret）。
@@ -86,6 +90,23 @@ struct ItemEditView: View {
         }
         .frame(width: 560, height: 560)
         .onAppear(perform: populate)
+        .sheet(isPresented: $showScan) {
+            TotpScanView(
+                onScanned: { uri in
+                    // 回填原始 URI 字符串（TC-QR-02）；保存走既有 save()（ItemWrite 门禁复用）
+                    otpauthText = uri
+                    showScan = false
+                    otpauthFocused = true
+                },
+                onDismiss: { showScan = false },
+                onManualInput: {
+                    // TCC 拒权兜底（TC-QR-08）：关闭扫描、聚焦 URI 输入框手动输入
+                    showScan = false
+                    otpauthFocused = true
+                }
+            )
+            .environmentObject(model)
+        }
         .ffiErrorAlert($model.lastErrorMessage)
         .alert("无法保存", isPresented: Binding(
             get: { saveError != nil },
@@ -132,11 +153,17 @@ struct ItemEditView: View {
                     .controlSize(.small)
             }
         }
-        SecureField(
-            hasExistingTotp ? "otpauth URI（粘贴以替换现有 TOTP）" : "otpauth URI（可选）",
-            text: $otpauthText,
-            prompt: Text("otpauth://totp/…?secret=…")
-        )
+        HStack(spacing: 8) {
+            SecureField(
+                hasExistingTotp ? "otpauth URI（粘贴以替换现有 TOTP）" : "otpauth URI（可选）",
+                text: $otpauthText,
+                prompt: Text("otpauth://totp/…?secret=…")
+            )
+            .focused($otpauthFocused)
+            Button("扫码") { showScan = true }
+                .controlSize(.small)
+                .help("用相机扫描 TOTP otpauth:// 二维码（FR-5.3）")
+        }
     }
 
     /// DDL 算法名 → 展示名（运行时仅 sha1，兜底原文）。

@@ -403,7 +403,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ### 修复路径
 
-1. 支持 Bitwarden password-protected export 解密（用户输入导出密码 → 解出 fido2Credentials 私钥 → 归一化 PKCS#8）——目标版本待定（ADP/后续版本卡均可，量级 ≈ 1 周内）；
+1. 支持 Bitwarden password-protected export 解密（用户输入导出密码 → 解出 fido2Credentials 私钥 → 归一化 PKCS#8）——目标版本待定（ADP/后续版本卡均可，量级 ≈ 1 周内）；**解法方向 2 设计规格 + 真实样本获取协议已于 2026-10-04 留档：`docs/22-v0.7实现方案.md` §2.6（v0.7.0 T10，规格留档不排实现——真实样本 + 版本卡排期为前置）**；
 2. 或接受现状并显式声明（UI 预检已逐条列出不可导入原因）；
 3. **发版文案约束（审查裁定，即时生效）**：TCB-1 真实样本核对关闭前，README/docs/16 判据不得声称「Bitwarden passkey 导入可用」。
 

@@ -1,6 +1,8 @@
 // ItemDetailView.swift —— 条目详情：字段掩码/显示切换、URL/标签/TOTP 元数据、
 // 收藏 / 编辑 / 删除动作、历史版本入口（FR-2.9，回滚见 HistorySheet）。
 // 复制按钮在阶段三接入（剪贴板 30s 清除一并实现）。
+// FR-12.4（v0.7）：密码字段「放大」→ 全屏 LargePasswordSheet（明文只在
+// sheet 存活期内持有，关闭即释放；锁定随会话拆除，见 LargePasswordSheet）。
 
 import SwiftUI
 
@@ -21,6 +23,9 @@ struct ItemDetailView: View {
     /// 条目 Passkey 列表（FR-10.2，docs/17 §4.4 PK3）：只含元数据
     /// （FfiPasskeyMeta 无私钥字段），删除后重载。
     @State private var passkeys: [FfiPasskeyMeta] = []
+    /// FR-12.4「放大」目标（明文 + 字段名，仅 sheet 存活期内持有）：
+    /// 非 nil = LargePasswordSheet 呈现中；sheet 关闭即清 nil（明文释放）。
+    @State private var enlargedPassword: (fieldName: String, value: String)?
 
     private var isTrashed: Bool {
         if case .trashed = details.state { return true }
@@ -89,6 +94,17 @@ struct ItemDetailView: View {
             CrossCopySheet(sourceItemId: details.uuid, sourceTitle: details.title)
                 .environmentObject(model)
         }
+        // FR-12.4 大字号 sheet（v0.7）：enlargedPassword 非 nil 即呈现；
+        // 关闭（含锁定联动）→ 清 nil，明文随之释放。
+        .sheet(isPresented: Binding(
+            get: { enlargedPassword != nil },
+            set: { if !$0 { enlargedPassword = nil } }
+        )) {
+            if let enlarged = enlargedPassword {
+                LargePasswordSheet(fieldName: enlarged.fieldName, password: enlarged.value)
+                    .environmentObject(model)
+            }
+        }
         .confirmationDialog(
             "彻底删除「\(details.title)」？此操作不可恢复。",
             isPresented: $confirmHardDelete,
@@ -140,7 +156,12 @@ struct ItemDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("字段").font(.headline)
                 ForEach(details.fields, id: \.uuid) { field in
-                    FieldRowView(itemId: details.uuid, field: field)
+                    // FR-12.4：Concealed 密码字段「放大」入口 → 明文交由
+                    // LargePasswordSheet 全屏呈现（明文只在 enlargedPassword
+                    // 存活期内持有，关闭即清）。
+                    FieldRowView(itemId: details.uuid, field: field) { value in
+                        enlargedPassword = (field.name, value)
+                    }
                 }
             }
         }

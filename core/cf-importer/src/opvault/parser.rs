@@ -21,8 +21,10 @@
 //! `default/`（docs/22 已定），其余列出不导入（TC-OPV-10）。
 
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
+use cf_crypto::opvault::MAX_PBKDF2_ITERATIONS;
 use cf_domain::CfError;
 use serde_json::Value;
 
@@ -41,6 +43,13 @@ pub const BAND_PREFIX: &str = "ld(";
 pub const ATTACHMENT_EXT: &str = ".attachment";
 /// band 文件前缀（`band_0.js` ~ `band_F.js`）。
 pub const BAND_FILE_PREFIX: &str = "band_";
+
+/// 单个 opvault JS 数据文件（profile.js / folders.js / band_*.js）最大
+/// 字节数（资源耗尽防线，dev-review HIGH-1）。
+///
+/// 对齐 CSV/bitwarden 导入的 50 MiB 单文件上限先例；恶意超大 JS 不再
+/// `read_to_string` 全量载入（真实 opvault 各文件仅 KB~MB 级）。
+pub const MAX_JS_FILE_BYTES: usize = 50 * 1024 * 1024;
 
 /// 一次完整打开的 opvault 内容（precheck 与 import 共用）。
 #[derive(Debug)]
@@ -93,7 +102,15 @@ fn parse_js_object(content: &str, prefix: &str, _what: &str) -> Result<Value, Cf
 pub fn parse_profile(content: &str) -> Result<ProfileMeta, CfError> {
     let v = parse_js_object(content, PROFILE_PREFIX, "profile.js")?;
     // profile.js 字段缺失或类型不符
-    serde_json::from_value(v).map_err(|_| CfError::ImportUnknownFormat)
+    let profile: ProfileMeta =
+        serde_json::from_value(v).map_err(|_| CfError::ImportUnknownFormat)?;
+    // PBKDF2 iterations 上界（防 CPU 耗尽，dev-review HIGH-1）：超限视为
+    // 结构非法（2001）——precheck/import 同源在解析层即拒绝，不把数十亿
+    // iterations 交给派生（cf-crypto 侧另有同界 backstop）。
+    if profile.iterations > MAX_PBKDF2_ITERATIONS {
+        return Err(CfError::ImportUnknownFormat);
+    }
+    Ok(profile)
 }
 
 /// 解析 `folders.js` 内容（`loadFolders({...})`，UUID → 文件夹对象）。
@@ -155,22 +172,50 @@ pub fn list_other_profiles(root: &Path) -> Vec<String> {
     others
 }
 
+/// 有界读取一个 opvault JS 数据文件（dev-review HIGH-1 防线）。
+///
+/// 对齐 1PUX 导入 `read_bounded` 模式（pux/parser.rs）：先按元数据大小
+/// 快筛，再以 `max + 1` 硬限宽（`.take`）读取；实际读入超过 `max` → 数据
+/// 截断丢弃，不把超限内容交给解析（声明大小不可信）。
+///
+/// # Errors
+///
+/// 读取失败 → [`CfError::Io`]；大小超限 → [`CfError::ImportUnknownFormat`]
+/// （2001，结构层；docs/22 §4）。
+fn read_js_bounded(path: &Path, what: &str, max: usize) -> Result<String, CfError> {
+    let meta = fs::metadata(path)
+        .map_err(|e| CfError::Io(format!("{what} 读取失败：{e}")))?;
+    if meta.len() > max as u64 {
+        return Err(CfError::ImportUnknownFormat);
+    }
+    let file = fs::File::open(path)
+        .map_err(|e| CfError::Io(format!("{what} 读取失败：{e}")))?;
+    let mut limited = file.take(max as u64 + 1);
+    let mut buf = String::new();
+    limited
+        .read_to_string(&mut buf)
+        .map_err(|e| CfError::Io(format!("{what} 读取失败：{e}")))?;
+    if buf.len() > max {
+        return Err(CfError::ImportUnknownFormat);
+    }
+    Ok(buf)
+}
+
 /// 结构预检（只读、不触密码；TC-OPV-05）——目录 + `profile.js` 元数据 +
 /// KDF 参数 + band/附件文件清点。不解析 band/folders 内容（docs/24 §6：
 /// 属解锁后内容，完整条目报告需密码）。
 ///
 /// # Errors
 ///
-/// 目录不存在 / 缺 `default/profile.js` / profile.js 无法解析 →
-/// [`CfError::Io`] / [`CfError::ImportUnknownFormat`]（2001）。
+/// 目录不存在 / 缺 `default/profile.js` / profile.js 无法解析或超大小
+/// 上限 → [`CfError::Io`] / [`CfError::ImportUnknownFormat`]（2001）。
 pub fn read_profile(path: &Path) -> Result<ProfileMeta, CfError> {
     let profile_dir = path.join(PROFILE_DIR);
     if !profile_dir.is_dir() {
         // 不是 opvault 目录（缺少 default/profile.js）
         return Err(CfError::ImportUnknownFormat);
     }
-    let content = fs::read_to_string(profile_dir.join("profile.js"))
-        .map_err(|e| CfError::Io(format!("profile.js 读取失败：{e}")))?;
+    let content = read_js_bounded(&profile_dir.join("profile.js"), "profile.js", MAX_JS_FILE_BYTES)?;
     parse_profile(&content)
 }
 
@@ -223,8 +268,7 @@ pub fn open_vault(path: &Path) -> Result<OpvaultArchive, CfError> {
     let mut folders: Vec<RawFolder> = Vec::new();
     let folders_path = profile_dir.join("folders.js");
     if folders_path.is_file() {
-        let content = fs::read_to_string(&folders_path)
-            .map_err(|e| CfError::Io(format!("folders.js 读取失败：{e}")))?;
+        let content = read_js_bounded(&folders_path, "folders.js", MAX_JS_FILE_BYTES)?;
         folders = parse_folders(&content)?;
     }
 
@@ -240,8 +284,7 @@ pub fn open_vault(path: &Path) -> Result<OpvaultArchive, CfError> {
     }
     band_names.sort();
     for name in band_names {
-        let content = fs::read_to_string(profile_dir.join(&name))
-            .map_err(|e| CfError::Io(format!("{name} 读取失败：{e}")))?;
+        let content = read_js_bounded(&profile_dir.join(&name), &name, MAX_JS_FILE_BYTES)?;
         items.extend(parse_band(&content)?);
     }
 
@@ -255,4 +298,55 @@ pub fn open_vault(path: &Path) -> Result<OpvaultArchive, CfError> {
         attachment_count: counts.attachment_count,
         other_profiles,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 最小合法 profile.js 内容（`{iterations}` 可注入超限值）。
+    fn profile_js(iterations: u32) -> String {
+        format!(
+            "var profile={{\"profileName\":\"default\",\"uuid\":\"714A14D7017048CC9577AD050FC9C6CA\",\"salt\":\"pzJ5y/CiCeU8Sbo8+k4/zg==\",\"iterations\":{iterations},\"masterKey\":\"b3BkYXRhMDE=\",\"overviewKey\":\"b3BkYXRhMDE=\"}};"
+        )
+    }
+
+    /// dev-review HIGH-1：iterations 超上界 → 结构层 2001（precheck/import
+    /// 同源拒绝；真实施行 PBKDF2 前即拦截）。
+    #[test]
+    fn profile_超限iterations被拒2001() {
+        let content = profile_js(MAX_PBKDF2_ITERATIONS + 1);
+        assert!(
+            matches!(parse_profile(&content), Err(CfError::ImportUnknownFormat)),
+            "超上界 iterations 必须 2001 结构非法"
+        );
+    }
+
+    /// 合法 iterations（vendor 样本 40000）通过解析。
+    #[test]
+    fn profile_合法iterations通过() {
+        let content = profile_js(40000);
+        let p = parse_profile(&content).expect("合法 iterations 应通过");
+        assert_eq!(p.iterations, 40000);
+    }
+
+    /// dev-review HIGH-1：JS 数据文件超大小上限 → 2001（对齐 pux
+    /// `read_bounded` 模式：元数据快筛 + `.take(max+1)` 硬限宽）。
+    #[test]
+    fn js文件超限被拒2001() {
+        let dir = std::env::temp_dir().join(format!("cf-opv-bounded-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("band_x.js");
+        std::fs::write(&p, "ld(".repeat(64) + &"x".repeat(4096) + ");").unwrap();
+
+        // 上限远小于实际大小 → 2001 结构非法
+        assert_eq!(
+            read_js_bounded(&p, "band_x.js", 1024),
+            Err(CfError::ImportUnknownFormat)
+        );
+        // 上限足够 → 正常读取
+        let content = read_js_bounded(&p, "band_x.js", 8192).expect("上限足够应可读");
+        assert!(content.starts_with("ld("));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

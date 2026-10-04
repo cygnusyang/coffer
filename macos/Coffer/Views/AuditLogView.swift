@@ -30,6 +30,7 @@ extension FfiAuditEvent {
         case .backupExport: return "导出备份"
         case .backupRestore: return "恢复备份"
         case .csvExport: return "导出 CSV"
+        case .puxExport: return "导出 1PUX"
         case .passwordChange: return "修改主密码"
         case .itemCopy: return "跨库复制"
         }
@@ -41,6 +42,7 @@ extension FfiAuditEvent {
         case .backupExport: return "externaldrive.badge.timemachine"
         case .backupRestore: return "arrow.counterclockwise"
         case .csvExport: return "tablecells"
+        case .puxExport: return "shippingbox"
         case .passwordChange: return "key"
         case .itemCopy: return "doc.on.doc"
         }

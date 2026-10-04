@@ -40,7 +40,9 @@
 //!   passkey 字段为恒空快速路径（docs/17 §4.2 PK2，[`pux::passkey`]）
 //! - Bitwarden JSON（含 `fido2Credentials` passkey）—— **v0.5.0 已实现**
 //!   （[`bitwarden`] 模块，FR-10.1 / FR-10.6，docs/17 §4.2 PK2）
-//! - opvault —— 未定
+//! - OPVault（`default/profile.js` + `band_*.js`，opdata01/opvault 加密）
+//!   —— **v0.7.0 已实现**（[`opvault`] 模块，FR-7.3 / TC-OPV 组，
+//!   docs/22 §2.2；附件 out-of-scope，跳过+计数）
 //! - KeePass KDBX —— 读取链路冒烟已验证（见下方测试），实现推后
 //!
 //! ## 硬性约束
@@ -64,6 +66,7 @@ use cf_store::{ItemRow, ItemStore, Repos};
 
 pub mod bitwarden;
 pub mod csv;
+pub mod opvault;
 pub mod precheck;
 pub mod pux;
 pub mod risk;
@@ -73,6 +76,9 @@ pub use bitwarden::{
     BwPrecheckReport,
 };
 pub use csv::mapping::{ImportModel, OtpauthData};
+pub use opvault::{
+    import_opvault, precheck_opvault, OpvaultImportResult, OpvaultItemModel, OpvaultPrecheckReport,
+};
 pub use precheck::{analyze_csv, read_and_analyze, CsvAnalysis, CsvPrecheckReport};
 pub use pux::{
     import_1pux, import_1pux_with_options, precheck_1pux, NotImportedItem, PuxAnalysis,

@@ -2,6 +2,8 @@
 // 点击「显示」按需经 getFieldValue 取明文（取回即用，只存行内局部状态）。
 // FR-5.6（v0.4）：密码字段的复制按钮在条目含 TOTP 时走序列复制
 // （ClipboardManager.copyPasswordThenTotp，docs/15 §3.3.3）。
+// FR-12.4（v0.7）：Concealed 密码字段增「放大」入口——明文按需取回后经
+// onEnlarge 回调交由宿主（ItemDetailView）呈现在全屏 LargePasswordSheet。
 
 import SwiftUI
 
@@ -11,10 +13,19 @@ struct FieldRowView: View {
 
     let itemId: String
     let field: FfiFieldDetail
+    /// FR-12.4「放大」回调：携带已取回的明文，由宿主视图呈现在全屏
+    /// LargePasswordSheet。nil = 不显示放大入口（本视图复用且不需要该能力时）。
+    let onEnlarge: ((String) -> Void)?
+
+    init(itemId: String, field: FfiFieldDetail, onEnlarge: ((String) -> Void)? = nil) {
+        self.itemId = itemId
+        self.field = field
+        self.onEnlarge = onEnlarge
+    }
 
     var body: some View {
         if field.fieldType == .concealed {
-            ConcealedFieldRow(itemId: itemId, field: field)
+            ConcealedFieldRow(itemId: itemId, field: field, onEnlarge: onEnlarge)
         } else {
             PlainFieldRow(field: field)
         }
@@ -73,6 +84,14 @@ struct ConcealedFieldRow: View {
 
     let itemId: String
     let field: FfiFieldDetail
+    /// FR-12.4「放大」回调（透传自 FieldRowView，见其 docstring）。
+    let onEnlarge: ((String) -> Void)?
+
+    init(itemId: String, field: FfiFieldDetail, onEnlarge: ((String) -> Void)? = nil) {
+        self.itemId = itemId
+        self.field = field
+        self.onEnlarge = onEnlarge
+    }
 
     /// nil = 掩码态；非 nil = 已取回的明文（仅本行局部状态，随视图销毁释放）。
     @State private var revealed: String?
@@ -117,6 +136,18 @@ struct ConcealedFieldRow: View {
                       systemImage: copiedFeedback ? "checkmark" : "doc.on.doc")
             }
             .controlSize(.small)
+
+            // FR-12.4「放大」入口（仅宿主提供 onEnlarge 时显示；显式用户操作
+            // 进入，绝不自动弹出，TC-FONT-03）。
+            if onEnlarge != nil {
+                Button {
+                    enlarge()
+                } label: {
+                    Label("放大", systemImage: "text.magnifyingglass")
+                }
+                .controlSize(.small)
+                .help("全屏大字号查看")
+            }
         }
         .padding(.vertical, 2)
     }
@@ -169,6 +200,23 @@ struct ConcealedFieldRow: View {
         // 主队列触发（与 MainView HK-3 调用点同一模式）
         ClipboardManager.shared.copyPasswordThenTotp(password: value) {
             MainActor.assumeIsolated { try? model.totpCode(itemId: itemId).code }
+        }
+    }
+
+    /// FR-12.4「放大」：明文经 onEnlarge 交给宿主呈现在全屏大字号 sheet。
+    /// 与 copyValue 同纪律——已显示则复用行内明文，否则按需跨 FFI 取回，
+    /// 不进全局状态。明文只在 sheet 的局部状态存活，随 sheet 关闭销毁。
+    /// 空值不放大（TC-FONT-07：避免空白视图）。
+    private func enlarge() {
+        guard !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let value = try revealed ?? (model.fieldValue(itemId: itemId, fieldId: field.uuid) ?? "")
+            guard !value.isEmpty else { return }
+            onEnlarge?(value)
+        } catch {
+            model.handleFfiError(error)
         }
     }
 }

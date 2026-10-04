@@ -678,6 +678,15 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
     func exportBackup(vaultDir: String, outPath: String) throws  -> FfiBackupExportResult
     
     /**
+     * 库容器格式版本（FR-14.4 诊断，docs/22 §3.4 / docs/23 TC-DIAG-02）。
+     *
+     * 常量 `cf_format::FORMAT_VERSION` 经 FFI 暴露（String 形态），供
+     * Swift 诊断页（`DiagnosticsView`）展示库格式版本；与 header 内逐库
+     * `format_version` 语义一致（当前 = 1）。只读常量，无门禁。
+     */
+    func formatVersion()  -> String
+    
+    /**
      * 枚举工作目录下的全部库（只读 header.json 非敏感字段）。
      *
      * 目录不存在返回空列表；单个库目录 header 损坏 / 不完整（如创建中）
@@ -850,6 +859,22 @@ open func exportBackup(vaultDir: String, outPath: String)throws  -> FfiBackupExp
             self.uniffiCloneHandle(),
         FfiConverterString.lower(vaultDir),
         FfiConverterString.lower(outPath),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 库容器格式版本（FR-14.4 诊断，docs/22 §3.4 / docs/23 TC-DIAG-02）。
+     *
+     * 常量 `cf_format::FORMAT_VERSION` 经 FFI 暴露（String 形态），供
+     * Swift 诊断页（`DiagnosticsView`）展示库格式版本；与 header 内逐库
+     * `format_version` 语义一致（当前 = 1）。只读常量，无门禁。
+     */
+open func formatVersion() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_format_version(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1094,6 +1119,16 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 删除条目：`hard = false` 进回收站，`hard = true` 级联硬删。
      */
     func deleteItem(itemId: String, hard: Bool) throws 
+    
+    /**
+     * 本地诊断摘要（FR-14.4，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
+     *
+     * 组合读取非敏感元数据：条目数 / 附件数 / 库创建时间 / 最后备份时间 /
+     * 库 UUID 前缀。**字段集白名单**——结构上不含任何敏感数据（无标题 /
+     * 无密码 / 无 secret，TC-DIAG-03）。只读允许面，无许可门禁
+     * （6002/6003 不适用，与 `list_items` 同类）；锁定态 → 1001。
+     */
+    func diagnosticSummary() throws  -> FfiDiagnosticSummary
     
     /**
      * 关闭 Touch ID 解锁（docs/08 §4.1 disable，header 侧）。
@@ -1605,6 +1640,23 @@ open func deleteItem(itemId: String, hard: Bool)throws   {try rustCallWithError(
         FfiConverterBool.lower(hard),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * 本地诊断摘要（FR-14.4，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
+     *
+     * 组合读取非敏感元数据：条目数 / 附件数 / 库创建时间 / 最后备份时间 /
+     * 库 UUID 前缀。**字段集白名单**——结构上不含任何敏感数据（无标题 /
+     * 无密码 / 无 secret，TC-DIAG-03）。只读允许面，无许可门禁
+     * （6002/6003 不适用，与 `list_items` 同类）；锁定态 → 1001。
+     */
+open func diagnosticSummary()throws  -> FfiDiagnosticSummary  {
+    return try  FfiConverterTypeFfiDiagnosticSummary_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_diagnostic_summary(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -3411,6 +3463,110 @@ public func FfiConverterTypeFfiDegradedItem_lift(_ buf: RustBuffer) throws -> Ff
 #endif
 public func FfiConverterTypeFfiDegradedItem_lower(_ value: FfiDegradedItem) -> RustBuffer {
     return FfiConverterTypeFfiDegradedItem.lower(value)
+}
+
+
+/**
+ * FR-14.4 本地诊断摘要（FFI 镜像，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
+ *
+ * **字段集白名单**（FR-14.4 红线，docs/23 §1.5 TC-DIAG-03）：只含计数 /
+ * 时间 / uuid 前缀类非敏感字段——结构上不存在密码明文 / 条目标题 /
+ * secret / 密钥材料读路径（非仅 UI 不展示）。新增字段须经
+ * `tests/diag_ffi_semantics.rs` 白名单钉住测试（编译期穷尽构造）复核。
+ */
+public struct FfiDiagnosticSummary: Equatable, Hashable {
+    /**
+     * 条目数（`meta.item_count`）
+     */
+    public var itemCount: Int64
+    /**
+     * 附件数（`attachments` 表行数；纯计数）
+     */
+    public var attachmentCount: Int64
+    /**
+     * 库创建时间（`header.created_at`，Unix 秒 UTC）
+     */
+    public var vaultCreatedAt: Int64
+    /**
+     * 最后成功备份时间（Unix 秒；从未备份为 `None`）
+     */
+    public var lastBackupAt: Int64?
+    /**
+     * 库 UUID 前 8 字符前缀（非敏感）
+     */
+    public var vaultUuidPrefix: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 条目数（`meta.item_count`）
+         */itemCount: Int64, 
+        /**
+         * 附件数（`attachments` 表行数；纯计数）
+         */attachmentCount: Int64, 
+        /**
+         * 库创建时间（`header.created_at`，Unix 秒 UTC）
+         */vaultCreatedAt: Int64, 
+        /**
+         * 最后成功备份时间（Unix 秒；从未备份为 `None`）
+         */lastBackupAt: Int64?, 
+        /**
+         * 库 UUID 前 8 字符前缀（非敏感）
+         */vaultUuidPrefix: String) {
+        self.itemCount = itemCount
+        self.attachmentCount = attachmentCount
+        self.vaultCreatedAt = vaultCreatedAt
+        self.lastBackupAt = lastBackupAt
+        self.vaultUuidPrefix = vaultUuidPrefix
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDiagnosticSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDiagnosticSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDiagnosticSummary {
+        return
+            try FfiDiagnosticSummary(
+                itemCount: FfiConverterInt64.read(from: &buf), 
+                attachmentCount: FfiConverterInt64.read(from: &buf), 
+                vaultCreatedAt: FfiConverterInt64.read(from: &buf), 
+                lastBackupAt: FfiConverterOptionInt64.read(from: &buf), 
+                vaultUuidPrefix: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDiagnosticSummary, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.itemCount, into: &buf)
+        FfiConverterInt64.write(value.attachmentCount, into: &buf)
+        FfiConverterInt64.write(value.vaultCreatedAt, into: &buf)
+        FfiConverterOptionInt64.write(value.lastBackupAt, into: &buf)
+        FfiConverterString.write(value.vaultUuidPrefix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDiagnosticSummary_lift(_ buf: RustBuffer) throws -> FfiDiagnosticSummary {
+    return try FfiConverterTypeFfiDiagnosticSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDiagnosticSummary_lower(_ value: FfiDiagnosticSummary) -> RustBuffer {
+    return FfiConverterTypeFfiDiagnosticSummary.lower(value)
 }
 
 
@@ -8970,6 +9126,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_cofferapp_export_backup() != 7932) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_format_version() != 16720) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_cofferapp_list_vaults() != 51569) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9013,6 +9172,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_delete_item() != 13382) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_diagnostic_summary() != 39742) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_disable_biometric() != 59338) {

@@ -239,6 +239,27 @@ final class AppModel: ObservableObject {
         showBackupBanner = false
     }
 
+    // MARK: 生成器默认参数（FR-14.3 / T08，docs/22 §2.4；docs/23 §1.4 TC-GEN）
+
+    /// 生成器默认参数（FR-14.3）：启动时从 UserDefaults 读档
+    /// （GeneratorDefaults.load 自处理缺失/损坏回退内置默认，TC-GEN-04）。
+    /// **不在 didSet 落盘**——持久化只在用户显式「另存为默认」
+    /// （saveGeneratorDefaults）时发生：设置页编辑中的草稿不污染存档
+    /// （编辑→放弃不留痕）。生成器面板预填钩子读本值（TC-GEN-01，
+    /// ItemEditView 接线，T11 收尾）。
+    private(set) var generatorDefaults: GeneratorDefaults = GeneratorDefaults.load()
+
+    /// 「另存为默认」（FR-14.3，TC-GEN-01/03）：校验通过才更新内存态并写
+    /// UserDefaults；非法参数返回 false 且不落盘（对齐 generate_password
+    /// 1012 Validation 语义，见 GeneratorDefaults.isValid）。
+    @discardableResult
+    func saveGeneratorDefaults(_ draft: GeneratorDefaults) -> Bool {
+        guard draft.isValid else { return false }
+        generatorDefaults = draft
+        draft.save()
+        return true
+    }
+
     // MARK: - FFI 对象
 
     /// Rust 侧应用工厂（库的枚举 / 创建 / 打开注册表）。

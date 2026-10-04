@@ -600,6 +600,37 @@ struct PasswordGeneratorPopover: View {
             }
         }
         .padding()
+        .onAppear(perform: applyDefaults)
+    }
+
+    // MARK: 默认参数装载（FR-14.3 / T08 钩子，TC-GEN-01）
+
+    /// 生成器面板打开时以存档默认预填（AppModel.generatorDefaults 经
+    /// genOptions / passphraseOptions 转换器，T08 已暴露钩子；分隔符预设
+    /// 映射对齐 GeneratorSettingsView.choice(for:)，非预设视为自定义）。
+    /// @State 初值即内置默认，装载后用户可改——保存默认后新建条目的
+    /// 生成器即用这些参数预填（TC-GEN-01）。
+    private func applyDefaults() {
+        let gen = model.generatorDefaults.genOptions
+        length = Double(gen.length)
+        useNumbers = gen.numbers
+        useLowercase = gen.lowercaseLetters
+        useUppercase = gen.uppercaseLetters
+        useSymbols = gen.symbols
+        excludeSimilar = gen.excludeSimilarCharacters
+
+        let phrase = model.generatorDefaults.passphraseOptions
+        wordCount = Double(phrase.wordCount)
+        switch phrase.separator {
+        case "-": separatorChoice = .dash
+        case ".": separatorChoice = .dot
+        case " ": separatorChoice = .space
+        default:
+            separatorChoice = .custom
+            customSeparator = phrase.separator
+        }
+        capitalize = phrase.capitalize
+        numberSuffix = phrase.numberSuffix
     }
 
     // MARK: 参数区

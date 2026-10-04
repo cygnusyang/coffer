@@ -1253,6 +1253,17 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func importCsv(path: String) throws  -> FfiCsvImportResult
     
     /**
+     * OPVault 导入（FR-7.3，v0.7.0-T05；锁定态 → 码 1001）。
+     *
+     * 密码保护目录导入（密码以 UTF-8 原始字节进 PBKDF2，勿追加 NUL），
+     * 走 **ImportRestore 许可门禁组**（`write_guard(LicensedOp::ImportRestore)`，
+     * 与 [`Self::import_1pux`] 同落点；只读态 → 6002/6003，TC-OPV-07）。
+     * 解密映射先于写入：密码错/数据损坏 → 2002 且**零落库**（TC-OPV-03）。
+     * `vault_dir` 为附件旁路目录宿主（本版附件 out-of-scope，保留扩展位）。
+     */
+    func importOpvault(path: String, password: String, vaultDir: String) throws  -> FfiOpvaultImportResult
+    
+    /**
      * 是否处于解锁态。
      */
     func isUnlocked()  -> Bool
@@ -1326,6 +1337,17 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * CSV 预检（只读、可反复调用；1Password 9 列，docs/07 §3）。
      */
     func precheckCsv(path: String) throws  -> FfiCsvPrecheckReport
+    
+    /**
+     * OPVault 预检（FR-7.3，v0.7.0-T05）：只读、可反复调用，**不触密码**。
+     *
+     * **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
+     * 只读目录结构 + `profile.js` 元数据 + KDF 参数读数，`folders.js` /
+     * `band_*.js` 属解锁后内容仅清点文件数（docs/22 §2.2.3 语义偏差：
+     * 完整报告含条目/分类分布需密码，由 [`Self::import_opvault`] 产出）。
+     * 非 opvault 目录 / 缺 `default/profile.js` → 2001（TC-OPV-06）。
+     */
+    func precheckOpvault(path: String) throws  -> FfiOpvaultPrecheckReport
     
     /**
      * 读附件明文内容（FR-9.2，一次一个、即用即弃；整块 `Data` 返回）。
@@ -1909,6 +1931,27 @@ open func importCsv(path: String)throws  -> FfiCsvImportResult  {
 }
     
     /**
+     * OPVault 导入（FR-7.3，v0.7.0-T05；锁定态 → 码 1001）。
+     *
+     * 密码保护目录导入（密码以 UTF-8 原始字节进 PBKDF2，勿追加 NUL），
+     * 走 **ImportRestore 许可门禁组**（`write_guard(LicensedOp::ImportRestore)`，
+     * 与 [`Self::import_1pux`] 同落点；只读态 → 6002/6003，TC-OPV-07）。
+     * 解密映射先于写入：密码错/数据损坏 → 2002 且**零落库**（TC-OPV-03）。
+     * `vault_dir` 为附件旁路目录宿主（本版附件 out-of-scope，保留扩展位）。
+     */
+open func importOpvault(path: String, password: String, vaultDir: String)throws  -> FfiOpvaultImportResult  {
+    return try  FfiConverterTypeFfiOpvaultImportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_import_opvault(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterString.lower(password),
+        FfiConverterString.lower(vaultDir),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 是否处于解锁态。
      */
 open func isUnlocked() -> Bool  {
@@ -2061,6 +2104,25 @@ open func precheckCsv(path: String)throws  -> FfiCsvPrecheckReport  {
     return try  FfiConverterTypeFfiCsvPrecheckReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * OPVault 预检（FR-7.3，v0.7.0-T05）：只读、可反复调用，**不触密码**。
+     *
+     * **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
+     * 只读目录结构 + `profile.js` 元数据 + KDF 参数读数，`folders.js` /
+     * `band_*.js` 属解锁后内容仅清点文件数（docs/22 §2.2.3 语义偏差：
+     * 完整报告含条目/分类分布需密码，由 [`Self::import_opvault`] 产出）。
+     * 非 opvault 目录 / 缺 `default/profile.js` → 2001（TC-OPV-06）。
+     */
+open func precheckOpvault(path: String)throws  -> FfiOpvaultPrecheckReport  {
+    return try  FfiConverterTypeFfiOpvaultPrecheckReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_precheck_opvault(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),uniffiCallStatus
     )
@@ -5100,6 +5162,369 @@ public func FfiConverterTypeFfiNotImportedItem_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeFfiNotImportedItem_lower(_ value: FfiNotImportedItem) -> RustBuffer {
     return FfiConverterTypeFfiNotImportedItem.lower(value)
+}
+
+
+/**
+ * 一条未导入项（TC-OPV-11：Tombstone 099 逐条列出，不静默）。
+ */
+public struct FfiNotImportedOpvaultItem: Equatable, Hashable {
+    /**
+     * 原始条目 uuid。
+     */
+    public var uuid: String
+    /**
+     * 标题（结构层无密码时不可知，为空字符串）。
+     */
+    public var title: String
+    /**
+     * 未导入原因（人类可读）。
+     */
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 原始条目 uuid。
+         */uuid: String, 
+        /**
+         * 标题（结构层无密码时不可知，为空字符串）。
+         */title: String, 
+        /**
+         * 未导入原因（人类可读）。
+         */reason: String) {
+        self.uuid = uuid
+        self.title = title
+        self.reason = reason
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiNotImportedOpvaultItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNotImportedOpvaultItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNotImportedOpvaultItem {
+        return
+            try FfiNotImportedOpvaultItem(
+                uuid: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiNotImportedOpvaultItem, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.uuid, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNotImportedOpvaultItem_lift(_ buf: RustBuffer) throws -> FfiNotImportedOpvaultItem {
+    return try FfiConverterTypeFfiNotImportedOpvaultItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNotImportedOpvaultItem_lower(_ value: FfiNotImportedOpvaultItem) -> RustBuffer {
+    return FfiConverterTypeFfiNotImportedOpvaultItem.lower(value)
+}
+
+
+/**
+ * OPVault 导入结果（`cf_importer::OpvaultImportResult` 映射；TC-OPV-03
+ * 密码错 2002 零落库）。
+ */
+public struct FfiOpvaultImportResult: Equatable, Hashable {
+    /**
+     * 实际导入（新建）的条目数。
+     */
+    public var importedItems: UInt32
+    /**
+     * 预检报告（与本次导入同管线产出，TC-OPV-05 完整档）。
+     */
+    public var report: FfiOpvaultPrecheckReport
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 实际导入（新建）的条目数。
+         */importedItems: UInt32, 
+        /**
+         * 预检报告（与本次导入同管线产出，TC-OPV-05 完整档）。
+         */report: FfiOpvaultPrecheckReport) {
+        self.importedItems = importedItems
+        self.report = report
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiOpvaultImportResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiOpvaultImportResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiOpvaultImportResult {
+        return
+            try FfiOpvaultImportResult(
+                importedItems: FfiConverterUInt32.read(from: &buf), 
+                report: FfiConverterTypeFfiOpvaultPrecheckReport.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiOpvaultImportResult, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.importedItems, into: &buf)
+        FfiConverterTypeFfiOpvaultPrecheckReport.write(value.report, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOpvaultImportResult_lift(_ buf: RustBuffer) throws -> FfiOpvaultImportResult {
+    return try FfiConverterTypeFfiOpvaultImportResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOpvaultImportResult_lower(_ value: FfiOpvaultImportResult) -> RustBuffer {
+    return FfiConverterTypeFfiOpvaultImportResult.lower(value)
+}
+
+
+/**
+ * OPVault 预检报告（`cf_importer::OpvaultPrecheckReport` 映射）。
+ *
+ * TC-OPV-05 语义偏差（docs/22 §2.2.3 显式标注）：结构字段（profile /
+ * KDF 参数 / band 与附件文件数）恒填充；**全量分析字段（total/分布等）
+ * 属解锁后内容，`precheck_opvault` 恒空**——完整报告由
+ * [`crate::api::VaultSession::import_opvault`] 内部解密后产出。
+ */
+public struct FfiOpvaultPrecheckReport: Equatable, Hashable {
+    /**
+     * profile 名（`default`）。
+     */
+    public var profileName: String
+    /**
+     * profile UUID。
+     */
+    public var profileUuid: String
+    /**
+     * PBKDF2 迭代次数（KDF 参数读数）。
+     */
+    public var iterations: UInt32
+    /**
+     * 密码提示（profile.js 明文，官方不混淆）。
+     */
+    public var passwordHint: String?
+    /**
+     * 存在的 `band_*.js` 文件数（0~16）。
+     */
+    public var bandFileCount: UInt32
+    /**
+     * 附件文件数（out-of-scope，跳过+计数，TC-OPV-10）。
+     */
+    public var attachmentCount: UInt32
+    /**
+     * 除 `default/` 外的其他 profile 目录（列出不导入，TC-OPV-10）。
+     */
+    public var otherProfiles: [String]
+    /**
+     * 条目总数（含 Tombstone 等未导入项）。
+     */
+    public var totalItems: UInt32
+    /**
+     * 可导入条目数（含未知类别降级——计入导入成功）。
+     */
+    public var importableItems: UInt32
+    /**
+     * 按类别分布（降级条目按 secure_note 计入）。
+     */
+    public var categoryDistribution: [FfiCategoryCount]
+    /**
+     * 文件夹数（folders.js）。
+     */
+    public var folderCount: UInt32
+    /**
+     * 归档（trashed）条目数。
+     */
+    public var trashedItems: UInt32
+    /**
+     * 未识别的字段 type/k 码（去重排序；值已按 Text 降级保留）。
+     */
+    public var unknownFieldTypes: [String]
+    /**
+     * 未识别分类码清单：(条目 uuid, 原始分类码)。
+     */
+    public var unknownCategories: [FfiUnknownCategory]
+    /**
+     * 未导入项逐条清单（TC-OPV-11）。
+     */
+    public var notImported: [FfiNotImportedOpvaultItem]
+    /**
+     * 告警文本。
+     */
+    public var warnings: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * profile 名（`default`）。
+         */profileName: String, 
+        /**
+         * profile UUID。
+         */profileUuid: String, 
+        /**
+         * PBKDF2 迭代次数（KDF 参数读数）。
+         */iterations: UInt32, 
+        /**
+         * 密码提示（profile.js 明文，官方不混淆）。
+         */passwordHint: String?, 
+        /**
+         * 存在的 `band_*.js` 文件数（0~16）。
+         */bandFileCount: UInt32, 
+        /**
+         * 附件文件数（out-of-scope，跳过+计数，TC-OPV-10）。
+         */attachmentCount: UInt32, 
+        /**
+         * 除 `default/` 外的其他 profile 目录（列出不导入，TC-OPV-10）。
+         */otherProfiles: [String], 
+        /**
+         * 条目总数（含 Tombstone 等未导入项）。
+         */totalItems: UInt32, 
+        /**
+         * 可导入条目数（含未知类别降级——计入导入成功）。
+         */importableItems: UInt32, 
+        /**
+         * 按类别分布（降级条目按 secure_note 计入）。
+         */categoryDistribution: [FfiCategoryCount], 
+        /**
+         * 文件夹数（folders.js）。
+         */folderCount: UInt32, 
+        /**
+         * 归档（trashed）条目数。
+         */trashedItems: UInt32, 
+        /**
+         * 未识别的字段 type/k 码（去重排序；值已按 Text 降级保留）。
+         */unknownFieldTypes: [String], 
+        /**
+         * 未识别分类码清单：(条目 uuid, 原始分类码)。
+         */unknownCategories: [FfiUnknownCategory], 
+        /**
+         * 未导入项逐条清单（TC-OPV-11）。
+         */notImported: [FfiNotImportedOpvaultItem], 
+        /**
+         * 告警文本。
+         */warnings: [String]) {
+        self.profileName = profileName
+        self.profileUuid = profileUuid
+        self.iterations = iterations
+        self.passwordHint = passwordHint
+        self.bandFileCount = bandFileCount
+        self.attachmentCount = attachmentCount
+        self.otherProfiles = otherProfiles
+        self.totalItems = totalItems
+        self.importableItems = importableItems
+        self.categoryDistribution = categoryDistribution
+        self.folderCount = folderCount
+        self.trashedItems = trashedItems
+        self.unknownFieldTypes = unknownFieldTypes
+        self.unknownCategories = unknownCategories
+        self.notImported = notImported
+        self.warnings = warnings
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiOpvaultPrecheckReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiOpvaultPrecheckReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiOpvaultPrecheckReport {
+        return
+            try FfiOpvaultPrecheckReport(
+                profileName: FfiConverterString.read(from: &buf), 
+                profileUuid: FfiConverterString.read(from: &buf), 
+                iterations: FfiConverterUInt32.read(from: &buf), 
+                passwordHint: FfiConverterOptionString.read(from: &buf), 
+                bandFileCount: FfiConverterUInt32.read(from: &buf), 
+                attachmentCount: FfiConverterUInt32.read(from: &buf), 
+                otherProfiles: FfiConverterSequenceString.read(from: &buf), 
+                totalItems: FfiConverterUInt32.read(from: &buf), 
+                importableItems: FfiConverterUInt32.read(from: &buf), 
+                categoryDistribution: FfiConverterSequenceTypeFfiCategoryCount.read(from: &buf), 
+                folderCount: FfiConverterUInt32.read(from: &buf), 
+                trashedItems: FfiConverterUInt32.read(from: &buf), 
+                unknownFieldTypes: FfiConverterSequenceString.read(from: &buf), 
+                unknownCategories: FfiConverterSequenceTypeFfiUnknownCategory.read(from: &buf), 
+                notImported: FfiConverterSequenceTypeFfiNotImportedOpvaultItem.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiOpvaultPrecheckReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.profileName, into: &buf)
+        FfiConverterString.write(value.profileUuid, into: &buf)
+        FfiConverterUInt32.write(value.iterations, into: &buf)
+        FfiConverterOptionString.write(value.passwordHint, into: &buf)
+        FfiConverterUInt32.write(value.bandFileCount, into: &buf)
+        FfiConverterUInt32.write(value.attachmentCount, into: &buf)
+        FfiConverterSequenceString.write(value.otherProfiles, into: &buf)
+        FfiConverterUInt32.write(value.totalItems, into: &buf)
+        FfiConverterUInt32.write(value.importableItems, into: &buf)
+        FfiConverterSequenceTypeFfiCategoryCount.write(value.categoryDistribution, into: &buf)
+        FfiConverterUInt32.write(value.folderCount, into: &buf)
+        FfiConverterUInt32.write(value.trashedItems, into: &buf)
+        FfiConverterSequenceString.write(value.unknownFieldTypes, into: &buf)
+        FfiConverterSequenceTypeFfiUnknownCategory.write(value.unknownCategories, into: &buf)
+        FfiConverterSequenceTypeFfiNotImportedOpvaultItem.write(value.notImported, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOpvaultPrecheckReport_lift(_ buf: RustBuffer) throws -> FfiOpvaultPrecheckReport {
+    return try FfiConverterTypeFfiOpvaultPrecheckReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOpvaultPrecheckReport_lower(_ value: FfiOpvaultPrecheckReport) -> RustBuffer {
+    return FfiConverterTypeFfiOpvaultPrecheckReport.lower(value)
 }
 
 
@@ -9082,6 +9507,31 @@ fileprivate struct FfiConverterSequenceTypeFfiNotImportedItem: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiNotImportedOpvaultItem: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiNotImportedOpvaultItem]
+
+    public static func write(_ value: [FfiNotImportedOpvaultItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiNotImportedOpvaultItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiNotImportedOpvaultItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiNotImportedOpvaultItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiNotImportedOpvaultItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiPasskeyMeta: FfiConverterRustBuffer {
     typealias SwiftType = [FfiPasskeyMeta]
 
@@ -9443,6 +9893,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_csv() != 58011) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_import_opvault() != 7940) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_is_unlocked() != 1040) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9474,6 +9927,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv() != 64030) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_opvault() != 47448) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_read_attachment() != 18594) {

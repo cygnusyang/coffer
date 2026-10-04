@@ -686,6 +686,40 @@ impl VaultSession {
         .map(Into::into)
     }
 
+    /// OPVault 预检（FR-7.3，v0.7.0-T05）：只读、可反复调用，**不触密码**。
+    ///
+    /// **无解锁门禁**（锁定态可预检）——与 CSV / 1PUX 预检同语义：预检
+    /// 只读目录结构 + `profile.js` 元数据 + KDF 参数读数，`folders.js` /
+    /// `band_*.js` 属解锁后内容仅清点文件数（docs/22 §2.2.3 语义偏差：
+    /// 完整报告含条目/分类分布需密码，由 [`Self::import_opvault`] 产出）。
+    /// 非 opvault 目录 / 缺 `default/profile.js` → 2001（TC-OPV-06）。
+    pub fn precheck_opvault(&self, path: String) -> Result<FfiOpvaultPrecheckReport, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            cf_importer::precheck_opvault(Path::new(&path))
+        }))
+        .map(Into::into)
+    }
+
+    /// OPVault 导入（FR-7.3，v0.7.0-T05；锁定态 → 码 1001）。
+    ///
+    /// 密码保护目录导入（密码以 UTF-8 原始字节进 PBKDF2，勿追加 NUL），
+    /// 走 **ImportRestore 许可门禁组**（`write_guard(LicensedOp::ImportRestore)`，
+    /// 与 [`Self::import_1pux`] 同落点；只读态 → 6002/6003，TC-OPV-07）。
+    /// 解密映射先于写入：密码错/数据损坏 → 2002 且**零落库**（TC-OPV-03）。
+    /// `vault_dir` 为附件旁路目录宿主（本版附件 out-of-scope，保留扩展位）。
+    pub fn import_opvault(
+        &self,
+        path: String,
+        password: String,
+        vault_dir: String,
+    ) -> Result<FfiOpvaultImportResult, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner
+                .import_opvault(Path::new(&path), password, Path::new(&vault_dir))
+        }))
+        .map(Into::into)
+    }
+
     /// 列出条目的全部 Passkey 元数据（FR-10.2，created_at 升序）。
     ///
     /// 门禁：需解锁态（1001）；条目不存在 → 1011。元数据**无私钥字段**

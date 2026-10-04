@@ -736,6 +736,30 @@ impl VaultSession {
         cf_importer::import_bitwarden_json(path, &mut state.store)
     }
 
+    /// OPVault 导入（v0.7.0-T05，FR-7.3）：密码保护目录导入。
+    ///
+    /// 薄委托 [`cf_importer::import_opvault`]，与 [`VaultSession::import_1pux`]
+    /// 同落点理由：导入编排归 cf-session，DEK / SubKeys 不跨 FFI。密码以
+    /// UTF-8 原始字节进 PBKDF2（docs/24 §1.3，勿追加 NUL）；解密映射先于
+    /// 写入——密码错/数据损坏 → 2002 且零落库（all-or-nothing，TC-OPV-03）。
+    /// `vault_dir` 为附件旁路目录宿主（本版附件 out-of-scope，保留扩展位）。
+    ///
+    /// # 错误
+    ///
+    /// 锁定态 → 1001；许可拒绝态 → 6002/6003（ImportRestore 组，docs/03
+    /// §14.6；TC-OPV-07）；结构非法 → 2001；解密/映射/写入失败 → 2002
+    /// （docs/22 §4，零新增）。
+    pub fn import_opvault(
+        &self,
+        path: &Path,
+        password: String,
+        vault_dir: &Path,
+    ) -> SessionResult<cf_importer::OpvaultImportResult> {
+        let mut guard = self.write_guard(LicensedOp::ImportRestore)?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        cf_importer::import_opvault(path, &password, &mut state.store, vault_dir)
+    }
+
     // ------------------------------------------------------- 账户安全
 
     /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，

@@ -1354,6 +1354,117 @@ impl From<cf_importer::PuxImportResult> for FfiPuxImportResult {
     }
 }
 
+// -------------------------------------------- OPVault 导入（FR-7.3，v0.7.0-T05）
+
+/// 一条未导入项（TC-OPV-11：Tombstone 099 逐条列出，不静默）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiNotImportedOpvaultItem {
+    /// 原始条目 uuid。
+    pub uuid: String,
+    /// 标题（结构层无密码时不可知，为空字符串）。
+    pub title: String,
+    /// 未导入原因（人类可读）。
+    pub reason: String,
+}
+
+impl From<cf_importer::opvault::NotImportedOpvaultItem> for FfiNotImportedOpvaultItem {
+    fn from(i: cf_importer::opvault::NotImportedOpvaultItem) -> Self {
+        Self {
+            uuid: i.uuid,
+            title: i.title,
+            reason: i.reason,
+        }
+    }
+}
+
+/// OPVault 预检报告（`cf_importer::OpvaultPrecheckReport` 映射）。
+///
+/// TC-OPV-05 语义偏差（docs/22 §2.2.3 显式标注）：结构字段（profile /
+/// KDF 参数 / band 与附件文件数）恒填充；**全量分析字段（total/分布等）
+/// 属解锁后内容，`precheck_opvault` 恒空**——完整报告由
+/// [`crate::api::VaultSession::import_opvault`] 内部解密后产出。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiOpvaultPrecheckReport {
+    /// profile 名（`default`）。
+    pub profile_name: String,
+    /// profile UUID。
+    pub profile_uuid: String,
+    /// PBKDF2 迭代次数（KDF 参数读数）。
+    pub iterations: u32,
+    /// 密码提示（profile.js 明文，官方不混淆）。
+    pub password_hint: Option<String>,
+    /// 存在的 `band_*.js` 文件数（0~16）。
+    pub band_file_count: u32,
+    /// 附件文件数（out-of-scope，跳过+计数，TC-OPV-10）。
+    pub attachment_count: u32,
+    /// 除 `default/` 外的其他 profile 目录（列出不导入，TC-OPV-10）。
+    pub other_profiles: Vec<String>,
+    /// 条目总数（含 Tombstone 等未导入项）。
+    pub total_items: u32,
+    /// 可导入条目数（含未知类别降级——计入导入成功）。
+    pub importable_items: u32,
+    /// 按类别分布（降级条目按 secure_note 计入）。
+    pub category_distribution: Vec<FfiCategoryCount>,
+    /// 文件夹数（folders.js）。
+    pub folder_count: u32,
+    /// 归档（trashed）条目数。
+    pub trashed_items: u32,
+    /// 未识别的字段 type/k 码（去重排序；值已按 Text 降级保留）。
+    pub unknown_field_types: Vec<String>,
+    /// 未识别分类码清单：(条目 uuid, 原始分类码)。
+    pub unknown_categories: Vec<FfiUnknownCategory>,
+    /// 未导入项逐条清单（TC-OPV-11）。
+    pub not_imported: Vec<FfiNotImportedOpvaultItem>,
+    /// 告警文本。
+    pub warnings: Vec<String>,
+}
+
+impl From<cf_importer::OpvaultPrecheckReport> for FfiOpvaultPrecheckReport {
+    fn from(r: cf_importer::OpvaultPrecheckReport) -> Self {
+        Self {
+            profile_name: r.profile_name,
+            profile_uuid: r.profile_uuid,
+            iterations: r.iterations,
+            password_hint: r.password_hint,
+            band_file_count: r.band_file_count,
+            attachment_count: r.attachment_count,
+            other_profiles: r.other_profiles,
+            total_items: r.total_items,
+            importable_items: r.importable_items,
+            category_distribution: r
+                .category_distribution
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            folder_count: r.folder_count,
+            trashed_items: r.trashed_items,
+            unknown_field_types: r.unknown_field_types,
+            unknown_categories: r.unknown_categories.into_iter().map(Into::into).collect(),
+            not_imported: r.not_imported.into_iter().map(Into::into).collect(),
+            warnings: r.warnings,
+        }
+    }
+}
+
+/// OPVault 导入结果（`cf_importer::OpvaultImportResult` 映射；TC-OPV-03
+/// 密码错 2002 零落库）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiOpvaultImportResult {
+    /// 实际导入（新建）的条目数。
+    pub imported_items: u32,
+    /// 预检报告（与本次导入同管线产出，TC-OPV-05 完整档）。
+    pub report: FfiOpvaultPrecheckReport,
+}
+
+impl From<cf_importer::OpvaultImportResult> for FfiOpvaultImportResult {
+    fn from(r: cf_importer::OpvaultImportResult) -> Self {
+        Self {
+            imported_items: r.imported_items,
+            report: r.report.into(),
+        }
+    }
+}
+
 // ---------------------------------------------- 条目历史（FR-2.9，v0.3.0-T05）
 
 /// 历史版本条目（元数据镜像；快照明文不跨 FFI，回滚是唯一消费路径）。

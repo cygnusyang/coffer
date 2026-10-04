@@ -356,6 +356,90 @@ fn tc_exp_01_structure_official_keys() {
     remove_dir_all_quiet(&base);
 }
 
+// --------------------------------------------- MEDIUM-2 附件条目名净化
+
+/// MEDIUM-2 出口防御：恶意附件文件名（含 `../`/`/`/`\`/`:` 路径成分）→
+/// ZIP 条目名净化防 zip-slip；`documentAttributes.fileName` 保留原始名
+/// （导出 JSON 层无损，回环无损）；附件不因文件名被丢弃（计数不变）。
+#[test]
+fn tc_exp_malicious_attachment_filename_zip_entry_safe() {
+    let base = temp_dir("pux_att_name");
+    let (vault_dir, _uuid) = build_vault(&base);
+    let mut store = unlocked_store(&vault_dir);
+    let out_path = base.join("att-name.1pux");
+
+    // 直写恶意文件名（绕过导入侧净化，独立锁定导出侧防御）
+    let now = 1_700_000_000i64;
+    store
+        .with_tx(|repos| {
+            let uuid = uuid::Uuid::now_v7().to_string();
+            repos.items.insert(
+                &ItemRow {
+                    uuid: uuid.clone(),
+                    category: ItemCategory::Login,
+                    state: ItemState::Active,
+                    is_favorite: false,
+                    fav_index: 0,
+                    created_at: now,
+                    updated_at: now,
+                    trashed_at: None,
+                    position: 0,
+                },
+                &SecretString::from_exposed("恶意附件条目"),
+            )?;
+            repos.meta.add_item_count(1)?;
+            repos.attachments.add(
+                &uuid,
+                b"../../etc/passwd",
+                b"evil content",
+                &vault_dir,
+            )?;
+            Ok(())
+        })
+        .expect("写条目与恶意附件成功");
+
+    let result = export_one_pux(&store, &vault_dir, &out_path).expect("导出成功");
+    assert_eq!(result.attachment_count, 1, "恶意文件名附件仍须导出（不丢弃）");
+
+    let f = fs::File::open(&out_path).expect("产物存在");
+    let mut zip = ZipArchive::new(BufReader::new(f)).expect("合法 ZIP");
+
+    // 条目名安全：files/ 下恰一成分，尾段无 `/`/`\`/`:`、非 `.`/`..`
+    let entries: Vec<String> = zip.file_names().map(str::to_owned).collect();
+    let att_entries: Vec<&String> = entries.iter().filter(|n| n.starts_with("files/")).collect();
+    assert_eq!(att_entries.len(), 1, "恰一个 files/ 条目");
+    for entry in &att_entries {
+        let tail = entry.strip_prefix("files/").expect("files/ 前缀");
+        assert!(!tail.contains('/'), "条目名 {entry:?} 含路径分隔 /");
+        assert!(!tail.contains('\\'), "条目名 {entry:?} 含反斜杠");
+        assert!(!tail.contains(':'), "条目名 {entry:?} 含冒号");
+        assert!(tail != "." && tail != "..", "条目名 {entry:?} 自指");
+    }
+
+    // 内容逐字节在位
+    let mut content = Vec::new();
+    zip.by_name(att_entries[0])
+        .expect("读附件条目成功")
+        .read_to_end(&mut content)
+        .expect("读内容成功");
+    assert_eq!(content, b"evil content", "附件内容逐字节在位");
+
+    // documentAttributes.fileName 保留原始名（JSON 层无损）
+    let data = export_data_json(&out_path);
+    let items = exported_items(&data);
+    let att_it = items
+        .iter()
+        .find(|it| it["overview"]["title"] == "恶意附件条目")
+        .expect("条目在导出 JSON 中");
+    assert_eq!(
+        att_it["details"]["documentAttributes"]["fileName"],
+        "../../etc/passwd",
+        "fileName 保留原始名（净化仅在 ZIP 条目名，回环无损）"
+    );
+
+    remove_dir_all_quiet(&base);
+}
+
 // ------------------------------------------------------------ TC-EXP-02/03 回环
 
 /// TC-EXP-02 回环主判据 + TC-EXP-03 附件面：导入 1PUX → 导出 → 新库再

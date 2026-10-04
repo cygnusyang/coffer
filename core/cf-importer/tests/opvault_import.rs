@@ -96,6 +96,24 @@ impl Vault {
         content.replace_range(vstart..vend, value);
         std::fs::write(&file, &content).unwrap();
     }
+
+    /// 把 `default/profile.js` 的 `"iterations":<n>` 数字替换为 `value`
+    /// （iterations 是数字，非引号包裹，与 [`Self::tamper`] 的字符串替换不同）。
+    fn tamper_iterations(&self, value: u32) {
+        let file = self.root.join("default").join("profile.js");
+        let mut content = std::fs::read_to_string(&file).unwrap();
+        let needle = "\"iterations\":";
+        let start = content
+            .find(needle)
+            .unwrap_or_else(|| panic!("profile.js 未找到 {needle}"))
+            + needle.len();
+        let end = content[start..]
+            .find(',')
+            .map(|i| start + i)
+            .unwrap_or_else(|| panic!("iterations 后应紧跟逗号"));
+        content.replace_range(start..end, &value.to_string());
+        std::fs::write(&file, &content).unwrap();
+    }
 }
 
 /// 取某 designation 的字段值（无则空串）。
@@ -281,4 +299,32 @@ fn 非opvault目录报2001() {
         "导入非 opvault 目录应报 2001，实际 {err:?}"
     );
     assert_eq!(h.store.repos().items.count(None).unwrap(), 0);
+}
+
+/// dev-review HIGH-1（负路径）：profile.js 的 iterations 超上界（恶意数十亿
+/// iterations → CPU 耗尽向量）→ 结构层 2001，precheck 与 import 同源拒绝，
+/// 零落库；合法 40000 不受影响（由 `正向导入vendor样本`/`结构预检不触密码`
+/// 覆盖）。
+#[test]
+fn iterations超上界报2001() {
+    let v = copied_vault();
+    v.tamper_iterations(cf_crypto::opvault::MAX_PBKDF2_ITERATIONS + 1);
+
+    let err = precheck_opvault(v.path()).unwrap_err();
+    assert!(
+        matches!(err, CfError::ImportUnknownFormat),
+        "预检超限 iterations 应报 2001，实际 {err:?}"
+    );
+
+    let mut h = harness();
+    let err = import_opvault(v.path(), "password", &mut h.store, &h.vault_dir).unwrap_err();
+    assert!(
+        matches!(err, CfError::ImportUnknownFormat),
+        "导入超限 iterations 应报 2001，实际 {err:?}"
+    );
+    assert_eq!(
+        h.store.repos().items.count(None).unwrap(),
+        0,
+        "超限 iterations 不得落任何条目"
+    );
 }

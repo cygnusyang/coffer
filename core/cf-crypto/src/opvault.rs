@@ -75,6 +75,14 @@ pub const ITEM_KEYS_PLAIN_LEN: usize = 64;
 /// PBKDF2 输出长度（字节）：前 32 加密钥 / 后 32 MAC 钥。
 pub const DERIVED_LEN: usize = 64;
 
+/// PBKDF2-HMAC-SHA512 迭代次数**上界**（资源耗尽防线，dev-review HIGH-1）。
+///
+/// 真实 1Password opvault 用 10^5（vendor 样本 40000）；10^7 留足 100 倍
+/// 余量仍远低于可被滥用的量级。恶意 `profile.js` 填数十亿 iterations 会让
+/// 导入挂起 CPU 耗尽——超上界在派生前即拒绝（对齐
+/// `cf_crypto::kdf::MAX_M_COST_KIB` 上界先例）。
+pub const MAX_PBKDF2_ITERATIONS: u32 = 10_000_000;
+
 /// opdata01 头部长度（魔数 8 + 明文长 8 + IV 16）。
 const OPDATA_HEADER_LEN: usize = OPDATA_MAGIC.len() + 8 + IV_LEN;
 
@@ -165,7 +173,8 @@ pub struct ItemKeys {
 ///
 /// # Errors
 ///
-/// `iterations == 0` → [`OpvaultCryptoError::InvalidParams`]。
+/// `iterations == 0` 或 `iterations > [`MAX_PBKDF2_ITERATIONS`]` →
+/// [`OpvaultCryptoError::InvalidParams`]（超上界在派生前拒绝，防 CPU 耗尽）。
 pub fn pbkdf2_derive(
     password: &[u8],
     salt: &[u8],
@@ -175,6 +184,11 @@ pub fn pbkdf2_derive(
         return Err(OpvaultCryptoError::InvalidParams(
             "iterations 不能为零".into(),
         ));
+    }
+    if iterations > MAX_PBKDF2_ITERATIONS {
+        return Err(OpvaultCryptoError::InvalidParams(format!(
+            "iterations {iterations} 超过上界 {MAX_PBKDF2_ITERATIONS}"
+        )));
     }
     if salt.is_empty() {
         return Err(OpvaultCryptoError::InvalidLength("salt 不能为空".into()));
@@ -634,6 +648,17 @@ mod tests {
         let salt = [0x41u8; 16];
         assert!(matches!(
             pbkdf2_derive(b"password", &salt, 0),
+            Err(OpvaultCryptoError::InvalidParams(_))
+        ));
+    }
+
+    #[test]
+    fn 超大迭代次数被拒绝() {
+        let salt = [0x41u8; 16];
+        // 超上界在派生前即拒绝（不实际跑 PBKDF2，瞬时返回；上界取值
+        // 10^7 = 真实 1Password 10^5 的百倍余量，见 `MAX_PBKDF2_ITERATIONS`）
+        assert!(matches!(
+            pbkdf2_derive(b"password", &salt, MAX_PBKDF2_ITERATIONS + 1),
             Err(OpvaultCryptoError::InvalidParams(_))
         ));
     }

@@ -260,6 +260,17 @@ pub mod test_seed {
         }
     }
 
+    /// 公开判定 secret 是否已登记（mcp 门面与 provider 共用同一判定源——
+    /// grant/revoke/rotate/audit 的「未知即拒」据此）。
+    #[must_use]
+    pub fn is_known_secret(name: &str) -> bool {
+        if name == ANON_SECRET {
+            return true;
+        }
+        TestSeedProvider::secret_value(name).is_some()
+            || TestSeedProvider::seed_names().iter().any(|n| n == name)
+    }
+
     impl SecretProvider for TestSeedProvider {
         fn list_secret_names(&self, _vault: Option<&str>) -> Result<Vec<String>, ProviderError> {
             Ok(Self::seed_names())

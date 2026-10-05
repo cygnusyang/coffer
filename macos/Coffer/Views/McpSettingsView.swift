@@ -50,6 +50,7 @@ struct McpSettingsSection: View {
             copyButtonRow
             linkButtonRow
             statusRow
+            usageLogRow
         } header: {
             Text("MCP / Agent 协作")
         } footer: {
@@ -72,20 +73,33 @@ struct McpSettingsSection: View {
 
     // MARK: - Provider 行（docs/20 §6.1：MVP 恒 op，Coffer 灰态预留）
 
-    /// Provider 以静态行 + 灰态提示呈现，而非下拉：本版仅一个可用选项
-    /// （D-2：MVP 数据源 = op），禁用下拉比可用下拉更诚实（§8 控件布局可调）。
+    /// Provider 以下拉呈现（docs/20 §6.1 控件表「Provider 下拉」）：MVP 恒
+    /// 「1Password CLI」（D-2：MVP 数据源 = op），「Coffer 自家库」灰态预留
+    /// （§4.5 CofferStoreProvider，feature 门控）。下拉项均禁选——本版仅一个
+    /// 可用 provider，禁选态比可用切换更诚实（§8 控件布局可调，随实现对齐
+    /// §6.1 表格形态）；选中值见 label，恒为 op。
     private var providerRow: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text("数据源")
-                Spacer()
-                Text(McpProvider.op.displayName)
-                    .foregroundStyle(.secondary)
-            }
-            // 灰态预留（docs/20 §4.5 CofferStoreProvider，feature 门控）
-            Text("Coffer 自家库（即将推出）")
-                .font(.caption)
+        HStack {
+            Text("数据源")
+            Spacer()
+            Menu {
+                // 当前 provider（恒选中态：MVP 无可切换项，项本身禁选）
+                Button {
+                } label: {
+                    Label(McpProvider.op.displayName, systemImage: "checkmark")
+                }
+                .disabled(true)
+                // 灰态预留（docs/20 §4.5 CofferStoreProvider，feature 门控）
+                Button(McpProvider.coffer.displayName) {}
+                    .disabled(true)
+            } label: {
+                HStack(spacing: 4) {
+                    Text(McpProvider.op.displayName)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                }
                 .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -221,6 +235,27 @@ struct McpSettingsSection: View {
         case .disabled: return .secondary
         case .ready: return .green
         case .notReady: return .orange
+        }
+    }
+
+    // MARK: - 查看使用记录（docs/20 §6.1 控件表末项）
+
+    /// 「查看使用记录」入口：打开只读审计视图（docs/20 §4.6 方案 A 的
+    /// usage audit JSONL）。审计 JSONL（D-3）待用户确认、cf-mcp 尚未落盘
+    /// ——本版做禁用态占位（UI 骨架），格式落定 + 落盘后由 op 集成组
+    /// （docs/20 §9 G-C/G-G）接入只读读取，本入口随之放开。
+    private var usageLogRow: some View {
+        HStack {
+            Button {
+                // 预留：D-3 落定后打开只读审计视图（audit JSONL tail，脱敏）
+            } label: {
+                Label("查看使用记录", systemImage: "list.bullet.rectangle")
+            }
+            .disabled(true) // 审计 JSONL（docs/20 §4.6 方案 A / D-3）落定后放开
+            Spacer()
+            Text("审计记录格式待定（D-3）")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

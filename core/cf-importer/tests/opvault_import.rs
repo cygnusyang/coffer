@@ -328,3 +328,73 @@ fn iterations超上界报2001() {
         "超限 iterations 不得落任何条目"
     );
 }
+
+/// TC-OPV-10 多 profile：仅导入 `default/`，其余 profile **列出不导入**
+/// （docs/23 TC-OPV-10）。vendor 样本单 profile（`other_profiles` 恒空），
+/// 此处把 default/ 整目录复制为第二个 profile `personal/`（含 band 与条目），
+/// 验证：precheck 列出 + 告警 surface；import 只取 `default/`，personal 的
+/// 条目不入库（不静默、不越界读取）。
+#[test]
+fn 多profile仅导入default其余列出不导入() {
+    let v = copied_vault();
+    // 复制第二份 profile：把 default/ 的内容复制到 personal/（含 profile.js
+    // + band 条目）——profile 目录判据 = 子目录含 profile.js
+    copy_dir_all(
+        &fixture("test.opvault").join("default"),
+        &v.root.join("personal"),
+    );
+
+    // precheck：只读列出 + 告警（不触密码）
+    let report = precheck_opvault(v.path()).unwrap();
+    assert_eq!(report.other_profiles, vec!["personal".to_string()]);
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("非 default profile") && w.contains("personal")),
+        "precheck 必须 surface 非 default profile 告警，实际 {warnings:?}",
+        warnings = report.warnings
+    );
+
+    // import：只取 default/（3 条），personal/ 不导入
+    let mut h = harness();
+    let result = import_opvault(v.path(), "password", &mut h.store, &h.vault_dir).unwrap();
+    assert_eq!(result.imported_items, 3, "仅 default/ 的条目被导入");
+    assert_eq!(
+        result.report.other_profiles,
+        vec!["personal".to_string()],
+        "import 报告同样列出其余 profile（不静默）"
+    );
+    assert_eq!(
+        h.store.repos().items.count(None).unwrap(),
+        3,
+        "personal/ 的条目不得落库"
+    );
+}
+
+/// TC-OPV-12 空库（0 条目）导入：无 band / 无 folders 的 `default/` 预检与
+/// 导入均成功、0 条目（docs/23 TC-OPV-12；trashed → 归档态已由 mapping
+/// 单测覆盖，不在本用例重复）。
+#[test]
+fn 空库0条目导入成功() {
+    let v = copied_vault();
+    // 清空 default/ 的 band 与 folders，仅保留 profile.js → 0 条目空库
+    for name in ["band_3.js", "band_6.js", "band_D.js", "band_E.js", "folders.js"] {
+        std::fs::remove_file(v.root.join("default").join(name)).unwrap();
+    }
+
+    let report = precheck_opvault(v.path()).unwrap();
+    assert_eq!(report.band_file_count, 0);
+
+    let mut h = harness();
+    let result = import_opvault(v.path(), "password", &mut h.store, &h.vault_dir).unwrap();
+    assert_eq!(result.imported_items, 0, "空库 0 条目");
+    assert_eq!(result.report.total_items, 0);
+    assert_eq!(result.report.importable_items, 0);
+    assert_eq!(result.report.folder_count, 0);
+    assert_eq!(
+        h.store.repos().items.count(None).unwrap(),
+        0,
+        "空库不得落任何条目"
+    );
+}

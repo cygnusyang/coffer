@@ -278,9 +278,12 @@ fn create_environment_long_name_boundary() {
 // D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn mount_environment_creates_mount_path() {
     // 判据（AS-5 模式 C）：挂载后目标路径必须真实存在（临时凭证文件/目录）。
+    // 前置（lead 裁定 2026-10-05，测试自身缺陷修正）：mount 要求 env 已存在（AS-5 模式 C），
+    // 先 create_environment（合法名）再 mount —— 与 rejects_unknown_env 的未知 env 判据一致。
     let env_name = unique("mtenv");
     let dir = temp_dir("mount");
     let target = dir.join("cred");
+    mcp::create_environment(&env_name).expect("create_environment must not error");
     mcp::mount_environment(&env_name, target.to_str().unwrap())
         .expect("mount_environment must not error");
     // 桩实现不产生任何产物 → 红灯。

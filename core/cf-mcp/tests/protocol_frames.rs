@@ -5,10 +5,14 @@
 //! 错误码映射（-32700/-32600/-32601/-32602 与 7xxx 应用层）、
 //! 输出 Redactor 管道（§3.5-2：所有 content[0].text 经 SecretRedactor）。
 
+use std::io::Cursor;
+
 use serde_json::{json, Value};
 
 use cf_mcp::error::McpError;
-use cf_mcp::protocol::{parse_frame, RequestId, JSONRPC_VERSION, MCP_PROTOCOL_VERSION};
+use cf_mcp::protocol::{
+    parse_frame, RequestId, MAX_LINE_BYTES, JSONRPC_VERSION, MCP_PROTOCOL_VERSION,
+};
 use cf_mcp::provider::{ProviderError, RunSpec, SecretMeta, SecretProvider};
 use cf_mcp::redact::REDACTION_TOKEN;
 use cf_mcp::McpServer;
@@ -355,4 +359,90 @@ fn error_code_constants_match_section_34() {
     assert_eq!(sub.code(), 7004);
     assert_eq!(McpError::InvalidParameter(String::new()).code(), 7005);
     assert_eq!(McpError::InternalError(String::new()).code(), 7006);
+}
+
+// ===========================================================================
+// 单行长度上界（L-7：HIGH-1 同族有界读取，KNOWN-ISSUES L-7 / docs/26 §2）
+// ===========================================================================
+
+fn overlong_line() -> String {
+    "x".repeat(MAX_LINE_BYTES + 1)
+}
+
+fn boundary_line() -> String {
+    "x".repeat(MAX_LINE_BYTES)
+}
+
+#[test]
+fn parse_frame_rejects_line_above_max_length_with_7005() {
+    // 超限行在进入 JSON 解析前即被拒收（7005，KNOWN-ISSUES L-7 建议码）。
+    let err = parse_frame(&overlong_line()).expect_err("overlong line must be rejected");
+    assert_eq!(err.code(), 7005, "超限拒收须报 7005（InvalidParameter）");
+}
+
+#[test]
+fn parse_frame_accepts_line_at_max_length_boundary() {
+    // 恰好 MAX_LINE_BYTES 的行不被长度检查拦截，继续走 JSON 解析（非 JSON → -32700）。
+    let err = parse_frame(&boundary_line()).expect_err("boundary line is non-JSON → parse error");
+    assert_eq!(
+        err.code(),
+        -32700,
+        "边界行应进入 JSON 解析而非被长度检查拦截"
+    );
+}
+
+#[test]
+fn handle_line_rejects_overlong_line_with_7005_frame() {
+    // 门面入口同样拒收：超限行 → 7005 错误帧，id 恒 null（无法取回合法 id）。
+    let s = server();
+    let resp = s
+        .handle_line(&overlong_line())
+        .expect("overlong line must be answered with an error frame");
+    let v = parse_resp(&resp);
+    assert_eq!(v["error"]["code"], 7005);
+    assert!(v["id"].is_null(), "超限拒收帧 id 恒 null");
+    let msg = v["error"]["message"].as_str().unwrap_or_default();
+    assert!(!msg.is_empty(), "错误消息须可操作（说明超限语义）");
+}
+
+#[test]
+fn serve_with_overlong_line_emits_7005_then_returns_fatal_err() {
+    // 传输层有界读取：超限行先给客户端 7005 诊断帧（stdout），随后返回 Err
+    // （帧同步不可恢复 → CLI 层映射退出码 2 协议致命，docs/20 §5.3）。
+    let s = server();
+    let mut out = Vec::new();
+    let mut input = Cursor::new(format!("{}\n", overlong_line()));
+    let err = s
+        .serve_with(&mut input, &mut out)
+        .expect_err("overlong line must terminate the connection");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    let raw = String::from_utf8(out).expect("output must be UTF-8");
+    let v: Value = serde_json::from_str(raw.trim_end()).expect("7005 帧须为合法 JSON");
+    assert_eq!(v["error"]["code"], 7005);
+}
+
+#[test]
+fn serve_with_processes_normal_lines_and_returns_ok_on_eof() {
+    // 回归：有界读取重构后，正常帧序列仍干净服务，EOF 干净返回 Ok（exit 0 路径）。
+    let s = server();
+    let mut out = Vec::new();
+    let input = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        "\n",
+    );
+    let mut cursor = Cursor::new(input);
+    s.serve_with(&mut cursor, &mut out).expect("normal lines must serve cleanly");
+    let raw = String::from_utf8(out).expect("output must be UTF-8");
+    let frames: Vec<&str> = raw.trim_end().split('\n').collect();
+    assert_eq!(frames.len(), 2, "两帧输入须产生两帧响应");
+    let v0: Value = serde_json::from_str(frames[0]).expect("frame 0 must be valid JSON");
+    assert_eq!(v0["result"], json!({}), "ping → 空 result");
+    let v1: Value = serde_json::from_str(frames[1]).expect("frame 1 must be valid JSON");
+    assert_eq!(
+        v1["result"]["tools"].as_array().map(Vec::len),
+        Some(4),
+        "tools/list → 4 个 MVP 工具"
+    );
 }

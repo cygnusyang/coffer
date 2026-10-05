@@ -27,6 +27,14 @@ pub const JSONRPC_VERSION: &str = "2.0";
 /// MCP 协议版本（2024-11-05 为 MCP 稳定版本线）。
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// MCP stdio 单行内容最大字节数（L-7，HIGH-1 同族有界读取）。
+///
+/// 换行分隔的 JSON-RPC 帧通常 < 1 KiB；64 KiB 对任何合法帧都宽裕，同时把
+/// 恶意/失控客户端的单行内存压力钉死在上界内。内容超限 → **7005 拒收**
+/// （KNOWN-ISSUES L-7 建议；[`parse_frame`] 与 [`crate::McpServer::serve_with`]
+/// 双层强制，同一常量，零新增 7xxx 码）。
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
+
 /// JSON-RPC 请求 id（数字 / 字符串；通知无 id，解析为 [`Option::None`]）。
 ///
 /// [`RequestId::Null`] 仅用于**错误响应**（JSON-RPC 要求 id 存在，解析失败时
@@ -83,10 +91,17 @@ pub struct ErrorObject {
 
 /// 解析一行 MCP 消息为请求帧。
 ///
+/// - 行内容超 [`MAX_LINE_BYTES`] → [`McpError::InvalidParameter`]（`7005`，
+///   单行长度上界，L-7 / HIGH-1 同族有界读取）；
 /// - 非 JSON → [`McpError::ParseError`]（`-32700`）；
 /// - `jsonrpc` 非 `2.0` / 缺 `method` → [`McpError::InvalidRequest`]（`-32600`）；
 /// - 其余结构错误 → [`McpError::InvalidRequest`]（`-32600`）。
 pub fn parse_frame(line: &str) -> Result<RequestFrame, McpError> {
+    if line.len() > MAX_LINE_BYTES {
+        return Err(McpError::InvalidParameter(format!(
+            "single line exceeds MAX_LINE_BYTES ({MAX_LINE_BYTES} bytes)"
+        )));
+    }
     let value: Value = serde_json::from_str(line)
         .map_err(|e| McpError::ParseError(format!("invalid JSON: {e}")))?;
     if value.get("jsonrpc").and_then(Value::as_str) != Some(JSONRPC_VERSION) {

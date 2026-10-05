@@ -52,7 +52,8 @@ use serde_json::{json, Value};
 use crate::audit::{NoopAudit, UsageAudit};
 use crate::error::McpError;
 use crate::protocol::{
-    parse_frame, RequestFrame, RequestId, ResponseFrame, JSONRPC_VERSION, MCP_PROTOCOL_VERSION,
+    parse_frame, RequestFrame, RequestId, ResponseFrame, MAX_LINE_BYTES, JSONRPC_VERSION,
+    MCP_PROTOCOL_VERSION,
 };
 use crate::provider::SecretProvider;
 use crate::redact::SecretRedactor;
@@ -131,21 +132,58 @@ impl McpServer {
 
     /// 运行 stdio 服务循环（§3.1）：stdout = 协议帧，stderr = 日志。
     ///
-    /// 逐行读 stdin，响应写 stdout 并 flush；EOF（连接关闭）返回 `Ok(())`
-    /// （§5.3 干净退出码由 CLI 层映射）。调用方禁在 stdout 打日志。
+    /// 逐行有界读取 stdin（单行上界 [`MAX_LINE_BYTES`]，L-7），响应写 stdout
+    /// 并 flush；EOF（连接关闭）返回 `Ok(())`（§5.3 干净退出码由 CLI 层映射）。
+    /// 调用方禁在 stdout 打日志。IO 语义见 [`Self::serve_with`]。
     pub fn serve_stdio(&self) -> std::io::Result<()> {
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let line = line.trim_end();
-            if line.is_empty() {
-                continue;
+        self.serve_with(stdin.lock(), stdout.lock())
+    }
+
+    /// 在任意 `BufRead` / `Write` 上运行服务循环（§3.1 传输；测试面注入
+    /// `Cursor`/`Vec` 代替真实 stdin/stdout）。stdio 入口见 [`Self::serve_stdio`]。
+    ///
+    /// 逐行**有界**读取（L-7 / HIGH-1 同族）：行内容超 [`MAX_LINE_BYTES`] →
+    /// 写 7005 错误帧（§3.4，客户端可见诊断）后返回 `Err`
+    /// （帧同步已不可恢复；CLI 层映射退出码 2 协议致命，§5.3）。空行跳过；
+    /// 非 UTF-8 行返回 `Err`；EOF 干净返回 `Ok(())`。
+    pub fn serve_with<R: BufRead, W: Write>(
+        &self,
+        mut reader: R,
+        mut writer: W,
+    ) -> std::io::Result<()> {
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
+        loop {
+            match read_bounded_line(&mut reader, &mut buf, MAX_LINE_BYTES)? {
+                BoundedLine::TooLong => {
+                    let msg = format!(
+                        "single line exceeds MAX_LINE_BYTES ({MAX_LINE_BYTES} bytes)"
+                    );
+                    let frame = self.error_frame(RequestId::Null, 7005, msg);
+                    writeln!(writer, "{frame}")?;
+                    writer.flush()?;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "protocol line exceeds MAX_LINE_BYTES",
+                    ));
+                }
+                BoundedLine::Eof => break,
+                BoundedLine::Line => {}
             }
+            if buf.is_empty() {
+                continue; // 空行（§3.1 忽略空行）。
+            }
+            let line = std::str::from_utf8(&buf).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid UTF-8 in protocol line: {e}"),
+                )
+            })?;
+            let line = line.trim_end();
             if let Some(response) = self.handle_line(line) {
-                writeln!(out, "{response}")?;
-                out.flush()?;
+                writeln!(writer, "{response}")?;
+                writer.flush()?;
             }
         }
         Ok(())
@@ -246,6 +284,49 @@ impl McpServer {
             error: Some(crate::protocol::ErrorObject { code, message }),
         };
         to_json_string(&frame)
+    }
+}
+
+/// 有界单行读取的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundedLine {
+    /// 读到一行（内容在 `buf`，不含换行符）。
+    Line,
+    /// 行内容超上界（HIGH-1 同族拒收，L-7）。
+    TooLong,
+    /// EOF（无更多输入），服务循环应干净结束。
+    Eof,
+}
+
+/// 有界地读取一行（`\n` 或 EOF 结束），内容存入 `buf`（不含 `\n`）。
+///
+/// L-7 核心：无论客户端单行多长，`buf` 累积**永不超 `max` 字节**——替代
+/// `BufRead::lines()` 的无界整行物化，超大单行不再造成内存压力。超限返回
+/// [`BoundedLine::TooLong`] 而不继续缓冲剩余行（帧同步已不可恢复）。
+fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    max: usize,
+) -> std::io::Result<BoundedLine> {
+    buf.clear();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(BoundedLine::Eof);
+        }
+        // 本块内 `\n` 的位置（含）；无则取整块。`\n` 不计入内容上界。
+        let nl = available.iter().position(|&b| b == b'\n');
+        let has_nl = nl.is_some();
+        let take = nl.map_or(available.len(), |i| i + 1);
+        let content = take - usize::from(has_nl);
+        if buf.len() + content > max {
+            return Ok(BoundedLine::TooLong);
+        }
+        buf.extend_from_slice(&available[..content]);
+        reader.consume(take);
+        if has_nl {
+            return Ok(BoundedLine::Line);
+        }
     }
 }
 

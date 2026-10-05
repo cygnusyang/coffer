@@ -331,3 +331,77 @@ fn run_spec_fields_match_design_contract() {
     let _: Vec<String> = spec.args;
     let _: Option<PathBuf> = spec.cwd;
 }
+
+// ===========================================================================
+// M-4 / L-3：缺省 env_name 取 `op://` 引用末段（RED：default_env_name 未实现）
+// ===========================================================================
+
+#[test]
+fn default_env_name_rule_is_locked_for_run_path() {
+    // M-4（KNOWN-ISSUES）：缺省 env_name 规则 = `op://` 引用末段（field 名，
+    // L-3「末段恒判 field」）；无 field 引用取 item 名；item 名含 `/` 的无
+    // field 引用末段恒判 field——规则与 M-4 一起锁定。
+    assert_eq!(
+        cf_mcp::provider::op::default_env_name("op://Personal/OPENAI_API_KEY/password"),
+        "password"
+    );
+    assert_eq!(
+        cf_mcp::provider::op::default_env_name("op://Personal/OPENAI_API_KEY"),
+        "OPENAI_API_KEY"
+    );
+    assert_eq!(
+        cf_mcp::provider::op::default_env_name("op://Personal/a/b"),
+        "b"
+    );
+}
+
+#[test]
+fn run_uses_default_env_name_derived_from_reference() {
+    // M-4 契约：tools.rs 缺省 env_name = default_env_name(secret_ref)（末段），
+    // 不再取整个 secret 串 → `op://` 引用省略 env_name 时不再恒 7005。此处
+    // 模拟 tools.rs 的缺省推导，验证推导结果可作为合法 env_name 注入。
+    let _g = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = temp_dir("m4-default");
+    let marker = dir.join("m4-default-marker");
+    let mut spec = api_key_spec();
+    spec.env_name = cf_mcp::provider::op::default_env_name(&spec.secret_ref);
+    assert_eq!(spec.env_name, "password");
+    spec.args = vec![
+        "-c".to_string(),
+        format!(
+            "test \"$password\" = \"fixture-secret-value-openai\" && touch {}",
+            marker.display()
+        ),
+    ];
+    spec.cwd = Some(dir.clone());
+    let code = provider()
+        .run_with_secret(&spec)
+        .expect("run with derived default env_name must not error");
+    assert_eq!(code, 0);
+    assert!(
+        marker.exists(),
+        "value must be injected under the default env_name derived from the reference"
+    );
+}
+
+// ===========================================================================
+// M-1：子进程失败 stderr 不破坏退出码契约（RED 前即锁定不回归面）
+// ===========================================================================
+
+#[test]
+fn run_with_secret_child_stderr_does_not_break_exit_code_contract() {
+    // M-1（KNOWN-ISSUES）：子进程写 stderr + 非零退出——stderr 被透传（见
+    // op.rs forward_child_stderr 单测）**不改变**退出码契约：仍返回 Ok(code)，
+    // 不吞、不误报 Err。成功路径 stderr 照旧剥离（§3.5-4 默认剥离纪律）。
+    let _g = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut spec = api_key_spec();
+    spec.args = vec!["-c".to_string(), "echo oops >&2; exit 9".to_string()];
+    let r = provider().run_with_secret(&spec);
+    match r {
+        Ok(code) => assert_eq!(
+            code, 9,
+            "child exit code must propagate with stderr present"
+        ),
+        Err(e) => panic!("child nonzero exit with stderr must NOT surface as Err, got {e:?}"),
+    }
+}

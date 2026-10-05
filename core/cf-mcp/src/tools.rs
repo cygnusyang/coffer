@@ -214,7 +214,11 @@ fn call_run_with_secret(
     args: &Value,
 ) -> Result<String, McpError> {
     let secret = required_string(args, "secret")?;
-    let env_name = optional_string(args, "env_name").unwrap_or_else(|| secret.clone());
+    // M-4（KNOWN-ISSUES）：缺省 env_name 取 `op://` 引用末段（field/item 名，
+    // `default_env_name` 规则在 op.rs 锁定）——不再取整个 secret 串（对 `op://`
+    // 引用必 7005）。末段非法环境变量名时由 provider 校验层照常 7005。
+    let env_name = optional_string(args, "env_name")
+        .unwrap_or_else(|| crate::provider::op::default_env_name(&secret));
     let cmd = required_string(args, "cmd")?;
     let cmd_args: Vec<String> = args
         .get("args")

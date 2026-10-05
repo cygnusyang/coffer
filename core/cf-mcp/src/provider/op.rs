@@ -19,6 +19,20 @@
 //! `COFFER_OP_SESSION_TOKEN` 透传给 op 子进程为 `OP_SESSION`，**不经 argv、
 //! 不经协议帧、不进日志**。`OpProviderConfig` 的 `Debug` 对 token 打码。
 //!
+//! ## blast-radius（M-1，docs/20 §4.4 诚实边界延伸）
+//!
+//! `op run` spawn 的目标子进程继承**完整环境（含 `OP_SESSION`）**——任一被注入
+//! secret 的进程都是凭据暴露半径的一部分：若其打印 env 或泄漏内存，会话 token
+//! 在其内可见。文档面（docs/20 §3.5/§4.4）补注由 G-F 文档批统一处理。
+//!
+//! # 子进程 stderr 透传（M-1，修复路径 2）
+//!
+//! stdout 恒为 MCP 协议帧不可让渡（§3.1）。目标子进程**失败**（非零退出）时其
+//! stderr 透传到 cf-mcp 进程自身的 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 =
+//! stderr）——标注不脱敏（子进程输出不受 Coffer 控制，§3.5-3 诚实边界），
+//! 截断至 [`MAX_FORWARDED_CHILD_STDERR`] 防灌爆。成功路径与 op 层失败路径
+//! 不转发（§3.5-4 默认剥离纪律：成功无诊断价值，op 层已有归一文案）。
+//!
 //! # 错误归一（docs/20 §3.4 的 7xxx 段）
 //!
 //! op 的 stderr **不回显进错误载荷**（防泄露）——仅按关键字归类后给出稳定文案：
@@ -28,6 +42,14 @@
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+
+// L-1（KNOWN-ISSUES 方案 B）：非 unix 平台无等价简单权限 API，无法保证临时
+// dotenv 的 0600 权限约束——随不支持平台一并拒编译，而非留下无约束分支。
+// cf-mcp 目标平台 macOS（unix），此门槛是编译期保证，不依赖运行时检查。
+#[cfg(not(unix))]
+compile_error!(
+    "cf-mcp OpProvider 仅支持 unix（macOS）：非 unix 平台无法保证临时 dotenv 0600 权限约束（KNOWN-ISSUES L-1）"
+);
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -256,6 +278,11 @@ impl SecretProvider for OpProvider {
         if !is_op_level_error(&stderr) {
             // 子进程失败：op run 原样传播其退出码（实测 op 2.32.1 不打 [ERROR]），
             // 契约（mcp_acceptance）：退出码作 i32 返回，不吞、不误报 Err。
+            // M-1（KNOWN-ISSUES 修复路径 2）：失败时把子进程 stderr 透传到
+            // cf-mcp 自身 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 = stderr；
+            // stdout 仍为协议帧，不混入）——不脱敏、尽力而为（诊断写失败不
+            // 升级为 Err）。成功路径与 op 层失败路径不转发（§3.5-4 默认剥离）。
+            forward_child_stderr(&output.stderr, &mut std::io::stderr());
             return Ok(output.status.code().unwrap_or(1));
         }
         Err(classify_run_failure(&stderr))
@@ -322,6 +349,23 @@ fn is_valid_env_name(name: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// 缺省 env_name 推导（M-4，docs/20 §4.2 run_with_secret 契约）。
+///
+/// 规则（L-3 联动，KNOWN-ISSUES 登记内已拍板）：缺省 env_name 取 `op://`
+/// 引用**末段**——末段恒判 field 名；无 field 的引用取 item 名。item 名含
+/// `/` 的无 field 引用无法表达（L-3，冲突面小登记留档）。非 `op://` 形态
+/// 回退整个 secret 串（run 面本就不接受裸 id/明文，保留元数据面语义）。
+///
+/// 末段非法环境变量名时由 [`validate_run_spec`] 照常 7005（调用方须显式给
+/// env_name）——缺省规则不做净化，只做「引用名字 → 变量名」的映射。
+#[must_use]
+pub fn default_env_name(secret_ref: &str) -> String {
+    let Some(rest) = secret_ref.strip_prefix("op://") else {
+        return secret_ref.to_string();
+    };
+    rest.rsplit('/').next().unwrap_or("").to_string()
 }
 
 /// `secret_ref` 形态校验（docs/20 §4.4「cf-mcp 不出现 Secret 明文」不变量结构面）。
@@ -460,6 +504,42 @@ fn classify_run_failure(stderr: &str) -> ProviderError {
     }
 }
 
+/// 透传子进程 stderr 的字节上限（防失控/恶意子进程灌爆诊断日志）。
+const MAX_FORWARDED_CHILD_STDERR: usize = 16 * 1024;
+
+/// 截断子进程 stderr 为末段（诊断通常看重尾部）。
+fn truncate_child_stderr(stderr: &[u8]) -> &[u8] {
+    if stderr.len() <= MAX_FORWARDED_CHILD_STDERR {
+        stderr
+    } else {
+        &stderr[stderr.len() - MAX_FORWARDED_CHILD_STDERR..]
+    }
+}
+
+/// 把子进程失败时的 stderr 透传到给定 sink（生产为 cf-mcp 自身 stderr）。
+///
+/// M-1（KNOWN-ISSUES 修复路径 2）：标注不脱敏——目标子进程输出不受 Coffer
+/// 控制（§3.5-3 诚实边界），可能含其自带的敏感值；截断至
+/// [`MAX_FORWARDED_CHILD_STDERR`]。写失败尽力而为（`let _`）：诊断透传不
+/// 得升级为业务错误。
+fn forward_child_stderr(stderr: &[u8], sink: &mut dyn Write) {
+    if stderr.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        sink,
+        "[cf-mcp] child process stderr (not redacted — may contain secrets):"
+    );
+    if stderr.len() > MAX_FORWARDED_CHILD_STDERR {
+        let _ = writeln!(
+            sink,
+            "[cf-mcp] (truncated to last {MAX_FORWARDED_CHILD_STDERR} bytes)"
+        );
+    }
+    let _ = sink.write_all(truncate_child_stderr(stderr));
+    let _ = writeln!(sink, "[cf-mcp] end child process stderr");
+}
+
 /// 解析 op 的 JSON 输出；非 UTF-8 或结构不符 → 7006（内部错误，不泄露细节）。
 fn parse_op_json<T: serde::de::DeserializeOwned>(stdout: &[u8]) -> Result<T, ProviderError> {
     let text = String::from_utf8(stdout.to_vec())
@@ -508,37 +588,62 @@ impl OpItem {
 /// 本进程内临时 dotenv 序号（与 pid+纳秒叠加，规避 BUG-12 撞名）。
 static ENV_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// 撞名重试上限（L-2：`create_new` 撞名换路径重试，有界防死循环）。
+const ENV_FILE_WRITE_ATTEMPTS: usize = 8;
+
 /// 临时 dotenv 文件（RAII：析构即删除）。
 struct TempDotenv {
     path: PathBuf,
 }
 
 impl TempDotenv {
-    /// 写 `ENV_NAME=op://…` 到临时文件（Unix 下权限 0600）。
+    /// 写 `ENV_NAME=op://…` 到临时文件（0600）。
     ///
     /// 内容**无明文值**（docs/20 §4.4）；IO 失败归 7006（内部错误）。
     fn write(spec: &RunSpec) -> Result<Self, ProviderError> {
-        let path = temp_env_path();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create_new(true).mode(0o600);
-            let mut f = opts
-                .open(&path)
-                .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
-            writeln!(f, "{}={}", spec.env_name, spec.secret_ref)
-                .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
-        }
-        #[cfg(not(unix))]
-        {
-            let mut f = std::fs::File::create(&path)
-                .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
-            writeln!(f, "{}={}", spec.env_name, spec.secret_ref)
-                .map_err(|_| ProviderError::Internal("temporary env file I/O failed".into()))?;
-        }
-        Ok(Self { path })
+        Self::write_with_path_gen(spec, temp_env_path)
     }
+
+    /// 写入核心：路径由生成器提供。生产用 [`temp_env_path`]；测试注入固定
+    /// 序列制造撞名，锁定 L-2 重试语义。
+    fn write_with_path_gen<G>(spec: &RunSpec, mut gen_path: G) -> Result<Self, ProviderError>
+    where
+        G: FnMut() -> PathBuf,
+    {
+        for _ in 0..ENV_FILE_WRITE_ATTEMPTS {
+            let path = gen_path();
+            match write_env_file(spec, &path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // 撞名（L-2）：换路径重试。`temp_env_path` 的原子计数器
+                    //（ENV_FILE_COUNTER）保证每次路径不同。
+                }
+                Err(_) => {
+                    // 其它 IO 错误（权限/空间等）：不重试，直接 7006（内部错误，
+                    // 不泄露细节）。
+                    return Err(ProviderError::Internal(
+                        "temporary env file I/O failed".to_string(),
+                    ));
+                }
+            }
+        }
+        Err(ProviderError::Internal(
+            "temporary env file I/O failed (collision after retries)".to_string(),
+        ))
+    }
+}
+
+/// 以 `create_new(true)`（0600）写 dotenv；返回原始 `io::Error` 供调用方区分
+/// 撞名（[`std::io::ErrorKind::AlreadyExists`]，重试）与其他 IO 失败。
+///
+/// 非 unix 平台由模块级 `compile_error!` 拒编译（L-1 方案 B），此处恒 unix。
+fn write_env_file(spec: &RunSpec, path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true).mode(0o600);
+    let mut f = opts.open(path)?;
+    writeln!(f, "{}={}", spec.env_name, spec.secret_ref)?;
+    Ok(())
 }
 
 impl Drop for TempDotenv {
@@ -764,5 +869,150 @@ mod tests {
         assert!(!is_valid_secret_ref("plain secret value here"));
         assert!(!is_valid_secret_ref("has\nnewline"));
         assert!(!is_valid_secret_ref("has\ttab"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // M-4 / L-3：缺省 env_name 取 `op://` 引用末段（RED：default_env_name 未实现）
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn default_env_name_takes_reference_last_segment() {
+        // M-4（KNOWN-ISSUES）：缺省 env_name = `op://` 引用末段；末段恒判 field
+        // （L-3 联动），无 field 引用取 item 名。末段非法环境变量名时由
+        // validate_run_spec 照常 7005（调用方须显式给 env_name）。
+        assert_eq!(
+            default_env_name("op://Personal/OPENAI_API_KEY/password"),
+            "password"
+        );
+        // 无 field 引用 → 取 item 名
+        assert_eq!(
+            default_env_name("op://Personal/OPENAI_API_KEY"),
+            "OPENAI_API_KEY"
+        );
+        // item 名含 `/`：末段恒判 field（L-3 联动）→ 取 field 名
+        assert_eq!(default_env_name("op://Personal/a/b/c"), "c");
+        // 非 op:// 形态：run 面本不接受，回退整个串
+        assert_eq!(
+            default_env_name("fixture-item-api-key"),
+            "fixture-item-api-key"
+        );
+        // 与 is_valid_env_name 的一致性：合法默认名须通过校验（否则 run 面 7005）
+        let d = default_env_name("op://Personal/OPENAI_API_KEY/password");
+        assert!(is_valid_env_name(&d));
+    }
+
+    // ---------------------------------------------------------------------------
+    // M-1：子进程失败 stderr 透传（RED：forward_child_stderr 未实现）
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn forward_child_stderr_labels_content_and_caps() {
+        // M-1（KNOWN-ISSUES 修复路径 2）：子进程失败时 stderr 透传到 cf-mcp
+        // 自身 stderr 诊断通道，标注不脱敏、截断防灌爆。
+        let mut sink = Vec::new();
+        forward_child_stderr(b"oops line 1\noops line 2\n", &mut sink);
+        let text = String::from_utf8(sink).unwrap();
+        assert!(text.contains("[cf-mcp] child process stderr (not redacted"));
+        assert!(text.contains("oops line 1"));
+        assert!(text.contains("end child process stderr"));
+
+        // 空 stderr：不输出任何内容。
+        let mut sink = Vec::new();
+        forward_child_stderr(b"", &mut sink);
+        assert!(sink.is_empty(), "empty stderr must not be forwarded");
+
+        // 超限截断：只保留末段，且标注截断（标签/注记无 'x'，故计数精确锁定）。
+        let big = vec![b'x'; MAX_FORWARDED_CHILD_STDERR + 100];
+        let mut sink = Vec::new();
+        forward_child_stderr(&big, &mut sink);
+        let text = String::from_utf8(sink).unwrap();
+        assert!(text.contains("truncated"), "truncation must be annotated");
+        assert_eq!(
+            text.matches('x').count(),
+            MAX_FORWARDED_CHILD_STDERR,
+            "only the last 16 KiB of child stderr may be forwarded"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // L-1 / L-2：临时 dotenv 权限与撞名重试（RED：write_env_file /
+    // write_with_path_gen / compile_error 未落地）
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn temp_dotenv_writes_with_0600_permissions() {
+        // L-1（KNOWN-ISSUES）：临时 dotenv 权限恒 0600——内容虽为 `op://`
+        // 引用（无明文，§4.4），权限约束是安全不变量；非 unix 平台由
+        // compile_error 拒编译（无等价权限 API 的平台不可携带此缺口）。
+        use std::os::unix::fs::PermissionsExt;
+        let spec = RunSpec {
+            secret_ref: "op://Personal/OPENAI_API_KEY/password".to_string(),
+            env_name: "MY_KEY".to_string(),
+            cmd: "sh".to_string(),
+            args: vec![],
+            cwd: None,
+        };
+        let dotenv = TempDotenv::write(&spec).expect("write must not error");
+        let meta = std::fs::metadata(&dotenv.path).unwrap();
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "temp dotenv must be 0600, got {mode:o}");
+        let content = std::fs::read_to_string(&dotenv.path).unwrap();
+        assert_eq!(content, "MY_KEY=op://Personal/OPENAI_API_KEY/password\n");
+        let path = dotenv.path.clone();
+        drop(dotenv);
+        assert!(!path.exists(), "temp env file must be removed on drop");
+    }
+
+    #[test]
+    fn temp_dotenv_retries_on_create_new_collision() {
+        // L-2（KNOWN-ISSUES）：create_new 撞名须换路径重试，不直接 7006。
+        // 注入固定路径生成器制造前两次撞名，断言最终在空闲路径上成功。
+        let dir = std::env::temp_dir().join(format!(
+            "coffer-mcp-env-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let taken = dir.join("collide");
+        let free = dir.join("free");
+        std::fs::write(&taken, b"existing").unwrap();
+
+        let spec = RunSpec {
+            secret_ref: "op://Personal/OPENAI_API_KEY/password".to_string(),
+            env_name: "MY_KEY".to_string(),
+            cmd: "sh".to_string(),
+            args: vec![],
+            cwd: None,
+        };
+        let mut calls = 0;
+        let dotenv = TempDotenv::write_with_path_gen(&spec, || {
+            calls += 1;
+            if calls <= 2 {
+                taken.clone()
+            } else {
+                free.clone()
+            }
+        })
+        .expect("collision must be retried, not 7006");
+        assert_eq!(dotenv.path, free);
+        assert!(
+            calls >= 3,
+            "must have retried after collision(s), calls={calls}"
+        );
+        assert!(free.exists(), "env file must be written at the free path");
+        let path = dotenv.path.clone();
+        drop(dotenv);
+        assert!(!path.exists(), "temp env file must be removed on drop");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn temp_env_path_is_unique_per_call() {
+        // L-2 机制面：原子计数器保证进程内每次路径不同（撞名重试的前提）。
+        let a = temp_env_path();
+        let b = temp_env_path();
+        assert_ne!(a, b);
     }
 }

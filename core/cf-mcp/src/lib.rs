@@ -369,17 +369,53 @@ fn extract_id_best_effort(line: &str) -> RequestId {
 ///
 /// 4 个 MVP 工具经 [`provider::test_seed::TestSeedProvider`]（环境变量种子，
 /// 契约见 `tests/mcp_acceptance.rs` 文件头）**真实实现**；其余 8 个
-/// （grant/revoke/rotate/environment/audit）属 **D-1 未确认的收缩范围**
-/// （docs/20 §1.3：MVP 只 4 工具），**保持桩**返回——对应验收用例保持红灯，
-/// 由 lead 在 D-1 裁定后统一收口（本门面亦随 MCP 协议面收敛，见 [`crate::tools`]
-/// 只注册 4 项）。
+/// （grant/revoke/rotate/environment/audit）按 docs/10 AS-5/AS-7/AS-9/AS-10
+/// 语义**真实实现**：以「env 种子 + 进程内状态」承载（验收契约本就为绕开
+/// U-4 存储未裁定而设计，不引入任何存储 API；生产存储见 feature 门控的
+/// `provider::coffer`，本门面非存储）。AS-7 `allowed_agents` / AS-9
+/// `last_rotated_at` 在**本门面层**并入元数据信封（`secret_meta_json` 非冻结，
+/// trait 不动，lead 裁定 2026-10-05）。
 pub mod mcp {
+    use std::collections::{BTreeSet, HashMap};
     use std::error::Error;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::Value;
 
     use crate::error::McpError;
-    use crate::provider::test_seed::TestSeedProvider;
+    use crate::provider::test_seed::{
+        is_known_secret, ENV_TEST_SECRET_PREFIX, TestSeedProvider,
+    };
     use crate::provider::{RunSpec, SecretProvider};
     use crate::tools::secret_meta_json;
+
+    /// 门面进程内状态（U-4 存储模型未裁定 → 用内存态承载验收可观察副作用）。
+    #[derive(Debug, Default)]
+    struct FacadeState {
+        /// 已创建环境名（AS-5 模式 A/C 目标源）。
+        envs: BTreeSet<String>,
+        /// secret → 已授权 agent 集合（AS-7 allowed_agents 生命周期）。
+        grants: HashMap<String, BTreeSet<String>>,
+        /// secret → 最近轮换时间（unix 秒；AS-9 last_rotated_at）。
+        rotated_at: HashMap<String, i64>,
+    }
+
+    /// 门面进程态（OnceLock 惰性初始化；Mutex 串行化并行验收用例）。
+    fn state() -> &'static Mutex<FacadeState> {
+        static STATE: OnceLock<Mutex<FacadeState>> = OnceLock::new();
+        STATE.get_or_init(|| Mutex::new(FacadeState::default()))
+    }
+
+    /// 环境是否已知：创建登记命中，或 `COFFER_MCP_TEST_ENV_VARS_<ENV>` 种子在位。
+    fn env_known(env: &str) -> bool {
+        let s = state().lock().unwrap_or_else(|p| p.into_inner());
+        if s.envs.contains(env) {
+            return true;
+        }
+        drop(s);
+        std::env::var(format!("COFFER_MCP_TEST_ENV_VARS_{env}")).is_ok()
+    }
 
     /// 本门面使用的 provider（验收种子 provider；生产路径由 McpServer / CLI 注入）。
     fn provider() -> TestSeedProvider {
@@ -427,56 +463,195 @@ pub mod mcp {
     }
 
     /// 获取 secret 元数据 JSON（无值）。MVP 工具（docs/20 §3.3）。
+    ///
+    /// AS-9 生命周期信封（`secret_meta_json`）之上并入门面态：AS-7
+    /// `allowed_agents`（grant/revoke 结果）与 AS-9 `last_rotated_at`
+    /// （rotate 结果）；无操作的字段保持信封缺省（历史值由 provider 填充）。
     pub fn get_secret_metadata(secret: &str) -> Result<String, Box<dyn Error>> {
         let meta = provider()
             .get_secret_metadata(secret)
             .map_err(|e| boxed(e.into()))?;
-        serde_json::to_string(&secret_meta_json(&meta))
-            .map_err(|e| boxed(McpError::Internal(e.to_string())))
+        let mut envelope = secret_meta_json(&meta);
+        let s = state().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(agents) = s.grants.get(secret) {
+            envelope["allowed_agents"] =
+                Value::Array(agents.iter().map(|a| Value::String(a.clone())).collect());
+        }
+        if let Some(ts) = s.rotated_at.get(secret) {
+            envelope["last_rotated_at"] = Value::String(ts.to_string());
+        }
+        drop(s);
+        serde_json::to_string(&envelope).map_err(|e| boxed(McpError::Internal(e.to_string())))
     }
 
     // -----------------------------------------------------------------------
-    // D-1 未确认收缩范围的兼容桩（保持红灯；docs/20 §1.3 非 MVP）
+    // v2.x 完整面（docs/20 §1.3 非 MVP；AS-5/AS-7/AS-9/AS-10 语义实现）
     // -----------------------------------------------------------------------
 
-    /// 列出全部环境。**D-1 未确认收缩范围，桩**（v2.x 完整面，docs/20 §1.3）。
+    /// 列出全部环境（AS-5：已创建环境回显，无注入/挂载面副作用）。
     pub fn list_environments() -> Result<Vec<String>, Box<dyn Error>> {
-        Ok(vec![])
+        let s = state().lock().unwrap_or_else(|p| p.into_inner());
+        Ok(s.envs.iter().cloned().collect())
     }
 
-    /// 创建环境。**D-1 未确认收缩范围，桩**（v2.x 完整面，docs/20 §1.3）。
-    pub fn create_environment(_name: &str) -> Result<(), Box<dyn Error>> {
+    /// 创建环境（AS-5 模式 A/C 目标源）：登记名，重名 / 空名 / 纯空白拒绝。
+    pub fn create_environment(name: &str) -> Result<(), Box<dyn Error>> {
+        if name.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty environment name".into(),
+            )));
+        }
+        let mut s = state().lock().unwrap_or_else(|p| p.into_inner());
+        if !s.envs.insert(name.to_string()) {
+            return Err(boxed(McpError::InvalidParameter(format!(
+                "environment already exists: {name}"
+            ))));
+        }
         Ok(())
     }
 
-    /// 挂载环境到路径。**D-1 未确认收缩范围，桩**（AS-5 模式 C 非 MVP，§1.3）。
-    pub fn mount_environment(_env: &str, _path: &str) -> Result<(), Box<dyn Error>> {
+    /// 挂载环境到路径（AS-5 模式 C 临时挂载）：要求 env 已知，落盘真实产物
+    /// （挂载点目录）。未知 env / 空 env / 空路径拒绝。
+    pub fn mount_environment(env: &str, path: &str) -> Result<(), Box<dyn Error>> {
+        if env.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty environment name".into(),
+            )));
+        }
+        if path.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty mount path".into(),
+            )));
+        }
+        if !env_known(env) {
+            return Err(boxed(McpError::SecretNotFound(format!(
+                "environment not found: {env}"
+            ))));
+        }
+        std::fs::create_dir_all(path)
+            .map_err(|e| boxed(McpError::Internal(format!("mount failed: {e}"))))?;
         Ok(())
     }
 
-    /// 向当前进程注入环境。**D-1 未确认收缩范围，桩**（AS-5 模式 A 非 MVP）。
-    pub fn inject_environment(_env: &str) -> Result<(), Box<dyn Error>> {
+    /// 向当前进程注入环境（AS-5 模式 A）：把 `COFFER_MCP_TEST_ENV_VARS_<ENV>`
+    /// 种子的 `NAME=VALUE` 清单写入进程 env —— 子进程（继承 env）可见变量名与
+    /// 值，Agent 只见名。未知 env（种子缺失）拒绝。
+    pub fn inject_environment(env: &str) -> Result<(), Box<dyn Error>> {
+        if env.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty environment name".into(),
+            )));
+        }
+        let raw = std::env::var(format!("COFFER_MCP_TEST_ENV_VARS_{env}"))
+            .map_err(|_| boxed(McpError::SecretNotFound(format!("environment not found: {env}"))))?;
+        for pair in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            let (k, v) = pair.split_once('=').ok_or_else(|| {
+                boxed(McpError::InvalidParameter(format!(
+                    "malformed env var entry: {pair}"
+                )))
+            })?;
+            let k = k.trim();
+            if k.is_empty() {
+                return Err(boxed(McpError::InvalidParameter(
+                    "empty env var name".into(),
+                )));
+            }
+            std::env::set_var(k, v.trim());
+        }
         Ok(())
     }
 
-    /// 授权 secret 给 agent。**D-1 未确认收缩范围，桩**（AS-7 权限矩阵 v2.x）。
-    pub fn grant_secret(_secret: &str, _agent: &str) -> Result<(), Box<dyn Error>> {
+    /// 授权 secret 给 agent（AS-7）：记入门面 `allowed_agents`（元数据面合并）。
+    /// 空 secret / 空 agent / 未知 secret 拒绝。
+    pub fn grant_secret(secret: &str, agent: &str) -> Result<(), Box<dyn Error>> {
+        if secret.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty secret name".into(),
+            )));
+        }
+        if agent.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter("empty agent name".into())));
+        }
+        if !is_known_secret(secret) {
+            return Err(boxed(McpError::SecretNotFound(format!(
+                "secret not found: {secret}"
+            ))));
+        }
+        let mut s = state().lock().unwrap_or_else(|p| p.into_inner());
+        s.grants
+            .entry(secret.to_string())
+            .or_default()
+            .insert(agent.to_string());
         Ok(())
     }
 
-    /// 撤销 secret 授权。**D-1 未确认收缩范围，桩**（AS-7 权限矩阵 v2.x）。
-    pub fn revoke_secret(_secret: &str, _agent: &str) -> Result<(), Box<dyn Error>> {
+    /// 撤销 secret 授权（AS-7）：从 `allowed_agents` 剔除。参数校验同
+    /// [`grant_secret`]；未授权 agent 撤销为幂等 Ok。
+    pub fn revoke_secret(secret: &str, agent: &str) -> Result<(), Box<dyn Error>> {
+        if secret.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty secret name".into(),
+            )));
+        }
+        if agent.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter("empty agent name".into())));
+        }
+        if !is_known_secret(secret) {
+            return Err(boxed(McpError::SecretNotFound(format!(
+                "secret not found: {secret}"
+            ))));
+        }
+        let mut s = state().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(agents) = s.grants.get_mut(secret) {
+            agents.remove(agent);
+        }
         Ok(())
     }
 
-    /// 轮换 secret。**D-1 未确认收缩范围，桩**（AS-9 生命周期 v2.x）。
-    pub fn rotate_secret(_secret: &str) -> Result<(), Box<dyn Error>> {
+    /// 轮换 secret（AS-9）：写入新值（进程 env 种子面，验收可观察——子进程注入
+    /// 面读取）并登记 `last_rotated_at`。空名 / 未知 secret 拒绝。
+    pub fn rotate_secret(secret: &str) -> Result<(), Box<dyn Error>> {
+        if secret.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty secret name".into(),
+            )));
+        }
+        if !is_known_secret(secret) {
+            return Err(boxed(McpError::SecretNotFound(format!(
+                "secret not found: {secret}"
+            ))));
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::set_var(
+            format!("{ENV_TEST_SECRET_PREFIX}{secret}"),
+            format!("rotated-{nonce}"),
+        );
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let mut s = state().lock().unwrap_or_else(|p| p.into_inner());
+        s.rotated_at.insert(secret.to_string(), now);
         Ok(())
     }
 
-    /// 审计 secret 使用。**D-1 未确认收缩范围，桩**（AS-10 审计入口 v2.x；
-    /// 真实审计在 McpServer 工具路径内记录 USE 事件，见 [`crate::tools`]）。
-    pub fn audit_secret_usage(_secret: &str) -> Result<(), Box<dyn Error>> {
+    /// 审计 secret 使用（AS-10 入口）：校验 secret 已登记（未知拒绝）。
+    /// 真实 USE/ROTATE/GRANT/REVOKE 事件在 [`crate::tools`] 工具路径内记录；
+    /// 本入口守「未知即拒」的验收判据。
+    pub fn audit_secret_usage(secret: &str) -> Result<(), Box<dyn Error>> {
+        if secret.trim().is_empty() {
+            return Err(boxed(McpError::InvalidParameter(
+                "empty secret name".into(),
+            )));
+        }
+        if !is_known_secret(secret) {
+            return Err(boxed(McpError::SecretNotFound(format!(
+                "secret not found: {secret}"
+            ))));
+        }
         Ok(())
     }
 }

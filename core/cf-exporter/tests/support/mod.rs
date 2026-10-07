@@ -29,8 +29,8 @@ use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::ItemState;
 use cf_domain::secret::SecretString;
 use cf_format::header::{
-    AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, VerifierSection, WrappedKey,
-    AEAD_ALGO, ARGON2_VERSION, FORMAT_VERSION, KDF_ALGO, NONCE_LEN, VERIFIER_CT_MIN,
+    AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, McpWrap, VerifierSection,
+    WrappedKey, AEAD_ALGO, ARGON2_VERSION, FORMAT_VERSION, KDF_ALGO, NONCE_LEN, VERIFIER_CT_MIN,
     WRAPPED_DEK_CT_MIN,
 };
 use cf_store::rows::{FieldRow, TagRow, UrlRow};
@@ -138,6 +138,7 @@ pub fn make_header(vault_uuid: &str) -> (Header, [u8; 32]) {
             key_alias: None,
             wrapped_dek_b64: None,
         },
+        mcp_wrap: McpWrap::default(),
         flags: HeaderFlags {
             sort_key_enabled: false,
             attachments_inline: false,

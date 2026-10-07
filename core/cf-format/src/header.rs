@@ -73,6 +73,10 @@ pub struct Header {
     pub verifier: VerifierSection,
     /// 生物识别封装（M1 恒为 `available: false`，仅元数据）。
     pub biometric_wrap: BiometricWrap,
+    /// MCP 托管封装（可选字段，旧库无 → 回落 [`McpWrap::default()`]，
+    /// `#[serde(default)]`，docs/29 §4.3 G1b）。
+    #[serde(default)]
+    pub mcp_wrap: McpWrap,
     /// 功能开关。
     pub flags: HeaderFlags,
 }
@@ -132,6 +136,28 @@ pub struct BiometricWrap {
     /// 平台密钥库中的密钥别名。
     pub key_alias: Option<String>,
     /// 用平台密钥封装的 DEK（base64）。
+    pub wrapped_dek_b64: Option<String>,
+}
+
+/// MCP 托管封装段（`header.json` 的 `mcp_wrap` 字段）。
+///
+/// 镜像 [`BiometricWrap`] 的形状（docs/29 §2「镜像 bio 通道」），承载
+/// `AEAD(mcp_key, DEK)` 的封装密文（sealed 后 base64）与 available 标志。
+/// `mcp_key` 为 DEK 派生（HKDF，见 `cf-crypto::subkeys::derive_mcp_key`），
+/// 非随机；删除 Keychain 条目即独立吊销（docs/29 §2）。
+///
+/// 旧库无此字段：Header 上 `#[serde(default)]` + 本结构 `#[derive(Default)]`
+/// 保证反序列化回落为默认值，双向兼容（docs/29 §4.3 G1b）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct McpWrap {
+    /// 当前是否启用了 MCP 托管。旧库默认 `false`。
+    pub available: bool,
+    /// 平台密钥库提供者名（如 `macos-keychain`）。
+    pub provider: Option<String>,
+    /// 平台密钥库中的服务标识（如 `cn.coffer.mcp-escrow`）。
+    pub key_alias: Option<String>,
+    /// 用 mcp_key 封装的 DEK（base64，≥ [`WRAPPED_DEK_CT_MIN`] 字节）。
     pub wrapped_dek_b64: Option<String>,
 }
 
@@ -256,6 +282,19 @@ pub fn validate_header(h: &Header) -> Result<(), CfFormatError> {
         }
     }
 
+    // 9. mcp_wrap：与 biometric_wrap 同款校验——若提供了 wrapped_dek_b64，
+    //    也需可解码且长度足够（docs/29 §2「镜像 bio 通道」）。available=true
+    //    不强制密文存在（stale 态合法，docs/29 §2 表格），与 8 保持一致。
+    if let Some(wrapped) = &h.mcp_wrap.wrapped_dek_b64 {
+        let b = decode_b64(wrapped, "mcp_wrap.wrapped_dek_b64")?;
+        if b.len() < WRAPPED_DEK_CT_MIN {
+            return Err(CfFormatError::InvalidHeader(format!(
+                "mcp_wrap.wrapped_dek_b64 解码后应 ≥ {WRAPPED_DEK_CT_MIN} 字节，实际为 {}",
+                b.len()
+            )));
+        }
+    }
+
     Ok(())
 }
 
@@ -365,6 +404,70 @@ mod tests {
 
         let back: Header = serde_json::from_str(&text).expect("未知字段应被忽略");
         assert_eq!(back, h);
+    }
+
+    // ---------- mcp_wrap（G1b escrow-format，docs/29 §4.3） ----------
+
+    /// 旧库 JSON（无 `mcp_wrap` 字段）必须反序列化成功，且字段回落为
+    /// [`McpWrap::default()`] —— `#[serde(default)]` 兼容判据。
+    #[test]
+    fn old_json_without_mcp_wrap_uses_default() {
+        let h = sample_header();
+        let mut json = serde_json::to_value(&h).expect("序列化成功");
+        json.as_object_mut().expect("object").remove("mcp_wrap");
+        let text = serde_json::to_string(&json).expect("序列化成功");
+
+        let back: Header = serde_json::from_str(&text).expect("旧库 JSON 应可反序列化");
+        assert_eq!(back.mcp_wrap, McpWrap::default());
+    }
+
+    /// `mcp_wrap: {}` 部分 JSON（内部字段全缺）也应反序列化成功并回落 Default。
+    #[test]
+    fn partial_mcp_wrap_object_uses_default() {
+        let h = sample_header();
+        let mut json = serde_json::to_value(&h).expect("序列化成功");
+        json.as_object_mut()
+            .expect("object")
+            .insert("mcp_wrap".into(), serde_json::json!({}));
+        let text = serde_json::to_string(&json).expect("序列化成功");
+
+        let back: Header = serde_json::from_str(&text).expect("空对象 mcp_wrap 应可反序列化");
+        assert_eq!(back.mcp_wrap, McpWrap::default());
+    }
+
+    /// mcp_wrap 携带合法封装数据（≥ 48B 密文）→ 校验通过（与 biometric_wrap 同款）。
+    #[test]
+    fn mcp_wrap_valid_wrapped_dek_passes() {
+        let mut h = sample_header();
+        h.mcp_wrap = McpWrap {
+            available: true,
+            provider: Some("macos-keychain".to_string()),
+            key_alias: Some("cn.coffer.mcp-escrow".to_string()),
+            wrapped_dek_b64: Some(b64(&[0x55u8; WRAPPED_DEK_CT_MIN])),
+        };
+        validate_header(&h).expect("合法 mcp_wrap 应通过校验");
+    }
+
+    /// mcp_wrap 密文长度不足（< 48 字节）→ 拒绝。
+    #[test]
+    fn mcp_wrap_too_short_rejected() {
+        let mut h = sample_header();
+        h.mcp_wrap.wrapped_dek_b64 = Some(b64(&[0x01u8; WRAPPED_DEK_CT_MIN - 1]));
+        assert!(matches!(
+            validate_header(&h),
+            Err(CfFormatError::InvalidHeader(_))
+        ));
+    }
+
+    /// mcp_wrap 密文非 base64 → 拒绝。
+    #[test]
+    fn mcp_wrap_invalid_base64_rejected() {
+        let mut h = sample_header();
+        h.mcp_wrap.wrapped_dek_b64 = Some("!!!not-base64!!!".to_string());
+        assert!(matches!(
+            validate_header(&h),
+            Err(CfFormatError::InvalidHeader(_))
+        ));
     }
 
     // ---------- 负路径 ----------

@@ -199,6 +199,8 @@ pub fn create_vault_with_kdf(
             key_alias: None,
             wrapped_dek_b64: None,
         },
+        // 新库默认不启用 MCP 托管（escrow 由 App 侧显式 enable，docs/29 §2）
+        mcp_wrap: cf_format::McpWrap::default(),
         flags: cf_format::HeaderFlags {
             sort_key_enabled: false,
             attachments_inline: false,

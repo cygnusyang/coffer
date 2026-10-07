@@ -12,9 +12,9 @@ use base64::Engine as _;
 use cf_crypto::aead::SessionKey;
 
 use crate::header::{
-    AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, VerifierSection, WrappedKey,
-    AEAD_ALGO, ARGON2_VERSION, FORMAT_VERSION, KDF_ALGO, NONCE_LEN, SALT_LEN, VERIFIER_CT_MIN,
-    WRAPPED_DEK_CT_MIN,
+    AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, McpWrap, VerifierSection,
+    WrappedKey, AEAD_ALGO, ARGON2_VERSION, FORMAT_VERSION, KDF_ALGO, NONCE_LEN, SALT_LEN,
+    VERIFIER_CT_MIN, WRAPPED_DEK_CT_MIN,
 };
 
 /// 构造一个满足全部校验的最小合法 header（形状对照 `docs/03-详细设计.md` §1.3）。
@@ -45,6 +45,12 @@ pub(crate) fn sample_header() -> Header {
             ct_b64: b64(&[0x44u8; VERIFIER_CT_MIN]),
         },
         biometric_wrap: BiometricWrap {
+            available: false,
+            provider: None,
+            key_alias: None,
+            wrapped_dek_b64: None,
+        },
+        mcp_wrap: McpWrap {
             available: false,
             provider: None,
             key_alias: None,

@@ -16,7 +16,7 @@ use cf_browser::e2e::{
     Session, SessionKeyMaterial,
 };
 use cf_browser::error::CfBrowserError;
-use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, HandshakeMessage};
+use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, EntryRef, HandshakeMessage};
 use p256::{PublicKey, SecretKey};
 
 // ---------------------------------------------------------------- 冻结输入
@@ -281,6 +281,47 @@ fn handshake_roundtrip_random() {
     assert_eq!(
         app_json(&req),
         app_json(&session_r.decrypt(&enc).expect("r 解密"))
+    );
+}
+
+#[test]
+fn get_entries_roundtrip_through_session() {
+    // GetEntries/EntriesResult 消息形状（2026-10-08 G-B 依赖增量）：serde + AEAD
+    // 会话往返；不涉冻结帧（KAT 不动，见模块级注释）。
+    let broker = broker_key();
+    let psk: [u8; 32] = arr(PSK);
+    let (init, msg1) = InitiatorHandshake::new(psk, broker.public_key()).expect("init");
+    let responder = ResponderHandshake::new(broker, psk).expect("responder");
+    let (msg2, pending) = responder.on_init(&msg1).expect("on_init");
+    let (msg3, mut session_i) = init.on_response(&msg2).expect("on_response");
+    let mut session_r = pending.on_confirm(&msg3).expect("on_confirm");
+
+    let req = AppMessage::Request(AppRequest::GetEntries {
+        origin: "https://example.com".into(),
+        gesture: "abc123".into(),
+    });
+    let enc = session_i.encrypt(&req).expect("i→r");
+    assert_eq!(
+        app_json(&req),
+        app_json(&session_r.decrypt(&enc).expect("r 解密"))
+    );
+
+    let resp = AppMessage::Response(AppResponse::EntriesResult {
+        entries: vec![
+            EntryRef {
+                entry: "demo".into(),
+                title: "Example Login".into(),
+            },
+            EntryRef {
+                entry: "demo-2".into(),
+                title: "Work Account".into(),
+            },
+        ],
+    });
+    let enc = session_r.encrypt(&resp).expect("r→i");
+    assert_eq!(
+        app_json(&resp),
+        app_json(&session_i.decrypt(&enc).expect("i 解密"))
     );
 }
 

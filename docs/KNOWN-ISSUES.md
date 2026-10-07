@@ -562,13 +562,13 @@ G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用�
 
 ---
 
-## L-4（✅ 已接受）：`CofferStoreProvider` 骨架方法 `unimplemented!` 占位——v2.x 建模前调用即 panic
+## L-4（✅ 已核销）：`CofferStoreProvider` 骨架方法 `unimplemented!` 占位——v2.x 建模前调用即 panic
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
-**状态**：✅ 已接受（设计内占位：feature `coffer-store` 默认关闭不进入普通构建；docs/20 §4.5 明示本版仅骨架，v2.x 存储模型落定后替换）
-**核销记录**：随 v2.x CofferStoreProvider 落地核销
+**状态**：✅ 已核销（v2.0.0，2026-10-07：实现 `74a4538` + 接入 `f623eb9`，核销条件「实现 + 接入」两段齐备）
+**核销记录**：实现 = commit `74a4538`（feature 门控生产实现：trait 4 方法 + 8 操作同语义映射 cf-store，`unimplemented!` 占位全部替换）；接入 = commit `f623eb9`（`coffer mcp --provider coffer` 经 `coffer-store` feature 门控接线 McpServer/CLI，库路径/密码走 §4.3 env 约定 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`）。docs/20 §4.5 已同步为生产实现 + 已接入。复验 = coffer.rs 单测 17 条 + cli 接入测试（`coffer_provider_serves_on_stdio_with_valid_vault` / `coffer_provider_missing_env_config_exits_1` / `coffer_provider_vault_dir_missing_exits_1` / `coffer_provider_wrong_password_exits_3` / `coffer_provider_unsupported_when_feature_off`，tests/cli.rs）→ cf-mcp feature 门禁绿
 **证据**：`core/cf-mcp/src/provider/coffer.rs` 各 `SecretProvider` 方法 `unimplemented!("CofferStoreProvider 骨架：v2.x Secret 实体未建模")`
 
 编译通过、调用即 panic 属显式占位（docs/20 §4.5 明示），非隐藏缺陷。已接受，不设修复工单。

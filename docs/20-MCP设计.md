@@ -222,6 +222,8 @@ pub trait SecretProvider: Send + Sync {
 | `COFFER_OP_BIN` | op 二进制路径 | `PATH` 查找 |
 | `COFFER_OP_VAULT` | 默认 vault 名 | op 首个 vault |
 | `COFFER_OP_SESSION_TOKEN` | op 会话 token（透传 `OP_SESSION`） | 空（走 op 自身集成会话） |
+| `COFFER_VAULT_DIR` | Coffer 库目录路径（`--provider coffer`，§4.5/§5.2） | 无（coffer 路径必填，缺 → 配置错误退出 1） |
+| `COFFER_VAULT_PASSWORD` | Coffer 库解锁密码（`--provider coffer`；经 `SecretString`/ZeroizeOnDrop 承载，**不经 argv / 协议帧 / 日志**，§3.5-4 同款载荷纪律） | 无（coffer 路径必填，缺 → 配置错误退出 1） |
 | `COFFER_MCP_UDS` | 非空则监听该 UDS 路径 | 空 = stdio |
 | `COFFER_MCP_LOG` | 日志文件路径 | stderr |
 
@@ -242,7 +244,7 @@ pub struct CofferStoreProvider { session: cf_session::VaultSession, /* … */ }
 - 依赖链 cf-mcp → cf-session → cf-store，单向。解锁经主 App 流程（VaultSession），1001 门禁复用。
 - **已实现（74a4538）**：`SecretProvider` trait 4 方法 + 8 操作（`list_environments` / `create_environment` / `mount_environment` / `inject_environment` / `grant_secret` / `revoke_secret` / `rotate_secret` / `audit_secret_usage`）同语义映射 cf-store 条目模型；`open(vault_dir, password)` 构造（open_vault + unlock）；**7xxx 码零新增**（CfError 映射：1001/1002→7002、1003→7001、1011→7003、1012/5002→7005、其余→7006）。
 - **存储映射 = 可逆临时约定（U-4，待用户追认，2026-10-07 落档）**：secret = 条目（名 = 标题；值 = `Designation::Password` 字段 → Concealed → 首个有值字段）；环境容器 = `SecureNote` 条目 + `coffer:environment` 标签（字段 = NAME/VALUE 对）；`allowed_agents` = 条目 `coffer:agent:*` 标签（授权即打 / 撤销即删，幂等）；轮换戳 = `coffer:rotated:*` 标签。**标签即数据，移除即撤**——U-4 落定后整体替换为新实体、无残留脏数据（见 §8 U-4）。原「本版不实现（无 Secret/Environment/权限实体）」随 74a4538 废止——实体建模以临时标签约定先行，正式实体建模归 U-4。
-- **本版未接线**：provider 尚未接入 `McpServer`/CLI（留待集成）；23 条 mcp_acceptance 判据由门面（env-seed + 进程内状态）承载，`coffer-store` 为门控生产面（语义一致性由 coffer.rs 单测保证）。
+- **已接入（f623eb9）**：`coffer mcp --provider coffer` 经 `coffer-store` feature 门控接线 McpServer/CLI（§5.2）——库路径 + 解锁密码走 §4.3 env 约定（`COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`，缺任一 → 配置错误退出 1），`--vault` 在该路径忽略；`open` 失败按 §5.3 退出码映射（7002→3 身份缺失、7001/其余→1）。23 条 mcp_acceptance 判据由门面（env-seed + 进程内状态）承载，`coffer-store` 为门控生产面（语义一致性由 coffer.rs 单测保证）。
 - 启用 feature 后 workspace 依赖树新增 cf-session/cf-crypto 边，**不触碰**其他 crate（§9 互斥矩阵核对）。
 
 ### 4.6 审计轨迹（UsageAudit，AS-10）
@@ -273,15 +275,16 @@ cf-mcp 包产 `[[bin]] name = "coffer"`（沿用 cf-ffi `uniffi-bindgen` 的 bin
 ### 5.2 签名
 
 ```text
-coffer mcp [--provider op] [--uds PATH] [--log PATH] [--vault NAME] [--no-audit]
+coffer mcp [--provider op|coffer] [--uds PATH] [--log PATH] [--vault NAME] [--no-audit]
 ```
 
 | flag | 语义 |
 | --- | --- |
-| `--provider op` | provider 选择（MVP 恒 `op`；缺省 = `$COFFER_MCP_PROVIDER`） |
+| `--provider op` | provider 选择（`op` 恒可用；缺省 = `$COFFER_MCP_PROVIDER`） |
+| `--provider coffer` | CofferStoreProvider（**仅 feature `coffer-store` 下可用**，§4.5；关闭时 `coffer` 同任意未知 provider → 配置错误退出 1；库路径/密码走 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`，`--vault` 在该路径忽略） |
 | `--uds PATH` | 监听 UDS 而非 stdio（⚠️ 触发 §3.1 改写工单） |
 | `--log PATH` | 日志落文件（缺省 stderr；stdout 永为协议帧） |
-| `--vault NAME` | 默认 vault（缺省 `$COFFER_OP_VAULT`） |
+| `--vault NAME` | 默认 vault（缺省 `$COFFER_OP_VAULT`；`--provider coffer` 路径忽略） |
 | `--no-audit` | 关闭审计记录（缺省开启，若 §4.6 方案 A 落定） |
 
 ### 5.3 退出码
@@ -406,5 +409,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.2 | 2026-09-30 | **版本归属裁定（§0.7）**：用户确认 MCP 归 v2.0.0、v0.5.0 不含此功能——独立 feature 继续开发、不进 v0.5.0 出口判据。其余 D-1~D-4 仍未确认（保持可逆暂定）。 |
 | r0.3 | 2026-09-30 | **§3.4 / §4.2 错误表述向实现看齐（G-F，dev-reviewer L5）**：§3.4 表 7004 由「run_with_secret 子进程非零退出」修正为「op 无法启动目标子进程（spawn 失败）」——实现（`core/cf-mcp/src/provider/op.rs` / `test_seed`）对子进程非零退出作 `Ok(exit_code)` 原样返回、非错误；7004 仅用于 spawn 阶段失败。§4.2 错误行由「op 非零退出 → 归一 7001/7002/7003」补全为 7001~7006 全段。docs/03 §12 已登记 7xxx 段（7001~7006）；缺陷登记见 KNOWN-ISSUES M-1 / M-4 / L 系列。 |
 | r0.4 | 2026-10-07 | **G-F 核销批次（v2.0.0）**：KNOWN-ISSUES 核销回填——M-1/M-4/L-1/L-2/L-3 → `72e4af6`、L-7 → `7c0a217`，L-5 显式顺延 v2.1（不核销）；§3.5-6 / §4.4 M-1 blast-radius 补注（目标子进程 stderr 透传例外 + OP_SESSION 暴露半径）；§4.5 / §8 U-4 临时约定落档（74a4538 标签即数据映射，待用户追认，与 D-1~D-4 并列挂起）。 |
+| r0.5 | 2026-10-07 | **G-D 接线后核销批次（v2.0.0）**：KNOWN-ISSUES L-4 核销（实现 `74a4538` + 接入 `f623eb9`，核销条件「实现 + 接入」两段齐备）；§4.3 补 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD` env 约定（密码经 `SecretString`/ZeroizeOnDrop，不经 argv/协议帧/日志，§3.5-4 同款边界）；§4.5「本版未接线」→「已接入（f623eb9）」；§5.2 `--provider` 补 `coffer` 行（feature 门控，关闭时同未知 provider 退出 1，`--vault` 该路径忽略）+ 用法行与 `--vault` 行同步。 |
 
-*文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 与 U-4 用户确认回填后升 r0.5。*
+*文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 与 U-4 用户确认回填后升 r0.6。*

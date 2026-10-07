@@ -516,6 +516,7 @@ dependencies = [
 name = "cf-mcp"
 version = "0.1.0"
 dependencies = [
+ "cf-crypto",
  "cf-domain",
  "cf-session",
  "serde",

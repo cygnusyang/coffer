@@ -19,15 +19,20 @@ thiserror = { workspace = true }
 zeroize = { workspace = true }
 tracing = { workspace = true }
 
-# CofferStoreProvider（骨架，docs/20 §4.5）经 `coffer-store` feature 才引入
+# CofferStoreProvider（docs/20 §4.5，生产实现）经 `coffer-store` feature 才引入
 # cf-session（→ cf-store → cf-crypto / cf-format / cf-domain，单向）。
 # MVP 默认关闭：不启用该 feature 时，cf-mcp 依赖树不含 cf-session/cf-store。
 cf-session = { workspace = true, optional = true }
+# 仅在 coffer-store feature 下需要：cf-session 已传递引入 cf-crypto（cf-store 下层），
+# 本处直列仅为让 in-crate 测试可命名 `KdfParams` 走快速建库档（避免默认 256 MiB
+# KDF 的秒级建库）。feature 关闭时依赖树不含 cf-crypto（docs/20 §2.2 只下不上）。
+cf-crypto = { workspace = true, optional = true }
 
 [features]
-# 启用 Coffer 自家 Secret Store provider（v2.x 存储模型扩展落定前仅骨架）。
-# 启用后 workspace 依赖树新增 cf-mcp → cf-session 边（docs/20 §9.2 互斥核对）。
-coffer-store = ["dep:cf-session"]
+# 启用 Coffer 自家 Secret Store provider（v2.x 存储模型 U-4 落定前的生产实现，
+# 存储映射为可逆临时约定，待用户追认）。启用后 workspace 依赖树新增
+# cf-mcp → cf-session 边（docs/20 §9.2 互斥核对）。
+coffer-store = ["dep:cf-session", "dep:cf-crypto"]
 
 # `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
 # 沿用 cf-ffi `uniffi-bindgen` 先例），未来 `coffer list/run/…` 扩进同一 bin 或

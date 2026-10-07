@@ -107,6 +107,8 @@ core/cf-mcp/src/
 | 可选传输 | `--uds PATH`：Unix domain socket，文件权限 **0600**、目录 **0700**；连接方 peer 凭据校验（macOS `LOCAL_PEERPID` 判 peer PID + `getpeereid` 判同用户，§3.6 ②）。**D-4 裁定（2026-10-07）：v2.1.0 实现**；本机内回环传输不违背零网络边界（无外部网络、数据不出本机，docs/27 附表） |
 | 零网络（无外部网络） | 不引入任何外部网络（远程 TCP/UDP）代码路径；`--uds` 为 AF_UNIX **本机回环**，属允许范围（NFR-SEC-07 语义 = 无云端/数据不出本机；本机内 UDS / 回环允许，docs/27 D-4） |
 
+> **部署约束（v2.1.0 发版前收编，lead 裁定 MEDIUM-1）**：spawner 必须将 `--uds` / `$COFFER_MCP_UDS` 路径置于**专用私有父目录**（目录不存在时服务端自建并 chmod 0700；目录已存在时服务端不改其权限）。**不得**置于共享可写目录（如 `/tmp`）：预置活监听者 / 抢占重绑窗口可造成本机 DoS（可用性），0600 + euid + challenge 纵深保证下**不构成凭据泄露**。
+
 ### 3.2 生命周期与消息流（MCP 规范子集）
 
 ```
@@ -155,12 +157,16 @@ client ──► (可选) notifications/cancelled / 连接关闭 ──► serve
 5. **shell history / argv 禁值**：`op` 的 session token 与 Secret 引用不经 argv（见 §4.4）。
 6. **M-1 补注（目标子进程 stderr 透传例外，2026-10-05）**：`run_with_secret` 启动的目标子进程**非零退出**时，其 stderr 透传到 cf-mcp 进程自身 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 = stderr）——截断至 16 KiB 取末段（`MAX_FORWARDED_CHILD_STDERR`）防灌爆、**标注不脱敏**（子进程输出不受 Coffer 控制，§3.5-3 诚实边界延伸）。**成功路径与 op 层失败路径不透传**（op stderr 仅按关键字归类为稳定文案，不进错误载荷，§4.2）。即 §3.5-4「日志禁值：op 子进程 stderr 默认剥离」的**显式例外**——非零退出路径放弃剥离换取可诊断性。
 
+> **L-5 补注（tracing 事件载荷纪律，2026-10-07）**：L-5 诊断订阅器（`DiagnosticSubscriber`，cli.rs）把 `tracing::warn!` / `error!` 事件（如工具层审计失败告警，tools.rs）路由到与 Logger 同一诊断通道（stderr / `--log` 文件；stdout 永为协议帧）。**事件字段纪律：secret 名可进事件（引用，如 `secret=%name`），secret 值一律不进事件**——订阅器对所有字段做 Debug 平铺（`FieldCollector`），载荷干净度由 emit 侧保证；未来新增 emit 站点守此纪律。
+
 ### 3.6 Replay 防护
 
 | 传输 | 威胁 | 对策 |
 | --- | --- | --- |
 | stdio | 无持久 token、会话短命，由消费方进程 spawn → replay 面 = 0（不存在可回放的已存凭据） | 不落盘任何 token；拒绝一切「已存会话恢复」模式 |
 | --uds（**v2.1.0 实现，D-4 裁定**） | 本地进程可向 socket 写入伪造/重放请求 | ① 单次 connect 生命周期；② peer 凭据校验——macOS 经 `LOCAL_PEERPID` 校验 peer PID == spawn 方 PID（`cf-uds-sys`，env `COFFER_MCP_UDS_PEER_PID` 下发，fail-closed）+ `getpeereid` 校验同用户（euid/egid）；**机制注记：`getpeereid` 仅返回 euid/egid、不返回 PID**——docs/27 D-4 原文「getpeereid 判 spawn 方」系简写，实现以「LOCAL_PEERPID 判 PID + getpeereid 判同用户」组合为准，差异经 lead 裁定接受；③ 会话随机 challenge（env `COFFER_MCP_UDS_CHALLENGE` 下发，`initialize` 回显 `_coffer_uds_challenge`，fail-closed）；④ 消息 id 单调递增，乱序/重号拒绝 |
+
+> **已知面注记（v2.1.0 发版前收编，lead 裁定 LOW-2 / LOW-4）**：① 单连接槽可被同用户抢占——首连（即便 peer 校验失败被拒）即消费唯一生命周期，属 §3.6 单次 connect 设计固有已知面（可用性，非凭据）；③ challenge **非对同用户保密**（env 下发同用户可读 + HMAC key 为公开常量），macOS 主门为 peer PID（②），challenge 为纵深 / 非 macOS 兜底。
 
 ---
 
@@ -259,6 +265,8 @@ pub struct AuditEvent { ts: i64, agent: Option<String>, user: Option<String>,
                         secret_id: String, operation: String, /* USE|ROTATE|GRANT|REVOKE */
                         target_process: Option<String>, result: bool }
 ```
+
+> **事件字段纪律（LOW-3 收敛，2026-10-07）**：secret 以**引用（名）**进事件——`AuditEvent.secret_id` 为引用/名，**值一律不进事件**（含 tracing 事件，沿用 §3.5-4 日志禁值）；**未来新增 emit 站点**（审计记录 / tracing / 诊断通道）守此纪律。
 
 | 方案 | 做法 | 优点 | 缺点 | 结论 |
 | --- | --- | --- | --- | --- |
@@ -416,5 +424,7 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.7 | 2026-10-07 | **文末注修正（lead 裁定收编批）**：原「D-1~D-4 与 U-4 用户确认回填后升 r0.6」已过时——追认已随 r0.4/r0.5 回填、r0.6 已为措辞批占用，改为现状描述 |
 | r0.8 | 2026-10-07 | **UDS env 契约登记 + §3.6 机制注记（lead 裁定收编批，实现 `7f3ec7b`/`7cb62c7`）**：§4.3 补 `COFFER_MCP_UDS_PEER_PID` / `COFFER_MCP_UDS_CHALLENGE` env 行（fail-closed：`--uds` 下缺 → 配置错误退出 1；非 macOS 跳过 peer PID 检查）；§3.6 `--uds` 行 peer 凭据措辞修正——`getpeereid` 仅返回 euid/egid、不返回 PID，实际机制 = macOS `LOCAL_PEERPID` 判 spawn 方 PID + `getpeereid` 判同用户，注记 docs/27 D-4 原文简写差异（lead 裁定接受）。修订记录历史行不改写 |
 | r0.9 | 2026-10-07 | **§3.1 可选传输行 peer 凭据简写对齐（lead 裁定收编批）**：「(macOS `getpeereid`)」→「(macOS `LOCAL_PEERPID` 判 peer PID + `getpeereid` 判同用户，§3.6 ②)」，与 §3.6 机制注记同款。修订记录历史行不改写 |
+| r0.10 | 2026-10-07 | **终审收敛批（reviewer 结论落档：0C/0H/1M/5L）**：§3.1 新增部署约束注记（MEDIUM-1：socket 路径须置专用私有父目录、自建 chmod 0700、禁共享可写目录——本机 DoS 面非凭据泄露）；§3.6 新增已知面注记（LOW-2 单连接槽同用户抢占、LOW-4 challenge 非对同用户保密）；§4.6 新增事件字段纪律注记（LOW-3：secret 以引用/名进事件、值不进、未来 emit 站点守此纪律）。修订记录历史行不改写 |
+| r0.10 | 2026-10-07 | **v2.1.0 发版前终审收编批（dev-reviewer-v210，lead 裁定）**：§3.1 补 UDS 部署约束（spawner 须用专用私有父目录、不得共享可写目录；预置活监听者 / 抢占重绑窗口 = 本机 DoS 可用性、非凭据泄露，MEDIUM-1）；§3.6 补已知面注记——① 单连接槽同用户抢占为单次 connect 设计固有已知面（LOW-2）、③ challenge 非对同用户保密、macOS 主门为 peer PID（LOW-4）；§3.5 补 L-5 tracing 事件载荷纪律（secret 名可进事件、值一律不进，LOW-3）。LOW-5 信息级不立案；LOW-1（读超时）tester 顺延。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

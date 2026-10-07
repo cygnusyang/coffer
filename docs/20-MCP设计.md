@@ -160,7 +160,7 @@ client ──► (可选) notifications/cancelled / 连接关闭 ──► serve
 | 传输 | 威胁 | 对策 |
 | --- | --- | --- |
 | stdio | 无持久 token、会话短命，由消费方进程 spawn → replay 面 = 0（不存在可回放的已存凭据） | 不落盘任何 token；拒绝一切「已存会话恢复」模式 |
-| --uds（**v2.1.0 实现，D-4 裁定**） | 本地进程可向 socket 写入伪造/重放请求 | ① 单次 connect 生命周期；② peer 凭据校验（`getpeereid` 须为 spawn 方 PID，spawn 时经 env 下发）；③ 会话随机 challenge（spawn 时经 env 下发，`initialize` 须回显）；④ 消息 id 单调递增，乱序/重号拒绝 |
+| --uds（**v2.1.0 实现，D-4 裁定**） | 本地进程可向 socket 写入伪造/重放请求 | ① 单次 connect 生命周期；② peer 凭据校验——macOS 经 `LOCAL_PEERPID` 校验 peer PID == spawn 方 PID（`cf-uds-sys`，env `COFFER_MCP_UDS_PEER_PID` 下发，fail-closed）+ `getpeereid` 校验同用户（euid/egid）；**机制注记：`getpeereid` 仅返回 euid/egid、不返回 PID**——docs/27 D-4 原文「getpeereid 判 spawn 方」系简写，实现以「LOCAL_PEERPID 判 PID + getpeereid 判同用户」组合为准，差异经 lead 裁定接受；③ 会话随机 challenge（env `COFFER_MCP_UDS_CHALLENGE` 下发，`initialize` 回显 `_coffer_uds_challenge`，fail-closed）；④ 消息 id 单调递增，乱序/重号拒绝 |
 
 ---
 
@@ -224,7 +224,9 @@ pub trait SecretProvider: Send + Sync {
 | `COFFER_OP_SESSION_TOKEN` | op 会话 token（透传 `OP_SESSION`） | 空（走 op 自身集成会话） |
 | `COFFER_VAULT_DIR` | Coffer 库目录路径（`--provider coffer`，§4.5/§5.2） | 无（coffer 路径必填，缺 → 配置错误退出 1） |
 | `COFFER_VAULT_PASSWORD` | Coffer 库解锁密码（`--provider coffer`；经 `SecretString`/ZeroizeOnDrop 承载，**不经 argv / 协议帧 / 日志**，§3.5-4 同款载荷纪律） | 无（coffer 路径必填，缺 → 配置错误退出 1） |
-| `COFFER_MCP_UDS` | 非空则监听该 UDS 路径 | 空 = stdio |
+| `COFFER_MCP_UDS` | 非空则监听该 UDS 路径（`--uds PATH` 未给时回落此 env，§3.1） | 空 = stdio |
+| `COFFER_MCP_UDS_PEER_PID` | spawn 方 PID（macOS 经 `LOCAL_PEERPID` 校验 peer PID == 该值 + `getpeereid` 校验同用户，§3.6 ②；非 macOS 跳过 peer 检查，challenge 仍生效） | 无（macOS 下 `--uds` 必填，缺 → fail-closed 配置错误退出 1） |
+| `COFFER_MCP_UDS_CHALLENGE` | 会话随机 challenge（spawn 时经 env 下发，`initialize` 经 `_coffer_uds_challenge` 参数回显，HMAC-SHA256 指纹比对，§3.6 ③） | 无（`--uds` 下必填，缺 → fail-closed 配置错误退出 1） |
 | `COFFER_MCP_LOG` | 日志文件路径 | stderr |
 
 ### 4.4 明文暴露面（设计显式声明）
@@ -412,5 +414,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.5 | 2026-10-07 | **G-D 接线后核销批次（v2.0.0）**：KNOWN-ISSUES L-4 核销（实现 `74a4538` + 接入 `f623eb9`，核销条件「实现 + 接入」两段齐备）；§4.3 补 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD` env 约定（密码经 `SecretString`/ZeroizeOnDrop，不经 argv/协议帧/日志，§3.5-4 同款边界）；§4.5「本版未接线」→「已接入（f623eb9）」；§5.2 `--provider` 补 `coffer` 行（feature 门控，关闭时同未知 provider 退出 1，`--vault` 该路径忽略）+ 用法行与 `--vault` 行同步。 |
 | r0.6 | 2026-10-07 | **零网络措辞全仓改写（D-4 裁定，docs/27 附表）**：§0 结论 2、§3.1 传输行（`--uds` 改「v2.1.0 实现（D-4 已裁定）」+ 零网络行新口径）、§3.6 防重放表 `--uds` 行标注 v2.1.0、§5.2 `--uds` flag 行、§6 构建面「App 自身 0 socket 判据」→「App 自身无外部网络连接判据」。§8 D-4 决策行（01a6ca9 已落）不再改；修订记录历史行不改写 |
 | r0.7 | 2026-10-07 | **文末注修正（lead 裁定收编批）**：原「D-1~D-4 与 U-4 用户确认回填后升 r0.6」已过时——追认已随 r0.4/r0.5 回填、r0.6 已为措辞批占用，改为现状描述 |
+| r0.8 | 2026-10-07 | **UDS env 契约登记 + §3.6 机制注记（lead 裁定收编批，实现 `7f3ec7b`/`7cb62c7`）**：§4.3 补 `COFFER_MCP_UDS_PEER_PID` / `COFFER_MCP_UDS_CHALLENGE` env 行（fail-closed：`--uds` 下缺 → 配置错误退出 1；非 macOS 跳过 peer PID 检查）；§3.6 `--uds` 行 peer 凭据措辞修正——`getpeereid` 仅返回 euid/egid、不返回 PID，实际机制 = macOS `LOCAL_PEERPID` 判 spawn 方 PID + `getpeereid` 判同用户，注记 docs/27 D-4 原文简写差异（lead 裁定接受）。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

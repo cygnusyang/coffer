@@ -153,6 +153,7 @@ client ──► (可选) notifications/cancelled / 连接关闭 ──► serve
 3. **子进程输出边界（诚实声明）**：run_with_secret 启动的子进程自身输出**不受** Coffer 控制；若子进程打印了 Secret，Coffer 无法代劳脱敏（AS-11 边界，docs/10 §5 已登记此风险）——文档向用户明示。
 4. **日志禁值**：`op` 子进程 stderr 默认剥离；tracing 层对携带值类型的日志禁打（沿用 L-1「带密钥材料类型禁派生 Debug」纪律延伸）。
 5. **shell history / argv 禁值**：`op` 的 session token 与 Secret 引用不经 argv（见 §4.4）。
+6. **M-1 补注（目标子进程 stderr 透传例外，2026-10-05）**：`run_with_secret` 启动的目标子进程**非零退出**时，其 stderr 透传到 cf-mcp 进程自身 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 = stderr）——截断至 16 KiB 取末段（`MAX_FORWARDED_CHILD_STDERR`）防灌爆、**标注不脱敏**（子进程输出不受 Coffer 控制，§3.5-3 诚实边界延伸）。**成功路径与 op 层失败路径不透传**（op stderr 仅按关键字归类为稳定文案，不进错误载荷，§4.2）。即 §3.5-4「日志禁值：op 子进程 stderr 默认剥离」的**显式例外**——非零退出路径放弃剥离换取可诊断性。
 
 ### 3.6 Replay 防护
 
@@ -229,17 +230,20 @@ pub trait SecretProvider: Send + Sync {
 - run_with_secret：明文只在 **op 子进程与目标子进程之间**流转，cf-mcp 进程内存**不出现** Secret 明文（op 从自己的 vault 解密后注入）。
 - list/meta：全程无值。
 - 诚实边界：op 自身、目标子进程不在 Coffer 控制内（威胁面属 1Password/用户终端）。
+- **blast-radius（M-1 补注，2026-10-05）**：`op run` 启动的目标子进程继承含 `OP_SESSION` 的完整环境（§4.2 `COFFER_OP_SESSION_TOKEN` 透传为 `OP_SESSION`）——若子进程打印 env 或经 `/proc` 泄露，会话 token 暴露半径含任意被注入 secret 的进程，**须视为凭据暴露半径的一部分**（KNOWN-ISSUES M-1）。目标子进程 stderr 透传例外见 §3.5-6。
 
-### 4.5 CofferStoreProvider（后续，feature `coffer-store`）
+### 4.5 CofferStoreProvider（feature `coffer-store`，74a4538 生产实现）
 
 ```rust
-// core/cf-mcp/src/provider/coffer.rs（feature 门控，本版仅骨架 + 语义测试占位）
+// core/cf-mcp/src/provider/coffer.rs（feature 门控生产实现，74a4538）
 pub struct CofferStoreProvider { session: cf_session::VaultSession, /* … */ }
 ```
 
 - 依赖链 cf-mcp → cf-session → cf-store，单向。解锁经主 App 流程（VaultSession），1001 门禁复用。
-- **本版不实现**：Coffer 现有模型是 条目/字段（密码管理器），无「Secret / Environment / 权限」实体——`secret_ref → (item, field)` 映射、AS-7 权限矩阵、生命周期元数据（AS-9）均属 v2.x 存储模型扩展（不可逆存储决策，见 §8 ④），不在本版造。
-- 启用 feature 后 workspace 依赖树新增 cf-session 边，**不触碰**其他 crate（§9 互斥矩阵核对）。
+- **已实现（74a4538）**：`SecretProvider` trait 4 方法 + 8 操作（`list_environments` / `create_environment` / `mount_environment` / `inject_environment` / `grant_secret` / `revoke_secret` / `rotate_secret` / `audit_secret_usage`）同语义映射 cf-store 条目模型；`open(vault_dir, password)` 构造（open_vault + unlock）；**7xxx 码零新增**（CfError 映射：1001/1002→7002、1003→7001、1011→7003、1012/5002→7005、其余→7006）。
+- **存储映射 = 可逆临时约定（U-4，待用户追认，2026-10-07 落档）**：secret = 条目（名 = 标题；值 = `Designation::Password` 字段 → Concealed → 首个有值字段）；环境容器 = `SecureNote` 条目 + `coffer:environment` 标签（字段 = NAME/VALUE 对）；`allowed_agents` = 条目 `coffer:agent:*` 标签（授权即打 / 撤销即删，幂等）；轮换戳 = `coffer:rotated:*` 标签。**标签即数据，移除即撤**——U-4 落定后整体替换为新实体、无残留脏数据（见 §8 U-4）。原「本版不实现（无 Secret/Environment/权限实体）」随 74a4538 废止——实体建模以临时标签约定先行，正式实体建模归 U-4。
+- **本版未接线**：provider 尚未接入 `McpServer`/CLI（留待集成）；23 条 mcp_acceptance 判据由门面（env-seed + 进程内状态）承载，`coffer-store` 为门控生产面（语义一致性由 coffer.rs 单测保证）。
+- 启用 feature 后 workspace 依赖树新增 cf-session/cf-crypto 边，**不触碰**其他 crate（§9 互斥矩阵核对）。
 
 ### 4.6 审计轨迹（UsageAudit，AS-10）
 
@@ -345,8 +349,9 @@ sheet 显式关闭出口（BUG-3/5 纪律）；op 调用慢 → `Task.detached`�
 | **D-2** | **MVP 数据源 = 1Password op（Coffer 扮演网关而非存储）** | 产品定位/数据源 | docs/10 AS-3「Secret 统一存储 Coffer」与本决策冲突；一旦 Agent 端集成 op 链路，回切 Coffer 自家存储需重配所有注册 | 采用（参考 1Password 最新设计，快速可用）；CofferStoreProvider 留 feature 门控 | 🔶 **需用户确认** |
 | **D-3** | **审计轨迹存储格式 = 本地 JSONL**（§4.6 方案 A） | **存储格式** | 一旦有日志即事实冻结，消费方（审计视图/工具）依赖格式 | 采用 JSONL（0600，无值）；或选方案 B 延迟 | 🔶 **需用户确认** |
 | **D-4** | **`--uds` 引入**（可选传输） | 接口/判据契约 | 触发 docs/16 判据②「App 运行时 0 socket」与 NFR-SEC-07 措辞改写工单（docs/10 §1.2 明确耦合）；UDS 上架即须开改写工单 | MVP 先只发 stdio（零改写）；`--uds` 延后 | 🔶 **需用户确认**（若上架） |
+| **U-4** | **Secret/Environment/权限实体存储模型**（现为 74a4538 标签承载的**可逆临时约定**） | **存储格式** | 新实体建表即事实冻结；标签约定移除须数据迁移 | 临时约定（`coffer:environment` / `coffer:agent:*` / `coffer:rotated:*` 标签即数据，移除即撤、无残留脏数据）已按 74a4538 实现，**待用户追认**后替换为新实体 | 🔶 **需用户确认** |
 
-> 另有**非不可逆**但须声明：cf-mcp 内部模块划分（§2.4）、env 变量名（§4.3）、tool 返回字段细节、设置页控件布局——实现期可调整，不冻结。
+> 另有**非不可逆**但须声明：cf-mcp 内部模块划分（§2.4）、env 变量名（§4.3）、tool 返回字段细节、设置页控件布局——实现期可调整，不冻结。U-4 与 D-1~D-4 并列挂起，用户确认前不升正式实体建模。
 
 ---
 
@@ -361,7 +366,7 @@ sheet 显式关闭出口（BUG-3/5 纪律）；op 调用慢 → `Task.detached`�
 | **G-C** | mcp-op | `core/cf-mcp/src/provider/op.rs`、`core/cf-mcp/src/provider/coffer.rs`（骨架）、`core/cf-mcp/tests/provider_op_*.rs`、fixtures（fake `op` 脚本） | 无（按 §4 冻结 trait 签名先行；集成在 G-B 合入后，v0.4 PK2 先例） |
 | **G-D** | mcp-cli | `core/cf-mcp/src/{cli.rs,main.rs}`（`[[bin]] coffer`）、CLI 集成测试 | G-B + G-C |
 | **G-E** | mcp-ui | `macos/Coffer/Views/SettingsView.swift`（增 Section）、`macos/Coffer/Views/McpSettingsView.swift`（新）、`macos/Coffer/Support/McpStatus*.swift`（新）；不触 AppModel（v0.4 §6.1） | 无（UI 独立于 core；7xxx 码表登记后即可） |
-| **G-F** | mcp-docs | `docs/03-详细设计.md`（§12 登记 7xxx 段）、`docs/10-Agent凭据域.md`（§0.3/§1.2 若 --uds 上架则改写）、`docs/09-版本开发计划.md`（归属回填）、`docs/KNOWN-ISSUES.md`（BUG-12 核销、MCP 域新缺陷登记） | 无 |
+| **G-F** | mcp-docs | `docs/03-详细设计.md`（§12 登记 7xxx 段）、`docs/10-Agent凭据域.md`（§0.3/§1.2 若 --uds 上架则改写）、`docs/09-版本开发计划.md`（归属回填）、`docs/KNOWN-ISSUES.md`（BUG-12 核销、MCP 域新缺陷登记）、`docs/20-MCP设计.md`（M-1/M-4/L 系列补注与 U-4 落档，本次核销批次） | 无 |
 | **G-G** | mcp-e2e | `tests/acceptance_mcp.rs`（新）、`tools/run_mcp_smoke.sh`（新：fake op + stdio 帧回环）、CI 工作流 | G-D（全部落盘后） |
 
 ### 9.2 互斥核对
@@ -400,5 +405,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.1 | 2026-09-30 | 首版：协议/模块/CLI/UI/错误码/BUG-12 合并/不可逆决策清单/并行分组 |
 | r0.2 | 2026-09-30 | **版本归属裁定（§0.7）**：用户确认 MCP 归 v2.0.0、v0.5.0 不含此功能——独立 feature 继续开发、不进 v0.5.0 出口判据。其余 D-1~D-4 仍未确认（保持可逆暂定）。 |
 | r0.3 | 2026-09-30 | **§3.4 / §4.2 错误表述向实现看齐（G-F，dev-reviewer L5）**：§3.4 表 7004 由「run_with_secret 子进程非零退出」修正为「op 无法启动目标子进程（spawn 失败）」——实现（`core/cf-mcp/src/provider/op.rs` / `test_seed`）对子进程非零退出作 `Ok(exit_code)` 原样返回、非错误；7004 仅用于 spawn 阶段失败。§4.2 错误行由「op 非零退出 → 归一 7001/7002/7003」补全为 7001~7006 全段。docs/03 §12 已登记 7xxx 段（7001~7006）；缺陷登记见 KNOWN-ISSUES M-1 / M-4 / L 系列。 |
+| r0.4 | 2026-10-07 | **G-F 核销批次（v2.0.0）**：KNOWN-ISSUES 核销回填——M-1/M-4/L-1/L-2/L-3 → `72e4af6`、L-7 → `7c0a217`，L-5 显式顺延 v2.1（不核销）；§3.5-6 / §4.4 M-1 blast-radius 补注（目标子进程 stderr 透传例外 + OP_SESSION 暴露半径）；§4.5 / §8 U-4 临时约定落档（74a4538 标签即数据映射，待用户追认，与 D-1~D-4 并列挂起）。 |
 
-*文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 用户确认回填后升 r0.4。*
+*文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 与 U-4 用户确认回填后升 r0.5。*

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- coffer CLI（MCP escrow 解锁，D-6，docs/29 §8）。
+	     非沙盒：CLI 由终端直接 spawn，须读写任意 $COFFER_VAULT_DIR 路径，
+	     App Sandbox 容器限制会阻断 vault 访问，故与 App 不同，不开沙盒
+	     （Coffer.entitlements 是 App Sandbox 版，二者刻意分离）。
+	     与 App 同 bundle 同身份同 keychain-access-groups（D-6 冻结契约）：
+	     托管条目无 ACL（docs/29 §5.1）+ 同组签名 → 静默读 MCP key，无弹窗。
+	     本 entitlement 属受限权限，须配合 provisioning profile
+	     （tools/make_provisioning_profile.sh 生成）；缺 profile 覆盖时
+	     AMFI 在 spawn 门直接 SIGKILL（D-6 spike 实证，/tmp/spike-escrow/log.md）。 -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>A6DS985SJJ.app.coffer.Coffer</string>
+	</array>
+</dict>
+</plist>

@@ -29,6 +29,8 @@ members = [
     "cf-mcp",
     # UDS 传输（v2.1.0 D-4）：macOS peer 凭据 syscall 安全封装（docs/20 §3.6 ②）
     "cf-uds-sys",
+    # MCP escrow 托管（v2.2.0 G1c）：macOS Keychain GenericPassword 只读封装（docs/29 §4.3）
+    "cf-escrow-keychain",
     # 测试支持
     "cf-testkit",
 ]

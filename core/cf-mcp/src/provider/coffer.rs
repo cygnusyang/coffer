@@ -176,7 +176,9 @@ impl CofferStoreProvider {
     fn resolve_env(&self, env: &str) -> Result<ItemDetails, ProviderError> {
         let env = env.trim();
         if env.is_empty() {
-            return Err(ProviderError::InvalidParameter("empty environment name".into()));
+            return Err(ProviderError::InvalidParameter(
+                "empty environment name".into(),
+            ));
         }
         for s in self.active_items()? {
             if s.title == env && self.is_env_item(&s)? {
@@ -306,7 +308,9 @@ impl CofferStoreProvider {
     pub fn create_environment(&self, name: &str) -> Result<(), ProviderError> {
         let name = name.trim();
         if name.is_empty() {
-            return Err(ProviderError::InvalidParameter("empty environment name".into()));
+            return Err(ProviderError::InvalidParameter(
+                "empty environment name".into(),
+            ));
         }
         if self.environment_exists(name)? {
             return Err(ProviderError::InvalidParameter(format!(
@@ -334,7 +338,9 @@ impl CofferStoreProvider {
     pub fn mount_environment(&self, env: &str, path: &str) -> Result<(), ProviderError> {
         let env = env.trim();
         if env.is_empty() {
-            return Err(ProviderError::InvalidParameter("empty environment name".into()));
+            return Err(ProviderError::InvalidParameter(
+                "empty environment name".into(),
+            ));
         }
         let path = path.trim();
         if path.is_empty() {
@@ -345,9 +351,8 @@ impl CofferStoreProvider {
                 "environment not found: {env}"
             )));
         }
-        std::fs::create_dir_all(path).map_err(|e| {
-            ProviderError::Internal(format!("create_dir_all({path}): {e}"))
-        })?;
+        std::fs::create_dir_all(path)
+            .map_err(|e| ProviderError::Internal(format!("create_dir_all({path}): {e}")))?;
         Ok(())
     }
 
@@ -384,7 +389,9 @@ impl CofferStoreProvider {
         }
         let mut draft = draft_from_details(&item);
         draft.tags.push(tag);
-        self.session.update_item(&item.uuid, &draft).map_err(map_session_err)?;
+        self.session
+            .update_item(&item.uuid, &draft)
+            .map_err(map_session_err)?;
         Ok(())
     }
 
@@ -401,7 +408,9 @@ impl CofferStoreProvider {
         let tag = agent_tag(agent);
         let mut draft = draft_from_details(&item);
         draft.tags.retain(|t| t != &tag);
-        self.session.update_item(&item.uuid, &draft).map_err(map_session_err)?;
+        self.session
+            .update_item(&item.uuid, &draft)
+            .map_err(map_session_err)?;
         Ok(())
     }
 
@@ -449,7 +458,9 @@ impl CofferStoreProvider {
         let now_secs = unix_now_secs();
         draft.tags.retain(|t| !t.starts_with(ROTATED_TAG_PREFIX));
         draft.tags.push(format!("{ROTATED_TAG_PREFIX}{now_secs}"));
-        self.session.update_item(&item.uuid, &draft).map_err(map_session_err)?;
+        self.session
+            .update_item(&item.uuid, &draft)
+            .map_err(map_session_err)?;
         Ok(())
     }
 
@@ -480,9 +491,7 @@ fn map_session_err(e: CfError) -> ProviderError {
         // 1011：条目不存在 → 7003。
         CfError::ItemNotFound => ProviderError::NotFound("secret not found".into()),
         // 1012 / 5002：校验 / 参数错误 → 7005。
-        CfError::Validation(m) | CfError::InvalidArgument(m) => {
-            ProviderError::InvalidParameter(m)
-        }
+        CfError::Validation(m) | CfError::InvalidArgument(m) => ProviderError::InvalidParameter(m),
         // 其余（1005 损坏 / 存储错误等）→ 7006，不泄露细节。
         other => ProviderError::Internal(other.to_string()),
     }
@@ -546,13 +555,13 @@ fn draft_from_details(d: &ItemDetails) -> ItemDraft {
                 value: f.value.as_ref().map(|v| v.expose().to_string()),
                 field_type: f.field_type,
                 designation: f.designation.clone(),
-                section_index: f.section_uuid.as_ref().and_then(|suid| {
-                    d.sections.iter().position(|s| &s.uuid == suid)
-                }),
+                section_index: f
+                    .section_uuid
+                    .as_ref()
+                    .and_then(|suid| d.sections.iter().position(|s| &s.uuid == suid)),
                 position: f.position as i32,
             })
             .collect(),
         totp: None,
     }
 }
-

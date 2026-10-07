@@ -52,7 +52,7 @@ use serde_json::{json, Value};
 use crate::audit::{NoopAudit, UsageAudit};
 use crate::error::McpError;
 use crate::protocol::{
-    parse_frame, RequestFrame, RequestId, ResponseFrame, MAX_LINE_BYTES, JSONRPC_VERSION,
+    parse_frame, RequestFrame, RequestId, ResponseFrame, JSONRPC_VERSION, MAX_LINE_BYTES,
     MCP_PROTOCOL_VERSION,
 };
 use crate::provider::SecretProvider;
@@ -157,9 +157,8 @@ impl McpServer {
         loop {
             match read_bounded_line(&mut reader, &mut buf, MAX_LINE_BYTES)? {
                 BoundedLine::TooLong => {
-                    let msg = format!(
-                        "single line exceeds MAX_LINE_BYTES ({MAX_LINE_BYTES} bytes)"
-                    );
+                    let msg =
+                        format!("single line exceeds MAX_LINE_BYTES ({MAX_LINE_BYTES} bytes)");
                     let frame = self.error_frame(RequestId::Null, 7005, msg);
                     writeln!(writer, "{frame}")?;
                     writer.flush()?;
@@ -384,9 +383,7 @@ pub mod mcp {
     use serde_json::Value;
 
     use crate::error::McpError;
-    use crate::provider::test_seed::{
-        is_known_secret, ENV_TEST_SECRET_PREFIX, TestSeedProvider,
-    };
+    use crate::provider::test_seed::{is_known_secret, TestSeedProvider, ENV_TEST_SECRET_PREFIX};
     use crate::provider::{RunSpec, SecretProvider};
     use crate::tools::secret_meta_json;
 
@@ -519,9 +516,7 @@ pub mod mcp {
             )));
         }
         if path.trim().is_empty() {
-            return Err(boxed(McpError::InvalidParameter(
-                "empty mount path".into(),
-            )));
+            return Err(boxed(McpError::InvalidParameter("empty mount path".into())));
         }
         if !env_known(env) {
             return Err(boxed(McpError::SecretNotFound(format!(
@@ -542,8 +537,11 @@ pub mod mcp {
                 "empty environment name".into(),
             )));
         }
-        let raw = std::env::var(format!("COFFER_MCP_TEST_ENV_VARS_{env}"))
-            .map_err(|_| boxed(McpError::SecretNotFound(format!("environment not found: {env}"))))?;
+        let raw = std::env::var(format!("COFFER_MCP_TEST_ENV_VARS_{env}")).map_err(|_| {
+            boxed(McpError::SecretNotFound(format!(
+                "environment not found: {env}"
+            )))
+        })?;
         for pair in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             let (k, v) = pair.split_once('=').ok_or_else(|| {
                 boxed(McpError::InvalidParameter(format!(

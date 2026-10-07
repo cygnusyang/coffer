@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use cf_mcp::error::McpError;
 use cf_mcp::protocol::{
-    parse_frame, RequestId, MAX_LINE_BYTES, JSONRPC_VERSION, MCP_PROTOCOL_VERSION,
+    parse_frame, RequestId, JSONRPC_VERSION, MAX_LINE_BYTES, MCP_PROTOCOL_VERSION,
 };
 use cf_mcp::provider::{ProviderError, RunSpec, SecretMeta, SecretProvider};
 use cf_mcp::redact::REDACTION_TOKEN;
@@ -433,7 +433,8 @@ fn serve_with_processes_normal_lines_and_returns_ok_on_eof() {
         "\n",
     );
     let mut cursor = Cursor::new(input);
-    s.serve_with(&mut cursor, &mut out).expect("normal lines must serve cleanly");
+    s.serve_with(&mut cursor, &mut out)
+        .expect("normal lines must serve cleanly");
     let raw = String::from_utf8(out).expect("output must be UTF-8");
     let frames: Vec<&str> = raw.trim_end().split('\n').collect();
     assert_eq!(frames.len(), 2, "两帧输入须产生两帧响应");

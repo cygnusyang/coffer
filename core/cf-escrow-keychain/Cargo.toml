@@ -1,0 +1,16 @@
+[package]
+name = "cf-escrow-keychain"
+description = "macOS Keychain GenericPassword 只读封装（MCP escrow 托管读取，docs/29 §4.1/§4.3 G1c）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# 已锁版本（core/Cargo.lock security-framework-sys 2.17.0 / core-foundation-sys 0.8.7，
+# cf-keychain 私有真源同款依赖），零新下载、check_no_network 不受影响（docs/29 §4.1）。
+# OSX_10_15 feature：kSecUseDataProtectionKeychain 常量在默认 OSX_10_13 下被
+# cfg 隐藏（security-framework-sys/src/item.rs:50），须显式开启；feature 是
+# 编译期开关，不写入 Cargo.lock、不改变任何已锁版本。
+security-framework-sys = { workspace = true, features = ["OSX_10_15"] }
+core-foundation-sys = { workspace = true }

@@ -413,6 +413,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cf-escrow-keychain"
+version = "0.1.0"
+dependencies = [
+ "core-foundation-sys",
+ "security-framework-sys",
+]
+
+[[package]]
 name = "cf-exporter"
 version = "0.1.0"
 dependencies = [

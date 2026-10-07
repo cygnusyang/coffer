@@ -1012,6 +1012,34 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ---
 
+## BUG-15（🟡 登记待后续）：cf-session `audit_orchestration::report_end_to_end` 门禁 flake——`updated_at DESC` 并列无次级排序键，同密码条目组内顺序不定
+
+**登记日期**：2026-10-08
+**发现环境**：G-A/G-B 返工后 default 全量门禁（`cargo test --workspace --no-fail-fast --offline -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线`，日志 /tmp/coffer-v200-dev/gb-shape-ws-default-rerun.log）
+**分级**：严重级 S3（测试基建 flake，具门禁否决力——偶发假红）/ 优先级 P2 / 来源版本 v2.2.0（既有测试）/ 发现版本 v2.3.0
+**状态**：🟡 登记待后续——本次合并不阻塞；G-A 隔离 6/6 全绿，后续全量重跑（gb2-*）未复现
+**核销记录**：—（待修）
+**证据**：`/tmp/coffer-v200-dev/gb-shape-ws-default-rerun.log:1331`（`report_end_to_end` panic：`duplicate_groups` 两条同密码条目组内顺序反转为 `[dup2, dup1]`，断言期望 `[dup1, dup2]`）
+
+### 现象（预期/实际 分行写）
+
+- 预期：`cf-session/tests/audit_orchestration.rs:126` 断言 `duplicate_groups == vec![vec![dup1, dup2]]`——两条同密码条目组内按创建顺序。
+- 实际：一次门禁运行中报告为 `[dup2, dup1]`（反转），断言失败；隔离单跑 6/6 全绿、后续全量重跑未复现——随机触发。
+
+### 根因（已定位，非全实证）
+
+`ItemStore::list` 为 `ORDER BY updated_at DESC`（`core/cf-store/src/repo/item.rs:223`）且**无次级排序键**：同毫秒/同精度内先后创建的条目 `updated_at` 并列时，SQLite 对并列行的返回顺序不保证（rowid/插入序为常见实现但非契约）→ `fps` 输入顺序不定 → `find_duplicate_groups`（`core/cf-audit/src/watchtower.rs:87`，BTreeMap 按指纹保序、组内保输入序）组内顺序随之不定。**与 G-A/G-B 改动无关**：cf-session 零依赖 cf-browser/cf-mcp（依赖清单核实）。
+
+### 修复路径
+
+（待排期，顺延记录）两选一：① `report_end_to_end` 组内顺序断言改集合比较（或断言前按 item_id 排序）；② `find_duplicate_groups` 输出前按 item_id 稳定排序，使组内顺序契约化。不阻塞本次合并。
+
+### 复现与诊断
+
+随机触发（并列 + SQLite 实现细节），无法可靠本地复现。已记录一次失败证据见上；隔离复验 `cargo test -p cf-session --test audit_orchestration report_end_to_end -- --exact` 连续 6/6 绿。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

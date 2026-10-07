@@ -35,6 +35,7 @@ import {
   type AppResponse,
   type EntryInfo,
 } from "./protocol";
+import { fillableFields } from "./fillable";
 import type {
   SessionState,
   PendingSnapshotData,
@@ -378,36 +379,15 @@ function menuContextFor(sender: chrome.runtime.MessageSender, origin: string, ac
 
 // --- fill helpers ---------------------------------------------------------------------
 
-interface FillableField {
-  role: "username" | "password";
-  /** Item field name as stored (used as the get_secret `field`). */
-  name: string;
-}
-
-function fillableFields(entry: EntryInfo | undefined): FillableField[] {
-  if (!entry || !Array.isArray(entry.fields)) return [];
-  const out: FillableField[] = [];
-  for (const f of entry.fields) {
-    const name = f.name;
-    const kind = f.kind;
-    if (kind === "password" || name === "password") {
-      if (!out.some((x) => x.role === "password")) out.push({ role: "password", name });
-    } else if (kind === "username" || kind === "email" || kind === "user" || name === "username" || name === "email") {
-      if (!out.some((x) => x.role === "username")) out.push({ role: "username", name });
-    }
-  }
-  return out.filter((f) => f.role === "username").concat(out.filter((f) => f.role === "password"));
-}
-
 async function entryMetadata(ctx: MenuContext, entry: string): Promise<EntryInfo | undefined> {
-  if (ctx.entries) return ctx.entries.find((e) => e.id === entry);
+  if (ctx.entries) return ctx.entries.find((e) => e.entry === entry);
   // Context may have been lost to a SW restart while the menu stayed open — refetch.
   try {
     const body = await brokerRequest({ type: "get_entries", origin: ctx.origin });
     if (body.type === "entries_result") {
       const list = body.entries.slice(0, MAX_ENTRY_LIST);
       ctx.entries = list;
-      return list.find((e) => e.id === entry);
+      return list.find((e) => e.entry === entry);
     }
   } catch {
     /* fall through to no-fields error */

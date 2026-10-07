@@ -355,6 +355,23 @@
     return diff === 0;
   }
 
+  // src/fillable.ts
+  var PASSWORD_KINDS = /* @__PURE__ */ new Set(["password"]);
+  var USERNAME_KINDS = /* @__PURE__ */ new Set(["username", "email"]);
+  function fillableFields(entry) {
+    if (!entry || !Array.isArray(entry.fields)) return [];
+    const out = [];
+    for (const f of entry.fields) {
+      const kind = f.designation?.kind ?? "";
+      if (PASSWORD_KINDS.has(kind)) {
+        if (!out.some((x) => x.role === "password")) out.push({ role: "password", name: f.name });
+      } else if (USERNAME_KINDS.has(kind)) {
+        if (!out.some((x) => x.role === "username")) out.push({ role: "username", name: f.name });
+      }
+    }
+    return out.filter((f) => f.role === "username").concat(out.filter((f) => f.role === "password"));
+  }
+
   // src/background.ts
   var NATIVE_HOST = "com.coffer.browser";
   var PAIRING_KEY = "coffer_pairing";
@@ -603,28 +620,14 @@
     if (tabId !== void 0) menuContexts.set(tabId, fresh);
     return fresh;
   }
-  function fillableFields(entry) {
-    if (!entry || !Array.isArray(entry.fields)) return [];
-    const out = [];
-    for (const f of entry.fields) {
-      const name = f.name;
-      const kind = f.kind;
-      if (kind === "password" || name === "password") {
-        if (!out.some((x) => x.role === "password")) out.push({ role: "password", name });
-      } else if (kind === "username" || kind === "email" || kind === "user" || name === "username" || name === "email") {
-        if (!out.some((x) => x.role === "username")) out.push({ role: "username", name });
-      }
-    }
-    return out.filter((f) => f.role === "username").concat(out.filter((f) => f.role === "password"));
-  }
   async function entryMetadata(ctx, entry) {
-    if (ctx.entries) return ctx.entries.find((e) => e.id === entry);
+    if (ctx.entries) return ctx.entries.find((e) => e.entry === entry);
     try {
       const body = await brokerRequest({ type: "get_entries", origin: ctx.origin });
       if (body.type === "entries_result") {
         const list = body.entries.slice(0, MAX_ENTRY_LIST);
         ctx.entries = list;
-        return list.find((e) => e.id === entry);
+        return list.find((e) => e.entry === entry);
       }
     } catch {
     }

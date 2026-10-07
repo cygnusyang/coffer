@@ -167,21 +167,42 @@ export interface SessionFrame {
 
 // --- application messages (mirror AppRequest/AppResponse serde) ----------------------
 
-/** Entry metadata used by the menu entry list. */
+/**
+ * cf-domain `Designation` wire form (cf-domain/src/field.rs): adjacently-tagged
+ * `{"kind": ..., "value"?: ...}` (`#[serde(rename_all="snake_case", tag="kind",
+ * content="value")]`). Known unit kinds: username / password / totp / notes_plain
+ * (serde snake_case of `NotesPlain`; the 1P import/export spelling is "notesPlain") /
+ * email; `Other(String)` → `{"kind":"other","value":...}`. The extension tolerates
+ * unknown kinds — fill roles come from known kinds only, never guessed from names.
+ */
+export interface Designation {
+  kind: string;
+  value?: string;
+}
+
+/** One fillable field reference inside `EntryInfo` (protocol.rs `EntryFieldRef`). */
+export interface EntryFieldRef {
+  /** Field name, passed back verbatim as a `get_secret.fields` element. */
+  name: string;
+  /** Semantic designation — the fill-role source (not guessed from the name). */
+  designation: Designation;
+}
+
+/** Menu entry metadata (protocol.rs `EntryInfo` — non-secret). */
 export interface EntryInfo {
-  id: string;
+  /** Item identifier, echoed verbatim by `get_secret.entry`. */
+  entry: string;
+  /** Display title. */
   title: string;
-  fields: { name: string; kind: string }[];
+  /** ItemCategory snake_case (e.g. "login"). */
+  category: string;
+  /** Requestable field references (a subset of `get_secret.fields`). */
+  fields: EntryFieldRef[];
 }
 
 /**
  * extension → broker (AppRequest, protocol.rs — snake_case type tags).
  * `request_id` on get_secret: u64 echoed by get_secret_result (JS Number-safe < 2^53).
- *
- * NOTE: `get_entries` is an extension-side DRAFT request — NOT adopted in the frozen
- * contract v1 (G-A 2026-10-08: out of scope). docs/31 §5.2 needs an entry list for the
- * inline menu/popup; flagged to lead for scheduling + G-A implementation. Until then the
- * menu shows empty when the broker rejects/ignores it.
  */
 export type AppRequest =
   | {
@@ -206,7 +227,7 @@ export type AppRequest =
     }
   | { type: "confirm_unbound_origin"; origin: string; gesture: string }
   | { type: "lock" }
-  | { type: "get_entries"; origin: string }; // DRAFT (see note)
+  | { type: "get_entries"; origin: string };
 
 /** broker → extension (AppResponse, protocol.rs). */
 export type AppResponse =
@@ -216,7 +237,7 @@ export type AppResponse =
   | { type: "locked" }
   | { type: "broker_locked" }
   | { type: "error"; code: number; message: string }
-  | { type: "entries_result"; entries: EntryInfo[] }; // DRAFT (see note)
+  | { type: "entries_result"; entries: EntryInfo[] };
 
 /** Application message union (AppMessage, untagged over the two tagged enums). */
 export type AppMessage = AppRequest | AppResponse;

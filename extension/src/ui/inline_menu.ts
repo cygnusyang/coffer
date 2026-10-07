@@ -9,6 +9,7 @@
  * step is required (docs/31 §5.2 — unless the user explicitly confirms an unbound origin).
  */
 import { makeGesture } from "../protocol";
+import type { EntryInfo } from "../protocol";
 import type { MenuToBackgroundMessage } from "../messages";
 
 const MODE = new URLSearchParams(location.search).get("mode") === "capture" ? "capture" : "fill";
@@ -20,7 +21,7 @@ interface MenuData {
   action?: string;
   title?: string;
   username?: string;
-  entries?: { id: string; title: string }[];
+  entries?: EntryInfo[];
   error?: { code: number; message: string };
 }
 
@@ -78,7 +79,7 @@ function renderStatus(text: string): void {
 function renderList(): void {
   const entries = data.entries ?? [];
   const rows = entries
-    .map((e) => `<button class="entry" data-id="${esc(e.id)}"><div>${esc(e.title)}</div></button>`)
+    .map((e) => `<button class="entry" data-id="${esc(e.entry)}"><div>${esc(e.title)}</div></button>`)
     .join("");
   app().innerHTML = `${renderHeader()}${renderWarn()}<div class="list">${rows}</div>`;
 }

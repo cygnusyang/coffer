@@ -85,11 +85,13 @@ enum McpSettings {
 /// 「Connect to Claude」一键复制；docs/29 §7.1：coffer 版随 provider 分支）。
 ///
 /// 输出形如：
-///   claude mcp add coffer -- coffer mcp --provider op --vault <vault>
-///   claude mcp add coffer -e COFFER_VAULT_DIR=<vaultDirPath> -- coffer mcp --provider coffer
-/// 用户前置：op 路径需 `op signin`（1Password 集成会话）+ `coffer` 在 PATH
-/// （随 App 分发，docs/20 §6.2）；coffer 路径只需 `coffer` 在 PATH（解锁走
-/// MCP 托管，**不含密码 env**——docs/29 §7.1 本版收口核心）。
+///   claude mcp add coffer -- /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider op --vault <vault>
+///   claude mcp add coffer -e COFFER_VAULT_DIR=<vaultDirPath> -- /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider coffer
+/// 用户前置：op 路径需 `op signin`（1Password 集成会话）；coffer 二进制随 App
+/// 以**嵌套 bundle** 分发（`Contents/Helpers/coffer.app/…`，docs/20 §5.4 /
+/// docs/29 §8 D-6，**不入 PATH**、拷出即 SIGKILL）——命令里的 coffer 路径由
+/// 调用方传入绝对路径（McpStatusProbe.cofferBinaryPath，shell 引号包裹）。
+/// coffer 版解锁走 MCP 托管，**不含密码 env**（docs/29 §7.1 本版收口核心）。
 enum McpRegisterCommand {
     /// 无需引号的「安全字符集」：字母数字 + 常见路径/域内标点。
     /// 仅当 vault 名 / 目录路径含此集合以外的字符（空格、单引号等）才加引号
@@ -99,6 +101,7 @@ enum McpRegisterCommand {
     /// 生成注册命令。op 路径：vault 为空/全空白则省略 `--vault`，非空则按需
     /// shell 单引号包裹（含内嵌单引号转义）；coffer 路径：出
     /// `-e COFFER_VAULT_DIR=<vaultDirPath>` 版（目录路径同样按需引号包裹）。
+    /// 两分支的 MCP 服务器进程恒为 coffer，二进制路径同样按需引号包裹。
     /// 命令粘贴到终端即原样执行，vault 名 / 路径含空格或引号也能正确解析。
     ///
     /// - Parameters:
@@ -109,15 +112,20 @@ enum McpRegisterCommand {
     ///   - vaultDirPath: 自家库目录路径（docs/29 §7.1，仅 coffer 分支消费；
     ///     空/全空白 → 仍输出 `-e COFFER_VAULT_DIR=` 空值——UI 侧无会话时应
     ///     禁用复制入口）。
+    ///   - cofferBinaryPath: coffer 二进制绝对路径（App 包内嵌套 bundle 优先，
+    ///     见 McpStatusProbe.cofferBinaryPath，docs/20 §5.4 / D-6）。纯参数入参
+    ///     不引用 McpStatusProbe，保持本类型无 AppKit/Foundation 之外依赖，可被
+    ///     不装配 bundle 的测试进程直接调用。
     /// - Returns: 可直接粘贴执行的 `claude mcp add …` 命令。
-    static func build(provider: String, vault: String?, vaultDirPath: String? = nil) -> String {
+    static func build(provider: String, vault: String?, vaultDirPath: String? = nil, cofferBinaryPath: String) -> String {
+        let binary = shellQuoteIfNeeded(cofferBinaryPath)
         switch provider {
         case "coffer":
             let dir = (vaultDirPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return "claude mcp add coffer -e COFFER_VAULT_DIR=\(shellQuoteIfNeeded(dir)) -- coffer mcp --provider coffer"
+            return "claude mcp add coffer -e COFFER_VAULT_DIR=\(shellQuoteIfNeeded(dir)) -- \(binary) mcp --provider coffer"
         default:
             let trimmed = vault.map(McpSettings.normalizedVaultName) ?? ""
-            var parts = ["claude mcp add coffer -- coffer mcp --provider \(provider)"]
+            var parts = ["claude mcp add coffer -- \(binary) mcp --provider \(provider)"]
             if !trimmed.isEmpty {
                 parts.append("--vault \(shellQuoteIfNeeded(trimmed))")
             }

@@ -73,8 +73,14 @@ struct McpEscrowKeychain {
     /// 本条目不设 kSecAttrAccessControl，元数据查询本身不触发认证）。
     /// 返回语义：
     ///   - 查询成功 → true（项存在）
+    ///   - errSecInteractionNotAllowed → true（设备锁定 / 交互被禁：
+    ///     WhenUnlockedThisDeviceOnly 条目此时不可读但**物理存在**——
+    ///     「存在」≠「可读」，镜像 BiometricKeychain 同款处理，避免锁屏期被
+    ///     误判为 stale，docs/29 §7.2）
     ///   - errSecItemNotFound → false（项不存在 / 已删）
-    ///   其他未预期状态码 → 记日志并返回 false（保守：不把未知错误当「存在」）。
+    ///   其他未预期状态码 → 记日志（保留**原始 OSStatus** 供诊断，含 -34018
+    ///   缺 entitlement 等签名/配置错误）并返回 false（保守：不把未知错误当
+    ///   「存在」）。
     func itemExists(vaultUUID: String, useDataProtection: Bool = true) -> Bool {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(
@@ -83,10 +89,12 @@ struct McpEscrowKeychain {
         switch status {
         case errSecSuccess:
             return true
+        case errSecInteractionNotAllowed:
+            return true
         case errSecItemNotFound:
             return false
         default:
-            DiagLog.append("McpEscrowKeychain.itemExists 失败 status=\(status)（\(vaultUUID.prefix(8))…）")
+            DiagLog.append("McpEscrowKeychain.itemExists 未预期 status=\(status)（\(vaultUUID.prefix(8))…）")
             return false
         }
     }

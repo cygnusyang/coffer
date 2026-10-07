@@ -27,6 +27,8 @@ members = [
     "cf-ffi",
     "cf-module-a",
     "cf-mcp",
+    # UDS 传输（v2.1.0 D-4）：macOS peer 凭据 syscall 安全封装（docs/20 §3.6 ②）
+    "cf-uds-sys",
     # 测试支持
     "cf-testkit",
 ]
@@ -123,6 +125,11 @@ keepass = "0.13.25"
 #          `cargo tree -e normal`）不受影响。本机无 nightly / cargo-fuzz，
 #          故以属性测试承担「任意字节不 panic + 有效输入往返不变」判据。
 proptest = "1"
+
+# [已确认] libc 0.2 —— cf-uds-sys 的 peer 凭据 syscall（LOCAL_PEERPID /
+#           getpeereid，docs/20 §3.6 ②）。0.2.189 已在 lockfile（传递依赖），
+#           本处直列仅供 cf-uds-sys 显式使用。
+libc = "0.2"
 
 # ---------- 序列化 ----------
 # [待校准] 1PUX 解析需要 JSON；内部快照用 CBOR

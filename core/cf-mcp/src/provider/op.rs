@@ -61,7 +61,7 @@ use serde::Deserialize;
 
 use cf_domain::secret::SecretString;
 
-use super::{ProviderError, RunSpec, SecretMeta, SecretProvider};
+use super::{is_valid_env_name, ProviderError, RunSpec, SecretMeta, SecretProvider};
 
 /// `OpProvider` 配置（docs/20 §4.3 环境变量约定）。
 ///
@@ -339,16 +339,6 @@ fn validate_run_spec(spec: &RunSpec) -> Result<(), ProviderError> {
         }
     }
     Ok(())
-}
-
-/// 环境变量名合法性：`[A-Za-z_][A-Za-z0-9_]*`（dotenv 注入防护的另一半）。
-fn is_valid_env_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c == '_' || c.is_ascii_alphabetic() => {}
-        _ => return false,
-    }
-    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
 /// 缺省 env_name 推导（M-4，docs/20 §4.2 run_with_secret 契约）。

@@ -208,6 +208,31 @@ fn run_with_secret_rejects_bad_input() {
     ));
 }
 
+#[test]
+fn run_with_secret_rejects_invalid_env_name() {
+    // MEDIUM-1（reviewer 实证）：coffer 路径缺 env_name 校验、与 op 路径不对称
+    // ——`=`/换行等非法名能正常 spawn 进子进程环境。对齐 op 路径现行行为（共享
+    // `is_valid_env_name`，非法 → 7005 InvalidParameter），spawn 前拒收。
+    let (prov, _) = provider("run_envname");
+    seed_secret(&prov, "api-key", "v1");
+    for bad in ["", "1ABC", "BAD NAME", "A=B", "A\nB"] {
+        let spec = RunSpec {
+            secret_ref: "api-key".to_string(),
+            env_name: bad.to_string(),
+            cmd: "/bin/true".to_string(),
+            args: Vec::new(),
+            cwd: None,
+        };
+        assert!(
+            matches!(
+                prov.run_with_secret(&spec),
+                Err(ProviderError::InvalidParameter(_))
+            ),
+            "env_name {bad:?} 应被 7005 拒收"
+        );
+    }
+}
+
 // ------------------------------------------------------------ 环境操作
 
 #[test]

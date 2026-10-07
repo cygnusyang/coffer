@@ -22,9 +22,32 @@ enum McpStatusProbe {
         return findInPath("op")
     }
 
-    /// coffer 命令路径：PATH 查找（docs/20 §6.2 分发方式：随 App 分发并入 PATH）。
+    /// coffer 命令路径。**App 包内嵌套 bundle 路径优先**（docs/20 §5.4 / docs/29 §8
+    /// D-6：`Contents/Helpers/coffer.app/Contents/MacOS/coffer`——CLI 随 App 分发、
+    /// **不入 PATH**；拷出 App 路径运行会因 AMFI 找不到 provisioning profile 被
+    /// SIGKILL(137)，G5 真机实证）。PATH 仅作**开发环境兜底**（dev/CI 未装配 App
+    /// bundle 时的 fallback，如非 App 进程的测试/脚本）。
+    ///
+    /// 诚实边界（docs/20 §3.6/§4.3）：二进制存在 ≠ 可正确执行——签名 / profile
+    /// 覆盖以实际进程行为为准，此处仅做就绪度展示信号。
     static func cofferBinaryPath() -> String? {
-        findInPath("coffer")
+        // ① App 包内嵌套 bundle（生产分发路径，D-6）
+        let bundled = bundledCofferBinaryPath()
+        if FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+        // ② PATH 兜底（开发环境 fallback）
+        return findInPath("coffer")
+    }
+
+    /// App 包内嵌套 bundle 的 coffer 二进制路径（`Bundle.main.bundleURL` 非可选，
+    /// 恒有值——App 内即 Coffer.app 根路径）：
+    /// `Contents/Helpers/coffer.app/Contents/MacOS/coffer`（docs/20 §5.4 /
+    /// docs/29 §8 D-6；装配见 tools/build_macos_app.sh step 3.5，G5）。
+    static func bundledCofferBinaryPath() -> String {
+        Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/coffer.app/Contents/MacOS/coffer")
+            .path
     }
 
     /// op 二进制可用。

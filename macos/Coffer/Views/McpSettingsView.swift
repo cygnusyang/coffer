@@ -176,25 +176,53 @@ struct McpSettingsSection: View {
         provider == .coffer ? (model.session != nil && !model.vaultUUID.isEmpty) : true
     }
 
+    /// coffer 二进制绝对路径（App 包内嵌套 bundle 优先，PATH 兜底；未找到 →
+    /// 空串，复制入口据此禁用，见 canCopyRegisterCommand）。
+    private var cofferBinaryPath: String {
+        McpStatusProbe.cofferBinaryPath() ?? ""
+    }
+
+    /// 复制入口可用性：coffer 二进制必须可解析（两 provider 的 MCP 服务器进程
+    /// 恒为 coffer，docs/20 §5.4 包内路径——未找到则命令无意义）+ coffer 分支
+    /// 需已打开库会话（vaultDirPath 才有效）。
+    private var canCopyRegisterCommand: Bool {
+        guard !cofferBinaryPath.isEmpty else { return false }
+        return canBuildCofferCommand
+    }
+
+    /// 复制不可用的引导文案（区分「未找到 coffer 二进制」与「coffer 分支未开库」）。
+    private var copyDisabledHint: String {
+        if cofferBinaryPath.isEmpty {
+            return "未找到 coffer 命令（App 包内或 PATH），无法生成注册命令"
+        }
+        return "请先打开密码库后生成注册命令"
+    }
+
     /// 注册命令（单一数据源：预览与复制按钮共用，所见即所得）。
     private var registerCommand: String {
         switch provider {
         case .op:
-            return McpRegisterCommand.build(provider: provider.rawValue, vault: vaultName)
+            return McpRegisterCommand.build(
+                provider: provider.rawValue,
+                vault: vaultName,
+                cofferBinaryPath: cofferBinaryPath
+            )
         case .coffer:
             return McpRegisterCommand.build(
                 provider: provider.rawValue,
                 vault: nil,
-                vaultDirPath: model.vaultDirPath
+                vaultDirPath: model.vaultDirPath,
+                cofferBinaryPath: cofferBinaryPath
             )
         }
     }
 
-    /// 命令预览（monospaced，可手动选中复制；coffer 无会话时显示引导文案）。
+    /// 命令预览（monospaced，可手动选中复制；未找到 coffer 二进制 / coffer 无
+    /// 会话时显示引导文案）。
     @ViewBuilder
     private var commandPreviewRow: some View {
-        if provider == .coffer && !canBuildCofferCommand {
-            Text("请先打开密码库后生成注册命令")
+        if !canCopyRegisterCommand {
+            Text(copyDisabledHint)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
@@ -206,7 +234,8 @@ struct McpSettingsSection: View {
         }
     }
 
-    /// 一键复制按钮（docs/20 §6.1 / §5.4；coffer 无会话时禁用）。
+    /// 一键复制按钮（docs/20 §6.1 / §5.4；未找到 coffer 二进制 / coffer 无
+    /// 会话时禁用）。
     private var copyButtonRow: some View {
         HStack {
             Button {
@@ -216,7 +245,7 @@ struct McpSettingsSection: View {
                       systemImage: copied ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!canBuildCofferCommand)
+            .disabled(!canCopyRegisterCommand)
             if provider == .op && !McpSettings.hasConfiguredVault(vaultName) {
                 // 未配置 vault → 命令省略 --vault（§5.2 缺省 = $COFFER_OP_VAULT）
                 Text("未配置 vault，命令将省略 --vault")
@@ -356,7 +385,7 @@ struct McpSettingsSection: View {
     private var footerText: String {
         switch provider {
         case .op:
-            return "让 Claude Code 等 Agent 通过 MCP 访问 1Password 中的密钥。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；使用前请在终端执行 op signin，并确认 coffer 命令已在 PATH。"
+            return "让 Claude Code 等 Agent 通过 MCP 访问 1Password 中的密钥。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；使用前请在终端执行 op signin（coffer 服务器随 App 分发，无需在 PATH 配置）。"
         case .coffer:
             return "让 Claude Code 等 Agent 通过 MCP 访问本机 Coffer 密码库。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；解锁走 MCP 解锁托管，注册命令不含密码 env。换主密码不影响托管；如需吊销请在本页关闭。"
         }

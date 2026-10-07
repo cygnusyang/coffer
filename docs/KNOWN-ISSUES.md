@@ -922,6 +922,34 @@ catch 的 `.authFailed` 分支按失败瞬间 `BiometricKeychain.isBiometricsAva
 
 ---
 
+## LOW-1（✅ 已核销）：UDS accept 后无读超时——连接后不发数据则 server 挂起至对端动作
+
+**登记日期**：2026-10-07（v2.1.0 终审发现，docs/28 §7 顺延登记 v2.2.0；本条为核销回填）
+**发现环境**：v2.1.0 终审（dev-reviewer-v210，审 01a6ca9..HEAD，2026-10-07），`core/cf-mcp/src/uds.rs` accept 后无读超时
+**分级**：S4（availability-only，非安全缺口）/ P3 / 来源版本 v2.1.0 / 发现版本 v2.1.0（终审）
+**状态**：✅ 已核销（v2.2.0，G1d 实现，2026-10-07）
+**核销记录**：修复 = v2.2.0 G1d（`core/cf-mcp/src/uds.rs` 逐帧 idle 读超时，commit 待 lead 收口）——accept 后 `set_read_timeout`（SO_RCVTIMEO，非阻塞读超时）：每读到数据即隐式重置计时（下一帧读窗从该帧处理完毕重新起算），超过超时值无任何数据到达 → 读返回 WouldBlock → 干净退出 0（连接生命周期完成，对照 peer 拒绝路径）；challenge / initialize 握手阶段同受窗约束（未完成握手的不活动同样超时断开）。缺省 120 s；env `COFFER_MCP_UDS_READ_TIMEOUT_SECS` 可配、下限 10 s（低于/非数字 → 配置错误退出 1）、**不提供 0=off 关闭路径**（fail-closed）。**边界诚实声明（任务口径）**：语义「任何数据到达重置」实现近似「**有效帧重置**」——逐字节慢滴（字节间隔 < 超时值）的非法/半帧数据流理论可维持连接存活（慢滴理论存活）；LOW-1 为 availability-only（非安全缺口），可用性意图（消除无界挂起）已满足，边界接受。复验 = `uds_idle_read_timeout_disconnects` / `uds_idle_timeout_resets_on_valid_frame` / `uds_active_session_not_timed_out` / `uds_handshake_inactivity_times_out` / `uds_idle_timeout_default_is_120s` / `uds_idle_timeout_below_min_rejected`（uds.rs 单测，docs/30 §1.5/§2 先红后绿）+ 既有 UDS 防护全套回归（peer / challenge / 单调 id / 单次 connect / 权限）全绿。缺省值 / 下限 / env 名已落 docs/20 §4.3
+**证据**：`core/cf-mcp/src/uds.rs`（`UDS_ENV_READ_TIMEOUT` / `DEFAULT_READ_TIMEOUT_SECS` / `MIN_READ_TIMEOUT_SECS` / `set_read_timeout` / `is_idle_timeout`）；docs/28 §7 顺延登记（⏳ 目标 v2.2.0）
+
+### 现象（预期/实际 分行写）
+
+- 预期：UDS 连接建立后若对端不发数据，server 连接生命周期受控，不应无限期挂起。
+- 实际：`uds.rs::run` accept 后无读超时——连接方不发数据则 server 挂起至对端动作（availability-only，非安全缺口）。
+
+### 根因（已实证）
+
+accept 后的读循环无超时窗；`set_read_timeout`（SO_RCVTIMEO）未设置，对端静默即无界挂起。
+
+### 修复路径（2026-10-07 已落地，v2.2.0 G1d）
+
+逐帧 idle 读超时（SO_RCVTIMEO，每读到数据重置 + 超时无数据 → 干净退出 0）；缺省 120 s、env 可配、下限 10 s、不提供关闭（fail-closed）。lead 裁定语义落 docs/30 §1.5（逐帧 idle / 握手同受窗约束）。
+
+### 复现与诊断
+
+`coffer mcp --uds <path>` 建立连接后不发数据 → 修复前 server 无限挂起；修复后超过超时值干净退出 0（socket 文件清理）。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

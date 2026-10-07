@@ -59,6 +59,7 @@ struct SettingsView: View {
                 diagnosticsSection
                 licenseSection
                 mcpSection
+                browserSection
                 doneSection
             }
             .formStyle(.grouped)
@@ -272,6 +273,14 @@ struct SettingsView: View {
     /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。
     private var mcpSection: some View {
         McpSettingsSection()
+    }
+
+    // MARK: - ⑨.5 浏览器集成（docs/31 §6.2 / §9.1 G-D）
+
+    /// 独立的 BrowserSettingsSection（docs/31 §9.1 G-D：设置页开关 + manifest
+    /// 写入/删除 + broker 生命周期 + 配对确认，经 AppModel 编排）。
+    private var browserSection: some View {
+        BrowserSettingsSection()
     }
 
     // MARK: - ⑩ 完成

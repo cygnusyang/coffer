@@ -12,6 +12,10 @@
 //   - BrowserStatusProbe.manifestExists / allManifestsInstalled / brokerProcessRunning
 //   - BrowserBroker.spawn / kill —— broker 生命周期（用 /bin/sleep 假进程，
 //     不依赖 G-A/G-B 二进制；真 `coffer browser-broker` 集成 = 合并期验收项）
+//   - §8 stdin 私有管道 + well-known UDS（HIGH-2 ②/3，docs/31 §3.1）：
+//     SpawnConfig.wellKnownUDSPath / brokerSocketPath / prepareSocketDirectory
+//     （0700 幂等）、BrokerStdinSecrets.payload（四行冻结格式）、zeroize、
+//     spawn stdinPayload（写 4 行 + close stdin，/bin/sh 假读端验证）
 //   - BrowserPairingRequest / BrowserPairingDecision / RecordingBrowserPairingResponder
 //     —— 配对决策门 + 转发 seam（docs/31 §4.2/§5.3）
 //
@@ -296,6 +300,95 @@ check(
 // ---- 10. 用户主目录解析（沙盒外 = NSHomeDirectory；沙盒内 getpwuid 真实 home）----
 
 check(!BrowserStatusProbe.userHomeDirectory().isEmpty, "userHomeDirectory 非空")
+
+// ---- 11. §8 stdin 私有管道 + well-known UDS（HIGH-2 ② / HIGH-3，docs/31 §3.1）----
+
+// 11.1 well-known UDS 路径构造（真实主目录 + 固定相对路径，host 无需 env 发现）
+let wellKnownRel = "Library/Application Support/Coffer/browser/broker.sock"
+let probeHome = "/Users/averylongusername123"
+let probeSocket = BrowserBroker.SpawnConfig.wellKnownUDSPath(homeDirectory: probeHome)
+check(
+    probeSocket == probeHome + "/" + wellKnownRel,
+    "wellKnownUDSPath = home + 固定相对路径"
+)
+check(
+    probeSocket.utf8.count < 104,
+    "well-known UDS ≤ AF_UNIX sun_path 104B（实测 \(probeSocket.utf8.count)B）"
+)
+check(
+    BrowserBroker.brokerSocketPath(homeDirectory: probeHome) == probeSocket,
+    "brokerSocketPath 与 wellKnownUDSPath 同落点"
+)
+
+// 11.2 prepareSocketDirectory：创建 0700 私有父目录 + 幂等（已存在不动权限，
+// 对齐 G-B cli.rs ensure_broker_parent_dir）
+do {
+    let tempHome = makeTempRoot()
+    try BrowserBroker.prepareSocketDirectory(homeDirectory: tempHome)
+    let dir = (BrowserBroker.brokerSocketPath(homeDirectory: tempHome) as NSString)
+        .deletingLastPathComponent
+    var isDir: ObjCBool = false
+    check(
+        FileManager.default.fileExists(atPath: dir, isDirectory: &isDir) && isDir.boolValue,
+        "prepareSocketDirectory 创建私有父目录"
+    )
+    let mode = try FileManager.default.attributesOfItem(atPath: dir)[.posixPermissions] as? NSNumber
+    check(mode?.intValue == 0o700, "私有父目录权限 = 0700")
+    try BrowserBroker.prepareSocketDirectory(homeDirectory: tempHome)
+    let mode2 = try FileManager.default.attributesOfItem(atPath: dir)[.posixPermissions] as? NSNumber
+    check(mode2?.intValue == 0o700, "prepareSocketDirectory 幂等：重复调用保持 0700")
+    try? FileManager.default.removeItem(atPath: tempHome)
+} catch {
+    check(false, "prepareSocketDirectory 未预期抛错：\(error)")
+}
+
+// 11.3 BrokerStdinSecrets.payload：§3.1 四行冻结格式
+let dekHex = String(repeating: "ab", count: 32)   // 64 字符 = 32 字节 hex
+let vaultUUIDHex = String(repeating: "cd", count: 16) // 32 字符 = 16 字节 hex
+let pskHex = String(repeating: "ef", count: 32)   // 64 字符 = 32 字节 hex
+let secrets = BrokerStdinSecrets(
+    dekHex: dekHex, vaultUUIDHex: vaultUUIDHex, pskHex: pskHex, unlocked: true)
+let expectedText = "DEK_HEX=\(dekHex)\n"
+    + "VAULT_UUID_HEX=\(vaultUUIDHex)\n"
+    + "PSK_HEX=\(pskHex)\n"
+    + "UNLOCKED=1\n"
+check(
+    String(data: secrets.payload, encoding: .utf8) == expectedText,
+    "payload = §3.1 四行（LF 结尾，unlocked→1）"
+)
+check(
+    String(data: BrokerStdinSecrets(
+        dekHex: "d", vaultUUIDHex: "u", pskHex: "p", unlocked: false).payload,
+           encoding: .utf8)?.hasSuffix("UNLOCKED=0\n") == true,
+    "unlocked=false → UNLOCKED=0"
+)
+
+// 11.4 zeroize：覆零字节缓冲（用后即毁，密钥材料不进日志/不残留）
+var secretData = Data("top-secret-bytes".utf8)
+zeroize(&secretData)
+check(
+    secretData.allSatisfy { $0 == 0 } && secretData.count == "top-secret-bytes".utf8.count,
+    "zeroize 覆零且长度不变"
+)
+
+// 11.5 spawn stdin 私有管道机制：写 §3.1 四行 + close stdin → 子进程读到精确
+// 内容并退出 0（不经 env/argv；关闭在 spawn 内同步完成，无挂起风险）
+do {
+    let process = try BrowserBroker.spawn(
+        executable: "/bin/sh",
+        arguments: ["-c",
+                    "IFS= read -r a && IFS= read -r b && IFS= read -r c && IFS= read -r d "
+                        + "&& [ \"$a\" = \"DEK_HEX=\(dekHex)\" ] "
+                        + "&& [ \"$b\" = \"VAULT_UUID_HEX=\(vaultUUIDHex)\" ] "
+                        + "&& [ \"$c\" = \"PSK_HEX=\(pskHex)\" ] "
+                        + "&& [ \"$d\" = \"UNLOCKED=1\" ]"],
+        environment: [:],
+        stdinPayload: secrets.payload)
+    process.waitUntilExit()
+    check(process.terminationStatus == 0, "spawn stdin 载荷被子进程精确读取（4 行 + close）")
+} catch {
+    check(false, "spawn stdin 流程未预期抛错：\(error)")
+}
 
 print("")
 print(failed == 0

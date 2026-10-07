@@ -10,12 +10,14 @@
 //      由 broker（Rust 侧 G-A/G-B）在批准后生成下发，App 侧只做批准门 +
 //      决策转发（BrowserPairingResponder seam）。
 //
-// 沙盒边界（诚实声明）：App 已启用 App Sandbox（Coffer.entitlements
-// app-sandbox=true），写浏览器 NativeMessagingHosts 目录（容器外绝对路径）会被
-// 沙盒拒绝，除非加装 sandbox temporary exception entitlement——该 entitlement
-// 决策属 G-E/lead（tools/build_macos_app.sh 装配）。本文件把写入错误显式上抛
-// （fail-closed），由 UI 呈现可操作文案。**合并期验收项**（本机 runtime 需
-// entitlement 后才可端到端验证写入）。
+// 沙盒边界（Design Y 冻结，docs/31 r0.7 = d556e65）：生产 App 形态 = 去沙盒
+// （Developer ID 非沙盒分发）——沙盒 `AF_UNIX bind` 被 `deny network*` 拦截 +
+// 沙盒继承致「App 父进程」模型不成立（Wave-4 实证，/tmp/coffer-wave4/
+// probe_*.log）。本文件据此以真实主目录为锚：manifest 写真实 ~/Library/
+// NativeMessagingHosts、broker UDS 落 well-known `~/Library/Application Support/
+// Coffer/browser/broker.sock`（0700/0600）。零网络由 check_no_network 代码门禁
+// 承接（D-6 先例）。写入错误仍显式上抛（fail-closed），由 UI 呈现可操作文案。
+// **合并期验收项**：build 侧去沙盒 + entitlement 变更归 G-E/lead 装配。
 //
 // 冻结占位（D-4，发布前必须定稿，docs/31 §6.1 / 31a D-4）：扩展 ID / GUID 未
 // 冻结，见 chromeExtensionID / edgeExtensionID / firefoxGUID 常量——与 G-C
@@ -164,21 +166,32 @@ struct BrowserBroker {
         /// 库目录 env（escrow 免密解锁，docs/31 §4.1；与 `coffer mcp
         /// --provider coffer` 同款取密语义，docs/29 §4）。
         static let vaultDirEnv = "COFFER_VAULT_DIR"
-        /// UDS socket 相对 App Library 的路径（私有父目录，docs/31 §3.1
-        /// dir 0700/file 0600 纪律）。
-        static let socketRelativePath = "Application Support/Coffer/browser/broker.sock"
+        /// well-known UDS 相对真实主目录的固定路径（HIGH-2 ②：host 无法经 env
+        /// 拿到 `$COFFER_BROKER_UDS`——Chrome 不注入 env，须 well-known 固定路径；
+        /// broker 与 host 共用同一落点，docs/31 §3.1 私有父目录 0700/0600）。
+        /// 长度守卫：`~/Library/Application Support/Coffer/browser/broker.sock`
+        /// 实测 68B << AF_UNIX sun_path 104B（Wave-4 实证，/tmp/coffer-wave4）。
+        static let wellKnownUDSPathRelative = "Library/Application Support/Coffer/browser/broker.sock"
+
+        /// well-known UDS 绝对路径（homeDirectory 注入便于单测临时根目录）。
+        static func wellKnownUDSPath(homeDirectory: String) -> String {
+            (homeDirectory as NSString).appendingPathComponent(wellKnownUDSPathRelative)
+        }
     }
 
-    /// UDS socket 绝对路径（App 沙盒容器内——broker 非沙盒可 bind）。
-    static func brokerSocketPath(baseLibraryDirectory: String) -> String {
-        (baseLibraryDirectory as NSString).appendingPathComponent(SpawnConfig.socketRelativePath)
+    /// well-known UDS 绝对路径（HIGH-2 ② 冻结落点：真实主目录 + 固定相对路径，
+    /// Design Y 去沙盒后 App/broker/host 共用，host 无需 env 发现）。
+    static func brokerSocketPath(homeDirectory: String) -> String {
+        SpawnConfig.wellKnownUDSPath(homeDirectory: homeDirectory)
     }
 
-    /// 创建 UDS 私有父目录（docs/31 §3.1：dir 0700）。幂等；失败上抛。
-    static func prepareSocketDirectory(baseLibraryDirectory: String) throws {
-        let dir = (baseLibraryDirectory as NSString)
-            .appendingPathComponent("Application Support/Coffer/browser")
+    /// 创建 UDS 私有父目录（docs/31 §3.1：dir 0700）。幂等——已存在不动其权限
+    /// （与 G-B cli.rs ensure_broker_parent_dir 语义一致）；失败上抛。
+    static func prepareSocketDirectory(homeDirectory: String) throws {
+        let socketPath = SpawnConfig.wellKnownUDSPath(homeDirectory: homeDirectory)
+        let dir = (socketPath as NSString).deletingLastPathComponent
         let fm = FileManager.default
+        guard !fm.fileExists(atPath: dir) else { return }
         try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir)
     }
@@ -189,12 +202,17 @@ struct BrowserBroker {
     ///   - executable: coffer 二进制绝对路径（McpStatusProbe.cofferBinaryPath）。
     ///   - arguments: 子命令 + 参数（如 browser-broker --uds <socketPath>）。
     ///   - environment: 追加到当前环境的键值（如 COFFER_VAULT_DIR=<vaultDir>）。
+    ///   - stdinPayload: stdin 私有管道载荷（HIGH-3，docs/31 §3.1：DEK/UUID/PSK/
+    ///     unlocked 四行，写完 close stdin 供 broker 读满零化；**不经 env/argv**，
+    ///     `ps eww` 不可读）。传 nil 不接 stdin（沿用默认继承）。传入的 Data 为
+    ///     值类型副本——本函数写后覆零该副本；调用方持有的原副本自行 zeroize。
     /// - Returns: 已启动的 Process（调用方持有，lock/termination 时 kill）。
     /// - Throws: `.brokerSpawnFailed`（Process 无法启动，fail-closed）。
     static func spawn(
         executable: String,
         arguments: [String],
-        environment: [String: String]
+        environment: [String: String],
+        stdinPayload: Data? = nil
     ) throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -202,10 +220,22 @@ struct BrowserBroker {
         var env = ProcessInfo.processInfo.environment
         for (key, value) in environment { env[key] = value }
         process.environment = env
+        if stdinPayload != nil {
+            process.standardInput = Pipe()
+        }
         do {
             try process.run()
         } catch {
             throw BrowserIntegrationError.brokerSpawnFailed(error.localizedDescription)
+        }
+        if let stdinPipe = process.standardInput as? Pipe, let payload = stdinPayload {
+            // 写满 → close stdin（EOF，broker 读满 fail-closed）→ 本副本覆零。
+            // 密钥材料不进日志、不经 env/argv；写失败以 close 收尾仍可让子进程
+            // 走 5s 硬超时（fail-closed），不吞错也不泄露材料。
+            stdinPipe.fileHandleForWriting.write(payload)
+            try? stdinPipe.fileHandleForWriting.close()
+            var local = payload
+            zeroize(&local)
         }
         return process
     }
@@ -225,6 +255,43 @@ struct BrowserBroker {
             Darwin.kill(process.processIdentifier, SIGKILL)
         }
         process.waitUntilExit()
+    }
+}
+
+// MARK: - broker stdin 私有管道（HIGH-3：密钥不经 env/argv，docs/31 §3.1）
+
+/// broker 解锁/配对材料（stdin 私有管道载荷，§3.1 冻结格式）。
+///
+/// 四行（LF 结尾）：`DEK_HEX` / `VAULT_UUID_HEX` / `PSK_HEX` / `UNLOCKED`，
+/// 与 G-B cli.rs `resolve_broker_secrets` 的解析面一致（env 名即 key）。密钥材料
+/// 仅存在于本结构体内存 + 序列化 Data 中，不进日志、不经 env/argv（H-3 核销）。
+struct BrokerStdinSecrets {
+    /// vault 数据加密密钥（32 字节 hex，64 字符）。
+    let dekHex: String
+    /// vault UUID（16 字节 hex，32 字符）。
+    let vaultUUIDHex: String
+    /// 配对 PSK（32 字节 hex，64 字符）。
+    let pskHex: String
+    /// 解锁态标记（true = 已解锁，可服务扩展请求）。
+    let unlocked: Bool
+
+    /// 序列化为 §3.1 四行（LF 结尾）的 UTF-8 载荷。
+    var payload: Data {
+        var text = ""
+        text += "DEK_HEX=\(dekHex)\n"
+        text += "VAULT_UUID_HEX=\(vaultUUIDHex)\n"
+        text += "PSK_HEX=\(pskHex)\n"
+        text += "UNLOCKED=\(unlocked ? "1" : "0")\n"
+        return Data(text.utf8)
+    }
+}
+
+/// 覆零字节缓冲（用后即毁：stdin 载荷写完即零化，密钥材料不进日志、不残留）。
+/// Data 为值类型——调用方持有的原副本须自行传入本函数（spawn 内部只零化其副本）。
+func zeroize(_ data: inout Data) {
+    data.withUnsafeMutableBytes { buffer in
+        guard let base = buffer.baseAddress else { return }
+        memset(base, 0, buffer.count)
     }
 }
 

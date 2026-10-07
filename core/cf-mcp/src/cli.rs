@@ -786,14 +786,18 @@ pub fn run(args: &[String]) -> i32 {
 // host 验父进程（②，8001）、broker 验 peer（③，8002）、E2E 会话编排
 //（BrokerEndpoint）、app 请求分发（锁定 → broker_locked 8003；Lock → 杀进程）。
 //
-// ## 解锁契约（G-B 版 = env 注入；生产装配 = G-D 在 App 解锁后 spawn 时注入）
+// ## 解锁契约（HIGH2-3 §3 冻结：stdin 私有管道为主源；env 降级仅测试门控）
 //
-// `COFFER_BROKER_DEK_HEX` + `COFFER_BROKER_VAULT_UUID_HEX` + `COFFER_BROKER_PSK_HEX`
-// 使 broker 派生确定性身份（`BrokerIdentity::derive`，docs/31 §4.2）并建立 E2E；
-// `COFFER_BROKER_UNLOCKED` 标记存在 = 已解锁（可服务 app 请求），缺省 = 锁定态
-//（E2E 可握手，但取密/列表 → broker_locked 8003）。PSK 持久化（配对时写入
-// keychain）与 vault 取密接线为 G-D/G-T merge-time 集成点（见 [`list_entries`] /
-// [`handle_request`] 文档）。
+// 生产：App 解锁后 spawn `browser-broker --uds <well-known>`，经 **stdin 私有管道**
+// 按行交付 `DEK_HEX/VAULT_UUID_HEX/PSK_HEX/UNLOCKED`（4 行 key=value LF，写完
+// close stdin，broker 读至 EOF + 5s 硬超时，读满零化缓冲；H-3 核销——密钥不落
+// env，`ps eww` 不可读）。`COFFER_BROKER_*` env 降级为**仅**
+// `COFFER_BROKER_SKIP_PEER_VERIFY=1` 且 debug 构建时回退（自动化测试夹具路径，
+// 生产绝不设置；release inert）。`DEK_HEX`/`VAULT_UUID_HEX` 使 broker 派生确定性
+// 身份（`BrokerIdentity::derive`，docs/31 §4.2）并建立 E2E；`UNLOCKED=1` = 已解锁
+//（可服务 app 请求），缺省/0 = 锁定态（E2E 可握手，但取密/列表 → broker_locked
+// 8003）。PSK 持久化（配对时写入 keychain）与 vault 取密接线为 G-D/G-T merge-time
+// 集成点（见 [`list_entries`] / [`handle_request`] 文档）。
 //
 // ## 退出码（复用 docs/20 §5.3，映射表见 run_agent / run_broker）
 //
@@ -822,11 +826,14 @@ mod browser {
     use super::exit_code;
     use super::{Logger, McpCliOptions};
     use std::os::unix::fs::{DirBuilderExt, FileTypeExt};
+    use zeroize::Zeroize;
 
     // ---------------- 环境变量契约（G-B 版 broker 解锁 / host 定位） ----------------
 
-    /// broker UDS 监听路径（G-D spawn `browser-broker --uds $COFFER_BROKER_UDS` 时
-    /// 设置；`browser-agent` 亦读它以定位 broker，host 与 broker 共享同一 socket）。
+    /// broker UDS 显式覆盖（host 定位 / broker `--uds` 传参；**非密钥**，仅路径，
+    /// HIGH2-3 §3.4 末——路径 env 不构成泄露面）。缺省 = well-known 公式
+    ///（[`well_known_broker_uds`]）：G-D spawn `browser-broker --uds <well-known>`
+    /// 与 host 同公式，两端共享同一 socket（无 env 发现，HIGH-2 ② 核销）。
     pub const ENV_BROKER_UDS: &str = "COFFER_BROKER_UDS";
     /// broker 身份 DEK（32 字节 hex）。G-B 版 = env 注入（生产 = G-D 在 App 解锁后
     /// spawn 注入；PSK 持久化/配对流 = G-D/G-T merge-time 集成点，见模块文档）。
@@ -846,6 +853,24 @@ mod browser {
     /// broker 条目夹具（`Vec<EntryInfo>` JSON）。G-B 版条目源；生产 = vault
     /// ItemStore（G-D/G-T merge-time 集成点，见 [`list_entries`]）。
     const ENV_BROKER_ENTRIES: &str = "COFFER_BROKER_ENTRIES_JSON";
+
+    /// broker well-known UDS 落点常量（docs/31 §4.2 / HIGH2-3-INTEGRATION §4.1；
+    /// G-D Swift 侧 `BrowserBroker.wellKnownUDS` 同串，**逐字节一致**）：
+    /// `<real_home>/Library/Application Support/Coffer/browser/broker.sock`。
+    /// 本机 68B ≪ AF_UNIX `sun_path` 104 上限（TC-PATH 预算守卫）。
+    const BROKER_UDS_SUFFIX: &str = "Library/Application Support/Coffer/browser/broker.sock";
+
+    /// stdin 私有管道帧缓冲上限（4 KiB；超即拒，防灌，HIGH2-3 §3.1）。
+    const STDIN_FRAME_LIMIT: usize = 4 * 1024;
+    /// stdin 读取硬超时（5s；App 未写 stdin 而保持打开 → 超时无有效行 →
+    /// fail-closed 退出 1，不留 socket，HIGH2-3 §3.3）。
+    const STDIN_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// stdin 帧 key（**key 大小写敏感**，顺序无关，HIGH2-3 §3.1）。
+    const KEY_DEK_HEX: &str = "DEK_HEX";
+    const KEY_VAULT_UUID_HEX: &str = "VAULT_UUID_HEX";
+    const KEY_PSK_HEX: &str = "PSK_HEX";
+    const KEY_UNLOCKED: &str = "UNLOCKED";
 
     /// 单帧 payload 上限（内存安全守卫：E2E 帧 ~100 字节、握手 JSON ~300 字节，
     /// 64 MiB 远够且防恶意长度前缀的分配炸弹；native messaging 理论 4 GiB 不追求）。
@@ -978,8 +1003,8 @@ mod browser {
     ///
     /// 退出码（复用 docs/20 §5.3）：
     /// - `0` 干净（stdin EOF，扩展关闭端口）；
-    /// - `1` 配置错：父进程非签名浏览器（8001）/ 缺 `$COFFER_BROKER_UDS` /
-    ///   broker 不可达（8003）；
+    /// - `1` 配置错：父进程非签名浏览器（8001）/ broker 不可达（8003）/
+    ///   无法确定 broker socket 路径（`$COFFER_BROKER_UDS` 未设且 `$HOME` 缺失）；
     /// - `2` 协议致命：中继 IO / 帧长异常。
     ///
     /// 日志纪律：stdout 是 native messaging 协议面，一切诊断只走 `--log` / stderr。
@@ -1006,14 +1031,11 @@ mod browser {
             return exit_code::CONFIG_ERROR;
         }
 
-        let Some(uds) = std::env::var(ENV_BROKER_UDS)
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .map(PathBuf::from)
-        else {
-            logger.error(&format!(
-                "error: browser host: missing ${ENV_BROKER_UDS}（broker socket 路径，docs/31 §3.1）"
-            ));
+        let Some(uds) = broker_uds_path() else {
+            logger.error(
+                "error: browser host: 无法确定 broker socket 路径（$COFFER_BROKER_UDS \
+                 未设且 $HOME 缺失），fail-closed 退出",
+            );
             return exit_code::CONFIG_ERROR;
         };
 
@@ -1111,14 +1133,15 @@ mod browser {
 
     /// `coffer browser-broker` 入口（docs/31 §2.1 D-2，长驻 daemon）。
     ///
-    /// 流程：解析 `--uds`（必填）/ `--log`（可选）→ 解锁契约（pairing env 必填，
-    /// 缺 → 配置错 1）→ 派生身份（失败 → 身份缺失 3）→ bind UDS（socket 0600 /
-    /// 父目录 0700）→ accept 循环：每连接 ③ 层验 peer（8002 拒连）→ E2E 握手
-    ///（失败拒绝）→ app 请求分发（锁定 → broker_locked 8003；Lock → 响应后退出 0）。
+    /// 流程：解析 `--uds`（必填）/ `--log`（可选）→ **解锁契约（stdin 私有管道
+    /// 必填，缺/非法 → 配置错 1，fail-closed；env 降级仅测试门控）** → 派生身份
+    ///（失败 → 身份缺失 3）→ bind UDS（socket 0600 / 父目录 0700）→ accept 循环：
+    /// 每连接 ③ 层验 peer（8002 拒连）→ E2E 握手（失败拒绝）→ app 请求分发
+    ///（锁定 → broker_locked 8003；Lock → 响应后退出 0）。
     ///
     /// 退出码（复用 docs/20 §5.3）：
     /// - `0` 干净（连接 EOF / 收到 Lock；peer 拒连为已处理事件，daemon 继续）；
-    /// - `1` 配置错：缺 `--uds` / 缺 pairing env / bind 失败；
+    /// - `1` 配置错：缺 `--uds` / 缺 pairing 材料（stdin 或测试降级 env）/ bind 失败；
     /// - `2` 协议致命：accept 循环致命错误；
     /// - `3` 身份缺失：broker 身份密钥派生失败。
     pub fn run_broker(args: &[String]) -> i32 {
@@ -1138,10 +1161,11 @@ mod browser {
         };
 
         // 解锁契约：pairing 材料必填（缺 → 配置错 1，fail-closed；测试断言此路径）。
+        // 主源 = stdin 私有管道（HIGH2-3 §3.3）；env 降级仅 SKIP_PEER_VERIFY+debug。
         let Some(secrets) = resolve_broker_secrets() else {
             logger.error(
-                "error: browser broker: 缺 pairing env（$COFFER_BROKER_DEK_HEX / \
-                 $COFFER_BROKER_VAULT_UUID_HEX / $COFFER_BROKER_PSK_HEX），fail-closed 退出",
+                "error: browser broker: 缺 pairing 材料（stdin 私有管道 4 行；测试降级 \
+                 $COFFER_BROKER_* 仅 SKIP_PEER_VERIFY+debug 门控），fail-closed 退出",
             );
             return exit_code::CONFIG_ERROR;
         };
@@ -1384,9 +1408,44 @@ mod browser {
         }
     }
 
-    /// 解锁契约：pairing 材料从 env 解析（G-B 版；生产 = G-D spawn 注入）。
-    /// 任一缺失/非法 → `None`（fail-closed，调用方配置错退出 1）。
+    /// broker UDS 定位（host 侧，HIGH2-3 §4.2）：`$COFFER_BROKER_UDS` 显式覆盖；
+    /// 缺省 = well-known 公式（无 env 发现，HIGH-2 ② 核销）。`$HOME` 缺失 →
+    /// `None`（fail-closed，不静默用错路径）。
+    fn broker_uds_path() -> Option<PathBuf> {
+        match std::env::var(ENV_BROKER_UDS) {
+            Ok(v) if !v.trim().is_empty() => Some(PathBuf::from(v)),
+            _ => well_known_broker_uds(),
+        }
+    }
+
+    /// broker well-known UDS 落点：`<real_home>/Library/Application Support/Coffer/browser/broker.sock`。
+    ///
+    /// `real_home`：cf-mcp 是 `forbid(unsafe_code)` crate（unsafe 面隔离在 sys
+    /// crate，cf-uds-sys 先例），libc `getpwuid` 无法在此直调 → 以 `$HOME` 落地
+    ///（HIGH2-3 §6「或 `$HOME` 兜底」；Design Y 非沙盒进程 `$HOME` = 真实主目录，
+    /// 与 G-D Swift 侧 `BrowserStatusProbe.userHomeDirectory` 同构）。`$HOME`
+    /// 缺失 → `None`（fail-closed）。
+    fn well_known_broker_uds() -> Option<PathBuf> {
+        let home = std::env::var("HOME").ok().filter(|v| !v.trim().is_empty())?;
+        Some(PathBuf::from(home).join(BROKER_UDS_SUFFIX))
+    }
+
+    /// 解锁契约解析：**stdin 私有管道**（生产主源，HIGH2-3 §3.3）为主；
+    /// env 降级**仅**测试门控（`COFFER_BROKER_SKIP_PEER_VERIFY=1` 且 debug 构建）——
+    /// 门控激活时**只用 env**（env 不完整即 fail-closed，不静默改读 stdin，测试
+    /// 语义可预期；production 绝不设置该 env）。任一材料缺失/非法 → `None`
+    ///（fail-closed，调用方配置错退出 1，不留 socket）。
     fn resolve_broker_secrets() -> Option<BrokerSecrets> {
+        if cfg!(debug_assertions) && env_flag(ENV_BROKER_SKIP_PEER_VERIFY) {
+            return resolve_broker_secrets_from_env();
+        }
+        resolve_broker_secrets_from_stdin()
+    }
+
+    /// env 降级源（G-B 旧夹具路径）。**仅** `COFFER_BROKER_SKIP_PEER_VERIFY=1`
+    /// 且 debug 构建可达（release 下 `cfg!(debug_assertions)` 恒定 false，恒走
+    /// stdin——生产绝不设置该 env，HIGH2-3 §3.4 / M-3 并入）。
+    fn resolve_broker_secrets_from_env() -> Option<BrokerSecrets> {
         let dek = parse_hex_array::<32>(std::env::var(ENV_BROKER_DEK).ok()?.as_str())?;
         let vault_uuid =
             parse_hex_array::<16>(std::env::var(ENV_BROKER_VAULT_UUID).ok()?.as_str())?;
@@ -1396,6 +1455,91 @@ mod browser {
             vault_uuid,
             psk,
             unlocked: env_flag(ENV_BROKER_UNLOCKED),
+        })
+    }
+
+    /// stdin 私有管道源：读至 EOF（App 已 close → 即时 EOF）+ 5s 硬超时 →
+    /// 解析 → 成功/失败皆零化读取缓冲（HIGH2-3 §3.3）。
+    fn resolve_broker_secrets_from_stdin() -> Option<BrokerSecrets> {
+        let mut buf = read_stdin_to_eof()?;
+        let parsed = parse_stdin_frame(&buf);
+        buf.zeroize();
+        parsed
+    }
+
+    /// 读 stdin 至 EOF，缓冲上限 [`STDIN_FRAME_LIMIT`]（4 KiB，超即拒，防灌）。
+    ///
+    /// 5s 硬超时（[`STDIN_READ_TIMEOUT`]）：App 未写 stdin 而保持打开 → 超时 →
+    /// `None`（fail-closed 退出 1，不留 socket）。读错 / 超限 → 零化部分缓冲后
+    /// `None`。
+    fn read_stdin_to_eof() -> Option<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf: Vec<u8> = Vec::with_capacity(STDIN_FRAME_LIMIT);
+            let mut chunk = [0u8; 512];
+            let mut stdin = io::stdin();
+            loop {
+                match stdin.read(&mut chunk) {
+                    Ok(0) => break, // EOF（App 已 close → 即时）
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if buf.len() > STDIN_FRAME_LIMIT {
+                            buf.zeroize();
+                            let _ = tx.send(Err(()));
+                            return;
+                        }
+                    }
+                    Err(_) => {
+                        buf.zeroize();
+                        let _ = tx.send(Err(()));
+                        return;
+                    }
+                }
+            }
+            let _ = tx.send(Ok(buf));
+        });
+        match rx.recv_timeout(STDIN_READ_TIMEOUT) {
+            Ok(Ok(buf)) => Some(buf),
+            // 超时（App 未写 stdin 而保持打开）/ 读错 / 超限 → fail-closed。
+            _ => None,
+        }
+    }
+
+    /// 解析 stdin 帧（key=value LF，4 行，顺序无关，**key 大小写敏感**，HIGH2-3
+    /// §3.1）。
+    ///
+    /// 空行（含末尾换行产生的空串）跳过；非空行必须含 `=` 且 key ∈ 已知集合；
+    /// 未知 key / 缺必填 / hex 非法 / `UNLOCKED` 值非 `0|1` → `None`（fail-closed）。
+    /// 只读解析不持有密钥材料，零化由调用方负责（[`resolve_broker_secrets_from_stdin`]）。
+    fn parse_stdin_frame(buf: &[u8]) -> Option<BrokerSecrets> {
+        let mut dek = None;
+        let mut vault_uuid = None;
+        let mut psk = None;
+        let mut unlocked = false;
+        for raw in buf.split(|&b| b == b'\n') {
+            if raw.is_empty() {
+                continue;
+            }
+            let line = std::str::from_utf8(raw).ok()?;
+            let (key, value) = line.split_once('=')?;
+            match key {
+                KEY_DEK_HEX => dek = Some(parse_hex_array::<32>(value)?),
+                KEY_VAULT_UUID_HEX => vault_uuid = Some(parse_hex_array::<16>(value)?),
+                KEY_PSK_HEX => psk = Some(parse_hex_array::<32>(value)?),
+                // 缺省/0 = 锁定态（app 请求 → broker_locked 8003）；1 = 已解锁。
+                KEY_UNLOCKED => match value {
+                    "1" => unlocked = true,
+                    "0" => unlocked = false,
+                    _ => return None, // 非法值 fail-closed
+                },
+                _ => return None, // 未知 key fail-closed
+            }
+        }
+        Some(BrokerSecrets {
+            dek: dek?,
+            vault_uuid: vault_uuid?,
+            psk: psk?,
+            unlocked,
         })
     }
 
@@ -1533,6 +1677,187 @@ mod browser {
         w.write_all(&len.to_le_bytes())?;
         w.write_all(payload)?;
         w.flush()
+    }
+
+    // ------------------------------------------------------------------
+    // 单元测试（纯解析面：stdin 帧 / well-known 公式 / host UDS 解析；
+    // 集成面 spawn `coffer` 二进制见 tests/browser_subcommand.rs）
+    // ------------------------------------------------------------------
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 环境变量是进程级共享状态，串行化读写（同 cli.rs 外层 tests 纪律）。
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        /// 确定性 4 行帧（`UNLOCKED` 取 `"1"` / `"0"` / 缺省行）。
+        fn frame(unlocked_line: Option<&str>) -> String {
+            format!(
+                "DEK_HEX={}\nVAULT_UUID_HEX={}\nPSK_HEX={}{}\n",
+                "a1".repeat(32),
+                "b2".repeat(16),
+                "c3".repeat(32),
+                match unlocked_line {
+                    Some(v) => format!("\n{v}"),
+                    None => String::new(),
+                }
+            )
+        }
+
+        #[test]
+        fn parse_stdin_frame_valid_unlocked() {
+            let s = parse_stdin_frame(frame(Some("UNLOCKED=1")).as_bytes())
+                .expect("4 行正确帧须解析成功");
+            assert_eq!(s.dek, [0xa1; 32]);
+            assert_eq!(s.vault_uuid, [0xb2; 16]);
+            assert_eq!(s.psk, [0xc3; 32]);
+            assert!(s.unlocked, "UNLOCKED=1 → 解锁态");
+        }
+
+        #[test]
+        fn parse_stdin_frame_order_independent() {
+            // 顺序无关（HIGH2-3 §3.1）：乱序 + 中间空行仍解析。
+            let (dek, uuid, psk) = ("a1".repeat(32), "b2".repeat(16), "c3".repeat(32));
+            let s = parse_stdin_frame(
+                format!("PSK_HEX={psk}\nDEK_HEX={dek}\n\nUNLOCKED=0\nVAULT_UUID_HEX={uuid}\n")
+                    .as_bytes(),
+            )
+            .expect("乱序帧须解析成功");
+            assert_eq!(s.dek, [0xa1; 32]);
+            assert_eq!(s.psk, [0xc3; 32]);
+            assert!(!s.unlocked, "UNLOCKED=0 → 锁定态");
+        }
+
+        #[test]
+        fn parse_stdin_frame_locked_by_default() {
+            // 缺 UNLOCKED 行 → 锁定态（HIGH2-3 §3.1「缺省 = 锁定态」）。
+            let s = parse_stdin_frame(frame(None).as_bytes()).expect("缺 UNLOCKED 可解析");
+            assert!(!s.unlocked, "缺省 → 锁定态");
+        }
+
+        #[test]
+        fn parse_stdin_frame_missing_required_is_none() {
+            let missing_psk = format!(
+                "DEK_HEX={}\nVAULT_UUID_HEX={}\nUNLOCKED=1\n",
+                "a1".repeat(32),
+                "b2".repeat(16)
+            );
+            assert!(
+                parse_stdin_frame(missing_psk.as_bytes()).is_none(),
+                "缺必填（PSK_HEX）→ fail-closed"
+            );
+            assert!(
+                parse_stdin_frame(b"").is_none(),
+                "空 stdin → fail-closed"
+            );
+        }
+
+        #[test]
+        fn parse_stdin_frame_unknown_key_is_none() {
+            let unknown = format!(
+                "DEK_HEX={}\nVAULT_UUID_HEX={}\nPSK_HEX={}\nFOO=bar\nUNLOCKED=1\n",
+                "a1".repeat(32),
+                "b2".repeat(16),
+                "c3".repeat(32)
+            );
+            assert!(
+                parse_stdin_frame(unknown.as_bytes()).is_none(),
+                "未知 key → fail-closed"
+            );
+        }
+
+        #[test]
+        fn parse_stdin_frame_invalid_hex_is_none() {
+            let bad = format!(
+                "DEK_HEX={}\nVAULT_UUID_HEX={}\nPSK_HEX={}\nUNLOCKED=1\n",
+                "zz".repeat(32),
+                "b2".repeat(16),
+                "c3".repeat(32)
+            );
+            assert!(
+                parse_stdin_frame(bad.as_bytes()).is_none(),
+                "非法 hex → fail-closed"
+            );
+        }
+
+        #[test]
+        fn parse_stdin_frame_malformed_line_is_none() {
+            // 非空行缺 `=` → 非法帧。
+            let malformed = format!(
+                "DEK_HEX={}\nVAULT_UUID_HEX={}\nPSK_HEX={}\nNOTAEQUAL\nUNLOCKED=1\n",
+                "a1".repeat(32),
+                "b2".repeat(16),
+                "c3".repeat(32)
+            );
+            assert!(
+                parse_stdin_frame(malformed.as_bytes()).is_none(),
+                "缺 `=` 行 → fail-closed"
+            );
+        }
+
+        #[test]
+        fn parse_stdin_frame_invalid_unlocked_value_is_none() {
+            let bad = format!(
+                "DEK_HEX={}\nVAULT_UUID_HEX={}\nPSK_HEX={}\nUNLOCKED=2\n",
+                "a1".repeat(32),
+                "b2".repeat(16),
+                "c3".repeat(32)
+            );
+            assert!(
+                parse_stdin_frame(bad.as_bytes()).is_none(),
+                "UNLOCKED 非法值 → fail-closed"
+            );
+        }
+
+        /// TC-PATH（HIGH2-3 §7）：well-known socket 路径 ≤ 104 字节（sun_path 预算
+        /// 守卫），且落点常量与 G-D Swift 侧逐字节一致（后缀断言）。
+        #[test]
+        fn well_known_broker_uds_within_sun_path_budget() {
+            let path = well_known_broker_uds().expect("$HOME 存在时须可计算");
+            let os = path.as_os_str().as_encoded_bytes();
+            assert!(
+                os.len() <= 104,
+                "well-known socket 路径须 ≤ 104 字节（AF_UNIX sun_path）: {} ({}B)",
+                path.display(),
+                os.len()
+            );
+            assert!(
+                path.ends_with(BROKER_UDS_SUFFIX),
+                "落点须以常量后缀结尾: {}",
+                path.display()
+            );
+        }
+
+        /// TC-HOST-1（HIGH2-3 §7，自动段）：无 `COFFER_BROKER_UDS` env → 回落
+        /// well-known 公式（无 env 发现，HIGH-2 ②）。可信签名浏览器父进程下的
+        /// 真机连 socket 为 P-S 判据（同 host_rejects_unsigned_parent 反向）。
+        #[test]
+        fn broker_uds_path_falls_back_to_well_known() {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            std::env::remove_var(ENV_BROKER_UDS);
+            assert_eq!(
+                broker_uds_path(),
+                well_known_broker_uds(),
+                "无 $COFFER_BROKER_UDS → well-known 公式"
+            );
+            std::env::remove_var(ENV_BROKER_UDS);
+        }
+
+        /// TC-HOST-2（HIGH2-3 §7，自动段）：`COFFER_BROKER_UDS` 指向显式路径 →
+        /// 采用覆盖值（显式错误路径 → 调用方连失败 → 配置错 1；真机断言同
+        /// TC-HOST-1）。
+        #[test]
+        fn broker_uds_path_honors_env_override() {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let override_path = PathBuf::from("/tmp/coffer-broker-override.sock");
+            std::env::set_var(ENV_BROKER_UDS, &override_path);
+            assert_eq!(
+                broker_uds_path(),
+                Some(override_path.clone()),
+                "$COFFER_BROKER_UDS 显式覆盖优先"
+            );
+            std::env::remove_var(ENV_BROKER_UDS);
+        }
     }
 }
 

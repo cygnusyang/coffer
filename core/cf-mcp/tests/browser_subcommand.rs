@@ -22,6 +22,15 @@
 //! 另含 `broker_get_entries_unlocked`（G-B「broker 需处理 GetEntries」的端到端
 //! 验证：解锁态 get_entries → EntriesResult，走真 E2E 通道）。
 //!
+//! **构建面拆分（M-3 release-inert）**：三个走 `spawn_broker` env 降级夹具的
+//! 用例（`broker_uds_bind_and_permissions` / `broker_locked_state` /
+//! `broker_get_entries_unlocked`）与配套 helper（`spawn_broker` /
+//! `e2e_client` / `read_frame` / `write_frame` / `drain_stderr`）+ E2E 协议
+//! import 均 `#[cfg(debug_assertions)]` 门控——env 降级仅 debug 生效，release 下
+//! broker 走 stdin fail-closed（语义由 `release_broker_skips_nothing_when_env_set`
+//! + TC-BROKER-1 覆盖），对应用例仅 debug 全量跑、release 不编译。docs/32 判据
+//! 锚点（§1.2-3/5 等）在 debug 门禁口径核销，计数不变。
+//!
 //! 平台门控：browser-* 子命令仅 `feature="coffer-store"` + macOS 构建注册
 //!（cli.rs `mod browser` 双门控）。故依赖真实子命令的测试以
 //! `#[cfg(feature = "coffer-store")]` 编译门控；`slim_build_subcommands_not_registered`
@@ -45,9 +54,12 @@ use std::path::Path;
 use std::process::Child;
 #[cfg(feature = "coffer-store")]
 use std::time::{Duration, Instant};
-#[cfg(feature = "coffer-store")]
+// E2E 协议类型（Session / AppMessage 等）仅被 debug 门控的 E2E 用例与
+// `e2e_client` 使用（release 下 env 降级剔除、无 E2E 用例）——随 debug 归位，
+// 否则 release 编译面报 unused import。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 use cf_browser::e2e::Session;
-#[cfg(feature = "coffer-store")]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, EntryFieldRef};
 
 // ---------------- 共享：spawn 助手 / 帧读写 / socket 等待 ----------------
@@ -111,8 +123,11 @@ fn clear_broker_env(cmd: &mut Command) {
 ///
 /// env 降级仅 `cfg!(debug_assertions)` 生效（release inert）；本 helper 仅用于
 /// 需要 env 注入的用例（§6-5：env 用例统一在 `COFFER_BROKER_SKIP_PEER_VERIFY=1`
-/// 下运行）。
-#[cfg(feature = "coffer-store")]
+/// 下运行）。**debug-only 门控**：唯一调用方即三个 env 夹具测试（均
+/// `debug_assertions` 门控）——release 下 env 降级编译期剔除、本 helper 无调用方
+/// 成 dead code，故随测试一并 debug 归位（release 走 stdin 语义由
+/// `release_broker_skips_nothing_when_env_set` + TC-BROKER-1 覆盖）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn spawn_broker(uds: &Path, log: &Path, overrides: &[(&str, &str)], omit_skip_verify: bool) -> Child {
     let (dek, uuid, psk) = fake_secrets();
     let mut cmd = Command::new(coffer_bin());
@@ -176,7 +191,10 @@ fn spawn_broker_stdin(
 }
 
 /// 读一个 native messaging 帧（4B LE + payload），返回 payload。EOF → `None`。
-#[cfg(feature = "coffer-store")]
+///
+/// 仅被 debug 门控的 E2E 用例（`broker_locked_state` / `broker_get_entries_unlocked`）
+/// 及 `e2e_client` 使用——release 下无调用方，随 debug 归位（防 dead code）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn read_frame<R: Read>(r: &mut R) -> std::io::Result<Option<Vec<u8>>> {
     let mut len_buf = [0u8; 4];
     if let Err(e) = r.read_exact(&mut len_buf) {
@@ -193,7 +211,9 @@ fn read_frame<R: Read>(r: &mut R) -> std::io::Result<Option<Vec<u8>>> {
 }
 
 /// 写一个 native messaging 帧（4B LE + payload），写后 flush。
-#[cfg(feature = "coffer-store")]
+///
+/// 仅被 debug 门控的 E2E 用例及 `e2e_client` 使用（同 `read_frame`），随 debug 归位。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn write_frame<W: Write>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
     w.write_all(&(payload.len() as u32).to_le_bytes())?;
     w.write_all(payload)?;
@@ -219,7 +239,9 @@ fn wait_for_socket_mode(path: &Path, expected_mode: u32, timeout: Duration) -> b
 }
 
 /// 读子进程 stderr 全文（测试断言用）。子进程可能仍存活，先尝试读再 wait。
-#[cfg(feature = "coffer-store")]
+///
+/// 仅被 `e2e_client` 握手诊断使用（debug 门控），随 debug 归位（防 dead code）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn drain_stderr(child: &mut Child) -> String {
     let mut buf = String::new();
     if let Some(mut e) = child.stderr.take() {
@@ -324,8 +346,13 @@ fn host_rejects_unsigned_parent() {
 // ===========================================================================
 
 /// broker bind UDS：socket 0600、自建父目录 0700；缺 `--uds` → 配置错 1。
+///
+/// **debug-only 门控**：走 `spawn_broker` env 降级（仅 debug 生效）；release 下
+/// env 降级编译期剔除 → broker 走空 stdin fail-closed（exit 1 无 socket），本用例
+/// 语义不成立。release 对应用例 = `release_broker_skips_nothing_when_env_set`
+/// （③ 层 seam 编译期剔除）。判据 docs/32 §1.2-3 在 debug 门禁口径核销，计数不变。
 #[test]
-#[cfg(feature = "coffer-store")]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn broker_uds_bind_and_permissions() {
     let dir = temp_dir("broker-uds");
     std::fs::create_dir_all(&dir).expect("create tmp dir");
@@ -476,8 +503,12 @@ fn release_broker_skips_nothing_when_env_set() {
 /// broker 无解锁会话（pairing 材料齐、`COFFER_BROKER_UNLOCKED` 缺省）→
 /// 走真 E2E：握手建立会话，`get_secret` → [`AppResponse::BrokerLocked`]，
 /// 随后 `lock` → `Locked` 响应 + broker 干净退出 0。
+///
+/// **debug-only 门控**（同 `broker_uds_bind_and_permissions`）：pairing 材料经
+/// `spawn_broker` env 降级注入（仅 debug 生效）；release 下 env 降级剔除 → 空
+/// stdin fail-closed，本用例语义不成立。判据 docs/32 §1.2-5 在 debug 门禁口径核销。
 #[test]
-#[cfg(feature = "coffer-store")]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn broker_locked_state() {
     let dir = temp_dir("broker-8003");
     std::fs::create_dir_all(&dir).expect("create tmp dir");
@@ -542,8 +573,12 @@ fn broker_locked_state() {
 /// 解锁态（`COFFER_BROKER_UNLOCKED=1` + 条目夹具）下 `get_entries` → 真 E2E 返回
 /// `EntriesResult`（夹具条目逐字段断言）；同时断言解锁态 `get_secret` 当前为
 /// G-B 版契约（8003 `BrokerUnavailable` 未接线，vault 集成 = G-D/G-T merge-time 点）。
+///
+/// **debug-only 门控**（同 `broker_locked_state`）：`COFFER_BROKER_UNLOCKED` /
+/// `COFFER_BROKER_ENTRIES_JSON` env 夹具仅 debug 生效；release 下 env 降级剔除 →
+/// 空 stdin fail-closed，本用例语义不成立。判据 debug 门禁口径核销，计数不变。
 #[test]
-#[cfg(feature = "coffer-store")]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn broker_get_entries_unlocked() {
     let dir = temp_dir("broker-entries");
     std::fs::create_dir_all(&dir).expect("create tmp dir");
@@ -895,7 +930,11 @@ fn broker_stdin_secrets_not_in_ps_env() {
 /// 流绑定，调用方用同一流收发后续 AEAD 帧（broker 单连接单会话）。
 ///
 /// 握手失败时把 broker stderr 并入 panic 消息（中途异常诊断）。
-#[cfg(feature = "coffer-store")]
+///
+/// 仅被 debug 门控的 `broker_locked_state` / `broker_get_entries_unlocked` 使用
+/// （release 下走 stdin 语义由 `release_broker_skips_nothing_when_env_set` 覆盖），
+/// 随 debug 归位（防 dead code）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
 fn e2e_client(uds: &Path, child: &mut Child) -> (Session, UnixStream) {
     use cf_browser::broker::BrokerIdentity;
     use cf_browser::e2e::InitiatorHandshake;

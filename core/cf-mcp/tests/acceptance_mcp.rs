@@ -404,11 +404,28 @@ fn illegal_provider_exits_1() {
 }
 
 #[test]
-fn uds_unimplemented_exits_1() {
-    // D-4 暂缓：`--uds` 传入 → 配置错误退出 1，注明未实现（§3.1 / §5.2）。
-    let (code, stderr) = run_coffer(&["mcp", "--uds", "/tmp/coffer-acc.sock"], &[]);
-    assert_eq!(code, Some(1), "--uds（D-4）→ 退出码 1");
-    assert!(stderr.contains("not implemented"), "stderr: {stderr}");
+fn uds_requires_handshake_env_exits_1() {
+    // D-4 已落地：`--uds` 缺 env 握手材料（challenge / spawn 方 PID）→ fail-closed
+    // 配置错误退出 1，不 bind、不留 socket 文件（§3.6 ②③ / §5.2）。完整 UDS 生命周期
+    // 由 tests/uds.rs 覆盖，此处只验退出码契约的配置错误面。显式 `--provider op`
+    // 排除缺省 coffer（D-2）的 COFFER_VAULT_DIR 前置校验，保证走到 UDS 层判据。
+    let (code, stderr) = run_coffer(
+        &["mcp", "--provider", "op", "--uds", "/tmp/coffer-acc.sock"],
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(1),
+        "--uds 缺握手 env → 退出码 1，stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("COFFER_MCP_UDS_CHALLENGE"),
+        "fail-closed 须指明缺失的 env: {stderr}"
+    );
+    assert!(
+        !std::path::Path::new("/tmp/coffer-acc.sock").exists(),
+        "fail-closed 不得创建 socket 文件"
+    );
 }
 
 #[test]

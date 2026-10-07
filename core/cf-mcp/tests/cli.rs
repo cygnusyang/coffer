@@ -161,14 +161,22 @@ fn missing_flag_value_exits_1() {
 }
 
 #[test]
-fn uds_flag_reports_unimplemented_exit_1() {
-    // D-4 暂缓：本版只支持 stdio；`--uds` 传入须报错退出 1 并注明未实现。
-    let out = run_coffer(&["mcp", "--uds", "/tmp/coffer-test.sock"], &[]);
-    assert_eq!(out.status.code(), Some(1), "--uds（D-4）→ §5.3 退出码 1");
+fn uds_requires_handshake_env_exits_1() {
+    // v2.1.0 D-4（docs/27）：--uds 已实现；但 spawn 方须经 env 下发会话
+    // challenge（docs/20 §3.6 ③）——缺 → fail-closed 配置错误退出 1，消息可操作。
+    let out = run_coffer(
+        &["mcp", "--provider", "op", "--uds", "/tmp/coffer-test.sock"],
+        &[],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "--uds 缺 challenge env → 退出码 1（fail-closed）"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("not implemented"),
-        "须注明未实现，stderr: {stderr}"
+        stderr.contains("COFFER_MCP_UDS_CHALLENGE"),
+        "须指明缺失的握手 env，stderr: {stderr}"
     );
 }
 

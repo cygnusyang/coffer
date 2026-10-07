@@ -23,6 +23,10 @@
 //!   `new_biometric_unwrap_key` / `enable_biometric` / `disable_biometric`
 //!   / `unlock_with_biometric` 的会话层内核，AAD 钉库与错误码纪律见其
 //!   模块文档
+//! - [`unlock_mcp`]：MCP 解锁托管 DEK 封装通道（docs/29 v2.2.0）——
+//!   `derive_mcp_key` / `enable_mcp_escrow` / `disable_mcp_escrow` /
+//!   `unlock_with_mcp_key` 的会话层内核，镜像 `unlock_bio` 通道（封装钥
+//!   为 DEK 派生、确定性，docs/29 §2 差异表格）
 //! - [`vault`]：`VaultSession`——持有 `Mutex<Option<UnlockedState>>`，
 //!   `lock()` 置 `None` 触发全链路 `ZeroizeOnDrop` 内存清零
 //! - [`idle`]：空闲超时判定的纯函数（时间由平台注入，可测试）
@@ -67,6 +71,7 @@ pub mod testing;
 pub mod types;
 pub mod unlock;
 pub mod unlock_bio;
+pub mod unlock_mcp;
 pub mod usecase;
 pub mod vault;
 
@@ -82,6 +87,7 @@ pub use diag::DiagnosticSummary;
 pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
 pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
 pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};
+pub use unlock_mcp::{MCP_KEYCHAIN_SERVICE, MCP_KEY_LEN, MCP_PROVIDER};
 pub use usecase::attachments::AttachmentInfo;
 pub use usecase::audit::{PasswordFingerprint, WatchtowerReport};
 pub use usecase::cross_copy::copy_item;

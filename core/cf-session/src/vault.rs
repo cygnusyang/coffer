@@ -44,6 +44,7 @@ use crate::idle;
 use crate::reminder;
 use crate::types::{ItemDetails, TotpCode, TotpDetail, VaultInfo};
 use crate::unlock_bio;
+use crate::unlock_mcp;
 use crate::usecase;
 use crate::{SessionResult, TotpSession};
 use cf_domain::license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
@@ -398,6 +399,168 @@ impl VaultSession {
         }
 
         let store = unlock_bio::unlock_store_with_bio(&self.vault_dir, &header, k_bio)?;
+        let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
+        self.last_activity
+            .store(crate::unix_now().unwrap_or(0), Ordering::Release);
+        *guard = Some(UnlockedState { store });
+        Ok(info)
+    }
+
+    // ------------------------------------------------ MCP 解锁托管（docs/29）
+
+    /// 是否启用了 MCP 托管封装（header `mcp_wrap.available`，docs/29 §2：
+    /// 语义 = 「用户意图开启」，锁定态可查）。
+    ///
+    /// 纯读 header，无密钥操作；供设置页决定是否显示托管开关态。实际
+    /// 可用性由 Swift 侧 Keychain 信号组合判定（三态见 docs/29 §5.2）。
+    #[must_use]
+    pub fn has_mcp_wrap(&self) -> bool {
+        self.header_snapshot().mcp_wrap.available
+    }
+
+    /// 派生 MCP 托管密钥（docs/29 §5.2 enable 流程 ①）。
+    ///
+    /// 门禁：需解锁态（设置页在解锁后才可达，错误码 1001）。内部经
+    /// `recover_dek` 重验证主密码并解出 DEK（错 → 1002）→
+    /// HKDF 确定性派生 mcp_key（DEK 派生，非随机；换主密码不吊销，
+    /// docs/29 §5.3）。返回的 [`cf_crypto::aead::SessionKey`] 为
+    /// `ZeroizeOnDrop`（NFR-SEC-04）；调用方（Swift，经 FFI）负责存入
+    /// Keychain（先 Keychain 后 header 顺序裁定，docs/29 §5.2）。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错 / 1007 派生失败。
+    ///
+    /// # 暴力退避（FR-12.5）
+    ///
+    /// 经 `recover_dek` 验主密码（密码 oracle），与 [`Self::unlock`] /
+    /// [`Self::enable_biometric`] / [`Self::enable_mcp_escrow`] **共享同一
+    /// 退避计数器**：门禁期内直接拒绝（1002，不跑 KDF）；主密码错（1002）
+    /// 计入失败，成功清零。门禁判定与 KDF 同临界区预占（`try_acquire`，
+    /// 语义同 [`Self::unlock`]）。
+    pub fn derive_mcp_key(&self, password: &str) -> SessionResult<cf_crypto::aead::SessionKey> {
+        if self.backoff_guard().try_acquire().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
+        let _guard = match self.unlocked() {
+            Ok(guard) => guard,
+            Err(e) => {
+                // 锁定态（1001）不是密码尝试，只释放预占
+                self.backoff_guard().release();
+                return Err(e);
+            }
+        };
+        let header = self.header_snapshot();
+        let key = match unlock_mcp::derive_mcp_key_impl(&self.vault_dir, &header, password) {
+            Ok(key) => key,
+            Err(e) => {
+                // 仅主密码校验失败（1002）计入退避；其余（1007 派生失败等）
+                // 不是密码尝试，只释放预占
+                if matches!(e, CfError::UnlockFailed) {
+                    self.backoff_guard().on_failure();
+                } else {
+                    self.backoff_guard().release();
+                }
+                return Err(e);
+            }
+        };
+        // 主密码校验通过（成功路径）：退避清零
+        self.backoff_guard().on_success();
+        Ok(key)
+    }
+
+    /// 启用 MCP 解锁托管（docs/29 §5.2 enable，header 侧）。
+    ///
+    /// 门禁：需解锁态（设置页在解锁后才可达，错误码 1001）。传入主密码
+    /// 而非 DEK（D-6 同款）：内部经 `recover_dek` 重验证主密码并解出 DEK
+    /// （错 → 1002，此时 header 未变）→ mcp_key 封装 DEK → 原子重写
+    /// header 的 `mcp_wrap` 段。
+    ///
+    /// `mcp_key` 必须为 32 字节（Swift 经 FFI 从 `derive_mcp_key` 取得并
+    /// 已先行写入 Keychain——先 Keychain 后 header 顺序裁定，docs/29 §5.2）；
+    /// 长度不符 → 5002。本方法失败时 header 保持原样，Keychain 补偿删除
+    /// 由 Swift 依据 Err 执行。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错 / 5002 mcp_key 长度 / 5001·1005 写失败。
+    ///
+    /// # 暴力退避（FR-12.5）
+    ///
+    /// 经 `recover_dek` 验主密码（密码 oracle），与 [`Self::unlock`]
+    /// **共享同一退避计数器**：门禁期内直接拒绝（1002，不跑 KDF）；
+    /// 主密码错（1002）计入失败，成功清零。mcp_key 长度（5002）等参数
+    /// 错误不是密码尝试，不计入。门禁判定与 KDF 同临界区预占
+    /// （`try_acquire`，语义同 [`Self::unlock`]）。
+    pub fn enable_mcp_escrow(&self, password: &str, mcp_key: &[u8]) -> SessionResult<()> {
+        if self.backoff_guard().try_acquire().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
+        let _guard = match self.write_guard(LicensedOp::VaultWrite) {
+            Ok(guard) => guard,
+            Err(e) => {
+                // 锁定态（1001）不是密码尝试，只释放预占
+                self.backoff_guard().release();
+                return Err(e);
+            }
+        };
+        let header = self.header_snapshot();
+        let new_header =
+            match unlock_mcp::enable_mcp_escrow_impl(&self.vault_dir, &header, password, mcp_key) {
+                Ok(new_header) => new_header,
+                Err(e) => {
+                    // 仅主密码校验失败（1002）计入退避；mcp_key 长度（5002）
+                    // 等参数错误不是密码尝试，只释放预占
+                    if matches!(e, CfError::UnlockFailed) {
+                        self.backoff_guard().on_failure();
+                    } else {
+                        self.backoff_guard().release();
+                    }
+                    return Err(e);
+                }
+            };
+        // 主密码校验通过（成功路径）：退避清零
+        self.backoff_guard().on_success();
+        // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
+        *self.header_guard() = new_header;
+        Ok(())
+    }
+
+    /// 关闭 MCP 解锁托管（docs/29 §5.2 disable，header 侧）。
+    ///
+    /// 门禁：需解锁态（1001）。重写 header → 禁用态（`mcp_wrap` 回落
+    /// 默认值）；**幂等**——已是禁用态时不重写文件。Keychain 项删除在
+    /// Swift 侧先行且幂等，两侧独立可重试；本方法失败非致命，可重试
+    /// （Keychain 已删时功能实际已失效，header 残留密文无泄露面）。
+    pub fn disable_mcp_escrow(&self) -> SessionResult<()> {
+        let _guard = self.write_guard(LicensedOp::VaultWrite)?;
+        let header = self.header_snapshot();
+        if let Some(new_header) = unlock_mcp::disable_mcp_escrow_impl(&self.vault_dir, &header)? {
+            *self.header_guard() = new_header;
+        }
+        Ok(())
+    }
+
+    /// MCP 托管解锁（docs/29 §6.2 `unlock_store_with_mcp_key` 的会话层门面）。
+    ///
+    /// mcp_key 解封 wrapped_dek_mcp → DEK → SubKeys → ItemStore——收尾与
+    /// 主密码 / 生物识别路径完全共享。获得的会话与主密码路径同生共死
+    /// （`lock()` / 自动锁定清零密钥）。
+    ///
+    /// 已解锁时幂等：直接返回当前信息，不做密钥操作。
+    ///
+    /// # 错误（fail-closed，docs/29 §2 差异说明）
+    ///
+    /// 未启用或解封失败统一 1002（[`CfError::UnlockFailed`]，不区分原因）；
+    /// mcp_key 非 32B → 5002。
+    pub fn unlock_with_mcp_key(&self, mcp_key: &[u8]) -> SessionResult<VaultInfo> {
+        let header = self.header_snapshot();
+        let mut guard = self.state_guard();
+        if let Some(state) = guard.as_ref() {
+            return vault_info(&state.store, self.vault_uuid, &self.display_name);
+        }
+
+        let store = unlock_mcp::unlock_store_with_mcp_key(&self.vault_dir, &header, mcp_key)?;
         let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
         self.last_activity
             .store(crate::unix_now().unwrap_or(0), Ordering::Release);

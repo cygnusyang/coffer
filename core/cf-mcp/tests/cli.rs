@@ -192,8 +192,10 @@ fn provider_unavailable_exits_1() {
 
 #[test]
 fn unsupported_provider_exits_1() {
-    let out = run_coffer(&["mcp", "--provider", "coffer"], &[]);
-    assert_eq!(out.status.code(), Some(1), "非 op provider → 退出码 1");
+    // 注意：`coffer` 在 `coffer-store` feature 下是合法 provider（G-D），
+    // 故这里用恒不存在的 `nosuch` 验证「未知 provider → 退出码 1」。
+    let out = run_coffer(&["mcp", "--provider", "nosuch"], &[]);
+    assert_eq!(out.status.code(), Some(1), "未知 provider → 退出码 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("unsupported provider"), "stderr: {stderr}");
 }
@@ -208,6 +210,121 @@ fn provider_defaults_from_env_when_flag_absent() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("provider=op"), "stderr: {stderr}");
+}
+
+// ===========================================================================
+// CofferStoreProvider 选择（docs/20 §4.5；feature `coffer-store` 门控）
+// ===========================================================================
+
+#[cfg(not(feature = "coffer-store"))]
+#[test]
+fn coffer_provider_unsupported_when_feature_off() {
+    // 未启用 `coffer-store`：`--provider coffer` 同任意未知 provider → 退出 1
+    // （与接线前行为一致；启用后此分支不再编译，见下方 feature 用例）。
+    let out = run_coffer(&["mcp", "--provider", "coffer"], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "feature 关闭 → coffer 不可选 → 退出码 1"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unsupported provider"), "stderr: {stderr}");
+}
+
+/// 建一个独立快速档测试库（cf-session 快速 KDF / cf-crypto KdfParams；与
+/// provider/coffer.rs 内测同款），返回 (库目录, 解锁密码)。
+#[cfg(feature = "coffer-store")]
+fn create_fast_vault(tag: &str) -> (PathBuf, String) {
+    use cf_crypto::kdf::KdfParams;
+    use cf_session::create_vault_with_kdf;
+
+    const STRONG_PASSWORD: &str = "correct-horse-battery-staple-42!";
+    let base = temp_dir(tag);
+    let brief = create_vault_with_kdf(
+        &base,
+        "测试库",
+        STRONG_PASSWORD,
+        KdfParams::new(8 * 1024, 1, 1).expect("8 MiB fast KDF params"),
+    )
+    .expect("create fast test vault");
+    let vault_dir = base.join(brief.uuid.to_string());
+    (vault_dir, STRONG_PASSWORD.to_string())
+}
+
+#[cfg(feature = "coffer-store")]
+#[test]
+fn coffer_provider_serves_on_stdio_with_valid_vault() {
+    let (vault_dir, password) = create_fast_vault("cli-coffer-serve");
+    let out = run_coffer(
+        &["mcp", "--provider", "coffer"],
+        &[
+            ("COFFER_VAULT_DIR", vault_dir.to_str().expect("utf8 path")),
+            ("COFFER_VAULT_PASSWORD", &password),
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "合法库 + 正确密码 → 干净退出 0（provider 构造成功并服务）"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("provider=coffer"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains(&password),
+        "密码不得出现在日志（§3.5-4 载荷纪律），stderr: {stderr}"
+    );
+}
+
+#[cfg(feature = "coffer-store")]
+#[test]
+fn coffer_provider_missing_env_config_exits_1() {
+    // 缺 $COFFER_VAULT_DIR / $COFFER_VAULT_PASSWORD → 配置错误退出 1，消息可操作。
+    let out = run_coffer(&["mcp", "--provider", "coffer"], &[]);
+    assert_eq!(out.status.code(), Some(1), "缺库配置 → 退出码 1");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("COFFER_VAULT_DIR") || stderr.contains("COFFER_VAULT_PASSWORD"),
+        "错误消息须指明缺失的 env 变量，stderr: {stderr}"
+    );
+}
+
+#[cfg(feature = "coffer-store")]
+#[test]
+fn coffer_provider_vault_dir_missing_exits_1() {
+    let dir = temp_dir("cli-coffer-missing");
+    let missing = dir.join("no-such-vault");
+    let out = run_coffer(
+        &["mcp", "--provider", "coffer"],
+        &[
+            ("COFFER_VAULT_DIR", missing.to_str().expect("utf8 path")),
+            ("COFFER_VAULT_PASSWORD", "correct-horse-battery-staple-42!"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "库目录缺失（7001）→ 退出码 1");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("provider unavailable") || stderr.contains("7001"),
+        "stderr: {stderr}"
+    );
+}
+
+#[cfg(feature = "coffer-store")]
+#[test]
+fn coffer_provider_wrong_password_exits_3() {
+    let (vault_dir, _password) = create_fast_vault("cli-coffer-wrongpw");
+    let out = run_coffer(
+        &["mcp", "--provider", "coffer"],
+        &[
+            ("COFFER_VAULT_DIR", vault_dir.to_str().expect("utf8 path")),
+            ("COFFER_VAULT_PASSWORD", "wrong-password"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(3), "解锁失败（7002）→ 退出码 3");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("identity missing") || stderr.contains("7002"),
+        "stderr: {stderr}"
+    );
 }
 
 // ===========================================================================

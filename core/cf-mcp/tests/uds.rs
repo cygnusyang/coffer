@@ -8,6 +8,8 @@
 //!   EOF → 干净退出 0；socket 文件清理；权限 0600/0700；
 //! - challenge 回显错误 → initialize 拒绝 + 工具面关闭；
 //! - 非 spawn 方 PID → 连接被丢弃（客户端 EOF）、进程干净退出；
+//! - LOW-1 idle 读超时（docs/30 §1.5）：env 低于下限 → 配置错误退出 1；连接建立后
+//!   不发数据 → 超过超时值进程干净退出 0 + socket 清理；
 //! - 退出码契约复用 stdio（docs/27 D-1：0 干净 / 1 配置错 / 2 协议致命）。
 //!
 //! 子进程 env 用 `Command::env` 逐子进程下发，无跨用例污染（进程级环境变量
@@ -285,4 +287,86 @@ fn uds_non_spawner_peer_rejected() {
         "拒绝非 spawn 方是干净退出（连接生命周期完成），stderr: {stderr}"
     );
     assert!(!path.exists(), "退出后 socket 文件须清理");
+}
+
+/// LOW-1 idle 读超时（docs/30 §1.5）：env 低于下限（5 s）→ 配置错误退出 1，
+/// 不创建 socket 文件（fail-closed）。
+#[test]
+fn uds_idle_timeout_below_min_rejected() {
+    let path = uds_path("lowtimeout");
+    let mut child = Command::new(coffer_bin())
+        .args(["mcp", "--provider", "op", "--uds"])
+        .arg(&path)
+        .env("COFFER_OP_BIN", fake_op())
+        .env("COFFER_MCP_UDS_PEER_PID", std::process::id().to_string())
+        .env("COFFER_MCP_UDS_CHALLENGE", CHALLENGE)
+        .env("COFFER_MCP_UDS_READ_TIMEOUT_SECS", "5")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn coffer with --uds and below-min timeout");
+    let (code, stderr) = finish(&mut child);
+    assert_eq!(
+        code,
+        Some(1),
+        "低于下限的超时 env 须配置错误退出 1；stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("READ_TIMEOUT_SECS"),
+        "stderr 须给出可操作的超时配置错误: {stderr}"
+    );
+    assert!(!path.exists(), "配置错误不得创建 socket 文件");
+}
+
+/// LOW-1 idle 读超时断开（集成版，docs/30 §1.5）：env=10（下限）下发，连接建立后
+/// 不发数据 → 超过超时值进程干净退出 0、socket 清理。旧实现（无读超时）此用例
+/// 等不到退出 → 转红。
+#[test]
+fn uds_idle_read_timeout_disconnects() {
+    let path = uds_path("idle-it");
+    let mut child = Command::new(coffer_bin())
+        .args(["mcp", "--provider", "op", "--uds"])
+        .arg(&path)
+        .env("COFFER_OP_BIN", fake_op())
+        .env("COFFER_MCP_UDS_PEER_PID", std::process::id().to_string())
+        .env("COFFER_MCP_UDS_CHALLENGE", CHALLENGE)
+        .env("COFFER_MCP_UDS_READ_TIMEOUT_SECS", "10")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn coffer with --uds and min timeout");
+    assert!(wait_for_socket(&path, Duration::from_secs(10)));
+
+    // 连接保持打开但不发数据——idle 超时触发点（drop 会触发 EOF 干净退出，非本判据）。
+    let conn = UnixStream::connect(&path).expect("client must connect");
+
+    // 有界等待进程自行退出（~10s idle 窗）；旧实现挂起在此转红。
+    let deadline = SystemTime::now() + Duration::from_secs(20);
+    let code = loop {
+        match child.try_wait().expect("try_wait") {
+            Some(status) => break status.code(),
+            None => {
+                assert!(
+                    SystemTime::now() < deadline,
+                    "idle 超时后进程必须自行退出，不得挂起"
+                );
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    };
+    drop(conn);
+    assert_eq!(code, Some(0), "idle 超时须干净退出 0");
+    assert!(!path.exists(), "退出后 socket 文件须清理");
+
+    // stderr 须出现 idle 超时日志（确认走的是超时路径，而非其它退出）。
+    let mut stderr = String::new();
+    if let Some(mut e) = child.stderr.take() {
+        e.read_to_string(&mut stderr).expect("read stderr");
+    }
+    assert!(
+        stderr.contains("idle read timeout"),
+        "stderr 须记录 idle 超时断开: {stderr}"
+    );
 }

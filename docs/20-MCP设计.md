@@ -15,7 +15,7 @@
 ## 0. 结论先行
 
 1. **协议 = 官方 MCP（Model Context Protocol，JSON-RPC 2.0 传输）**，不是自造 JSON-RPC。Claude Code / Codex 原生消费 MCP，用户需求「通过 MCP 访问、与 Claude Code 协作」即落在 MCP 工具面。协议层错误码用 JSON-RPC/MCP 标准码，应用层错误另登记 **7xxx 段**（docs/03 §12 现行 1xxx~6xxx 已满，7xxx 空缺）。
-2. **MVP 数据源 = 1Password CLI（op）**，作为 `SecretProvider` 第一实现；Coffer 自家库为后续 provider（feature 门控）。**MCP 服务器是独立进程 `coffer mcp`，主 App 不宿主服务器**——进程边界保住 v0.4 判据②「App 运行时 0 socket」；`--uds` 上架则按 docs/10 §1.2 触发判据/措辞改写工单。
+2. **MVP 数据源 = 1Password CLI（op）**，作为 `SecretProvider` 第一实现；Coffer 自家库为后续 provider（feature 门控）。**MCP 服务器是独立进程 `coffer mcp`，主 App 不宿主服务器**——进程边界使主 App 保持无外部网络连接（判据②「关主窗口后 App 仍驻留，运行时无外部网络连接」）；`--uds` 本机内回环传输，随 D-4 裁定 **v2.1.0 实现**（判据② / NFR-SEC-07 措辞已按新口径统一改写，docs/27 附表）。
 3. **依赖方向（只下不上）**：cf-mcp 单向依赖下层。MVP 只依赖 cf-domain（CfError/SecretString）；Coffer 原生 provider 经 `coffer-store` feature 依赖 cf-session→cf-store。**不复用 cf-audit 作审计轨迹**——cf-audit 是弱密码体检（FR-6），与 AS-10「Secret 使用审计轨迹」语义不符，复用即分层语义违规。
 4. **MVP 工具集**：`list_secret_names` / `list_secrets`（仅元数据）/ `run_with_secret` / `get_secret_metadata`。grant/revoke/rotate/environment 系列 **absent**（权限模型与 secret 生命周期在 Coffer 现有模型中不存在，属 v2.x 完整面，见 docs/10 AS-4/AS-7）。
 5. **BUG-12 本版修**（并行微任务，不占 MCP 关键路径）：S3/P1 门禁否决力，修复面是测试基建，与 MCP 零文件交集。
@@ -104,8 +104,8 @@ core/cf-mcp/src/
 | 项 | 规范 |
 | --- | --- |
 | 默认传输 | **stdio**：stdout = 协议帧，stderr = 日志（MCP 规范；禁 stdout 打日志）。UTF-8，**换行分隔的 JSON-RPC 2.0 消息**（MCP stdio transport 约定） |
-| 可选传输 | `--uds PATH`：Unix domain socket，文件权限 **0600**、目录 **0700**；连接方 peer 凭据校验（macOS `getpeereid`）。⚠️ 上架即触发 docs/16 判据② + NFR-SEC-07 措辞改写工单（docs/10 §1.2 明确耦合） |
-| 零网络 | 不引入任何 TCP/UDP 代码路径；`--uds` 为 AF_UNIX，仍属「零网络暴露」（NFR-SEC-07 语义 = 无云端/数据不出本机，docs/10 §1.2） |
+| 可选传输 | `--uds PATH`：Unix domain socket，文件权限 **0600**、目录 **0700**；连接方 peer 凭据校验（macOS `getpeereid`）。**D-4 裁定（2026-10-07）：v2.1.0 实现**；本机内回环传输不违背零网络边界（无外部网络、数据不出本机，docs/27 附表） |
+| 零网络（无外部网络） | 不引入任何外部网络（远程 TCP/UDP）代码路径；`--uds` 为 AF_UNIX **本机回环**，属允许范围（NFR-SEC-07 语义 = 无云端/数据不出本机；本机内 UDS / 回环允许，docs/27 D-4） |
 
 ### 3.2 生命周期与消息流（MCP 规范子集）
 
@@ -160,7 +160,7 @@ client ──► (可选) notifications/cancelled / 连接关闭 ──► serve
 | 传输 | 威胁 | 对策 |
 | --- | --- | --- |
 | stdio | 无持久 token、会话短命，由消费方进程 spawn → replay 面 = 0（不存在可回放的已存凭据） | 不落盘任何 token；拒绝一切「已存会话恢复」模式 |
-| --uds | 本地进程可向 socket 写入伪造/重放请求 | ① 单次 connect 生命周期；② peer 凭据校验（`getpeereid` 须为 spawn 方 PID，spawn 时经 env 下发）；③ 会话随机 challenge（spawn 时经 env 下发，`initialize` 须回显）；④ 消息 id 单调递增，乱序/重号拒绝 |
+| --uds（**v2.1.0 实现，D-4 裁定**） | 本地进程可向 socket 写入伪造/重放请求 | ① 单次 connect 生命周期；② peer 凭据校验（`getpeereid` 须为 spawn 方 PID，spawn 时经 env 下发）；③ 会话随机 challenge（spawn 时经 env 下发，`initialize` 须回显）；④ 消息 id 单调递增，乱序/重号拒绝 |
 
 ---
 
@@ -282,7 +282,7 @@ coffer mcp [--provider op|coffer] [--uds PATH] [--log PATH] [--vault NAME] [--no
 | --- | --- |
 | `--provider op` | provider 选择（`op` 恒可用；缺省 = `$COFFER_MCP_PROVIDER`） |
 | `--provider coffer` | CofferStoreProvider（**仅 feature `coffer-store` 下可用**，§4.5；关闭时 `coffer` 同任意未知 provider → 配置错误退出 1；库路径/密码走 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`，`--vault` 在该路径忽略） |
-| `--uds PATH` | 监听 UDS 而非 stdio（⚠️ 触发 §3.1 改写工单） |
+| `--uds PATH` | 监听 UDS 而非 stdio（**D-4 裁定：v2.1.0 实现**；本机内回环传输，不违背零网络边界） |
 | `--log PATH` | 日志落文件（缺省 stderr；stdout 永为协议帧） |
 | `--vault NAME` | 默认 vault（缺省 `$COFFER_OP_VAULT`；`--provider coffer` 路径忽略） |
 | `--no-audit` | 关闭审计记录（缺省开启，若 §4.6 方案 A 落定） |
@@ -319,7 +319,7 @@ claude mcp add coffer -- coffer mcp --provider op --vault <vault>
 
 ### 6.2 进程边界与构建面（关键决策）
 
-- **主 App 不宿主 MCP 服务器**：MCP 服务器 = 独立 `coffer` 进程（由 Claude Code 经 stdio spawn，或 --uds 下由 App/launchd spawn）。主 App 只写配置、发注册命令、显示状态。**App 自身 0 socket 判据不受影响**（docs/16 判据② 测主 App PID）。
+- **主 App 不宿主 MCP 服务器**：MCP 服务器 = 独立 `coffer` 进程（由 Claude Code 经 stdio spawn，或 --uds 下由 App/launchd spawn）。主 App 只写配置、发注册命令、显示状态。**App 自身无外部网络连接判据不受影响**（docs/16 判据② 测主 App PID；本机内 UDS 传输由独立 coffer 进程承载，主 App 不监听——docs/27 D-4 新口径）。
 - 分发：`coffer` 二进制随 App 包内 `Contents/MacOS/` 或独立 Helper 安装并入 PATH（用户确认安装方式；对齐 1Password 把 op 作为集成组件分发的先例）。构建脚本 `tools/build_macos_app.sh` 增装配步骤（本版不落地，仅设计）。
 
 ### 6.3 UI 纪律（沿用 docs/07 §2.4 + docs/17 §6）
@@ -410,5 +410,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.3 | 2026-09-30 | **§3.4 / §4.2 错误表述向实现看齐（G-F，dev-reviewer L5）**：§3.4 表 7004 由「run_with_secret 子进程非零退出」修正为「op 无法启动目标子进程（spawn 失败）」——实现（`core/cf-mcp/src/provider/op.rs` / `test_seed`）对子进程非零退出作 `Ok(exit_code)` 原样返回、非错误；7004 仅用于 spawn 阶段失败。§4.2 错误行由「op 非零退出 → 归一 7001/7002/7003」补全为 7001~7006 全段。docs/03 §12 已登记 7xxx 段（7001~7006）；缺陷登记见 KNOWN-ISSUES M-1 / M-4 / L 系列。 |
 | r0.4 | 2026-10-07 | **G-F 核销批次（v2.0.0）**：KNOWN-ISSUES 核销回填——M-1/M-4/L-1/L-2/L-3 → `72e4af6`、L-7 → `7c0a217`，L-5 显式顺延 v2.1（不核销）；§3.5-6 / §4.4 M-1 blast-radius 补注（目标子进程 stderr 透传例外 + OP_SESSION 暴露半径）；§4.5 / §8 U-4 临时约定落档（74a4538 标签即数据映射，待用户追认，与 D-1~D-4 并列挂起）。 |
 | r0.5 | 2026-10-07 | **G-D 接线后核销批次（v2.0.0）**：KNOWN-ISSUES L-4 核销（实现 `74a4538` + 接入 `f623eb9`，核销条件「实现 + 接入」两段齐备）；§4.3 补 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD` env 约定（密码经 `SecretString`/ZeroizeOnDrop，不经 argv/协议帧/日志，§3.5-4 同款边界）；§4.5「本版未接线」→「已接入（f623eb9）」；§5.2 `--provider` 补 `coffer` 行（feature 门控，关闭时同未知 provider 退出 1，`--vault` 该路径忽略）+ 用法行与 `--vault` 行同步。 |
+| r0.6 | 2026-10-07 | **零网络措辞全仓改写（D-4 裁定，docs/27 附表）**：§0 结论 2、§3.1 传输行（`--uds` 改「v2.1.0 实现（D-4 已裁定）」+ 零网络行新口径）、§3.6 防重放表 `--uds` 行标注 v2.1.0、§5.2 `--uds` flag 行、§6 构建面「App 自身 0 socket 判据」→「App 自身无外部网络连接判据」。§8 D-4 决策行（01a6ca9 已落）不再改；修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约；D-1~D-4 与 U-4 用户确认回填后升 r0.6。*

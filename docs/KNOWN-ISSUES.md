@@ -463,13 +463,13 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ---
 
-## M-1（🟡 登记待后续处理）：run_with_secret 目标子进程 stderr 整体吞掉 + 子进程继承 OP_SESSION（blast-radius 未文档化）
+## M-1（✅ 已修复：72e4af6）：run_with_secret 目标子进程 stderr 整体吞掉 + 子进程继承 OP_SESSION（blast-radius 未文档化）
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C（mcp-op）审查发现，非阻断项（docs/20 §9.1 G-F 登记）
 **分级**：严重级 S3（dev-reviewer 判 MEDIUM——子进程 stderr 对调用方不可见，且 OP_SESSION 落入目标子进程 env 的 blast-radius 未明示）/ 优先级 P2 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（G-C 审查）
-**状态**：🟡 登记待后续处理（MVP 保持现状可接受，需架构裁定透传/日志化取舍）
-**核销记录**：待回填
+**状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
+**核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 1 文档 + 方案 2 子集 stderr 透传）。透传语义 = 目标子进程**非零退出**时其 stderr 透传到 cf-mcp 自身 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 = stderr），截断至 16 KiB 取末段（`MAX_FORWARDED_CHILD_STDERR`）、**标注不脱敏**（子进程输出不受 Coffer 控制，§3.5-3 诚实边界延伸）；**成功路径与 op 层失败路径不透传**（op stderr 仅按关键字归类为稳定文案，不进错误载荷，§4.2）。blast-radius 文档化 = docs/20 §3.5-6 / §4.4 补注（本次 G-F 核销批次）。复验 = `forward_child_stderr_labels_content_and_caps`（op.rs 单测）+ `run_with_secret_child_stderr_does_not_break_exit_code_contract`（core/cf-mcp/tests/provider_op_run.rs）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` run_with_secret（`cmd.stdout(Stdio::null())` + `output()` 捕获 stderr 仅作 op 层分类，不向调用方透出）；`op_command()` 设 `OP_SESSION`，经 `op run` spawn 的目标子进程继承之
 
 ### 现象（预期/实际 分行写）
@@ -481,10 +481,10 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 stderr 捕获后归一为稳定错误文案（剥离敏感值，§3.5-4 日志禁值纪律），**无向调用方透传子进程 stderr 的通道**；`OP_SESSION` 继承是进程环境语义（非缺陷，属设计），但 blast-radius 未文档化。
 
-### 修复路径（候选，未拍板）
+### 修复路径（2026-10-05 已落地：方案 1 + 方案 2 子集）
 
-1. 文档明示 blast-radius（docs/20 §3.5/§4.4 补一句：`op run` 启动的目标子进程继承 `OP_SESSION`，须视为凭据暴露半径的一部分）；
-2. 子进程 stderr 透传/日志化取舍：stdout 恒为协议帧不可让渡，stderr 可经日志文件（`COFFER_MCP_LOG`）落盘或加开关透传——泄露面 vs 可诊断性，需架构裁定；
+1. 文档明示 blast-radius（docs/20 §3.5/§4.4 补一句：`op run` 启动的目标子进程继承 `OP_SESSION`，须视为凭据暴露半径的一部分）——✅ 落地：docs/20 §3.5-6 / §4.4 补注（本次 G-F 核销批次）；
+2. 子进程 stderr 透传/日志化取舍：stdout 恒为协议帧不可让渡，stderr 可经日志文件（`COFFER_MCP_LOG`）落盘或加开关透传——泄露面 vs 可诊断性，需架构裁定——✅ 落地子集：非零退出路径透传（16 KiB 截断、不脱敏标注），成功路径与 op 层失败路径不透传（保持剥离纪律）；
 3. 不动作（MVP 保持吞掉）亦可接受——登记留档。
 
 ### 复现与诊断
@@ -493,13 +493,13 @@ fake op fixture + 子进程写 stderr（`sh -c 'echo oops >&2; exit 1'`）→ ru
 
 ---
 
-## M-4（🟡 登记待协商）：run_with_secret 缺省 env_name 取整个 secret 串——`op://` 引用必 7005
+## M-4（✅ 已修复：72e4af6）：run_with_secret 缺省 env_name 取整个 secret 串——`op://` 引用必 7005
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C 审查发现，跨层联动（G-B `tools.rs` 缺省 vs G-C `op.rs` 校验），非阻断项（docs/20 §9.1 G-F 登记）
 **分级**：严重级 S3（dev-reviewer 判 MEDIUM——带 `op://` 引用且省略 env_name 的 run_with_secret 调用恒 7005，功能面缺口）/ 优先级 P2 / 来源版本 v2.0.0（MCP，G-B/G-C 契约） / 发现版本 v2.0.0（G-C 审查）
-**状态**：🟡 登记待协商（属 G-B/G-C 契约联动，需协商确定 env_name 缺省语义；改 API 签名触 D-1 冻结契约需用户确认）
-**核销记录**：待回填
+**状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
+**核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 2：缺省取 `op://` 引用末段——新增 `default_env_name`，field 名优先、退化取 item 名，规则随 L-3 一并锁定）；API 签名不变（env_name 保持可选，**不触 D-1 冻结契约**）。复验 = `default_env_name_takes_reference_last_segment`（op.rs 单测）+ `run_uses_default_env_name_derived_from_reference`（core/cf-mcp/tests/provider_op_run.rs）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/tools.rs:218` `optional_string(args, "env_name").unwrap_or_else(|| secret.clone())`（缺省取整个 secret 串）；`core/cf-mcp/src/provider/op.rs` `is_valid_env_name`（`[A-Za-z_][A-Za-z0-9_]*`）——`op://vault/item/field` 含 `/`/`:` 必不匹配 → 7005
 
 ### 现象（预期/实际 分行写）
@@ -511,7 +511,7 @@ fake op fixture + 子进程写 stderr（`sh -c 'echo oops >&2; exit 1'`）→ ru
 
 G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用的「名字」理解与 G-C 的 env 名合法性校验不一致——`op://vault/item/field` 整串不是合法环境变量名。跨层契约缺口。
 
-### 修复路径（候选，需协商）
+### 修复路径（2026-10-05 已落地：方案 2 缺省取引用末段）
 
 1. env_name 改必填（inputSchema `required` 增 env_name）——API 签名变更，触 D-1 冻结契约，需用户确认；
 2. 缺省取 `op://` 引用末段（field/item 名）作默认变量名——需定义「从引用提取默认变量名」规则（field 歧义，见 L-3）；
@@ -523,39 +523,39 @@ G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用�
 
 ---
 
-## L-1（🟡 LOW）：临时 dotenv 非 unix 分支无 0600 权限约束
+## L-1（✅ 已修复：72e4af6）：临时 dotenv 非 unix 分支无 0600 权限约束
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
 **分级**：S4 / P3 / 来源版本 v2.0.0（MCP，docs/20 §4.2） / 发现版本 v2.0.0（G-C 审查）
-**状态**：🟡 登记待后续处理
-**核销记录**：待回填
+**状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
+**核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 B：非 unix 分支随不支持平台一并拒编译——模块级 `#[cfg(not(unix))] compile_error!`，消除无权限约束缺口面）；复验 = `temp_dotenv_writes_with_0600_permissions`（op.rs 单测）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write`——`#[cfg(unix)]` 分支 `OpenOptionsExt::mode(0o600)`，`#[cfg(not(unix))]` 分支 `File::create` 无权限约束
 
-`TempDotenv` 内容仅 `ENV_NAME=op://…` 引用（无明文值，§4.4），cf-mcp 目标平台 macOS（unix）故当前无实际暴露；非 unix 分支权限缺口登记留档。修复 = 非 unix 分支补平台权限 API，或随不支持的平台一并拒编译。
+`TempDotenv` 内容仅 `ENV_NAME=op://…` 引用（无明文值，§4.4），cf-mcp 目标平台 macOS（unix）故当前无实际暴露；非 unix 分支权限缺口登记留档。修复（2026-10-05 已落地）= 随不支持的平台一并拒编译（`#[cfg(not(unix))] compile_error!`）。
 
 ---
 
-## L-2（🟡 LOW）：临时 dotenv `create_new` 撞名直接 7006，无重试
+## L-2（✅ 已修复：72e4af6）：临时 dotenv `create_new` 撞名直接 7006，无重试
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
-**状态**：🟡 登记待后续处理
-**核销记录**：待回填
+**状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
+**核销记录**：修复 = commit `72e4af6`（2026-10-05，写入抽成 `write_with_path_gen` 可重试路径——`create_new` 撞名（`AlreadyExists`）换路径重试，上限 `ENV_FILE_WRITE_ATTEMPTS` = 8；路径唯一性由 `temp_env_path`（pid + 纳秒 + 进程内原子计数器 `ENV_FILE_COUNTER`）保证，其他 IO 错误不重试直接 7006）；复验 = `temp_dotenv_retries_on_create_new_collision` + `temp_env_path_is_unique_per_call`（op.rs 单测）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write` 用 `create_new(true)`——文件已存在则直接 `Internal`（7006）
 
 路径含 pid + 进程内原子计数器（`temp_env_path`），跨进程由 pid 隔离、进程内由计数器保证，实际碰撞面 ≈ 0；无重试可接受，登记留档。
 
 ---
 
-## L-3（🟡 LOW）：`op://vault/item/field` 末段恒判为 field——item 名含 `/` 的无 field 引用无法表达
+## L-3（✅ 已修复：72e4af6，规则锁定 + 接受留档）：`op://vault/item/field` 末段恒判为 field——item 名含 `/` 的无 field 引用无法表达
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
-**状态**：🟡 登记待后续处理（与 M-4 缺省 env_name 规则联动）
-**核销记录**：待回填
+**状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05，规则锁定 + 接受留档）
+**核销记录**：commit `72e4af6`（2026-10-05）与 M-4 一并定规则并锁定——引用解析与缺省 env_name 统一「末段恒判 field，无 field 引用取 item 名」；`default_env_name_rule_is_locked_for_run_path`（provider_op_run.rs）哨兵测试锁规则（`op://Personal/a/b` → `b`，item 名含 `/` 恒判末段为 field）；item 名含 `/` 的无 field 引用无法表达一项**接受留档**（op 实测语义冲突面小，必要时引入显式 field designation 语法）。复验 = `default_env_name_rule_is_locked_for_run_path` → cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` `parse_secret_ref`——`op://vault/item/field` 剥除末段作 field；item 名本身含 `/`（op 允许）且无 field 时歧义（`op://vault/a/b` 被解析为 item="a"、field="b"）
 
 当前 `get_secret_metadata` 用其取 item，歧义会解析错 item；op 实测语义（末段 = field）与「item 名含 /」冲突面小，登记留档。必要时引入显式 field designation 语法。
@@ -685,13 +685,13 @@ grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` �
 
 ---
 
-## L-5（🟡 LOW）：tools.rs `tracing::warn!` 无 subscriber——审计失败告警恒被丢弃
+## L-5（🟡 显式顺延 v2.1）：tools.rs `tracing::warn!` 无 subscriber——审计失败告警恒被丢弃
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-1，LOW）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
-**状态**：🟡 登记待后续处理
-**核销记录**：待回填
+**状态**：🟡 显式顺延 v2.1（2026-10-07 lead 裁定，不修复不核销）
+**核销记录**：非修复项——显式顺延 v2.1（lead 裁定：v2.0.0 本版 NoopAudit 不可达、不构成实际缺陷；D-3 JSONL 落地时随审计链路一并处理，届时若需告警路径再补 subscriber）
 **证据**：`core/cf-mcp/src/tools.rs:242` `tracing::warn!(error = ?e, secret = %secret, "audit record failed")`——仓库从未初始化 tracing subscriber
 
 当前 NoopAudit 不会失败（不可达），但 D-3 JSONL 落地后审计失败将**静默**（违反「错误不静默吞」纪律）。修复 = 改用 `cli::Logger` 或初始化 subscriber / 文档化。
@@ -722,16 +722,16 @@ grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` �
 
 ---
 
-## L-7（🟡 LOW）：parse_frame 对单行长度无上限——恶意/失控客户端可发超大单行造成内存压力
+## L-7（✅ 已修复：7c0a217）：parse_frame 对单行长度无上限——恶意/失控客户端可发超大单行造成内存压力
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-3，LOW）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
-**状态**：🟡 登记待后续处理
-**核销记录**：待回填
+**状态**：✅ 已修复（v2.0.0，commit `7c0a217`，2026-10-05）
+**核销记录**：修复 = commit `7c0a217`（2026-10-05，传输层有界读取：单行超限拒收 7005、连接拒绝退出；边界内行正常处理）；复验 = `parse_frame_rejects_line_above_max_length_with_7005` / `parse_frame_accepts_line_at_max_length_boundary` / `handle_line_rejects_overlong_line_with_7005_frame` / `serve_with_overlong_line_emits_7005_then_returns_fatal_err` / `serve_with_processes_normal_lines_and_returns_ok_on_eof`（core/cf-mcp/tests/protocol_frames.rs）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/protocol.rs:89-103` `parse_frame` 对单行长度无上限
 
-本地 stdio 传输，影响面小；可选按行长度截断（超限报 7005/连接拒绝）。
+本地 stdio 传输，影响面小；按行长度截断（超限报 7005/连接拒绝）已落地（7c0a217）。
 
 ---
 

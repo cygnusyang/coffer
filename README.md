@@ -143,6 +143,68 @@ cargo test --workspace --no-fail-fast
 
 ---
 
+## 使用说明
+
+### 构建 App
+
+```bash
+./tools/build_macos_app.sh      # 产物 → macos/build/Coffer.app
+open macos/build/Coffer.app     # 建议拖入 /Applications
+```
+
+要求 Rust >= 1.85；构建链路与签名核查详见 `macos/README.md`。本地构建产物为开发签名（未公证），首次启动若被 Gatekeeper 拦截：右键 App → 「打开」。正式分发构建（官方签名 + 离线序列号激活，7 天试用期、到期只读保护）不在本公开仓——源码自建默认不启用许可门禁（`PermitAllGate`）。
+
+### 首次启动与建库
+
+1. 首启创建保险库并设置**主密码**——这是唯一解锁凭据，无服务端、无恢复后门，**遗失 = 数据永久丢失**
+2. 解锁后即可使用：**22 类条目模板**（Login / Credit Card / Identity / SSH Key 等）+ 自定义字段、**TOTP 验证码**、随机字符 / 密码短语**双模式生成器**
+3. 安全与便利设置在「设置」页：自动锁定、剪贴板五档（复制后自动清除时长）、备份提醒档位、菜单栏常驻（全局快捷键 ⌥⌘P 呼出，关窗驻留）
+
+### 导入 / 导出 / 备份
+
+| 方向 | 格式 | 说明 |
+| --- | --- | --- |
+| 导入 | 1PUX（1Password）、CSV、opvault | 字段映射逐项可核对、未知字段不静默丢弃；opvault 尚未与真实 1Password 导出完成交叉验证 |
+| 导出 | 1PUX 兼容（官方 v3 结构）、CSV | CSV 为**明文**，导出前有双重门禁确认 |
+| 备份 | 加密备份 / 从备份恢复 | 支持改主密码（换密不重加密全库） |
+
+### CLI：`coffer` 与 `coffer mcp`
+
+```bash
+cd core && cargo build --release -p cf-mcp
+# 产物：core/target/release/coffer（可自行拷入 PATH）
+```
+
+当前 CLI 唯一子命令 `mcp`——启动一个 MCP 服务器进程，供 Claude Code 等 Agent 客户端取密。两种数据源：
+
+| provider | 选择方式 | 前置条件 |
+| --- | --- | --- |
+| `coffer`（**缺省**） | 默认，无需 flag | env `COFFER_VAULT_DIR`（库路径）+ `COFFER_VAULT_PASSWORD`（解锁密码；缺任一 → 配置错误退出 1） |
+| `op`（1Password CLI） | `--provider op` | 已安装并 `op signin`；`--vault <vault>` 指定库 |
+
+审计日志（JSONL）缺省开启，`--log PATH` 改日志落点、`--no-audit` 关闭审计；传输缺省 stdio，`--uds PATH` 提供本机内 UDS 端点（面向浏览器取密等非 CLI 消费方，spawner 需按 `docs/20` §3.6 下发 peer 校验 env）。完整参数与错误码见 `docs/20-MCP设计.md` §5。
+
+### 与 Claude Code 协作（MCP）
+
+Claude Code 以 stdio 子进程方式运行 `coffer mcp`，注册一次即可。注册后 Agent 可调用 4 个工具（契约已冻结）：`list_secret_names` / `list_secrets` / `run_with_secret` / `get_secret_metadata`。
+
+```bash
+# 数据源 = Coffer 自家库（coffer 不在 PATH 时写完整路径）
+claude mcp add coffer \
+  -e COFFER_VAULT_DIR=/path/to/vault \
+  -e COFFER_VAULT_PASSWORD=... \
+  -- coffer mcp --provider coffer
+
+# 数据源 = 1Password CLI
+claude mcp add coffer -- coffer mcp --provider op --vault <vault>
+```
+
+App 内「设置 → MCP / Agent 协作」提供状态检查与「复制注册命令」一键复制（对齐 1Password「Connect to Claude」）。
+
+> 已知坑：**未签名 CLI** 读取官方签名 App 创建的 keychain 记录（如 Touch ID 托管的生物识别解锁条目）时，macOS 会弹 keychain ACL 同意框。规避：对弹窗完成一次同意授权，或用与 App 相同签名身份构建 CLI。
+
+---
+
 ## 测试与质量门
 
 | 检查项 | 结果 |
@@ -163,6 +225,7 @@ cargo test --workspace --no-fail-fast
 | 日期 | 说明 |
 | --- | --- |
 | 2026-10-07 | 零网络措辞按 docs/27 D-4 边界重申统一改写（简介与「零网络可验证」特性行）：**边界 = 禁止外部网络（不去云端、数据不出本机）为硬承诺；本机内 UDS / 本机回环允许且不违背承诺** |
+| 2026-10-07 | 新增「使用说明」章：App 构建 / 首启建库 / 导入导出备份 / `coffer mcp` CLI（双 provider + env 约定）/ MCP 接入 Claude Code（`claude mcp add` 注册命令与 4 工具契约） |
 
 ---
 

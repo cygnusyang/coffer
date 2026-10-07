@@ -359,6 +359,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_create_item(uint64_t ptr, RustBu
 void uniffi_cf_ffi_fn_method_vaultsession_delete_item(uint64_t ptr, RustBuffer item_id, int8_t hard, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DERIVE_MCP_KEY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DERIVE_MCP_KEY
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_derive_mcp_key(uint64_t ptr, RustBuffer password, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_diagnostic_summary(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -369,6 +374,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_diagnostic_summary(uint64_t ptr,
 void uniffi_cf_ffi_fn_method_vaultsession_disable_biometric(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISABLE_MCP_ESCROW
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISABLE_MCP_ESCROW
+void uniffi_cf_ffi_fn_method_vaultsession_disable_mcp_escrow(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISPLAY_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DISPLAY_NAME
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_display_name(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -377,6 +387,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_display_name(uint64_t ptr, RustC
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
 void uniffi_cf_ffi_fn_method_vaultsession_enable_biometric(uint64_t ptr, RustBuffer password, RustBuffer k_bio, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_MCP_ESCROW
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_MCP_ESCROW
+void uniffi_cf_ffi_fn_method_vaultsession_enable_mcp_escrow(uint64_t ptr, RustBuffer password, RustBuffer mcp_key, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
@@ -412,6 +427,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_get_item(uint64_t ptr, RustBuffe
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
 int8_t uniffi_cf_ffi_fn_method_vaultsession_has_biometric_wrap(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_MCP_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_MCP_WRAP
+int8_t uniffi_cf_ffi_fn_method_vaultsession_has_mcp_wrap(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HEALTH_REPORT
@@ -1007,6 +1027,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_delete_item(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DERIVE_MCP_KEY
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DERIVE_MCP_KEY
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_derive_mcp_key(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DIAGNOSTIC_SUMMARY
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_diagnostic_summary(void
@@ -1019,6 +1045,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_disable_biometric(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISABLE_MCP_ESCROW
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISABLE_MCP_ESCROW
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_disable_mcp_escrow(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISPLAY_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DISPLAY_NAME
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_display_name(void
@@ -1028,6 +1060,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_display_name(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_BIOMETRIC
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_MCP_ESCROW
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_MCP_ESCROW
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_mcp_escrow(void
     
 );
 #endif
@@ -1070,6 +1108,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_get_item(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_BIOMETRIC_WRAP
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_MCP_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_MCP_WRAP
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_mcp_wrap(void
     
 );
 #endif

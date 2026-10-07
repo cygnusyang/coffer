@@ -419,6 +419,64 @@ impl VaultSession {
         .map(Into::into)
     }
 
+    // -------------------------------------------- MCP 解锁托管（docs/29 G3b）
+
+    /// 派生 MCP 托管密钥（docs/29 §5.2 enable 流程 ①）。
+    ///
+    /// 门禁：需解锁态（锁定 → 1001）。内部经 `recover_dek` 重验证主密码
+    /// 并解出 DEK（错 → 1002）→ HKDF 确定性派生 mcp_key（DEK 派生，
+    /// 非随机；换主密码不吊销，docs/29 §5.3）。返回 32 字节密钥（供
+    /// Swift 写入 Keychain——先 Keychain 后 header 顺序裁定，docs/29
+    /// §5.2）；Rust 侧不落任何状态。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错 / 1007 派生失败。与 [`Self::unlock`]
+    /// 共享暴力退避计数器（docs/29 §4.3 G2）。
+    pub fn derive_mcp_key(&self, password: String) -> Result<Vec<u8>, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.derive_mcp_key(&password)))
+            .map(|key| key.as_bytes().to_vec())
+    }
+
+    /// 启用 MCP 解锁托管（docs/29 §5.2 enable 流程 ③，header 侧）。
+    ///
+    /// 门禁：需解锁态（锁定 → 1001）。传入主密码而非 DEK（D-6 同款）：
+    /// 内部经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，此时
+    /// header 未变）→ mcp_key 封装 DEK → 原子重写 header 的 `mcp_wrap`
+    /// 段。Rust 不触碰 Keychain——调用前 Swift 已把 mcp_key 写入
+    /// Keychain（先 Keychain 后 header）；本方法返回 Err 时 header 保持
+    /// 原样，Swift 依据 Err 补偿删除 Keychain 项（docs/29 §5.2）。
+    ///
+    /// `mcp_key` 必须为 32 字节（建议经
+    /// [`VaultSession::derive_mcp_key`] 取得；长度不符 → 5002）。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错 / 5002 mcp_key 长度 / 5001·1005 写失败。
+    pub fn enable_mcp_escrow(&self, password: String, mcp_key: Vec<u8>) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.enable_mcp_escrow(&password, &mcp_key)
+        }))
+    }
+
+    /// 关闭 MCP 解锁托管（docs/29 §5.2 disable，header 侧）。
+    ///
+    /// 门禁：需解锁态（1001）。原子重写 header → 禁用态（`mcp_wrap`
+    /// 回落默认值）；**幂等**——已是禁用态时不重写文件。Keychain 项删除
+    /// 在 Swift 侧先行且幂等；本方法失败非致命、可重试（docs/29 §5.2）。
+    pub fn disable_mcp_escrow(&self) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.disable_mcp_escrow()))
+    }
+
+    /// 是否启用了 MCP 托管封装（header `mcp_wrap.available`，docs/29 §2：
+    /// 语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥操作；
+    /// 供设置页决定是否显示托管开关态。实际可用性由 Swift 侧 Keychain
+    /// 信号组合判定（三态见 docs/29 §5.2 resolve：本方法只出 Rust 侧
+    /// 可得的 header available 信号，Keychain 条目存在性由 Swift 组合）。
+    pub fn has_mcp_wrap(&self) -> bool {
+        self.inner.has_mcp_wrap()
+    }
+
     // ------------------------------------------------------ 条目 CRUD
 
     /// 列出条目（updated_at 倒序）；`filter` 传 `None` 为默认全量。
@@ -1495,6 +1553,109 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code(), 5999);
         assert!(matches!(err, FfiError::InternalPanic { .. }));
+    }
+
+    // ------------------------------------------- MCP 解锁托管（docs/29 G3b）
+
+    /// 4 接口跨 FFI 冒烟（docs/29 §5.2 enable/disable 流程 ①②③ 的
+    /// Rust/header 侧）：derive_mcp_key 确定性派生（两次调用同值且 32B）→
+    /// enable（错密码 1002 且 header 不变）→ 正确密码 → hasMcpWrap=true →
+    /// disable（幂等）→ hasMcpWrap=false，roundtrip 闭环。
+    #[test]
+    fn mcp四接口跨ffi冒烟() {
+        let base = temp_base("mcp_smoke");
+        let brief = setup_vault(&base, "MCP 托管库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        // 未启用态：hasMcpWrap=false
+        assert!(!session.has_mcp_wrap());
+
+        // 解锁（derive/enable 的门禁要求解锁态）→ 错密码 derive → 1002
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        let err = session
+            .derive_mcp_key("wrong password indeed!".to_owned())
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+
+        // 确定性派生：正确密码 → 32B，两次调用同值（DEK 派生非随机，
+        // 重启用幂等覆盖，docs/29 §5.3）
+        let mcp_key = session.derive_mcp_key(STRONG_PASSWORD.to_owned()).unwrap();
+        assert_eq!(mcp_key.len(), 32, "mcp_key 必须是 32 字节（docs/29 §3.1）");
+        let mcp_key_again = session.derive_mcp_key(STRONG_PASSWORD.to_owned()).unwrap();
+        assert_eq!(mcp_key, mcp_key_again, "确定性派生：两次调用必须同值");
+
+        // 错密码 enable → 1002 且 header 未变
+        let err = session
+            .enable_mcp_escrow("wrong password indeed!".to_owned(), mcp_key.clone())
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert!(!session.has_mcp_wrap(), "错密码 enable 后 header 不得变更");
+
+        // 正确密码 enable → 意图位翻转
+        session
+            .enable_mcp_escrow(STRONG_PASSWORD.to_owned(), mcp_key)
+            .unwrap();
+        assert!(session.has_mcp_wrap());
+
+        // disable（幂等）→ 意图位回落；重复 disable 保持禁用态
+        session.disable_mcp_escrow().unwrap();
+        assert!(!session.has_mcp_wrap());
+        session.disable_mcp_escrow().unwrap();
+        assert!(!session.has_mcp_wrap(), "幂等：重复 disable 保持禁用态");
+    }
+
+    /// mcp_key 非 32 字节 → 5002（enable 门禁，docs/29 §5.2）
+    #[test]
+    fn mcp接口mcp_key长度不符返回5002() {
+        let base = temp_base("mcp_len");
+        let brief = setup_vault(&base, "长度库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let short = vec![7u8; 16];
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        assert_eq!(
+            session
+                .enable_mcp_escrow(STRONG_PASSWORD.to_owned(), short.clone())
+                .unwrap_err()
+                .code(),
+            5002
+        );
+        assert!(!session.has_mcp_wrap(), "长度门禁失败后 header 不得变更");
+    }
+
+    /// 锁定态 derive / enable / disable → 1001（门禁在 Rust 侧强制）
+    #[test]
+    fn mcp接口锁定态门禁返回1001() {
+        let base = temp_base("mcp_locked");
+        let brief = setup_vault(&base, "锁定门禁库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let mcp_key = vec![7u8; 32];
+        assert_eq!(
+            session
+                .derive_mcp_key(STRONG_PASSWORD.to_owned())
+                .unwrap_err()
+                .code(),
+            1001
+        );
+        assert_eq!(
+            session
+                .enable_mcp_escrow(STRONG_PASSWORD.to_owned(), mcp_key.clone())
+                .unwrap_err()
+                .code(),
+            1001
+        );
+        assert_eq!(session.disable_mcp_escrow().unwrap_err().code(), 1001);
+        assert!(!session.has_mcp_wrap(), "锁定态门禁失败后 header 不得变更");
     }
 
     /// list_vaults 枚举：只读 header.json，损坏目录跳过不中断

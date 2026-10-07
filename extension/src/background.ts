@@ -36,6 +36,7 @@ import {
   type EntryInfo,
 } from "./protocol";
 import { fillableFields } from "./fillable";
+import { originOfUrl } from "./origin";
 import type {
   SessionState,
   PendingSnapshotData,
@@ -418,11 +419,20 @@ async function fillFromEntry(tabId: number, ctx: MenuContext, entry: string): Pr
   const values = body.values; // keys = requested field names (contract v1)
   const usernameField = fields.find((f) => f.role === "username");
   const passwordField = fields.find((f) => f.role === "password");
+  // HIGH-1 (G-R): re-verify the tab URL still matches the approved origin before the
+  // plaintext is sent to the frame — the tab could have drifted (navigation / user
+  // switch) since the menu opened. Fail-closed: unverifiable URL → reject.
+  const tab = await chrome.tabs.get(tabId);
+  if (originOfUrl(tab.url) !== ctx.origin) {
+    throw new ProtocolError(ErrCode.OriginNotBound, "tab origin changed since menu opened");
+  }
   const msg: BackgroundToContentMessage = {
     type: "fill_values",
     entry,
     username: (usernameField ? values[usernameField.name] : undefined) ?? "",
     password: (passwordField ? values[passwordField.name] : undefined) ?? "",
+    origin: ctx.origin,
+    action: ctx.action ?? null,
   };
   await chrome.tabs.sendMessage(tabId, msg, { frameId: ctx.hostFrameId });
 }

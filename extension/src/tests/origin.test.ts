@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   parseOrigin,
   canonicalOrigin,
+  originOfUrl,
   type OriginBinding,
   validateBinding,
   matchBinding,
@@ -187,4 +188,22 @@ test("matchBindings: deterministic first-wins within equal priority", () => {
     { type: "domain", pattern: "sub.example.com" },
   ];
   assert.equal(matchBindings("https://sub.example.com", bindings)?.pattern, "example.com");
+});
+
+// --- originOfUrl (HIGH-1 tab re-verification; fail-closed) --------------------------
+
+test("originOfUrl: parses http(s) tab URLs and canonicalizes", () => {
+  assert.equal(originOfUrl("https://example.com/path?q=1"), "https://example.com");
+  assert.equal(originOfUrl("http://Example.COM:80/"), "http://example.com");
+  assert.equal(originOfUrl("https://example.com:8443/x"), "https://example.com:8443");
+});
+
+test("originOfUrl: unverifiable tab URLs → null (fail-closed, tab check rejects)", () => {
+  assert.equal(originOfUrl(undefined), null);
+  assert.equal(originOfUrl(null), null);
+  assert.equal(originOfUrl(""), null);
+  assert.equal(originOfUrl("about:blank"), null);
+  assert.equal(originOfUrl("chrome-extension://abc/foo"), null);
+  assert.equal(originOfUrl("data:text/html,hi"), null);
+  assert.equal(originOfUrl("not a url"), null);
 });

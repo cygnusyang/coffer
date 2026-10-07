@@ -372,6 +372,40 @@
     return out.filter((f) => f.role === "username").concat(out.filter((f) => f.role === "password"));
   }
 
+  // src/origin.ts
+  function normalizeHost(host) {
+    let h = host.trim().toLowerCase();
+    if (h.endsWith(".")) h = h.slice(0, -1);
+    return h;
+  }
+  function parseOrigin(input) {
+    if (!input || typeof input !== "string") return null;
+    let url;
+    try {
+      url = new URL(input);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.origin === "null") return null;
+    const host = normalizeHost(url.hostname);
+    if (host.length === 0) return null;
+    const port2 = url.port ? Number(url.port) : null;
+    return {
+      scheme: url.protocol === "https:" ? "https" : "http",
+      host,
+      port: port2,
+      canonical: url.origin
+    };
+  }
+  function canonicalOrigin(input) {
+    return parseOrigin(input)?.canonical ?? null;
+  }
+  function originOfUrl(raw) {
+    if (!raw || typeof raw !== "string") return null;
+    return canonicalOrigin(raw);
+  }
+
   // src/background.ts
   var NATIVE_HOST = "com.coffer.browser";
   var PAIRING_KEY = "coffer_pairing";
@@ -652,11 +686,17 @@
     const values = body.values;
     const usernameField = fields.find((f) => f.role === "username");
     const passwordField = fields.find((f) => f.role === "password");
+    const tab = await chrome.tabs.get(tabId);
+    if (originOfUrl(tab.url) !== ctx.origin) {
+      throw new ProtocolError(8005 /* OriginNotBound */, "tab origin changed since menu opened");
+    }
     const msg = {
       type: "fill_values",
       entry,
       username: (usernameField ? values[usernameField.name] : void 0) ?? "",
-      password: (passwordField ? values[passwordField.name] : void 0) ?? ""
+      password: (passwordField ? values[passwordField.name] : void 0) ?? "",
+      origin: ctx.origin,
+      action: ctx.action ?? null
     };
     await chrome.tabs.sendMessage(tabId, msg, { frameId: ctx.hostFrameId });
   }

@@ -23,7 +23,16 @@ export type UiToBackgroundMessage =
 // --- background -> content script -----------------------------------------------------
 
 export type BackgroundToContentMessage =
-  | { type: "fill_values"; entry: string; username: string; password: string }
+  | {
+      type: "fill_values";
+      entry: string;
+      username: string;
+      password: string;
+      /** Approved origin from the menu/popup context — re-verified before writing (HIGH-1). */
+      origin: string;
+      /** Approved form action at menu-open (null if none); same-origin re-checked before writing. */
+      action: string | null;
+    }
   | { type: "get_pending_snapshot" }
   | { type: "capture_saved" };
 

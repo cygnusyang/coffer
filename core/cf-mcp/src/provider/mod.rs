@@ -97,6 +97,22 @@ impl fmt::Display for ProviderError {
 
 impl Error for ProviderError {}
 
+/// 环境变量名合法性：`[A-Za-z_][A-Za-z0-9_]*`。
+///
+/// op 路径经 dotenv 注入防护（`ENV_NAME=op://…` 行解析，§3.5-4 / M-1 同族）；
+/// coffer 路径经 `Command::env` 直接注入子进程（MEDIUM-1，reviewer 实证）。
+/// 两 provider 共用同一实现保持校验对称；`=`/换行/NUL 等非法名在 spawn 前拒收
+/// （7005）。注：`is_ascii_alphabetic` / `is_ascii_alphanumeric` 判定为纯 ASCII，
+/// 规避 MSRV 下非 ASCII 字母的 std 行为差异不确定性。
+pub(crate) fn is_valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c == '_' || c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
 /// SecretProvider 抽象（docs/20 §4.1 冻结签名）。
 ///
 /// **不变量**：trait 面**无**「返回明文值」方法——`run_with_secret` 把值直接注入

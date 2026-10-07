@@ -55,7 +55,7 @@ use cf_domain::CfError;
 use cf_session::types::ItemDetails;
 use cf_session::{open_vault, VaultSession};
 
-use crate::provider::{ProviderError, RunSpec, SecretMeta, SecretProvider};
+use crate::provider::{is_valid_env_name, ProviderError, RunSpec, SecretMeta, SecretProvider};
 
 /// 标记环境容器条目的保留标签（U-4 落定前约定，见模块文档）。
 const ENV_TAG: &str = "coffer:environment";
@@ -269,6 +269,14 @@ impl SecretProvider for CofferStoreProvider {
         }
         if spec.cmd.is_empty() {
             return Err(ProviderError::InvalidParameter("empty command".into()));
+        }
+        // env_name 合法性（MEDIUM-1）：与 op 路径同源校验（provider/mod.rs
+        // `is_valid_env_name`），`=`/换行/NUL 等非法名在 spawn 前拒收（7005）——
+        // 两 provider 校验对称，纵深防御（MCP tools/call 可达）。
+        if !is_valid_env_name(&spec.env_name) {
+            return Err(ProviderError::InvalidParameter(
+                "env_name is not a valid environment variable name".to_string(),
+            ));
         }
         let item = self.resolve_secret(&spec.secret_ref)?;
         let value = Self::secret_value(&item);

@@ -16,6 +16,7 @@
 | r1.0 | 2026-09-27 | 首版（工单 WO-11）。承载用户 2026-09-27 提供的需求原文，并记录当日的两项裁定与版本号规则。**需求正文照录，不做加工、不新增** |
 | r1.1 | 2026-09-30 | 归属再确认：用户确认 Agent 凭据域（MCP 服务）规划归 **v2.0.0**，v0.5.0 内**不包含**此功能。MCP 设计见 `20-MCP设计.md` §0.7（§0.3 版本归属规则维持不变）。本文状态「已裁定归属，未分解」不变。 |
 | r1.2 | 2026-10-07 | **零网络措辞同步（D-4 裁定，docs/27 附表）**：§1.2「可核的冲突站点」标记**已关闭**——UDS 裁定 v2.1.0 实现，判据② / NFR-SEC-07 措辞按新口径统一改写；§5 U-2 行同步标记已裁定。本文 §1.2「无云端 / 数据不出本机」语义即新口径来源，未变 |
+| r1.3 | 2026-10-07 | **v2.2.0 托管解锁条目（G1e）**：新增 §6——MCP CLI 经 Keychain 托管条目免密解锁库；mcp_key 为 DEK 派生子密钥（非主密码）、换主密码不吊销、取密顺序（托管→env→退出 1）；域归属不变（本地零网络，§1.2 语义未变）。来源 docs/29 §2/§3/§5.3/§6 |
 
 ---
 
@@ -299,6 +300,25 @@ Coffer 的竞争重点不是「保存更多密码」，而是：**在 AI Agent �
 - **`clientInfo` 之类的自称不是凭据**；
 - **`AS-5` 模式 C** 会在磁盘上**临时生成**凭证文件（`.env`、credential file）—— 与「不进入 Git / 不进入 Agent Context」需有**可验证**的落实手段，而非仅靠约定；
 - **`AS-11` 脱敏的完备性** —— 脱敏若只覆盖 MCP Tool Result，而 Agent 可从 `stderr` 或子进程读回明文，则形同虚设。
+
+---
+
+## 6. v2.2.0：MCP 解锁托管（Keychain 托管条目免密解锁）
+
+> **域归属不变**：本条目为 v2.2.0 实现记录（docs/29，lead 裁定路线 2026-10-07），仍属本域——Keychain
+> 为本机系统钥匙串，MCP CLI 经本机托管条目解锁本机库，**数据不出本机**，零网络语义（§1.2）未变。
+
+- **机制**：App 解锁后 `HKDF(DEK, salt=vault_uuid, info="cf/mcp/v1")` 派生 `mcp_key`，托管进 macOS 数据保护
+  Keychain（service `cn.coffer.mcp-escrow`、account=vault_uuid、**无 ACL**、共享 access group）；库 header 新增
+  可选 `mcp_wrap` 字段（`#[serde(default)]`，零 format_version / DDL 变更）承载 `AEAD(mcp_key, DEK)` 封装密文。
+  MCP CLI（`coffer mcp --provider coffer`）经 Keychain 读 `mcp_key` 解封 DEK 开库——**免密解锁**。
+- **mcp_key 是 DEK 派生子密钥，非主密码**（`cf-crypto derive_mcp_key`，label `cf/mcp/v1`，与既有 10 把子密钥
+  同一 HKDF 方案、两两互异）：CLI 只拿 mcp_key 获得「此库解锁能力」，无法反向推出主密码；删除 Keychain
+  条目即独立吊销。
+- **换主密码不自动吊销**（docs/29 §5.3 三处落档之一）：重封装（D-2）时 DEK 不变 → mcp_key 不变 →
+  `wrapped_dek_mcp` 不变；吊销走设置页开关显式执行（用户可见：McpSettingsView footer 文案）。
+- **取密顺序**（docs/29 §6，D-4）：托管优先 → `COFFER_VAULT_PASSWORD` env 兜底（**仅托管不存在时**，
+  `available=false` 亦视同不存在）→ 都无退出 1；托管存在但读取/解锁失败 **fail-closed 退出 1，绝不回落 env**。
 
 ---
 

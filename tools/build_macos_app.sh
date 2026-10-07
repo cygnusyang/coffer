@@ -26,6 +26,13 @@
 #
 # 验收（docs/07 §7 T05 ⑤）：
 #   codesign -d --entitlements - macos/build/Coffer.app   # 确认无 network.*
+#
+# 兼容 bash 3.2（macOS 自带 /bin/bash）：公开模式 CLANG_INCLUDES 空数组的展开用
+# ${arr[@]+"${arr[@]}"} 守卫（见下方 swiftc 调用）；本脚本全部代码段（含 v2.2.0
+# G5 新增的 coffer CLI 装配）只用 bash 3.2 兼容语法，系统默认 bash 可直接运行。
+#
+# v2.2.0 G5（escrow-build）：coffer CLI 随 App bundle 分发——装配为**嵌套 bundle**
+# Contents/Helpers/coffer.app（非裸 Mach-O），原因与实证见 step 3.5 注释。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -117,19 +124,67 @@ if [[ -f "${SRC_DIR}/Resources/Coffer.icns" ]]; then
 fi
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 
-# ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
-step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
+# ---- 3.5/4 coffer CLI 构建 + 装配 + 签名（v2.2.0 G5，D-6）----
+# D-6 裁定（docs/29 §8）：coffer CLI 随 Coffer.app bundle 分发、同 bundle 同身份
+# 同 keychain-access-groups；「必须从 App 内路径运行，拷出即 SIGKILL」为用户可见纪律。
+# 装配为**嵌套 bundle**（Contents/Helpers/coffer.app）而非裸 Mach-O，两重实证
+# （2026-10-07 G5 真机，本机 Apple Development 身份 + 本 profile）：
+#   ① 大小写冲突：Contents/MacOS/Coffer（App 主可执行文件）与 Contents/MacOS/coffer
+#     在 macOS 默认 case-insensitive APFS 上是同一文件名，裸 coffer 会覆盖 App 可执行文件；
+#   ② AMFI profile 覆盖：裸 Mach-O（非 CFBundleExecutable 主可执行文件）即使同 bundle
+#     内嵌 embedded.provisionprofile，AMFI 也只对最近 .app 的**主代码**应用 profile——
+#     嵌套非主二进制带 keychain-access-groups → spawn 门 SIGKILL(137)。嵌套 .app bundle
+#     （自带 embedded.provisionprofile）才获得 profile 覆盖；拷出该嵌套 bundle 的裸二进制
+#     仍 SIGKILL(137)（实证），「拷出即 SIGKILL」纪律成立。
+step "3.5/4 构建并装配 coffer CLI（escrow，D-6 嵌套 bundle）"
 IDENTITY=$(security find-identity -v -p codesigning \
   | awk -F'"' '/Apple Development/{print $2; exit}')
 [[ -n "${IDENTITY}" ]] || die "未找到 codesigning 身份（方案 A 要求 Apple Development 证书，BUG-2）：请在 Xcode → Settings → Accounts 登录 Apple ID 并生成证书后重试。不回退 ad-hoc。"
 printf '签名身份: %s\n' "${IDENTITY}"
 
 # keychain-access-groups 是受限 entitlement，必须嵌入 provisioning profile
-# 授权，否则进程 spawn 即被 SIGKILL（BUG-2 方案 A.2）。
+# 授权，否则进程 spawn 即被 SIGKILL（BUG-2 方案 A.2）。App 与 coffer 共用同一 profile。
 PROFILE="${ROOT_DIR}/macos/build/app.coffer.Coffer.provisionprofile"
 if [[ ! -f "${PROFILE}" ]]; then
   die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
 fi
+
+COFFER_REL="${CORE_TARGET}/release/coffer"
+step "    cargo build --release -p cf-mcp --bin coffer"
+( cd "${ROOT_DIR}/core" && "${CARGO:-cargo}" build --release -p cf-mcp --bin coffer ) || die "coffer CLI 构建失败（需 cargo 在 PATH；命令：cargo build --release -p cf-mcp --bin coffer）。"
+[[ -x "${COFFER_REL}" ]] || die "coffer CLI 二进制未产出：${COFFER_REL}"
+
+CLI_APP_DIR="${APP_DIR}/Contents/Helpers/coffer.app"
+mkdir -p "${CLI_APP_DIR}/Contents/MacOS"
+cp "${COFFER_REL}" "${CLI_APP_DIR}/Contents/MacOS/coffer"
+cat > "${CLI_APP_DIR}/Contents/Info.plist" <<'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>app.coffer.Coffer</string>
+	<key>CFBundleExecutable</key>
+	<string>coffer</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+</dict>
+</plist>
+PLIST_EOF
+cp "${PROFILE}" "${CLI_APP_DIR}/Contents/embedded.provisionprofile"
+
+# 嵌套 bundle 先于外层 App 签名：codesign 对外层 bundle 签名时对已签名的嵌套 .app
+# 保留其独立签名与 entitlements（实证）；若后签会被外层签名覆盖成 App sandbox 版。
+codesign --force --sign "${IDENTITY}" \
+  --entitlements "${SRC_DIR}/Coffer-cli.entitlements" \
+  "${CLI_APP_DIR}" || die "coffer CLI（嵌套 bundle）codesign 失败。"
+
+# ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
+step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
+# 签名身份与 profile 已在 3.5 发现/校验（coffer CLI 与 App 同一身份、同一 profile）。
+[[ -n "${IDENTITY:-}" ]] || die "未找到 codesigning 身份（方案 A 要求 Apple Development 证书，BUG-2）：请在 Xcode → Settings → Accounts 登录 Apple ID 并生成证书后重试。不回退 ad-hoc。"
+printf '签名身份: %s\n' "${IDENTITY}"
+[[ -f "${PROFILE:-}" ]] || die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
 cp "${PROFILE}" "${APP_DIR}/Contents/embedded.provisionprofile"
 
 codesign --force --sign "${IDENTITY}" \
@@ -137,8 +192,11 @@ codesign --force --sign "${IDENTITY}" \
   "${APP_DIR}" || die "codesign 失败。"
 
 codesign --verify --strict "${APP_DIR}" || die "签名校验失败。"
+codesign --verify --strict "${CLI_APP_DIR}" || die "coffer CLI 嵌套 bundle 签名校验失败。"
 
 step "完成 ✅"
 echo "  App : ${APP_DIR}"
 echo "  启动: open ${APP_DIR}"
+echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
+echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

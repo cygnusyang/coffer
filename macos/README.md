@@ -19,6 +19,30 @@ open macos/build/Coffer.app         # 启动
   —— 输出只应包含 `app-sandbox` 与 `files.user-selected.read-write`，
   无任何 `com.apple.security.network.*`。
 
+## coffer CLI（MCP 解锁托管，v2.2.0）
+
+`coffer`（`coffer mcp` MCP 服务器，docs/20）**随 App bundle 分发，不独立安装**：
+
+- **路径**：`macos/build/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`
+  （装配为**嵌套 bundle** `coffer.app`，构建脚本 `tools/build_macos_app.sh` step 3.5 自动完成）。
+- **必须从 App 内路径运行**：把该二进制拷出到任何位置再运行 → **SIGKILL（exit 137）**。
+  原因一句话：AMFI 按可执行文件最近的 `.app` bundle 查找 provisioning profile 来授权
+  `keychain-access-groups` entitlement；拷出后没有 bundle/profile 覆盖，进程 spawn 即被
+  内核 SIGKILL（D-6 spike 与 G5 装配真机实证）。这是**用户可见纪律**，不是 bug。
+- 为什么是嵌套 bundle 而非裸 `Contents/MacOS/coffer`（G5 装配实证）：
+  ① `Contents/MacOS/Coffer`（App 主可执行文件）与 `Contents/MacOS/coffer` 在 macOS 默认
+  case-insensitive APFS 上是同一文件名，无法共存；② 裸 Mach-O（非主可执行文件）即使同
+  bundle 内嵌 profile，AMFI 也只对最近 `.app` 的**主代码**应用 profile——带
+  `keychain-access-groups` 的裸 CLI spawn 即 SIGKILL；嵌套 `.app` bundle 自带
+  `embedded.provisionprofile` 才获得覆盖。
+- **注册命令示例**（Claude Code，docs/20 §5.4 同构）：
+
+  ```bash
+  claude mcp add coffer -- "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer" mcp --provider op --vault <vault>
+  ```
+
+  注意 `mcp` 子命令**必须显式给出**（CLI 不识别裸 `--help`；缺子命令打印 usage 并以 1 退出）。
+
 ## 当前已有内容
 
 - `Coffer/` —— SwiftUI 应用（App 壳 / 建库 / 解锁 / 条目列表·详情·编辑 /

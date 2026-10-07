@@ -386,6 +386,11 @@ pub mod mcp {
     use crate::provider::test_seed::{is_known_secret, TestSeedProvider, ENV_TEST_SECRET_PREFIX};
     use crate::provider::{RunSpec, SecretProvider};
     use crate::tools::secret_meta_json;
+    // MEDIUM-2 facade 轮换同源生成器（docs/27 裁定 B）：仅 coffer-store feature 下
+    // 引入 cf-audit（依赖树含 cf-crypto/rand/zxcvbn，docs/20 §2.2 只下不上）；
+    // slim 构建（--no-default-features）不引入，facade 保留时间 nonce 兜底。
+    #[cfg(feature = "coffer-store")]
+    use cf_audit::{generate_password, PasswordGenOptions};
 
     /// 门面进程内状态（U-4 存储模型未裁定 → 用内存态承载验收可观察副作用）。
     #[derive(Debug, Default)]
@@ -619,14 +624,27 @@ pub mod mcp {
                 "secret not found: {secret}"
             ))));
         }
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::set_var(
-            format!("{ENV_TEST_SECRET_PREFIX}{secret}"),
-            format!("rotated-{nonce}"),
-        );
+        // 轮换新值（MEDIUM-2，docs/27 裁定 B）：与 provider 同源——Coffer 生成器
+        // 强随机值（cf_audit `generate_password` 默认档，CSPRNG 20 位四类字符去
+        // 易混淆），不再用可预测时间戳 nonce。`generate_password` 仅 coffer-store
+        // feature 下可用（cf-audit 依赖树含 cf-crypto/rand/zxcvbn，docs/20 §2.2
+        // 只下不上）；`--no-default-features` slim 构建下 facade 为测试种子 mock
+        //（仅 mcp_acceptance 消费、不落生产），保留时间 nonce 兜底并注明。
+        #[cfg(feature = "coffer-store")]
+        let new_value = generate_password(&PasswordGenOptions::default()).map_err(|reason| {
+            boxed(McpError::Internal(format!(
+                "password generation failed: {reason}"
+            )))
+        })?;
+        #[cfg(not(feature = "coffer-store"))]
+        let new_value = {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("rotated-{nonce}")
+        };
+        std::env::set_var(format!("{ENV_TEST_SECRET_PREFIX}{secret}"), new_value);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

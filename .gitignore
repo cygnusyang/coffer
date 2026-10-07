@@ -83,3 +83,8 @@ logs/
 # ---------- 本地 Agent/助手目录（按需不入库） ----------
 .claude/
 .codebuddy/
+
+# ---------- 浏览器扩展（v2.3.0 G-C）----------
+# 扩展 node_modules：仅 devDependencies（TypeScript/esbuild），构建产物 build.mjs 产出，不入库
+/extension/node_modules/
+/extension/tests-dist/

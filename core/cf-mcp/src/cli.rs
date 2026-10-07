@@ -4,6 +4,14 @@
 //! [`crate::McpServer::serve_stdio`]。stdout 永为协议帧（§3.1）；日志只走
 //! stderr 或 `--log` 文件。退出码映射见 §5.3 与 [`exit_code`]。
 //!
+//! ## provider 选择（docs/20 §4.5 / §5.2）
+//!
+//! - `op`（`OpProvider`，MVP 数据源）恒可用；
+//! - `coffer`（`CofferStoreProvider`）经 `coffer-store` feature 门控：
+//!   开启时 `--provider coffer` 从 `$COFFER_VAULT_DIR` / `$COFFER_VAULT_PASSWORD`
+//!   构造（§4.3 同款 env 约定；密码不经 argv/日志）；关闭时 `coffer` 同任意
+//!   未知 provider → 配置错误退出 1。
+//!
 //! ## 传输（D-4 暂缓）
 //!
 //! MVP 只支持 **stdio**。`--uds` 传入 → 配置错误（退出码 1），注明未实现
@@ -32,6 +40,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::provider::op::{OpProvider, OpProviderConfig};
 use crate::provider::{ProviderError, SecretProvider};
 use crate::McpServer;
+
+#[cfg(feature = "coffer-store")]
+use crate::provider::coffer::CofferStoreProvider;
+#[cfg(feature = "coffer-store")]
+use cf_domain::secret::SecretString;
 
 /// 退出码（docs/20 §5.3）。
 ///
@@ -77,7 +90,8 @@ pub enum CliError {
 /// `coffer mcp` 已解析选项（docs/20 §5.2）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpCliOptions {
-    /// provider 名（MVP 恒 `op`；缺省 `$COFFER_MCP_PROVIDER`）。
+    /// provider 名（`op` 恒可用；`coffer` 经 `coffer-store` feature 门控；
+    /// 缺省 `$COFFER_MCP_PROVIDER`）。
     pub provider: String,
     /// 默认 vault（`--vault NAME`；缺省由 [`OpProviderConfig::from_env`] 读
     /// `$COFFER_OP_VAULT`，本层只收集 flag 覆盖值）。
@@ -153,6 +167,56 @@ fn take_value(args: &[String], i: &mut usize, flag: &str) -> Result<String, CliE
     }
     *i = next;
     Ok(args[next].clone())
+}
+
+/// `--provider coffer` 的库配置：读 `$COFFER_VAULT_DIR`（库目录路径）与
+/// `$COFFER_VAULT_PASSWORD`（解锁密码），供 [`CofferStoreProvider::open`] 构造
+/// （docs/20 §4.5）。缺任一 → 打印可操作错误并返回退出码 1。
+///
+/// env 约定与 §4.3 同款（Coffer 侧定义、文档落表）：密码**不经 argv / 协议帧 /
+/// 日志**，经 [`SecretString`]（ZeroizeOnDrop）承载，用后即毁。
+#[cfg(feature = "coffer-store")]
+fn coffer_config_from_env() -> Result<(PathBuf, SecretString), i32> {
+    let vault_dir = match std::env::var("COFFER_VAULT_DIR") {
+        Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
+        _ => {
+            eprintln!(
+                "error: `--provider coffer` requires $COFFER_VAULT_DIR（库目录路径，docs/20 §4.5）"
+            );
+            return Err(exit_code::CONFIG_ERROR);
+        }
+    };
+    let password = match std::env::var("COFFER_VAULT_PASSWORD") {
+        Ok(v) => SecretString::from_exposed(v),
+        _ => {
+            eprintln!(
+                "error: `--provider coffer` requires $COFFER_VAULT_PASSWORD（解锁密码，docs/20 §4.5）"
+            );
+            return Err(exit_code::CONFIG_ERROR);
+        }
+    };
+    Ok((vault_dir, password))
+}
+
+/// 把 [`CofferStoreProvider::open`] 的失败映射到退出码（docs/20 §5.3）：
+/// 7002（密码错误 / 锁态）→ 3 身份缺失；7001（库缺失 / 版本不受支持）→ 1；
+/// 其余（7005 / 7006）→ 1。错误消息面向调用方可操作，载荷不泄露细节。
+#[cfg(feature = "coffer-store")]
+fn map_coffer_open_error(e: ProviderError) -> i32 {
+    match e {
+        ProviderError::AuthRequired(m) => {
+            eprintln!("error: identity missing (7002): {m}");
+            exit_code::IDENTITY_MISSING
+        }
+        ProviderError::Unavailable(m) => {
+            eprintln!("error: provider unavailable (7001): {m}");
+            exit_code::CONFIG_ERROR
+        }
+        other => {
+            eprintln!("error: provider open failed: {other}");
+            exit_code::CONFIG_ERROR
+        }
+    }
 }
 
 /// CLI 运行时日志接收器（stdout 永为协议帧，docs/20 §3.1）。
@@ -260,43 +324,79 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    // provider 选择（docs/20 §5.2）：MVP 恒 `op`。
-    if options.provider != "op" {
-        eprintln!(
-            "error: unsupported provider `{}`: MVP 仅支持 `op`（docs/20 §5.2）",
-            options.provider
-        );
-        return exit_code::CONFIG_ERROR;
-    }
+    // provider 选择（docs/20 §4.5 / §5.2）：`op`（OpProvider，MVP 数据源）恒
+    // 可用；`coffer`（CofferStoreProvider）经 `coffer-store` feature 门控——
+    // 开启时从 `$COFFER_VAULT_DIR` / `$COFFER_VAULT_PASSWORD` 构造（§4.3 同款
+    // env 约定），关闭时 `coffer` 同任意未知 provider → 配置错误退出 1。
+    let vault_override = options.vault.clone();
+    let provider: Box<dyn SecretProvider>;
+    let provider_name: &str;
+    let vault_label: String;
+    match options.provider.as_str() {
+        "op" => {
+            // 构造 OpProviderConfig：env 缺省（COFFER_OP_BIN / COFFER_OP_VAULT /
+            // COFFER_OP_SESSION_TOKEN，§4.3）+ `--vault` 覆盖。
+            let mut config = OpProviderConfig::from_env();
+            if let Some(vault) = vault_override {
+                config.default_vault = Some(vault);
+            }
+            let vault_hint = config.default_vault.clone();
 
-    // 构造 OpProviderConfig：env 缺省（COFFER_OP_BIN / COFFER_OP_VAULT /
-    // COFFER_OP_SESSION_TOKEN，§4.3）+ `--vault` 覆盖。
-    let mut config = OpProviderConfig::from_env();
-    if let Some(vault) = options.vault {
-        config.default_vault = Some(vault);
-    }
-    let vault_hint = config.default_vault.clone();
+            // 构造 provider：`op --version` 启动探测（docs/20 §4.2）；
+            // 失败 → 7001 → 退出 1。
+            let p = match OpProvider::new(config) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: provider unavailable (7001): {e}");
+                    return exit_code::CONFIG_ERROR;
+                }
+            };
 
-    // 构造 provider：`op --version` 启动探测（docs/20 §4.2）；失败 → 7001 → 退出 1。
-    let provider = match OpProvider::new(config) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: provider unavailable (7001): {e}");
+            // 启动期身份检查（docs/20 §5.3 退出码 3）：轻量探测 provider 的
+            // list 面。仅 `AuthRequired`（7002）阻断启动；其余探测错误非致命
+            // （在协议层暴露）。
+            match p.list_secret_names(vault_hint.as_deref()) {
+                Err(ProviderError::AuthRequired(m)) => {
+                    eprintln!("error: identity missing (7002): {m}");
+                    return exit_code::IDENTITY_MISSING;
+                }
+                Err(e) => {
+                    logger.warn(&format!("provider startup probe: {e}"));
+                }
+                Ok(_) => {}
+            }
+
+            provider = Box::new(p);
+            provider_name = "op";
+            vault_label = vault_hint.unwrap_or_else(|| "default".to_string());
+        }
+        #[cfg(feature = "coffer-store")]
+        "coffer" => {
+            // CofferStoreProvider（docs/20 §4.5）：库路径 + 解锁密码来自 env
+            // （§4.3 同款 Coffer 侧约定；密码经 [`SecretString`] 承载，不经
+            // argv/日志，§3.5-4 载荷纪律）。`open` 即完成开库 + 解锁：7002 →
+            // 退出 3，7001 等 → 退出 1（见 [`map_coffer_open_error`]）。
+            let (vault_dir, password) = match coffer_config_from_env() {
+                Ok(cfg) => cfg,
+                Err(code) => return code,
+            };
+            let p = match CofferStoreProvider::open(&vault_dir, password.expose()) {
+                Ok(p) => p,
+                Err(e) => return map_coffer_open_error(e),
+            };
+            provider = Box::new(p);
+            provider_name = "coffer";
+            vault_label = "coffer-store".to_string();
+        }
+        other => {
+            let supported = if cfg!(feature = "coffer-store") {
+                "`op` / `coffer`"
+            } else {
+                "`op`"
+            };
+            eprintln!("error: unsupported provider `{other}`: 支持 {supported}（docs/20 §5.2）");
             return exit_code::CONFIG_ERROR;
         }
-    };
-
-    // 启动期身份检查（docs/20 §5.3 退出码 3）：轻量探测 provider 的 list 面。
-    // 仅 `AuthRequired`（7002）阻断启动；其余探测错误非致命（在协议层暴露）。
-    match provider.list_secret_names(vault_hint.as_deref()) {
-        Err(ProviderError::AuthRequired(m)) => {
-            eprintln!("error: identity missing (7002): {m}");
-            return exit_code::IDENTITY_MISSING;
-        }
-        Err(e) => {
-            logger.warn(&format!("provider startup probe: {e}"));
-        }
-        Ok(_) => {}
     }
 
     // audit（docs/20 §5.2 --no-audit）：D-3 未确认前审计恒 NoopAudit（§4.6 方案 B）。
@@ -307,10 +407,9 @@ pub fn run(args: &[String]) -> i32 {
         logger.info("audit: on (NoopAudit until D-3 JSONL lands)");
     }
 
-    let server = McpServer::new(Box::new(provider));
+    let server = McpServer::new(provider);
     logger.info(&format!(
-        "serving on stdio (provider=op, vault={})",
-        vault_hint.as_deref().unwrap_or("default")
+        "serving on stdio (provider={provider_name}, vault={vault_label})"
     ));
 
     match server.serve_stdio() {

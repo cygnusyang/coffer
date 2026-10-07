@@ -390,8 +390,9 @@ fn unknown_flag_exits_1() {
 
 #[test]
 fn illegal_provider_exits_1() {
-    // 非法 `--provider`（非 `op`）→ 配置错误退出 1（§5.2 MVP 恒 `op`）。
-    let (code, stderr) = run_coffer(&["mcp", "--provider", "coffer"], &[]);
+    // 非法 `--provider`（未知名）→ 配置错误退出 1（§5.2）。注意：`coffer` 在
+    // `coffer-store` feature 下是合法 provider（G-D），故用恒不存在的 `nosuch`。
+    let (code, stderr) = run_coffer(&["mcp", "--provider", "nosuch"], &[]);
     assert_eq!(code, Some(1), "非法 --provider → 退出码 1");
     assert!(stderr.contains("unsupported provider"), "stderr: {stderr}");
 }

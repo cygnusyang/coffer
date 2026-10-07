@@ -16,7 +16,11 @@ use cf_browser::e2e::{
     Session, SessionKeyMaterial,
 };
 use cf_browser::error::CfBrowserError;
-use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, EntryRef, HandshakeMessage};
+use cf_browser::protocol::{
+    AppMessage, AppRequest, AppResponse, EntryFieldRef, EntryInfo, HandshakeMessage,
+};
+use cf_domain::category::ItemCategory;
+use cf_domain::field::Designation;
 use p256::{PublicKey, SecretKey};
 
 // ---------------------------------------------------------------- 冻结输入
@@ -298,7 +302,6 @@ fn get_entries_roundtrip_through_session() {
 
     let req = AppMessage::Request(AppRequest::GetEntries {
         origin: "https://example.com".into(),
-        gesture: "abc123".into(),
     });
     let enc = session_i.encrypt(&req).expect("i→r");
     assert_eq!(
@@ -308,13 +311,35 @@ fn get_entries_roundtrip_through_session() {
 
     let resp = AppMessage::Response(AppResponse::EntriesResult {
         entries: vec![
-            EntryRef {
+            EntryInfo {
                 entry: "demo".into(),
                 title: "Example Login".into(),
+                category: ItemCategory::Login,
+                fields: vec![
+                    EntryFieldRef {
+                        name: "username".into(),
+                        designation: Designation::Username,
+                    },
+                    EntryFieldRef {
+                        name: "password".into(),
+                        designation: Designation::Password,
+                    },
+                ],
             },
-            EntryRef {
+            EntryInfo {
                 entry: "demo-2".into(),
                 title: "Work Account".into(),
+                category: ItemCategory::Login,
+                fields: vec![
+                    EntryFieldRef {
+                        name: "username".into(),
+                        designation: Designation::Username,
+                    },
+                    EntryFieldRef {
+                        name: "password".into(),
+                        designation: Designation::Password,
+                    },
+                ],
             },
         ],
     });

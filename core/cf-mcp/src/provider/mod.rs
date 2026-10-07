@@ -173,12 +173,14 @@ impl ProviderRegistry {
 /// `pub`：CLI（G-D）构造 [`op::OpProvider`]，集成测试直接引用。
 pub mod op;
 
-/// `CofferStoreProvider`（feature `coffer-store` 门控骨架，docs/20 §4.5）。
+/// `CofferStoreProvider`（feature `coffer-store` 门控生产实现，docs/20 §4.5）。
 ///
 /// 实现见 `provider/coffer.rs`。feature 关闭时本模块不进入构建，cf-mcp
-/// 默认依赖树不引入 cf-session（docs/20 §2.2 只下不上）。
+/// 默认依赖树不引入 cf-session（docs/20 §2.2 只下不上）。`pub`：与
+/// [`op::OpProvider`] 同型——CLI（G-D）/ 集成测试直接引用。存储映射为
+/// U-4 落定前的临时约定（可逆），详见 coffer.rs 模块文档。
 #[cfg(feature = "coffer-store")]
-mod coffer;
+pub mod coffer;
 
 // ---------------------------------------------------------------------------
 // 验收测试种子 provider

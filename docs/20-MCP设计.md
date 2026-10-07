@@ -104,7 +104,7 @@ core/cf-mcp/src/
 | 项 | 规范 |
 | --- | --- |
 | 默认传输 | **stdio**：stdout = 协议帧，stderr = 日志（MCP 规范；禁 stdout 打日志）。UTF-8，**换行分隔的 JSON-RPC 2.0 消息**（MCP stdio transport 约定） |
-| 可选传输 | `--uds PATH`：Unix domain socket，文件权限 **0600**、目录 **0700**；连接方 peer 凭据校验（macOS `getpeereid`）。**D-4 裁定（2026-10-07）：v2.1.0 实现**；本机内回环传输不违背零网络边界（无外部网络、数据不出本机，docs/27 附表） |
+| 可选传输 | `--uds PATH`：Unix domain socket，文件权限 **0600**、目录 **0700**；连接方 peer 凭据校验（macOS `LOCAL_PEERPID` 判 peer PID + `getpeereid` 判同用户，§3.6 ②）。**D-4 裁定（2026-10-07）：v2.1.0 实现**；本机内回环传输不违背零网络边界（无外部网络、数据不出本机，docs/27 附表） |
 | 零网络（无外部网络） | 不引入任何外部网络（远程 TCP/UDP）代码路径；`--uds` 为 AF_UNIX **本机回环**，属允许范围（NFR-SEC-07 语义 = 无云端/数据不出本机；本机内 UDS / 回环允许，docs/27 D-4） |
 
 ### 3.2 生命周期与消息流（MCP 规范子集）
@@ -415,5 +415,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.6 | 2026-10-07 | **零网络措辞全仓改写（D-4 裁定，docs/27 附表）**：§0 结论 2、§3.1 传输行（`--uds` 改「v2.1.0 实现（D-4 已裁定）」+ 零网络行新口径）、§3.6 防重放表 `--uds` 行标注 v2.1.0、§5.2 `--uds` flag 行、§6 构建面「App 自身 0 socket 判据」→「App 自身无外部网络连接判据」。§8 D-4 决策行（01a6ca9 已落）不再改；修订记录历史行不改写 |
 | r0.7 | 2026-10-07 | **文末注修正（lead 裁定收编批）**：原「D-1~D-4 与 U-4 用户确认回填后升 r0.6」已过时——追认已随 r0.4/r0.5 回填、r0.6 已为措辞批占用，改为现状描述 |
 | r0.8 | 2026-10-07 | **UDS env 契约登记 + §3.6 机制注记（lead 裁定收编批，实现 `7f3ec7b`/`7cb62c7`）**：§4.3 补 `COFFER_MCP_UDS_PEER_PID` / `COFFER_MCP_UDS_CHALLENGE` env 行（fail-closed：`--uds` 下缺 → 配置错误退出 1；非 macOS 跳过 peer PID 检查）；§3.6 `--uds` 行 peer 凭据措辞修正——`getpeereid` 仅返回 euid/egid、不返回 PID，实际机制 = macOS `LOCAL_PEERPID` 判 spawn 方 PID + `getpeereid` 判同用户，注记 docs/27 D-4 原文简写差异（lead 裁定接受）。修订记录历史行不改写 |
+| r0.9 | 2026-10-07 | **§3.1 可选传输行 peer 凭据简写对齐（lead 裁定收编批）**：「(macOS `getpeereid`)」→「(macOS `LOCAL_PEERPID` 判 peer PID + `getpeereid` 判同用户，§3.6 ②)」，与 §3.6 机制注记同款。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

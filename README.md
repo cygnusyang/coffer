@@ -104,7 +104,7 @@ Rust 工作区（`core/`）11 个 crate：
 
 - ✅ `cargo build` 通过，`cargo clippy --all-targets -- -D warnings` 零警告；测试 **768 个用例**，门禁命令下 **760 条执行通过**（另 8 条标 `#[ignore]`：1 条 1 GiB KDF 重载荷用例 release 人工独占、fuzz/统计类用例按 CI 口径 `--include-ignored` 执行）
 - ℹ️ 门禁命令为 `cargo test --workspace --no-fail-fast`（**须在 `core/` 下执行**）。历史上曾有两条用例需要 `--skip`（1 GiB KDF 资源耗尽、`千条搜索基线` 单次墙钟断言 flaky），**BUG-4 已于 2026-09-27 修复，`--skip` 不再需要**；根因与修复见 `docs/KNOWN-ISSUES.md` **BUG-4**
-- ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零；**9 把派生子密钥**（v0.2 增 audit_key、root_mac_key）
+- ✅ `cf-crypto`：Argon2id KDF + XChaCha20-Poly1305 AEAD + 内存清零；**11 把派生子密钥**（v0.2 增 audit_key、root_mac_key，v2.2.0 增 mcp_key——MCP 解锁托管，不入 SubKeys 容器）
 - ✅ TOTP 全链路：`cf-totp`（RFC 6238 SHA-1）→ `cf-store`（加密持久化）→ `cf-session`（会话门禁 + 验证），已串联打通
 - ✅ `cf-audit`：密码强度评估（zxcvbn）、**密码短语**（EFF 大词表）、Watchtower 弱密码/弱 URL/重复检测编排、陈旧密码 + 泄露启发式 + 无 2FA 提示纯函数
 - 🟡 Argon2id 参数：开发机摸底完成（见 `05-Argon2id参数标定.md`），**最低端设备待做**

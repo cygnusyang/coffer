@@ -1090,21 +1090,31 @@ final class AppModel: ObservableObject {
         if let process = browserBrokerProcess, process.isRunning {
             return
         }
-        let libraryDir = libraryDirectoryPath()
+        // stdin 私有管道材料（HIGH-3，docs/31 §3.1：DEK/UUID/PSK/unlocked 四行）。
+        // 取值接线 = merge-time（§8 第 4 项）；未接线 → fail-closed 不 spawn——
+        // 不留半配置 broker（G-B resolve_broker_secrets 必填缺即 exit 1）。
+        guard let secrets = brokerStdinSecrets() else {
+            browserBrokerState = .failed("broker 解锁材料接线未完成（merge-time）")
+            return
+        }
+        let home = BrowserStatusProbe.userHomeDirectory()
         do {
-            try BrowserBroker.prepareSocketDirectory(baseLibraryDirectory: libraryDir)
+            try BrowserBroker.prepareSocketDirectory(homeDirectory: home)
         } catch {
             DiagLog.append("BrowserBroker socket 目录准备失败：\(error.localizedDescription)")
             browserBrokerState = .failed("broker socket 目录准备失败")
             return
         }
-        let socketPath = BrowserBroker.brokerSocketPath(baseLibraryDirectory: libraryDir)
+        let socketPath = BrowserBroker.brokerSocketPath(homeDirectory: home)
         do {
+            var payload = secrets.payload
             let process = try BrowserBroker.spawn(
                 executable: binary,
                 arguments: [BrowserBroker.SpawnConfig.subcommand,
                             BrowserBroker.SpawnConfig.udsFlag, socketPath],
-                environment: [BrowserBroker.SpawnConfig.vaultDirEnv: vaultDirPath])
+                environment: [BrowserBroker.SpawnConfig.vaultDirEnv: vaultDirPath],
+                stdinPayload: payload)
+            zeroize(&payload)  // 用后即毁：stdin 载荷本地副本覆零（H-3 核销）
             browserBrokerProcess = process
             browserBrokerState = .running(pid: process.processIdentifier)
         } catch {
@@ -1112,6 +1122,16 @@ final class AppModel: ObservableObject {
             DiagLog.append(errText)
             browserBrokerState = .failed(errText)
         }
+    }
+
+    /// broker stdin 私有管道材料 seam（HIGH-3，docs/31 §3.1 四行）。
+    ///
+    /// 取值接线 = merge-time（§8 第 4 项）：DEK = vault 解锁派生（Rust session
+    /// 内部）、VAULT_UUID = vaultUUID 去横线（16 字节 hex）、PSK = 配对 keychain
+    /// （配对时写入，docs/31 §4.2）。未接线 → 返回 nil（fail-closed 不 spawn，
+    /// 避免以占位材料腐蚀确定性身份派生）。
+    private func brokerStdinSecrets() -> BrokerStdinSecrets? {
+        nil
     }
 
     /// 锁定 / 退出 / 停用：kill broker（幂等，docs/31 §2.1 killed；会话密钥随
@@ -1144,12 +1164,6 @@ final class AppModel: ObservableObject {
             BrowserPairingDecision(browser: request.browser, extensionID: request.extensionID,
                                    approved: false, decidedAt: Date()))
         pendingPairingRequest = nil
-    }
-
-    /// App Library 目录（沙盒内为容器路径；broker UDS socket 私有父目录根）。
-    private func libraryDirectoryPath() -> String {
-        FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?.path
-            ?? (NSHomeDirectory() as NSString).appendingPathComponent("Library")
     }
 
     /// 进程退出兜底（AppDelegate.applicationWillTerminate 调用）。

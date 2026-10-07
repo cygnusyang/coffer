@@ -84,12 +84,34 @@ fn fake_secrets() -> (String, String, String) {
     (dek, uuid, psk)
 }
 
-/// spawn `coffer browser-broker --uds <uds> --log <log>` + pairing env。
+/// 移除所有 `COFFER_BROKER_*` env（测试隔离：stdin 用例须确保不走 env 降级路径，
+/// HIGH2-3 §3.4——env 回退仅 `COFFER_BROKER_SKIP_PEER_VERIFY=1` 且 debug 构建生效）。
+#[cfg(feature = "coffer-store")]
+fn clear_broker_env(cmd: &mut Command) {
+    for key in [
+        "COFFER_BROKER_UDS",
+        "COFFER_BROKER_DEK_HEX",
+        "COFFER_BROKER_VAULT_UUID_HEX",
+        "COFFER_BROKER_PSK_HEX",
+        "COFFER_BROKER_UNLOCKED",
+        "COFFER_BROKER_SKIP_PEER_VERIFY",
+        "COFFER_BROKER_REQUIREMENT",
+        "COFFER_BROKER_ENTRIES_JSON",
+    ] {
+        cmd.env_remove(key);
+    }
+}
+
+/// spawn `coffer browser-broker --uds <uds> --log <log>` + pairing env（**env 降级**）。
 ///
 /// - `overrides`：追加/覆盖环境变量（如 `COFFER_BROKER_UNLOCKED` /
 ///   `COFFER_BROKER_ENTRIES_JSON`）；
 /// - `omit_skip_verify`：`true` 时不设 `COFFER_BROKER_SKIP_PEER_VERIFY=1`
 ///   （③ 层签名校验恒开 → 伪造 peer 被拒，测 8002 用）。
+///
+/// env 降级仅 `cfg!(debug_assertions)` 生效（release inert）；本 helper 仅用于
+/// 需要 env 注入的用例（§6-5：env 用例统一在 `COFFER_BROKER_SKIP_PEER_VERIFY=1`
+/// 下运行）。
 #[cfg(feature = "coffer-store")]
 fn spawn_broker(uds: &Path, log: &Path, overrides: &[(&str, &str)], omit_skip_verify: bool) -> Child {
     let (dek, uuid, psk) = fake_secrets();
@@ -98,6 +120,7 @@ fn spawn_broker(uds: &Path, log: &Path, overrides: &[(&str, &str)], omit_skip_ve
         .arg(uds)
         .args(["--log"])
         .arg(log);
+    clear_broker_env(&mut cmd);
     cmd.env("COFFER_BROKER_DEK_HEX", &dek)
         .env("COFFER_BROKER_VAULT_UUID_HEX", &uuid)
         .env("COFFER_BROKER_PSK_HEX", &psk);
@@ -109,6 +132,47 @@ fn spawn_broker(uds: &Path, log: &Path, overrides: &[(&str, &str)], omit_skip_ve
     }
     cmd.stderr(Stdio::piped()).stdout(Stdio::piped());
     cmd.spawn().expect("spawn browser-broker")
+}
+
+/// 标准 4 行 stdin 帧（HIGH2-3 §3.1；`unlocked` 取 `"1"` / `"0"`）。
+#[cfg(feature = "coffer-store")]
+fn stdin_frame(unlocked: &str) -> String {
+    let (dek, uuid, psk) = fake_secrets();
+    format!(
+        "DEK_HEX={dek}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nUNLOCKED={unlocked}\n"
+    )
+}
+
+/// spawn `coffer browser-broker --uds <uds> --log <log>`，解锁契约经 **stdin 私有
+/// 管道**交付（HIGH2-3 §3.3，生产路径）：写 `stdin_lines` 后 **close stdin**
+///（App 契约：写完 close → broker 即时 EOF）。`None` = 无内容即时 close（→ EOF，
+/// TC-BROKER-1）。**不设任何 `COFFER_BROKER_*` env**（清空隔离，防走 env 降级）。
+#[cfg(feature = "coffer-store")]
+fn spawn_broker_stdin(
+    uds: &Path,
+    log: &Path,
+    stdin_lines: Option<&str>,
+    extra_env: &[(&str, &str)],
+) -> Child {
+    let mut cmd = Command::new(coffer_bin());
+    cmd.args(["browser-broker", "--uds"])
+        .arg(uds)
+        .args(["--log"])
+        .arg(log);
+    clear_broker_env(&mut cmd);
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::piped()).stderr(Stdio::piped()).stdout(Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn browser-broker");
+    let mut child_stdin = child.stdin.take().expect("stdin pipe");
+    if let Some(lines) = stdin_lines {
+        child_stdin
+            .write_all(lines.as_bytes())
+            .expect("write stdin frame");
+    }
+    drop(child_stdin); // close stdin（写入端）→ broker 读到 EOF
+    child
 }
 
 /// 读一个 native messaging 帧（4B LE + payload），返回 payload。EOF → `None`。
@@ -316,6 +380,10 @@ fn broker_missing_uds_is_config_error() {
 
 /// 伪造 peer（测试进程 = 非嵌套 bundle coffer 二进制）连 broker → ③ 层拒连，
 /// stderr 断言 8002，连接被关闭（自动段伪造断言；真机签名链为 P-S 判据）。
+///
+/// 解锁契约走 **stdin 私有管道**（生产路径）、**不设** `COFFER_BROKER_SKIP_PEER_VERIFY`
+/// → ③ 层签名校验恒开（SKIP env 同时门控 env 降级，8002 用例须走 stdin 才能
+/// 保持 ③ 层真实，HIGH2-3 §6.5）。
 #[test]
 #[cfg(feature = "coffer-store")]
 fn broker_rejects_unverified_host() {
@@ -324,8 +392,8 @@ fn broker_rejects_unverified_host() {
     let uds = dir.join("coffer.sock");
     let log = dir.join("broker.log");
 
-    // omit_skip_verify = true：③ 层签名校验恒开（不设 COFFER_BROKER_SKIP_PEER_VERIFY）。
-    let mut child = spawn_broker(&uds, &log, &[], true);
+    // stdin 注入配对材料（不设 COFFER_BROKER_* env）→ ③ 层签名校验恒开。
+    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
     assert!(
         wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
         "socket 未就绪: {}",
@@ -533,7 +601,9 @@ fn exit_code_contract() {
     std::fs::create_dir_all(&dir).expect("create tmp dir");
     let uds = dir.join("coffer.sock");
 
-    // 1. 缺 pairing env（fail-closed）→ 1。
+    // 1. 缺 pairing env（fail-closed）→ 1。env 用例统一在
+    //    COFFER_BROKER_SKIP_PEER_VERIFY=1 下运行（§6-5；缺 SKIP 门控 → 走 stdin
+    //    源，语义不同，非本判据）。
     let (dek, uuid, psk) = fake_secrets();
     let out = Command::new(coffer_bin())
         .args(["browser-broker", "--uds"])
@@ -541,12 +611,13 @@ fn exit_code_contract() {
         .env("COFFER_BROKER_DEK_HEX", &dek)
         .env("COFFER_BROKER_VAULT_UUID_HEX", &uuid)
         // 故意缺 COFFER_BROKER_PSK_HEX
+        .env("COFFER_BROKER_SKIP_PEER_VERIFY", "1")
         .stderr(Stdio::piped())
         .output()
         .expect("run broker missing psk");
     assert_eq!(out.status.code(), Some(1), "缺 pairing env → 配置错 1");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("pairing env"), "提示缺 pairing env: {err}");
+    assert!(err.contains("pairing"), "提示缺 pairing: {err}");
     assert!(err.contains("COFFER_BROKER"), "提示 env 名: {err}");
 
     // 2. 缺 --uds（有 pairing env）→ 1。
@@ -555,6 +626,7 @@ fn exit_code_contract() {
         .env("COFFER_BROKER_DEK_HEX", &dek)
         .env("COFFER_BROKER_VAULT_UUID_HEX", &uuid)
         .env("COFFER_BROKER_PSK_HEX", &psk)
+        .env("COFFER_BROKER_SKIP_PEER_VERIFY", "1")
         .stderr(Stdio::piped())
         .output()
         .expect("run broker missing uds");
@@ -590,6 +662,7 @@ fn slim_build_subcommands_not_registered() {
 
     if cfg!(feature = "coffer-store") {
         // default 面：browser-broker 注册（缺 PSK → 配置错 1 + 分支特征，非未知子命令）。
+        // env 用例统一在 COFFER_BROKER_SKIP_PEER_VERIFY=1 下运行（§6-5）。
         let (dek, uuid, _psk) = fake_secrets();
         let out = Command::new(env!("CARGO_BIN_EXE_coffer"))
             .args(["browser-broker", "--uds"])
@@ -597,6 +670,7 @@ fn slim_build_subcommands_not_registered() {
             .env("COFFER_BROKER_DEK_HEX", &dek)
             .env("COFFER_BROKER_VAULT_UUID_HEX", &uuid)
             // 缺 PSK → fail-closed 配置错 1（证明进入浏览器分支）
+            .env("COFFER_BROKER_SKIP_PEER_VERIFY", "1")
             .stderr(Stdio::piped())
             .output()
             .expect("run broker");
@@ -618,6 +692,148 @@ fn slim_build_subcommands_not_registered() {
         }
     }
     let _ = dir;
+}
+
+// ===========================================================================
+// HIGH2-3 stdin 私有管道判据（TC-BROKER-1/2/3/4，docs/31 r0.7 冻结协议）
+// ===========================================================================
+
+/// TC-BROKER-1（HIGH2-3 §7）：无 stdin 内容 spawn `browser-broker --uds` → exit 1，
+/// **无 socket 残留**（fail-closed 不留 socket；stdin 读取先于 bind，顺序敏感 §6.3）。
+#[test]
+#[cfg(feature = "coffer-store")]
+fn broker_no_stdin_fails_closed_no_socket() {
+    let dir = temp_dir("broker-no-stdin");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    // 无 stdin 内容（pipe 即 close → 即时 EOF）：缺配对材料 → fail-closed 1。
+    let mut child = spawn_broker_stdin(&uds, &log, None, &[]);
+    let code = wait_timeout(&mut child, Duration::from_secs(15))
+        .expect("broker 应在缺 stdin 材料时退出（未挂死）");
+    assert_eq!(code, 1, "缺 stdin 配对材料 → 配置错 1");
+
+    // 诊断走 `--log` 文件（broker 缺省日志纪律），断言缺 pairing 特征。
+    let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(log_text.contains("pairing"), "日志提示缺 pairing: {log_text}");
+    assert!(
+        !uds.exists(),
+        "fail-closed 不得留 socket: {}",
+        uds.display()
+    );
+}
+
+/// TC-BROKER-2（HIGH2-3 §7）：stdin 4 行正确 → broker 绑定 UDS、日志 `locked=false`
+///（UNLOCKED=1 解锁态，可服务 app 请求）。well-known 落点公式本身由 TC-PATH /
+/// TC-HOST-1 单元测试覆盖；此处绑临时路径避免污染真实主目录（App 生产经
+/// `--uds <well-known>` 传参，HIGH2-3 §4.1）。
+#[test]
+#[cfg(feature = "coffer-store")]
+fn broker_stdin_valid_binds_and_locked_false() {
+    let dir = temp_dir("broker-stdin-ok");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+    let mode = std::fs::metadata(&uds)
+        .expect("socket metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "socket 权限须 0600, got {:o}", mode);
+
+    // 日志 locked=false（解锁态）。
+    let _ = child.kill();
+    let _ = child.wait();
+    let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        log_text.contains("locked=false"),
+        "日志断言 locked=false: {log_text}"
+    );
+}
+
+/// TC-BROKER-3（HIGH2-3 §7）：stdin 含非法 hex / 未知 key / 超 4 KiB 缓冲 → exit 1
+///（fail-closed 配置错），无 socket 残留。
+#[test]
+#[cfg(feature = "coffer-store")]
+fn broker_stdin_invalid_fails_closed() {
+    let dir = temp_dir("broker-stdin-bad");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let log = dir.join("broker.log");
+
+    let (dek, uuid, psk) = fake_secrets();
+    // (a) 非法 hex（DEK_HEX 全 z，非 hex 字符）→ 1。
+    let bad_hex = format!(
+        "DEK_HEX={}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nUNLOCKED=1\n",
+        "zz".repeat(32)
+    );
+    // (b) 未知 key（`FOO=bar`，key 大小写敏感白名单外）→ 1。
+    let unknown_key = format!(
+        "DEK_HEX={dek}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nFOO=bar\nUNLOCKED=1\n"
+    );
+    // (c) 超 4 KiB 缓冲（防灌，HIGH2-3 §3.1）→ 1。
+    let oversized = stdin_frame("1") + &"x".repeat(5 * 1024);
+
+    for (tag, frame) in [("bad-hex", bad_hex), ("unknown-key", unknown_key), ("oversized", oversized)] {
+        let uds = dir.join(format!("{tag}.sock"));
+        let mut child = spawn_broker_stdin(&uds, &log, Some(&frame), &[]);
+        let code = wait_timeout(&mut child, Duration::from_secs(15))
+            .unwrap_or_else(|| panic!("[{tag}] broker 应 fail-closed 退出（未挂死）"));
+        assert_eq!(code, 1, "[{tag}] 非法 stdin → 配置错 1");
+        assert!(
+            !uds.exists(),
+            "[{tag}] fail-closed 不得留 socket: {}",
+            uds.display()
+        );
+    }
+}
+
+/// TC-BROKER-4（HIGH2-3 §7，HIGH-3 核销）：`ps eww <broker_pid>` 不含
+/// `COFFER_BROKER_*`、无密钥材料——密钥经 stdin 私有管道交付，绝不落 env / argv /
+/// 日志（`ps eww` 同用户可读 env，即 HIGH-3 泄露面）。
+#[test]
+#[cfg(feature = "coffer-store")]
+fn broker_stdin_secrets_not_in_ps_env() {
+    let dir = temp_dir("broker-psenv");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+
+    // ps eww <pid>（macOS BSD 语法）：显示进程 env（同用户可读）。
+    let out = Command::new("ps")
+        .arg("eww")
+        .arg(child.id().to_string())
+        .output()
+        .expect("run ps eww");
+    let ps = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !ps.contains("COFFER_BROKER"),
+        "ps env 不得含 COFFER_BROKER_*: {ps}"
+    );
+    let (dek, uuid, psk) = fake_secrets();
+    for material in [&dek, &uuid, &psk] {
+        assert!(
+            !ps.contains(material.as_str()),
+            "ps env 不得含密钥材料（HIGH-3）: {ps}"
+        );
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = log;
 }
 
 // ===========================================================================

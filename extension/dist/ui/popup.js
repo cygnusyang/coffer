@@ -76,7 +76,7 @@
       box.innerHTML = `<div class="empty">\u5F53\u524D\u7AD9\u70B9\u6CA1\u6709\u53EF\u586B\u5145\u7684\u6761\u76EE</div>`;
       return;
     }
-    box.innerHTML = entries.map((e) => `<button class="entry" data-id="${esc(e.id)}"><div>${esc(e.title)}</div></button>`).join("");
+    box.innerHTML = entries.map((e) => `<button class="entry" data-id="${esc(e.entry)}"><div>${esc(e.title)}</div></button>`).join("");
     for (const btn of box.querySelectorAll(".entry")) {
       btn.addEventListener("click", () => void doFill(btn.dataset.id));
     }

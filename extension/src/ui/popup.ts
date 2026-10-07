@@ -76,7 +76,7 @@ function renderEntries(): void {
     return;
   }
   box.innerHTML = entries
-    .map((e) => `<button class="entry" data-id="${esc(e.id)}"><div>${esc(e.title)}</div></button>`)
+    .map((e) => `<button class="entry" data-id="${esc(e.entry)}"><div>${esc(e.title)}</div></button>`)
     .join("");
   for (const btn of box.querySelectorAll<HTMLButtonElement>(".entry")) {
     btn.addEventListener("click", () => void doFill(btn.dataset.id as string));

@@ -60,7 +60,7 @@
   }
   function renderList() {
     const entries = data.entries ?? [];
-    const rows = entries.map((e) => `<button class="entry" data-id="${esc(e.id)}"><div>${esc(e.title)}</div></button>`).join("");
+    const rows = entries.map((e) => `<button class="entry" data-id="${esc(e.entry)}"><div>${esc(e.title)}</div></button>`).join("");
     app().innerHTML = `${renderHeader()}${renderWarn()}<div class="list">${rows}</div>`;
   }
   function renderCrossOriginConfirm(id) {

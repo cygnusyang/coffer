@@ -50,6 +50,7 @@ import {
   parseGesture,
   gestureWithinTtl,
   type AppMessage,
+  type EntryInfo,
 } from "../protocol";
 import { MockBroker } from "./mock_broker";
 
@@ -262,6 +263,42 @@ test("two-way handshake: random ephemerals, round-trip, tamper + replay rejected
     mock.open(sealed),
     (e: unknown) => e instanceof ProtocolError && e.code === ErrCode.SessionNotEstablished,
   );
+});
+
+test("get_entries: no-gesture list request round-trips EntryInfo (entry/title/category/fields) over the session", async () => {
+  const { pairing, identity, psk } = await randomIdentityPairing();
+  const { client, mock } = await handshake(pairing, identity, psk);
+
+  // Request carries origin only — no gesture (lead ruling: get_entries is a read-only
+  // non-secret enumeration; docs/31 L261 gestures only get_secret/capture_save/
+  // confirm_unbound_origin).
+  const req: AppMessage = { type: "get_entries", origin: "https://example.com" };
+  const sealed = await client.seal(req);
+  assert.deepEqual((await mock.open(sealed)).body, req);
+
+  // Broker replies with the structured EntryInfo list (designation adjacently-tagged
+  // {"kind": ...} — cf-domain Designation, protocol.rs EntryFieldRef).
+  const entries: EntryInfo[] = [
+    {
+      entry: "e1",
+      title: "GitHub",
+      category: "login",
+      fields: [
+        { name: "username", designation: { kind: "username" } },
+        { name: "password", designation: { kind: "password" } },
+      ],
+    },
+    {
+      entry: "e2",
+      title: "API Key",
+      category: "api_credential",
+      fields: [{ name: "key", designation: { kind: "other", value: "key" } }],
+    },
+  ];
+  const resp: AppMessage = { type: "entries_result", entries };
+  const opened = await client.open(await mock.seal(resp));
+  assert.equal(opened.body.type, "entries_result");
+  assert.deepEqual(opened.body.entries, entries);
 });
 
 test("session isolation: cross-session decrypt fails (fresh ephemerals)", async () => {

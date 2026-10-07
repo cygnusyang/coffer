@@ -1,0 +1,33 @@
+[package]
+name = "cf-browser"
+description = "浏览器扩展 E2E 协议与 origin 匹配（docs/31 §3.3/§5.3，v2.3.0 G-A）：纯 lib，不产 bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# 依赖方向（docs/31 §2.2 硬约束，审计口径同 docs/11 §3.3）：
+#   cf-browser → cf-domain（SecretString/CfError/ItemCategory 复用）
+#   cf-browser → cf-crypto（HKDF 子密钥派生 / 密钥材料纪律，§3.3 增量）
+#   cf-browser 不依赖 cf-mcp / cf-store / cf-ffi；cf-mcp 仅作组合根。
+#   crate 内自足：E2E（P-256/HKDF/AES-GCM/HMAC）+ 协议消息集 + origin 三型 + 会话骨架。
+[dependencies]
+p256 = { workspace = true }
+aes-gcm = { workspace = true }
+# CSPRNG 统一走 getrandom（ephemeral 标量 / nonce；不依赖 rand_core/OsRng，
+# 见 core/Cargo.toml p256 段注释）。
+# HKDF-SHA256（会话密钥 KDF，docs/31 §3.3）：session = HKDF(ee||es, salt=双方公钥, "cf/browser/session/v1")
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+# HMAC-SHA256（confirm 令牌 / 每消息帧 MAC，docs/31 §3.3）
+hmac = { workspace = true }
+# 常量时间比较（confirm 令牌 / 帧 MAC 校验，防时序侧信道）
+subtle = { workspace = true }
+# CSPRNG（AES-GCM nonce / 会话随机）
+getrandom = { workspace = true }
+zeroize = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+cf-domain = { workspace = true }
+cf-crypto = { workspace = true }

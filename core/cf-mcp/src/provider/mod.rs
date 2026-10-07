@@ -198,6 +198,16 @@ pub mod op;
 #[cfg(feature = "coffer-store")]
 pub mod coffer;
 
+/// `VaultEscrowStore`（MCP 托管条目读取抽象，docs/29 §4.2，G3a）。
+///
+/// 实现见 `provider/escrow.rs`（macOS = [`escrow::MacKeychainEscrow`] 调
+/// `cf-escrow-keychain`；非 macOS = [`escrow::UnsupportedEscrow`] 端口预留）。
+/// 仅在 `coffer-store` feature 下进入构建——escrow 只被 coffer provider 的
+/// CLI 取密路径消费（docs/29 §6.2），feature 关闭时依赖树不含
+/// cf-escrow-keychain（docs/20 §2.2 只下不上）。
+#[cfg(feature = "coffer-store")]
+pub mod escrow;
+
 // ---------------------------------------------------------------------------
 // 验收测试种子 provider
 // ---------------------------------------------------------------------------

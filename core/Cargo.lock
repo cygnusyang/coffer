@@ -527,6 +527,7 @@ dependencies = [
  "cf-audit",
  "cf-crypto",
  "cf-domain",
+ "cf-escrow-keychain",
  "cf-session",
  "cf-uds-sys",
  "hmac 0.12.1",

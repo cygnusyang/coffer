@@ -59,7 +59,15 @@ use crate::McpServer;
 #[cfg(feature = "coffer-store")]
 use crate::provider::coffer::CofferStoreProvider;
 #[cfg(feature = "coffer-store")]
+use crate::provider::escrow::{EscrowErrorKind, VaultEscrowStore};
+#[cfg(feature = "coffer-store")]
 use cf_domain::secret::SecretString;
+#[cfg(feature = "coffer-store")]
+use cf_domain::CfError;
+#[cfg(feature = "coffer-store")]
+use cf_session::open_vault;
+#[cfg(feature = "coffer-store")]
+use zeroize::Zeroize;
 
 /// 退出码（docs/20 §5.3）。
 ///
@@ -205,52 +213,139 @@ fn take_value(args: &[String], i: &mut usize, flag: &str) -> Result<String, CliE
     Ok(args[next].clone())
 }
 
-/// `--provider coffer` 的库配置：读 `$COFFER_VAULT_DIR`（库目录路径）与
-/// `$COFFER_VAULT_PASSWORD`（解锁密码），供 [`CofferStoreProvider::open`] 构造
-/// （docs/20 §4.5）。缺任一 → 打印可操作错误并返回退出码 1。
+/// `--provider coffer` 取密流程（docs/29 §6.2，D-4 冻结契约）：
+/// **托管优先 → env 兜底 → 都无退出 1**。
 ///
-/// env 约定与 §4.3 同款（Coffer 侧定义、文档落表）：密码**不经 argv / 协议帧 /
-/// 日志**，经 [`SecretString`]（ZeroizeOnDrop）承载，用后即毁。
+/// 流程：`COFFER_VAULT_DIR` 必填（缺 → 配置错误退出 1，现状维持）→
+/// `open_vault`（**锁定态**读 header，取 vault_uuid）→
+/// [`VaultEscrowStore::read_mcp_key`]：
+///
+/// - `Ok(Some(mcp_key))` → `unlock_with_mcp_key`；失败 → **fail-closed 退出 1**
+///   （提示从 App 重新启用 MCP 以重建托管，**绝不回落 env**）；
+/// - `Ok(None)`（托管不存在）→ env 兜底：有 `COFFER_VAULT_PASSWORD` → 密码解锁
+///   + warning `source="env-fallback"`；无 → 配置错误退出 1（提示启用托管或提供
+///     `COFFER_VAULT_PASSWORD`）；
+/// - `Err(..)`（读取失败：ACL / 签名 / 内容非法）→ **fail-closed 退出 1**
+///   （可操作消息，不回退 env）。
+///
+/// **read 门（lead 裁定 2026-10-07，§5.2 意图源语义）**：仅当 header
+/// `mcp_wrap.available == true`（用户经 App 显式启用托管）才读 Keychain；
+/// `available == false` = 用户显式停用托管 → 语义即「托管不存在」→ **直接走
+/// env 兜底，不触 Keychain read**。孤儿条目边界：header 禁用 + keychain 残留
+/// → 仍走 env（`unlock_with_mcp_key` 对该态本就 1002，header 为意图源）。
+///
+/// **env 不覆盖托管**（D-4）：托管条目存在即不再看 env；env 仅在托管不存在
+/// （`Ok(None)` / `available=false`）时兜底。mcp_key **不经 argv / 协议帧 /
+/// 日志**（§3.5-4）；`[u8; 32]` 用后显式 zeroize。
+///
+/// 成功会话 → [`CofferStoreProvider::new`]（复用既有构造，coffer.rs:99）。
 #[cfg(feature = "coffer-store")]
-fn coffer_config_from_env() -> Result<(PathBuf, SecretString), i32> {
-    let vault_dir = match std::env::var("COFFER_VAULT_DIR") {
-        Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
-        _ => {
-            eprintln!(
-                "error: `--provider coffer` requires $COFFER_VAULT_DIR（库目录路径，docs/20 §4.5）"
-            );
-            return Err(exit_code::CONFIG_ERROR);
+fn build_coffer_provider(
+    vault_dir: &std::path::Path,
+    escrow: &dyn VaultEscrowStore,
+    env_password: Option<SecretString>,
+    logger: &mut Logger,
+) -> Result<CofferStoreProvider, i32> {
+    let session = match open_vault(vault_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            let (msg, code) = match e {
+                CfError::VaultNotFound | CfError::UnsupportedFormat(_) => (
+                    format!("error: provider unavailable (7001): cannot open vault: {e}"),
+                    exit_code::CONFIG_ERROR,
+                ),
+                other => (
+                    format!("error: provider open failed: {other}"),
+                    exit_code::CONFIG_ERROR,
+                ),
+            };
+            logger.error(&msg);
+            return Err(code);
         }
     };
-    let password = match std::env::var("COFFER_VAULT_PASSWORD") {
-        Ok(v) => SecretString::from_exposed(v),
-        _ => {
-            eprintln!(
-                "error: `--provider coffer` requires $COFFER_VAULT_PASSWORD（解锁密码，docs/20 §4.5）"
-            );
+
+    // read 门（lead 裁定 2026-10-07，§5.2 意图源语义）：available=false =
+    // 用户显式停用托管 → 语义即「托管不存在」→ 直接 env 兜底，不触 Keychain。
+    if !session.has_mcp_wrap() {
+        return env_fallback_unlock(session, env_password, logger);
+    }
+
+    let vault_uuid = session.vault_uuid().to_string();
+    match escrow.read_mcp_key(&vault_uuid) {
+        Ok(Some(mut mcp_key)) => {
+            let r = session.unlock_with_mcp_key(&mcp_key);
+            mcp_key.zeroize();
+            match r {
+                Ok(_) => {
+                    logger.info(
+                        "vault unlocked via MCP keychain escrow (source=\"keychain-escrow\")",
+                    );
+                }
+                Err(_) => {
+                    // fail-closed：托管条目存在但不可用（吊销 / 损坏 / 库换过）
+                    // → 报错退出 1，不静默回落 env（多凭据静默重试 = 安全反模式，
+                    // 与 challenge fail-closed 先例一致，docs/30 §1.3）。
+                    logger.error(
+                        "error: MCP 托管条目存在但解锁失败（可能已吊销/损坏）；\
+                         请从 App 重新启用 MCP 以重建托管（source=\"keychain-escrow-failed\"）",
+                    );
+                    return Err(exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        Ok(None) => return env_fallback_unlock(session, env_password, logger),
+        Err(e) => {
+            // fail-closed：读取失败不回退 env（防掩盖签名 / ACL 问题，D-4）。
+            let hint = match e.kind() {
+                EscrowErrorKind::AccessDenied => {
+                    "；请确认 CLI 与 App 同 bundle 同身份签名（docs/29 D-6）"
+                }
+                EscrowErrorKind::NotFound => "；请从 App 重新启用 MCP 以重建托管",
+                EscrowErrorKind::Other => "",
+            };
+            logger.error(&format!("error: MCP 托管读取失败：{e}{hint}"));
             return Err(exit_code::CONFIG_ERROR);
         }
-    };
-    Ok((vault_dir, password))
+    }
+
+    Ok(CofferStoreProvider::new(session))
 }
 
-/// 把 [`CofferStoreProvider::open`] 的失败映射到退出码（docs/20 §5.3）：
-/// 7002（密码错误 / 锁态）→ 3 身份缺失；7001（库缺失 / 版本不受支持）→ 1；
-/// 其余（7005 / 7006）→ 1。错误消息面向调用方可操作，载荷不泄露细节。
+/// env 兜底解锁（docs/29 §6.2，仅托管不存在时进入）：
+/// 有 `COFFER_VAULT_PASSWORD` → `unlock` + warning `source="env-fallback"`；
+/// 无 → 配置错误退出 1（提示启用托管或提供 env）。解锁失败按 §5.3 映射
+/// （7002 → 3 身份缺失；7001 / 其余 → 1）。
 #[cfg(feature = "coffer-store")]
-fn map_coffer_open_error(e: ProviderError) -> i32 {
-    match e {
-        ProviderError::AuthRequired(m) => {
-            eprintln!("error: identity missing (7002): {m}");
-            exit_code::IDENTITY_MISSING
+fn env_fallback_unlock(
+    session: cf_session::VaultSession,
+    env_password: Option<SecretString>,
+    logger: &mut Logger,
+) -> Result<CofferStoreProvider, i32> {
+    let Some(password) = env_password else {
+        logger.error(
+            "error: 未启用 MCP 解锁托管，也未提供 $COFFER_VAULT_PASSWORD；\
+             请在 App 设置页启用 MCP 托管，或设置 $COFFER_VAULT_PASSWORD（docs/20 §4.5）",
+        );
+        return Err(exit_code::CONFIG_ERROR);
+    };
+    match session.unlock(password.expose()) {
+        Ok(_) => {
+            logger.warn("vault unlocked via env password fallback (source=\"env-fallback\")");
+            Ok(CofferStoreProvider::new(session))
         }
-        ProviderError::Unavailable(m) => {
-            eprintln!("error: provider unavailable (7001): {m}");
-            exit_code::CONFIG_ERROR
-        }
-        other => {
-            eprintln!("error: provider open failed: {other}");
-            exit_code::CONFIG_ERROR
+        Err(e) => {
+            let (msg, code) = match e {
+                CfError::VaultLocked | CfError::UnlockFailed => (
+                    format!("error: identity missing (7002): vault unlock failed: {e}"),
+                    exit_code::IDENTITY_MISSING,
+                ),
+                other => (
+                    format!("error: provider open failed: {other}"),
+                    exit_code::CONFIG_ERROR,
+                ),
+            };
+            logger.error(&msg);
+            Err(code)
         }
     }
 }
@@ -324,6 +419,12 @@ impl Logger {
     /// 警告级日志（非致命）。
     pub fn warn(&mut self, msg: &str) {
         self.sink.write_line("WARN", msg);
+    }
+
+    /// 错误级日志（致命启动错误，操作者必须可见）。经同一诊断通道（stderr /
+    /// `--log` 文件）落盘，供可测性与生产排障共用。
+    pub fn error(&mut self, msg: &str) {
+        self.sink.write_line("ERROR", msg);
     }
 
     /// 供 L-5 诊断订阅器共享诊断通道写端（stderr / `--log` 文件同一句柄）。
@@ -558,17 +659,28 @@ pub fn run(args: &[String]) -> i32 {
         },
         #[cfg(feature = "coffer-store")]
         "coffer" => {
-            // CofferStoreProvider（docs/20 §4.5）：库路径 + 解锁密码来自 env
-            // （§4.3 同款 Coffer 侧约定；密码经 [`SecretString`] 承载，不经
-            // argv/日志，§3.5-4 载荷纪律）。`open` 即完成开库 + 解锁：7002 →
-            // 退出 3，7001 等 → 退出 1（见 [`map_coffer_open_error`]）。
-            let (vault_dir, password) = match coffer_config_from_env() {
-                Ok(cfg) => cfg,
-                Err(code) => return code,
+            // CofferStoreProvider（docs/20 §4.5）：取密走 docs/29 §6.2 托管优先
+            // 流程（D-4）。`COFFER_VAULT_DIR` 必填（缺 → 配置错误退出 1 现状
+            // 维持）；`COFFER_VAULT_PASSWORD` 现为**可选**（仅托管不存在时
+            // env 兜底）。escrow store = 平台默认（macOS Keychain）；mcp_key /
+            // 密码经 `SecretString` / 显式 zeroize 承载，不经 argv/日志
+            // （§3.5-4 载荷纪律）。
+            let vault_dir = match std::env::var("COFFER_VAULT_DIR") {
+                Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
+                _ => {
+                    logger.error(
+                        "error: `--provider coffer` requires $COFFER_VAULT_DIR（库目录路径，docs/20 §4.5）",
+                    );
+                    return exit_code::CONFIG_ERROR;
+                }
             };
-            let p = match CofferStoreProvider::open(&vault_dir, password.expose()) {
+            let env_password = std::env::var("COFFER_VAULT_PASSWORD")
+                .ok()
+                .map(SecretString::from_exposed);
+            let escrow = crate::provider::escrow::platform_escrow();
+            let p = match build_coffer_provider(&vault_dir, &escrow, env_password, &mut logger) {
                 Ok(p) => p,
-                Err(e) => return map_coffer_open_error(e),
+                Err(code) => return code,
             };
             provider = Box::new(p);
             provider_name = "coffer";
@@ -649,6 +761,8 @@ pub fn run(args: &[String]) -> i32 {
 mod tests {
     use super::*;
     use crate::audit::{AuditError, AuditEvent, UsageAudit};
+    #[cfg(feature = "coffer-store")]
+    use crate::provider::escrow::EscrowError;
     use crate::provider::test_seed::TestSeedProvider;
     use serde_json::json;
     use std::path::PathBuf;
@@ -982,5 +1096,315 @@ mod tests {
             "secret 引用须平铺: {content}"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    // -------------------------------------------------------- escrow 取密（G3a）
+    //
+    // docs/30 §1.3 六条 + 孤儿边界（lead 裁定 2026-10-07）+ 读失败 fail-closed。
+    // mock escrow 经 trait 注入 `build_coffer_provider`（in-process，不 spawn）；
+    // 日志经临时 `--log` 文件捕获（断言托管/兜底线索，载荷纪律：不泄密钥）。
+
+    /// 快速档测试库（8 MiB KDF，几十毫秒；tests/cli.rs 同款）。
+    #[cfg(feature = "coffer-store")]
+    fn escrow_fast_vault(tag: &str) -> (PathBuf, String) {
+        use cf_crypto::kdf::KdfParams;
+        use cf_session::create_vault_with_kdf;
+
+        const STRONG_PASSWORD: &str = "correct-horse-battery-staple-42!";
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "cf-mcp-cli-escrow-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&base).expect("create temp base");
+        let brief = create_vault_with_kdf(
+            &base,
+            "测试库",
+            STRONG_PASSWORD,
+            KdfParams::new(8 * 1024, 1, 1).expect("8 MiB fast KDF"),
+        )
+        .expect("create fast vault");
+        (
+            base.join(brief.uuid.to_string()),
+            STRONG_PASSWORD.to_string(),
+        )
+    }
+
+    /// 在测试库上启用 MCP 托管（解锁态 derive → enable），返回 mcp_key 字节
+    /// 副本（供 mock escrow 注入）。session 在返回前 drop（库留在磁盘）。
+    #[cfg(feature = "coffer-store")]
+    fn escrow_enable(vault_dir: &std::path::Path, password: &str) -> [u8; 32] {
+        let session = open_vault(vault_dir).expect("open vault");
+        session.unlock(password).expect("unlock vault");
+        let mcp_key = session.derive_mcp_key(password).expect("derive mcp_key");
+        session
+            .enable_mcp_escrow(password, mcp_key.as_bytes())
+            .expect("enable escrow");
+        *mcp_key.as_bytes()
+    }
+
+    /// mock escrow（trait 注入，docs/30 §1.3）：可编程三态结果 + 记录调用 uuid。
+    #[cfg(feature = "coffer-store")]
+    struct MockEscrow {
+        result: std::sync::Mutex<Result<Option<[u8; 32]>, EscrowError>>,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[cfg(feature = "coffer-store")]
+    impl MockEscrow {
+        fn new(result: Result<Option<[u8; 32]>, EscrowError>) -> Self {
+            Self {
+                result: std::sync::Mutex::new(result),
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn called_with(&self) -> Vec<String> {
+            self.calls.lock().expect("mock calls lock").clone()
+        }
+    }
+
+    #[cfg(feature = "coffer-store")]
+    impl VaultEscrowStore for MockEscrow {
+        fn read_mcp_key(&self, vault_uuid: &str) -> Result<Option<[u8; 32]>, EscrowError> {
+            self.calls
+                .lock()
+                .expect("mock calls lock")
+                .push(vault_uuid.to_string());
+            self.result.lock().expect("mock result lock").clone()
+        }
+    }
+
+    /// 测试 logger：落临时 `--log` 文件，供断言托管/兜底线索。
+    #[cfg(feature = "coffer-store")]
+    fn escrow_test_logger(tag: &str) -> (Logger, PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "cf-mcp-cli-escrow-log-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        let options = McpCliOptions {
+            provider: "coffer".to_string(),
+            provider_explicit: false,
+            vault: None,
+            log_path: Some(path.clone()),
+            no_audit: false,
+            uds: None,
+        };
+        (Logger::new(&options).expect("test logger"), path)
+    }
+
+    /// 读日志文件并清理（断言后统一走此路径，避免并行测试残留）。
+    #[cfg(feature = "coffer-store")]
+    fn escrow_read_log(log_path: &PathBuf) -> String {
+        let content = std::fs::read_to_string(log_path).expect("read log file");
+        let _ = std::fs::remove_file(log_path);
+        content
+    }
+
+    /// **托管优先**（docs/30 §1.3 第 1 条）：托管条目存在且可用 → 走托管
+    /// mcp_key 解锁成功；read 以 vault_uuid 定位；日志 source="keychain-escrow"，
+    /// 不出现 env-fallback。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_uses_escrow_first() {
+        let (vault_dir, password) = escrow_fast_vault("uses-escrow-first");
+        let key = escrow_enable(&vault_dir, &password);
+        let escrow = MockEscrow::new(Ok(Some(key)));
+        let (mut logger, log_path) = escrow_test_logger("uses-escrow-first");
+        let p = build_coffer_provider(&vault_dir, &escrow, None, &mut logger)
+            .expect("托管优先：有可用 mcp_key 须解锁成功");
+        assert_eq!(escrow.called_with().len(), 1, "须恰好读一次 Keychain");
+        assert_eq!(
+            escrow.called_with()[0],
+            vault_dir
+                .file_name()
+                .expect("vault dir file name")
+                .to_str()
+                .expect("utf8 path"),
+            "read_mcp_key 须以 vault_uuid 定位"
+        );
+        let content = escrow_read_log(&log_path);
+        assert!(content.contains("keychain-escrow"), "须日志托管解锁线索: {content}");
+        assert!(!content.contains("env-fallback"), "托管优先不得走 env 兜底: {content}");
+        drop(p);
+    }
+
+    /// **env 兜底**（docs/30 §1.3 第 2 条）+ **read 门**（lead 裁定 2026-10-07）：
+    /// 未启用托管（available=false）→ 直接 env 兜底成功，**不触 Keychain read**
+    /// （mock 即便返回 Some 也不得被读），日志 warning source="env-fallback"。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_env_fallback_when_escrow_disabled() {
+        let (vault_dir, password) = escrow_fast_vault("env-fallback");
+        let escrow = MockEscrow::new(Ok(Some([0x42; 32])));
+        let (mut logger, log_path) = escrow_test_logger("env-fallback");
+        let p = build_coffer_provider(
+            &vault_dir,
+            &escrow,
+            Some(SecretString::from_exposed(&password)),
+            &mut logger,
+        )
+        .expect("env 兜底：无托管 + env 正确须解锁成功");
+        assert!(
+            escrow.called_with().is_empty(),
+            "available=false 不得触 Keychain read（read 门）"
+        );
+        let content = escrow_read_log(&log_path);
+        assert!(content.contains("env-fallback"), "须日志 env 兜底线索: {content}");
+        assert!(!content.contains("keychain-escrow"), "未启用托管不得走托管解锁: {content}");
+        drop(p);
+    }
+
+    /// **都无退出 1**（docs/30 §1.3 第 3 条）：托管缺失 + env 缺失 → 配置错误
+    /// 退出 1（fail-closed，D-1 退出码契约不破坏），消息提示启用托管或提供 env。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_no_escrow_no_env_exits_1() {
+        let (vault_dir, _password) = escrow_fast_vault("no-escrow-no-env");
+        let escrow = MockEscrow::new(Ok(None));
+        let (mut logger, log_path) = escrow_test_logger("no-escrow-no-env");
+        let code = build_coffer_provider(&vault_dir, &escrow, None, &mut logger)
+            .map(|_| ())
+            .expect_err("托管缺失 + env 缺失 → 配置错误退出 1");
+        assert_eq!(code, exit_code::CONFIG_ERROR);
+        let content = escrow_read_log(&log_path);
+        assert!(
+            content.contains("COFFER_VAULT_PASSWORD"),
+            "须提示启用托管或提供 env，content: {content}"
+        );
+    }
+
+    /// **托管 + env 并存 → 托管优先（优先级锁定）**（docs/30 §1.3 第 4 条）：
+    /// env 密码故意给错，若实现误回落 env → unlock 失败退出 3；正确实现走托管
+    /// → 成功（env 不覆盖托管，D-4），日志无 env-fallback。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_escrow_takes_priority_when_both() {
+        let (vault_dir, password) = escrow_fast_vault("escrow-priority");
+        let key = escrow_enable(&vault_dir, &password);
+        let escrow = MockEscrow::new(Ok(Some(key)));
+        let (mut logger, log_path) = escrow_test_logger("escrow-priority");
+        let p = build_coffer_provider(
+            &vault_dir,
+            &escrow,
+            Some(SecretString::from_exposed("definitely-wrong-password-99!")),
+            &mut logger,
+        )
+        .expect("托管 + env 并存 → 托管优先，须解锁成功（env 不覆盖托管）");
+        let content = escrow_read_log(&log_path);
+        assert!(content.contains("keychain-escrow"), "须走托管: {content}");
+        assert!(!content.contains("env-fallback"), "并存时不得走 env 兜底: {content}");
+        drop(p);
+    }
+
+    /// **回落 env 仅限条目不存在**（docs/30 §1.3 第 5 条）：启用态但 Keychain
+    /// 条目被外部删除（stale header）→ mock Ok(None) → 合法回落 env（条目不
+    /// 存在 = 未启用托管语义，回落仅限此分支）。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_env_fallback_only_when_item_missing() {
+        let (vault_dir, password) = escrow_fast_vault("env-fallback-only-missing");
+        escrow_enable(&vault_dir, &password);
+        let escrow = MockEscrow::new(Ok(None));
+        let (mut logger, log_path) = escrow_test_logger("env-fallback-only-missing");
+        let p = build_coffer_provider(
+            &vault_dir,
+            &escrow,
+            Some(SecretString::from_exposed(&password)),
+            &mut logger,
+        )
+        .expect("条目不存在（Ok(None)）→ env 兜底须成功");
+        assert_eq!(escrow.called_with().len(), 1, "启用态须触 read");
+        let content = escrow_read_log(&log_path);
+        assert!(content.contains("env-fallback"), "须走 env 兜底: {content}");
+        drop(p);
+    }
+
+    /// **托管条目存在但解锁失败 = fail-closed 报错退出 1**（docs/30 §1.3 第 6
+    /// 条）：mock 返回形状合法但内容错的 32B 密钥（已吊销/损坏）+ env **正确**——
+    /// 若实现静默回落 env 会解锁成功；正确实现须退出 1 + 错误含「从 App 重新
+    /// 启用 MCP 以重建托管」指引 + 不出现 env 兜底信号。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_escrow_unlock_failure_exits_1_no_env_fallback() {
+        let (vault_dir, password) = escrow_fast_vault("escrow-unlock-failure");
+        escrow_enable(&vault_dir, &password);
+        let escrow = MockEscrow::new(Ok(Some([0xAB; 32])));
+        let (mut logger, log_path) = escrow_test_logger("escrow-unlock-failure");
+        let code = build_coffer_provider(
+            &vault_dir,
+            &escrow,
+            Some(SecretString::from_exposed(&password)),
+            &mut logger,
+        )
+        .map(|_| ())
+        .expect_err("托管条目存在但解锁失败 → fail-closed 退出 1，不回落 env");
+        assert_eq!(code, exit_code::CONFIG_ERROR);
+        let content = escrow_read_log(&log_path);
+        assert!(
+            content.contains("请从 App 重新启用 MCP 以重建托管"),
+            "须含重建指引，content: {content}"
+        );
+        assert!(!content.contains("env-fallback"), "不得回落 env: {content}");
+    }
+
+    /// **孤儿条目边界**（lead 裁定 2026-10-07）：header 禁用 + keychain 残留
+    /// → 仍走 env 兜底，**不触 read**（header = 意图源；unlock_with_mcp_key 对
+    /// 该态本就 1002）。mock 返回能解锁的 key 也不得被读。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_orphan_item_ignored_when_header_disabled() {
+        let (vault_dir, password) = escrow_fast_vault("orphan-item");
+        let escrow = MockEscrow::new(Ok(Some([0x42; 32])));
+        let (mut logger, log_path) = escrow_test_logger("orphan-item");
+        let p = build_coffer_provider(
+            &vault_dir,
+            &escrow,
+            Some(SecretString::from_exposed(&password)),
+            &mut logger,
+        )
+        .expect("header 禁用 + keychain 残留 → env 兜底须成功");
+        assert!(
+            escrow.called_with().is_empty(),
+            "available=false 必须跳过 read（孤儿条目不触发托管路径）"
+        );
+        let content = escrow_read_log(&log_path);
+        assert!(content.contains("env-fallback"), "须走 env 兜底: {content}");
+        drop(p);
+    }
+
+    /// **读失败 fail-closed**（D-4，docs/29 §6.2 step 3 Err）：读取失败（ACL /
+    /// 签名 / 内容非法）→ 退出 1 + 可操作消息，**不回退 env**（防掩盖签名 / ACL
+    /// 问题）；env 密码正确也不得兜底。
+    #[cfg(feature = "coffer-store")]
+    #[test]
+    fn coffer_provider_escrow_read_error_exits_1_no_env_fallback() {
+        let (vault_dir, password) = escrow_fast_vault("escrow-read-error");
+        escrow_enable(&vault_dir, &password);
+        let escrow = MockEscrow::new(Err(EscrowError::access_denied(
+            "simulated missing entitlement (-34018)",
+        )));
+        let (mut logger, log_path) = escrow_test_logger("escrow-read-error");
+        let code = build_coffer_provider(
+            &vault_dir,
+            &escrow,
+            Some(SecretString::from_exposed(&password)),
+            &mut logger,
+        )
+        .map(|_| ())
+        .expect_err("读取失败 → fail-closed 退出 1，不回退 env");
+        assert_eq!(code, exit_code::CONFIG_ERROR);
+        let content = escrow_read_log(&log_path);
+        assert!(
+            content.contains("MCP 托管读取失败"),
+            "须含可操作错误，content: {content}"
+        );
+        assert!(!content.contains("env-fallback"), "读失败不得回落 env: {content}");
     }
 }

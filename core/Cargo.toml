@@ -31,6 +31,8 @@ members = [
     "cf-uds-sys",
     # MCP escrow 托管（v2.2.0 G1c）：macOS Keychain GenericPassword 只读封装（docs/29 §4.3）
     "cf-escrow-keychain",
+    # 浏览器扩展 E2E（v2.3.0 G-A，docs/31 §2.2）：协议/E2E/origin/会话，crate 内自足纯 lib
+    "cf-browser",
     # 测试支持
     "cf-testkit",
 ]
@@ -98,6 +100,19 @@ unicode-normalization = "0.1"
 # [已确认] 常量时间比较。已启用：cf-session 的 constant_time_eq 与
 #           cf-totp 的 verify 码值比对均改用此库（时序侧信道防护）
 subtle = "2"
+
+# ---------- 浏览器扩展 E2E（v2.3.0 G-A，docs/31 §3.3 D-6）----------
+# p256 0.14.0（RustCrypto，MIT/Apache——NFR-LEGAL-02）：P-256 ECDH + ECDSA。
+#           cf-importer 已依赖同版（pkcs8 feature）；本处启用 ecdsa 做握手签名、
+#           ecdh 做会话密钥协商（p256::ecdh 模块），feature 并集解析仍为
+#           0.14.0（已在 Cargo.lock，零新下载）。无网络能力。
+p256 = { version = "0.14.0", features = ["ecdsa", "ecdh"] }
+# aes-gcm 0.10.3（RustCrypto，MIT/Apache——NFR-LEGAL-02）：AES-256-GCM，
+#           与扩展侧 WebCrypto 同原语（docs/31 §3.3 原语表）。无网络能力。
+aes-gcm = "0.10.3"
+# 随机性统一走 getrandom（CSPRNG，cf-browser 不依赖 rand_core/OsRng——
+#           其 CryptoRng 绑定与椭圆曲线 0.14 存在 trait 归属摩擦；ephemeral
+#           标量由 getrandom::fill + 归约 mod n 生成，见 cf-browser e2e.rs）。
 
 # [已确认] totp-rs 5.7.2 —— TOTP (RFC 6238) 委托实现
 #           锁 5.7.2 不升 6.0：保持 MSRV 1.85（6.0 抬高 MSRV 且 API 有 breaking 变更）。

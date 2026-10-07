@@ -243,7 +243,7 @@ pub struct CofferStoreProvider { session: cf_session::VaultSession, /* … */ }
 
 - 依赖链 cf-mcp → cf-session → cf-store，单向。解锁经主 App 流程（VaultSession），1001 门禁复用。
 - **已实现（74a4538）**：`SecretProvider` trait 4 方法 + 8 操作（`list_environments` / `create_environment` / `mount_environment` / `inject_environment` / `grant_secret` / `revoke_secret` / `rotate_secret` / `audit_secret_usage`）同语义映射 cf-store 条目模型；`open(vault_dir, password)` 构造（open_vault + unlock）；**7xxx 码零新增**（CfError 映射：1001/1002→7002、1003→7001、1011→7003、1012/5002→7005、其余→7006）。
-- **存储映射 = 可逆临时约定（U-4，待用户追认，2026-10-07 落档）**：secret = 条目（名 = 标题；值 = `Designation::Password` 字段 → Concealed → 首个有值字段）；环境容器 = `SecureNote` 条目 + `coffer:environment` 标签（字段 = NAME/VALUE 对）；`allowed_agents` = 条目 `coffer:agent:*` 标签（授权即打 / 撤销即删，幂等）；轮换戳 = `coffer:rotated:*` 标签。**标签即数据，移除即撤**——U-4 落定后整体替换为新实体、无残留脏数据（见 §8 U-4）。原「本版不实现（无 Secret/Environment/权限实体）」随 74a4538 废止——实体建模以临时标签约定先行，正式实体建模归 U-4。
+- **存储映射 = 可逆临时约定（U-4，用户已追认 2026-10-07——临时约定转正式）**：secret = 条目（名 = 标题；值 = `Designation::Password` 字段 → Concealed → 首个有值字段）；环境容器 = `SecureNote` 条目 + `coffer:environment` 标签（字段 = NAME/VALUE 对）；`allowed_agents` = 条目 `coffer:agent:*` 标签（授权即打 / 撤销即删，幂等）；轮换戳 = `coffer:rotated:*` 标签。**标签即数据，移除即撤**——U-4 落定后整体替换为新实体、无残留脏数据（见 §8 U-4）。原「本版不实现（无 Secret/Environment/权限实体）」随 74a4538 废止——实体建模以临时标签约定先行，正式实体建模归 U-4。
 - **已接入（f623eb9）**：`coffer mcp --provider coffer` 经 `coffer-store` feature 门控接线 McpServer/CLI（§5.2）——库路径 + 解锁密码走 §4.3 env 约定（`COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`，缺任一 → 配置错误退出 1），`--vault` 在该路径忽略；`open` 失败按 §5.3 退出码映射（7002→3 身份缺失、7001/其余→1）。23 条 mcp_acceptance 判据由门面（env-seed + 进程内状态）承载，`coffer-store` 为门控生产面（语义一致性由 coffer.rs 单测保证）。
 - 启用 feature 后 workspace 依赖树新增 cf-session/cf-crypto 边，**不触碰**其他 crate（§9 互斥矩阵核对）。
 

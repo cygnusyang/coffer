@@ -42,13 +42,24 @@ cf-crypto = { workspace = true, optional = true }
 # `audit` 模块，cf-audit 是弱/重复/陈旧密码体检 FR-6）。feature 关闭时依赖树
 # 不含 cf-audit（docs/20 §2.2 只下不上；check_no_network 基线随 default 重标）。
 cf-audit = { workspace = true, optional = true }
+# 仅在 coffer-store feature 下需要：MCP 托管条目读取（docs/29 §4.2/§4.3-G3a）——
+# cf-escrow-keychain 是 macOS Keychain 只读封装（unsafe 面隔离，cf-mcp 保持
+# forbid(unsafe_code)，cf-mcp → cf-uds-sys 先例同构）。平台以 `cfg(target_os="macos")`
+# 在该 crate 内表达（workspace 惯例：Cargo.toml 无 target 门控，同 cf-uds-sys；
+# 非 macOS 分支编译期不触 FFI）。feature 关闭时依赖树不含（docs/20 §2.2 只下不上）。
+cf-escrow-keychain = { path = "../cf-escrow-keychain", optional = true }
 
 [features]
 default = ["coffer-store"]
 # 启用 Coffer 自家 Secret Store provider（D-2 用户裁定：缺省 provider = coffer，
 # coffer-store 转 default feature，docs/27 D-2）。依赖边 cf-mcp → cf-session →
 # cf-store（docs/20 §2.2，§9.2 互斥核对）；`--no-default-features` 才瘦依赖树。
-coffer-store = ["dep:cf-session", "dep:cf-crypto", "dep:cf-audit"]
+coffer-store = [
+    "dep:cf-session",
+    "dep:cf-crypto",
+    "dep:cf-audit",
+    "dep:cf-escrow-keychain",
+]
 
 # `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
 # 沿用 cf-ffi `uniffi-bindgen` 先例），未来 `coffer list/run/…` 扩进同一 bin 或

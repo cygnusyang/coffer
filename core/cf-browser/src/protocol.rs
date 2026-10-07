@@ -15,6 +15,8 @@
 //! 禁止场景是**未加密**的明文传输，本通道不触犯）。含 [`SecretString`] 的变体
 //! 因此**不**派生 `Clone`/`PartialEq`/`Eq`（cf-domain 刻意不实现，防明文复制）。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use cf_domain::category::ItemCategory;
@@ -82,12 +84,18 @@ pub enum HandshakeMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppRequest {
-    /// 取密（docs/31 §5.2）：broker 按需单值下发，一次性、无缓存。
+    /// 取密（docs/31 §5.2）：一次手势 = 一次授权填充（D-7 单次/TTL 30 s）。
+    ///
+    /// 填充一次登录需 username+password **多字段**（G-C 扩展侧契约 2026-10-08
+    /// 对齐），故 `fields` 一次声明、`values` 一次返回（见 [`AppResponse::GetSecretResult`]）；
+    /// `request_id` 关联请求/响应（扩展侧自增小整数，`< 2^53`，避免 JS Number 精度损失）。
     GetSecret {
+        /// 请求关联 id（响应原样带回）。
+        request_id: u64,
         /// 目标条目标识。
         entry: String,
-        /// 目标字段名（如 `password`）。
-        field: String,
+        /// 目标字段名数组（如 `["username", "password"]`）。
+        fields: Vec<String>,
         /// 当前页有效 origin（`Origin::to_string`，docs/31 §5.3 匹配输入）。
         origin: String,
         /// 手势令牌（UI 点击即生成，TTL 30 s、单次，docs/31 §5.2）。
@@ -128,10 +136,13 @@ pub enum AppRequest {
 pub enum AppResponse {
     /// broker 处于锁定态（docs/31 §4.1：popup 提示打开 App 解锁）。
     BrokerLocked,
-    /// 取密结果：单值、一次性（docs/31 §5.2）。
+    /// 取密结果：多字段、一次性（docs/31 §5.2）。
     GetSecretResult {
-        /// 解密后的单值（扩展解密后填充 DOM 随即覆盖，docs/31 §5.2）。
-        value: SecretString,
+        /// 与请求 `get_secret.request_id` 关联。
+        request_id: u64,
+        /// 解密后的字段值（键 = 请求 `fields` 元素；扩展填充 DOM 随即覆盖，
+        /// 值以 [`SecretString`] 承载、drop 清零——仅存在于密文之内）。
+        values: BTreeMap<String, SecretString>,
     },
     /// 捕获保存成功。
     CaptureSaved {

@@ -574,10 +574,12 @@ fn rotate_secret_updates_metadata() {
 
     mcp::rotate_secret(&secret).expect("rotate must not error");
     let meta = mcp::get_secret_metadata(&secret).expect("metadata");
-    // 桩返回空 metadata → 红灯。
+    // 判据（AS-9）：rotate 后 last_rotated_at 须为**非空**时间戳。secret_meta_json
+    // 信封恒含 `"last_rotated_at":""` 缺省（tools.rs:190）——仅判键存在是假绿
+    // （变异探针实证：移除门面 rotated_at 登记后原断言仍绿），故断言非空。
     assert!(
-        meta.contains("rotated_at") || meta.contains("last_rotated_at"),
-        "post-rotation metadata must carry rotation timestamp, got {meta:?}"
+        !meta.contains("\"last_rotated_at\":\"\""),
+        "rotate 后 last_rotated_at 须非空（缺省空串 = 未登记轮换），got {meta:?}"
     );
 }
 

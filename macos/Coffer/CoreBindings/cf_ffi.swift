@@ -1121,6 +1121,22 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func deleteItem(itemId: String, hard: Bool) throws 
     
     /**
+     * 派生 MCP 托管密钥（docs/29 §5.2 enable 流程 ①）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。内部经 `recover_dek` 重验证主密码
+     * 并解出 DEK（错 → 1002）→ HKDF 确定性派生 mcp_key（DEK 派生，
+     * 非随机；换主密码不吊销，docs/29 §5.3）。返回 32 字节密钥（供
+     * Swift 写入 Keychain——先 Keychain 后 header 顺序裁定，docs/29
+     * §5.2）；Rust 侧不落任何状态。
+     *
+     * # 错误
+     *
+     * 1001 锁定态 / 1002 主密码错 / 1007 派生失败。与 [`Self::unlock`]
+     * 共享暴力退避计数器（docs/29 §4.3 G2）。
+     */
+    func deriveMcpKey(password: String) throws  -> Data
+    
+    /**
      * 本地诊断摘要（FR-14.4，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
      *
      * 组合读取非敏感元数据：条目数 / 附件数 / 库创建时间 / 最后备份时间 /
@@ -1138,6 +1154,15 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 本方法失败非致命、可重试（docs/08 §8 降级矩阵）。
      */
     func disableBiometric() throws 
+    
+    /**
+     * 关闭 MCP 解锁托管（docs/29 §5.2 disable，header 侧）。
+     *
+     * 门禁：需解锁态（1001）。原子重写 header → 禁用态（`mcp_wrap`
+     * 回落默认值）；**幂等**——已是禁用态时不重写文件。Keychain 项删除
+     * 在 Swift 侧先行且幂等；本方法失败非致命、可重试（docs/29 §5.2）。
+     */
+    func disableMcpEscrow() throws 
     
     /**
      * 库显示名（锁定时也可见）。
@@ -1158,6 +1183,25 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * Keychain 项。
      */
     func enableBiometric(password: String, kBio: Data) throws 
+    
+    /**
+     * 启用 MCP 解锁托管（docs/29 §5.2 enable 流程 ③，header 侧）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。传入主密码而非 DEK（D-6 同款）：
+     * 内部经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，此时
+     * header 未变）→ mcp_key 封装 DEK → 原子重写 header 的 `mcp_wrap`
+     * 段。Rust 不触碰 Keychain——调用前 Swift 已把 mcp_key 写入
+     * Keychain（先 Keychain 后 header）；本方法返回 Err 时 header 保持
+     * 原样，Swift 依据 Err 补偿删除 Keychain 项（docs/29 §5.2）。
+     *
+     * `mcp_key` 必须为 32 字节（建议经
+     * [`VaultSession::derive_mcp_key`] 取得；长度不符 → 5002）。
+     *
+     * # 错误
+     *
+     * 1001 锁定态 / 1002 主密码错 / 5002 mcp_key 长度 / 5001·1005 写失败。
+     */
+    func enableMcpEscrow(password: String, mcpKey: Data) throws 
     
     /**
      * CSV 明文导出（FR-8.3；锁定态 → 1001）。
@@ -1218,6 +1262,15 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 由 Swift 侧 Keychain 信号组合判定（docs/08 §8 降级矩阵）。
      */
     func hasBiometricWrap()  -> Bool
+    
+    /**
+     * 是否启用了 MCP 托管封装（header `mcp_wrap.available`，docs/29 §2：
+     * 语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥操作；
+     * 供设置页决定是否显示托管开关态。实际可用性由 Swift 侧 Keychain
+     * 信号组合判定（三态见 docs/29 §5.2 resolve：本方法只出 Rust 侧
+     * 可得的 header available 信号，Keychain 条目存在性由 Swift 组合）。
+     */
+    func hasMcpWrap()  -> Bool
     
     /**
      * 五类体检报告（FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 编排）：需解锁态
@@ -1683,6 +1736,30 @@ open func deleteItem(itemId: String, hard: Bool)throws   {try rustCallWithError(
 }
     
     /**
+     * 派生 MCP 托管密钥（docs/29 §5.2 enable 流程 ①）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。内部经 `recover_dek` 重验证主密码
+     * 并解出 DEK（错 → 1002）→ HKDF 确定性派生 mcp_key（DEK 派生，
+     * 非随机；换主密码不吊销，docs/29 §5.3）。返回 32 字节密钥（供
+     * Swift 写入 Keychain——先 Keychain 后 header 顺序裁定，docs/29
+     * §5.2）；Rust 侧不落任何状态。
+     *
+     * # 错误
+     *
+     * 1001 锁定态 / 1002 主密码错 / 1007 派生失败。与 [`Self::unlock`]
+     * 共享暴力退避计数器（docs/29 §4.3 G2）。
+     */
+open func deriveMcpKey(password: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_derive_mcp_key(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(password),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 本地诊断摘要（FR-14.4，docs/22 §3.4；docs/23 §1.5 TC-DIAG 组）。
      *
      * 组合读取非敏感元数据：条目数 / 附件数 / 库创建时间 / 最后备份时间 /
@@ -1709,6 +1786,21 @@ open func diagnosticSummary()throws  -> FfiDiagnosticSummary  {
 open func disableBiometric()throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_disable_biometric(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 关闭 MCP 解锁托管（docs/29 §5.2 disable，header 侧）。
+     *
+     * 门禁：需解锁态（1001）。原子重写 header → 禁用态（`mcp_wrap`
+     * 回落默认值）；**幂等**——已是禁用态时不重写文件。Keychain 项删除
+     * 在 Swift 侧先行且幂等；本方法失败非致命、可重试（docs/29 §5.2）。
+     */
+open func disableMcpEscrow()throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_disable_mcp_escrow(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
@@ -1745,6 +1837,33 @@ open func enableBiometric(password: String, kBio: Data)throws   {try rustCallWit
             self.uniffiCloneHandle(),
         FfiConverterString.lower(password),
         FfiConverterData.lower(kBio),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 启用 MCP 解锁托管（docs/29 §5.2 enable 流程 ③，header 侧）。
+     *
+     * 门禁：需解锁态（锁定 → 1001）。传入主密码而非 DEK（D-6 同款）：
+     * 内部经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，此时
+     * header 未变）→ mcp_key 封装 DEK → 原子重写 header 的 `mcp_wrap`
+     * 段。Rust 不触碰 Keychain——调用前 Swift 已把 mcp_key 写入
+     * Keychain（先 Keychain 后 header）；本方法返回 Err 时 header 保持
+     * 原样，Swift 依据 Err 补偿删除 Keychain 项（docs/29 §5.2）。
+     *
+     * `mcp_key` 必须为 32 字节（建议经
+     * [`VaultSession::derive_mcp_key`] 取得；长度不符 → 5002）。
+     *
+     * # 错误
+     *
+     * 1001 锁定态 / 1002 主密码错 / 5002 mcp_key 长度 / 5001·1005 写失败。
+     */
+open func enableMcpEscrow(password: String, mcpKey: Data)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_enable_mcp_escrow(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(password),
+        FfiConverterData.lower(mcpKey),uniffiCallStatus
     )
 }
 }
@@ -1860,6 +1979,22 @@ open func hasBiometricWrap() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_has_biometric_wrap(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 是否启用了 MCP 托管封装（header `mcp_wrap.available`，docs/29 §2：
+     * 语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥操作；
+     * 供设置页决定是否显示托管开关态。实际可用性由 Swift 侧 Keychain
+     * 信号组合判定（三态见 docs/29 §5.2 resolve：本方法只出 Rust 侧
+     * 可得的 header available 信号，Keychain 条目存在性由 Swift 组合）。
+     */
+open func hasMcpWrap() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_has_mcp_wrap(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -9848,16 +9983,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_delete_item() != 13382) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_derive_mcp_key() != 18202) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_diagnostic_summary() != 39742) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_disable_biometric() != 59338) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_disable_mcp_escrow() != 11718) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_display_name() != 43087) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_enable_biometric() != 41906) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_enable_mcp_escrow() != 42044) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
@@ -9879,6 +10023,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap() != 31384) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_has_mcp_wrap() != 8554) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_health_report() != 32920) {

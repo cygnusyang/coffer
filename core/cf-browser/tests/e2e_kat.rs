@@ -41,12 +41,12 @@ const ENC_KEY: &str = "37cda6c871a2141e6d20cff7214874cd5933937a2939065397cd2e40a
 const MAC_KEY: &str = "4ec75e27d834d2d34e4d0d2990409dcd1806ec0fcb7a4e5d591e3874959b3b44";
 const P_CONFIRM: &str = "b591b4c925e15a85a094c00e0d430933d3c091db476a4bd00c4dedf675c4e2c8";
 const SIG: &str = "411040076db3a5c33e781153df25cebab4efc9560923556ec260dcade96c4cd38281271885aff8412010c49c331fbb5682a89249f6017aaab63004e94651123f";
-const PLAINTEXT: &str = "01000000000000007b2274797065223a226765745f736563726574222c22656e747279223a2264656d6f222c226669656c64223a2270617373776f7264222c226f726967696e223a2268747470733a2f2f6578616d706c652e636f6d222c2267657374757265223a22616263313233227d";
-const CT_TAG: &str = "7e789f2a03990e20a5f9f8ab5ec192565477852420534670a3c40b58139f515a7ae710237c5a3e495d1ab0e432d0264bd9ee2d49bed086277016b30ca83643a49daec386770e6c56f1b866586427732f79f36ad7317bc888149dbe64d27a7d085acf0d129f2d6dabe59ac89d934523d3a16407f6a64b0a1acedab1d9ddd106f97a";
-const MAC: &str = "7a6b49912d461c569f6d72250b931e6796605ec915c45f2ef69d04a95992f951";
+const PLAINTEXT: &str = "01000000000000007b2274797065223a226765745f736563726574222c22726571756573745f6964223a312c22656e747279223a2264656d6f222c226669656c6473223a5b22757365726e616d65222c2270617373776f7264225d2c226f726967696e223a2268747470733a2f2f6578616d706c652e636f6d222c2267657374757265223a22616263313233227d";
+const CT_TAG: &str = "7e789f2a03990e20a5f9f8ab5ec192565477852420534670a3c40b58139f46517fe00c7232273348124fa3e432d3215ac7f32d49bec482396c43f05caa7d0aea96af88db45423b1fb6a27c4d79316b2c74e673c52f7ccb9f5edc8c25d2392d0658d51745d76a27e5b38bd9c48d587589bd7132e060e4cd97ecc423c9487304d80c7f06bcccbf6f57bf5587f0fb5547fb5378bd4d632210e4838e0b59628e";
+const MAC: &str = "f480c97f3927313bec96f92152e3836eed3faeda4233d5f8fe7e572d5f549a34";
 /// 冻结完整帧 `nonce(12) ‖ ct_tag ‖ mac(32)`，md5（冻结帧字节）=
-/// `74a7ef5621a6e5f1ce25afc141c0f247`。
-const FROZEN_FRAME: &str = "a0a1a2a3a4a5a6a7a8a9aaab7e789f2a03990e20a5f9f8ab5ec192565477852420534670a3c40b58139f515a7ae710237c5a3e495d1ab0e432d0264bd9ee2d49bed086277016b30ca83643a49daec386770e6c56f1b866586427732f79f36ad7317bc888149dbe64d27a7d085acf0d129f2d6dabe59ac89d934523d3a16407f6a64b0a1acedab1d9ddd106f97a7a6b49912d461c569f6d72250b931e6796605ec915c45f2ef69d04a95992f951";
+/// `ef82fd23434b8857f010e7fadb93c057`（2026-10-08 多字段 get_secret 契约重算）。
+const FROZEN_FRAME: &str = "a0a1a2a3a4a5a6a7a8a9aaab7e789f2a03990e20a5f9f8ab5ec192565477852420534670a3c40b58139f46517fe00c7232273348124fa3e432d3215ac7f32d49bec482396c43f05caa7d0aea96af88db45423b1fb6a27c4d79316b2c74e673c52f7ccb9f5edc8c25d2392d0658d51745d76a27e5b38bd9c48d587589bd7132e060e4cd97ecc423c9487304d80c7f06bcccbf6f57bf5587f0fb5547fb5378bd4d632210e4838e0b59628ef480c97f3927313bec96f92152e3836eed3faeda4233d5f8fe7e572d5f549a34";
 
 // ---------------------------------------------------------------- 工具
 
@@ -71,11 +71,12 @@ fn broker_pub() -> PublicKey {
     PublicKey::from_sec1_bytes(&hx(PK_B)).expect("冻结公钥在曲线上")
 }
 
-/// 冻结帧对应的 GetSecret 请求（与 PLAINTEXT 内 JSON 一致）。
+/// 冻结帧对应的 GetSecret 请求（与 PLAINTEXT 内 JSON 一致，多字段契约）。
 fn frozen_get_secret() -> AppMessage {
     AppMessage::Request(AppRequest::GetSecret {
+        request_id: 1,
         entry: "demo".into(),
-        field: "password".into(),
+        fields: vec!["username".into(), "password".into()],
         origin: "https://example.com".into(),
         gesture: "abc123".into(),
     })
@@ -195,6 +196,11 @@ fn frame_primitives_match_frozen_and_session_decrypts() {
     let decrypted = decrypt_payload(&enc_key, &nonce, &ct_tag).expect("decrypt");
     assert_eq!(plaintext, decrypted);
 
+    // 自锁：冻结载荷的 JSON == serde_json 对 frozen_get_secret() 的输出
+    //（保证 Python 首算载荷与 Rust 序列化逐字节一致，字段序敏感）
+    let frozen = app_json(&frozen_get_secret());
+    assert_eq!(frozen.as_bytes(), &plaintext[8..]);
+
     // Session::decrypt 对冻结帧完整走通 → 反序列化为 GetSecret（seq=1 通过）
     let material = SessionKeyMaterial {
         enc_key,
@@ -265,8 +271,9 @@ fn handshake_roundtrip_random() {
     let mut session_r = pending.on_confirm(&msg3).expect("on_confirm");
 
     let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 1,
         entry: "demo".into(),
-        field: "password".into(),
+        fields: vec!["username".into(), "password".into()],
         origin: "https://example.com".into(),
         gesture: "abc123".into(),
     });

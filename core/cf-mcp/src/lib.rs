@@ -43,7 +43,9 @@ pub mod protocol;
 pub mod provider;
 pub mod redact;
 pub mod tools;
+pub mod uds;
 
+use std::cell::Cell;
 use std::io::{BufRead, Write};
 use std::sync::Mutex;
 
@@ -71,6 +73,13 @@ pub struct McpServer {
     tools: ToolRegistry,
     /// Replay 防护（§3.6）：数值消息 id 单调递增，乱序/重号拒绝。
     last_id: Mutex<Option<i64>>,
+    /// UDS 会话 challenge（docs/20 §3.6 ③）：`Some` 仅 `--uds` 传输设置；连接方
+    /// 须在 `initialize` 回显 challenge（HMAC 指纹比对，[`uds::Challenge`]），
+    /// 否则工具面拒绝。stdio 恒 `None`（无持久 token，replay 面 = 0，§3.6）。
+    uds_challenge: Option<uds::Challenge>,
+    /// challenge 是否已通过（仅 [`uds_challenge`](Self::uds_challenge) 为
+    /// `Some` 时有意义；单线程主循环，`Cell` 足够）。
+    uds_authorized: Cell<bool>,
 }
 
 impl McpServer {
@@ -83,6 +92,8 @@ impl McpServer {
             audit: Box::new(NoopAudit),
             tools: ToolRegistry::new(),
             last_id: Mutex::new(None),
+            uds_challenge: None,
+            uds_authorized: Cell::new(false),
         }
     }
 
@@ -98,6 +109,22 @@ impl McpServer {
     pub fn with_audit(mut self, audit: Box<dyn UsageAudit>) -> Self {
         self.audit = audit;
         self
+    }
+
+    /// 启用 UDS 会话 challenge 门控（builder；docs/20 §3.6 ③）。
+    ///
+    /// 仅 `--uds` 传输（[`uds::run`]）调用；stdio 不用（无持久 token，replay
+    /// 面 = 0）。设置后连接方须在 `initialize` 回显 challenge（[`uds::Challenge`]
+    /// 指纹比对），否则工具面（`tools/list` / `tools/call`）被拒（-32600）。
+    #[must_use]
+    pub fn with_uds_challenge(mut self, challenge: uds::Challenge) -> Self {
+        self.uds_challenge = Some(challenge);
+        self
+    }
+
+    /// UDS challenge 门控是否放行（stdio 恒 true；UDS 下须 initialize 回显通过）。
+    fn uds_session_ok(&self) -> bool {
+        self.uds_challenge.is_none() || self.uds_authorized.get()
     }
 
     /// 处理一行 MCP 消息，返回响应帧字符串；通知返回 `None`（无响应）。
@@ -218,19 +245,60 @@ impl McpServer {
     fn dispatch(&self, req: &RequestFrame) -> String {
         let id = req.id.clone().unwrap_or(RequestId::Null);
         match req.method.as_str() {
-            "initialize" => self.result_frame(
-                id,
-                json!({
-                    "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": { "tools": {} },
-                    "serverInfo": {
-                        "name": "coffer",
-                        "version": env!("CARGO_PKG_VERSION"),
-                    },
-                }),
-            ),
-            "tools/list" => self.result_frame(id, json!({ "tools": self.tools.definitions() })),
-            "tools/call" => self.handle_tools_call(req),
+            "initialize" => {
+                // UDS 会话 challenge（docs/20 §3.6 ③）：连接方须在 initialize
+                // 回显 env 下发的 challenge（`_coffer_uds_challenge` 参数，HMAC
+                // 指纹常量时间比对）；未回显/回显错 → 拒绝本请求且工具面关闭。
+                if let Some(challenge) = &self.uds_challenge {
+                    let ok = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get(uds::CHALLENGE_PARAM))
+                        .and_then(Value::as_str)
+                        .map(|echo| challenge.verify(echo))
+                        .unwrap_or(false);
+                    if !ok {
+                        self.uds_authorized.set(false);
+                        return self.error_frame(
+                            id,
+                            -32600,
+                            "UDS challenge verification failed (docs/20 §3.6 ③)".to_string(),
+                        );
+                    }
+                    self.uds_authorized.set(true);
+                }
+                self.result_frame(
+                    id,
+                    json!({
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "capabilities": { "tools": {} },
+                        "serverInfo": {
+                            "name": "coffer",
+                            "version": env!("CARGO_PKG_VERSION"),
+                        },
+                    }),
+                )
+            }
+            "tools/list" => {
+                if !self.uds_session_ok() {
+                    return self.error_frame(
+                        id,
+                        -32600,
+                        "UDS challenge not verified (docs/20 §3.6 ③)".to_string(),
+                    );
+                }
+                self.result_frame(id, json!({ "tools": self.tools.definitions() }))
+            }
+            "tools/call" => {
+                if !self.uds_session_ok() {
+                    return self.error_frame(
+                        id,
+                        -32600,
+                        "UDS challenge not verified (docs/20 §3.6 ③)".to_string(),
+                    );
+                }
+                self.handle_tools_call(req)
+            }
             "ping" => self.result_frame(id, json!({})),
             other => self.error_frame(id, -32601, format!("method not found: {other}")),
         }

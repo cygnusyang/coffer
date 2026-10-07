@@ -17,10 +17,13 @@
 //! - feature 关闭时显式 `--provider coffer`（flag 或 env 均为显式选择）→ 同任意
 //!   未知 provider → 配置错误退出 1（D-1：coffer 仅 feature 构建下可用）。
 //!
-//! ## 传输（D-4 暂缓）
+//! ## 传输（docs/20 §3.1 / §3.6，v2.1.0 D-4 实现）
 //!
-//! MVP 只支持 **stdio**。`--uds` 传入 → 配置错误（退出码 1），注明未实现
-//! （docs/20 §3.1 / §8 D-4）。**零网络**：无 TCP/UDP 代码路径（§3.1）。
+//! 缺省 **stdio**；`--uds PATH`（或 `$COFFER_MCP_UDS`，见 [`resolve_uds_path`]）
+//! 切换 UDS **本机回环**传输（[`crate::uds`] 模块，§3.6 防护全套：0600/0700
+//! 权限、peer 凭据校验、会话 challenge、单调 id）。协议帧格式与退出码契约
+//! 不变（§5.3 / D-1 冻结面零改动）。**零网络**：无 TCP/UDP 代码路径（§3.1；
+//! AF_UNIX 本机回环不违背「不去云端」，docs/27 D-4 新口径）。
 //!
 //! ## 日志纪律（§3.1 / §3.5-4）
 //!
@@ -50,6 +53,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::provider::op::{OpProvider, OpProviderConfig};
 use crate::provider::{ProviderError, SecretProvider};
+use crate::uds;
 use crate::McpServer;
 
 #[cfg(feature = "coffer-store")]
@@ -83,11 +87,6 @@ pub enum CliError {
     /// flag 缺值。
     #[error("flag `{0}` requires a value")]
     MissingValue(String),
-    /// flag 在本版未实现（D-4 暂缓）。
-    #[error(
-        "{0} is not implemented in this version (docs/20 D-4): only stdio transport is supported"
-    )]
-    Unimplemented(String),
     /// `--log` 文件无法打开。
     #[error("cannot open log file `{path}`: {source}")]
     LogOpen {
@@ -115,6 +114,9 @@ pub struct McpCliOptions {
     pub log_path: Option<PathBuf>,
     /// 关闭审计记录（`--no-audit`；缺省开启）。
     pub no_audit: bool,
+    /// UDS 监听路径（`--uds PATH`；`None` = stdio 或回落 `$COFFER_MCP_UDS`，
+    /// 见 [`resolve_uds_path`]）。v2.1.0 D-4 实现（docs/20 §3.1/§3.6）。
+    pub uds: Option<PathBuf>,
 }
 
 /// 从 argv（不含子命令 `mcp`）解析 `coffer mcp` 选项（docs/20 §5.2 冻结签名）。
@@ -125,9 +127,8 @@ pub struct McpCliOptions {
 ///   缺省 coffer 回落 op，显式 coffer 按 D-1 报 unsupported）；
 /// - `--vault`：不在本层解析（由 [`OpProviderConfig::from_env`] 读
 ///   `$COFFER_OP_VAULT`）；
-/// - `--log` / `--no-audit`：本层直收。
-///
-/// `--uds`（D-4 暂缓）返回 [`CliError::Unimplemented`]。
+/// - `--log` / `--no-audit` / `--uds`：本层直收（`--uds` 未给时回落
+///   `$COFFER_MCP_UDS`，见 [`resolve_uds_path`]）。
 ///
 /// 未知 flag / 位置参数 → [`CliError::UnknownFlag`]；值 flag 缺值 →
 /// [`CliError::MissingValue`]。
@@ -136,6 +137,7 @@ pub fn parse_args(args: &[String]) -> Result<McpCliOptions, CliError> {
     let mut log_path: Option<PathBuf> = None;
     let mut vault: Option<String> = None;
     let mut no_audit = false;
+    let mut uds: Option<PathBuf> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -152,9 +154,9 @@ pub fn parse_args(args: &[String]) -> Result<McpCliOptions, CliError> {
                 log_path = Some(PathBuf::from(path));
             }
             "--uds" => {
-                // 仍校验取值形态（缺值报 MissingValue），随后报未实现（D-4）。
-                let _ = take_value(args, &mut i, "--uds")?;
-                return Err(CliError::Unimplemented("--uds".to_string()));
+                // v2.1.0 D-4 实现（docs/20 §3.1/§3.6）：监听 UDS 而非 stdio。
+                let path = take_value(args, &mut i, "--uds")?;
+                uds = Some(PathBuf::from(path));
             }
             "--no-audit" => {
                 no_audit = true;
@@ -177,7 +179,20 @@ pub fn parse_args(args: &[String]) -> Result<McpCliOptions, CliError> {
         log_path,
         vault,
         no_audit,
+        uds,
     })
+}
+
+/// 解析 UDS 监听路径：`--uds PATH` flag 优先；未给则回落 `$COFFER_MCP_UDS`
+/// （非空；docs/20 §4.3）。`None` = stdio 传输。
+fn resolve_uds_path(options: &McpCliOptions) -> Option<PathBuf> {
+    if let Some(p) = &options.uds {
+        return Some(p.clone());
+    }
+    std::env::var(uds::UDS_ENV_PATH)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
 }
 
 /// 取 flag 的下一个取值；缺值 → [`CliError::MissingValue`]。推进 `i` 越过取值。
@@ -598,6 +613,18 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     let server = McpServer::new(provider);
+
+    // 传输选择（docs/20 §3.1）：`--uds PATH` / `$COFFER_MCP_UDS` → UDS 本机回环
+    //（§3.6 防护全套，见 [`crate::uds::run`]）；缺省 stdio。协议帧格式与退出码
+    // 契约两传输一致（D-1 冻结面零改动）。
+    if let Some(path) = resolve_uds_path(&options) {
+        logger.info(&format!(
+            "serving on uds {} (provider={provider_name}, vault={vault_label})",
+            path.display()
+        ));
+        return uds::run(&path, &mut logger, server);
+    }
+
     logger.info(&format!(
         "serving on stdio (provider={provider_name}, vault={vault_label})"
     ));
@@ -647,6 +674,8 @@ mod tests {
             "--log",
             "/tmp/coffer.log",
             "--no-audit",
+            "--uds",
+            "/tmp/coffer.sock",
         ]))
         .expect("valid flag set must parse");
         assert_eq!(o.provider, "op");
@@ -656,6 +685,11 @@ mod tests {
             Some(PathBuf::from("/tmp/coffer.log").as_path())
         );
         assert!(o.no_audit);
+        assert_eq!(
+            o.uds.as_deref(),
+            Some(PathBuf::from("/tmp/coffer.sock").as_path()),
+            "--uds 须解析进选项"
+        );
     }
 
     #[test]
@@ -730,10 +764,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_uds_as_unimplemented() {
-        let err = parse_args(&arg(&["--uds", "/tmp/coffer.sock"]))
-            .expect_err("--uds (D-4) must be rejected as unimplemented");
-        assert!(matches!(err, CliError::Unimplemented(f) if f == "--uds"));
+    fn parse_accepts_uds() {
+        // v2.1.0 D-4 实现（docs/27）：--uds 激活，不再是占位未实现。
+        let o = parse_args(&arg(&["--uds", "/tmp/coffer.sock"]))
+            .expect("--uds must parse (v2.1.0 D-4)");
+        assert_eq!(o.uds, Some(PathBuf::from("/tmp/coffer.sock")));
+    }
+
+    #[test]
+    fn parse_rejects_uds_missing_value() {
+        let err = parse_args(&arg(&["--uds"])).expect_err("--uds without value must be rejected");
+        assert!(matches!(err, CliError::MissingValue(f) if f == "--uds"));
     }
 
     #[test]
@@ -743,10 +784,76 @@ mod tests {
         assert_eq!(unknown.to_string(), "unknown flag: --xyz");
         let missing = CliError::MissingValue("--vault".into());
         assert_eq!(missing.to_string(), "flag `--vault` requires a value");
-        let uds = CliError::Unimplemented("--uds".into());
+    }
+
+    // -------------------------------------------------------- UDS challenge 门控
+
+    /// stdio 路径不受 challenge 影响：无 challenge 时 tools/list 无需 initialize
+    ///（§3.6：stdio 无持久 token，replay 面 = 0，不加门控）。
+    #[test]
+    fn stdio_tools_without_challenge_works() {
+        let server = McpServer::new(Box::new(TestSeedProvider));
+        let input = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+"#;
+        let mut out: Vec<u8> = Vec::new();
+        server
+            .serve_with(std::io::Cursor::new(input.as_bytes()), &mut out)
+            .expect("stdio serve must not error");
+        let response = String::from_utf8(out).expect("response must be UTF-8");
         assert!(
-            uds.to_string().contains("not implemented"),
-            "uds 须注明未实现: {uds}"
+            response.contains("\"tools\""),
+            "stdio tools/list 须正常: {response}"
+        );
+    }
+
+    /// UDS challenge（docs/20 §3.6 ③）：initialize 回显错误 → 拒绝本请求，
+    /// 且工具面保持关闭（-32600「not verified」）。
+    #[test]
+    fn uds_challenge_wrong_echo_rejects_tools() {
+        let server = McpServer::new(Box::new(TestSeedProvider))
+            .with_uds_challenge(uds::Challenge::from_env_value("real-challenge"));
+        let input = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"{}\":\"wrong\"}}}}\n\
+             {{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}}\n",
+            uds::CHALLENGE_PARAM
+        );
+        let mut out: Vec<u8> = Vec::new();
+        server
+            .serve_with(std::io::Cursor::new(input.as_bytes()), &mut out)
+            .expect("serve must not error");
+        let response = String::from_utf8(out).expect("response must be UTF-8");
+        assert!(
+            response.contains("challenge verification failed"),
+            "initialize 回显错误须被拒: {response}"
+        );
+        assert!(
+            response.contains("challenge not verified"),
+            "工具面须保持关闭: {response}"
+        );
+    }
+
+    /// UDS challenge：initialize 正确回显 → initialize 与 tools/list 均成功。
+    #[test]
+    fn uds_challenge_correct_echo_opens_tools() {
+        let server = McpServer::new(Box::new(TestSeedProvider))
+            .with_uds_challenge(uds::Challenge::from_env_value("real-challenge"));
+        let input = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"{}\":\"real-challenge\"}}}}\n\
+             {{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}}\n",
+            uds::CHALLENGE_PARAM
+        );
+        let mut out: Vec<u8> = Vec::new();
+        server
+            .serve_with(std::io::Cursor::new(input.as_bytes()), &mut out)
+            .expect("serve must not error");
+        let response = String::from_utf8(out).expect("response must be UTF-8");
+        assert!(
+            !response.contains("challenge"),
+            "正确回显不得出现 challenge 错误: {response}"
+        );
+        assert!(
+            response.contains("\"tools\""),
+            "tools/list 须成功: {response}"
         );
     }
 

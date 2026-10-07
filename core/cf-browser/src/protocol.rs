@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use cf_domain::category::ItemCategory;
+use cf_domain::field::Designation;
 use cf_domain::secret::SecretString;
 
 use crate::error::CfBrowserError;
@@ -125,18 +126,35 @@ pub enum AppRequest {
     },
     /// 列出当前 origin 的可填充条目（docs/31 §5.2 菜单列表；G-B 依赖，G-A
     /// 2026-10-08 增量添加，不动 KAT）。
+    ///
+    /// **不携带 `gesture`**（lead 裁定 2026-10-08）：docs/31 L261 手势规则仅点名
+    /// `get_secret` / `capture_save` / `confirm_unbound_origin` 三消息必须带手势；
+    /// `get_entries` 是只读非机密元数据列举、仅用户点击菜单触发，不在点名之列，
+    /// 也无需手势防护。
     GetEntries {
         /// 当前页有效 origin（同 `get_secret.origin` 语义）。
         origin: String,
-        /// 手势令牌（TTL 30 s、单次）。
-        gesture: String,
     },
     /// 锁定（docs/31 §2.4：扩展侧 lock → broker 杀进程，同 App 锁定）。
     Lock,
 }
 
+/// 条目可填充字段引用（`EntryInfo.fields` 的一项；**非机密元数据**）。
+///
+/// 携带 [`Designation`]（cf-domain 域模型既有语义标识，lead 裁定 2026-10-08）：
+/// 扩展侧按 `designation`（`{"kind": "username"}` 等 adjacently-tagged 序列化）
+/// 推字段填充角色，**不**靠字段名猜（"pass"/"密码"/"code" 等非标准名会猜错）。
+/// 本类型不含 [`SecretString`]，可派生 `Clone`/`PartialEq`/`Eq`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntryFieldRef {
+    /// 字段名（`get_secret.fields` 里原样回传的元素）。
+    pub name: String,
+    /// 字段语义标识（填充角色来源）。
+    pub designation: Designation,
+}
+
 /// 菜单条目信息（`get_entries` 结果的一项；**非机密元数据**——标识/标题/类别/
-/// 可用字段名列表均不承载明文密钥，扩展展示给用户点选后发 `get_secret` 取密）。
+/// 可用字段引用列表均不承载明文密钥，扩展展示给用户点选后发 `get_secret` 取密）。
 ///
 /// 与 [`AppRequest`]/[`AppResponse`] 不同，本类型**不**含 [`SecretString`]，
 /// 故可派生 `Clone`/`PartialEq`/`Eq`（仅菜单展示用途，无明文复制风险）。
@@ -148,9 +166,9 @@ pub struct EntryInfo {
     pub title: String,
     /// 条目类别（`get_secret.fields` 可用范围依类别而异）。
     pub category: ItemCategory,
-    /// 可请求的字段名列表（`get_secret.fields` 的可选子集，如
-    /// `["username", "password"]`）。
-    pub fields: Vec<String>,
+    /// 可请求的字段引用列表（`get_secret.fields` 的可选子集；扩展按
+    /// [`EntryFieldRef::designation`] 推填充角色）。
+    pub fields: Vec<EntryFieldRef>,
 }
 
 /// broker → 扩展的应用响应（docs/31 §4 / §5）。
@@ -174,7 +192,7 @@ pub enum AppResponse {
     EntriesResult {
         /// 与 `get_entries.origin` 匹配的条目（顺序 = broker 决定，建议按绑定
         /// 优先级/标题）。
-        entries: Vec<EntryRef>,
+        entries: Vec<EntryInfo>,
     },
     /// 捕获保存成功。
     CaptureSaved {

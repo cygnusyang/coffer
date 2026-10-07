@@ -1,8 +1,16 @@
-//! `coffer mcp` CLI（docs/20 §5，G-D）。
+//! `coffer` CLI（docs/20 §5，G-D；browser 子命令 G-B）。
 //!
-//! 职责：把命令行参数（§5.2 **冻结签名**）解析成 provider 配置 + 启动
+//! 主职责：把 `mcp` 子命令参数（§5.2 **冻结签名**）解析成 provider 配置 + 启动
 //! [`crate::McpServer::serve_stdio`]。stdout 永为协议帧（§3.1）；日志只走
 //! stderr 或 `--log` 文件。退出码映射见 §5.3 与 [`exit_code`]。
+//!
+//! ## 子命令（docs/31 §2.1 D-2，G-B）
+//!
+//! - `mcp`：MCP 服务（本文主体）；
+//! - `browser-agent` / `browser-broker`：浏览器扩展 native messaging host / 长驻
+//!   daemon（`mod browser`，docs/31；经 `coffer-store` feature + macOS 双门控，
+//!   docs/32 §8 #1 裁决——feature 关闭时两子命令不注册，落 unknown-subcommand
+//!   fail-closed）。
 //!
 //! ## provider 选择（docs/20 §4.5 / §5.2；docs/27 D-2 缺省翻转）
 //!
@@ -614,6 +622,16 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("error: missing subcommand; expected `coffer mcp` (docs/20 §5.2)");
         return exit_code::CONFIG_ERROR;
     };
+    // 浏览器扩展子命令（G-B，docs/31 §2.1 D-2）：经 `coffer-store` feature +
+    // macOS 双门控（docs/32 §8 #1 裁决：复用既有 feature，不新增 browser feature）。
+    // feature 关闭（slim build）或非 macOS 时两子命令不注册 → 落入下方
+    // unknown-subcommand 分支 fail-closed（cli.rs:617，退出码契约不变）。
+    #[cfg(all(feature = "coffer-store", target_os = "macos"))]
+    match subcommand.as_str() {
+        "browser-agent" => return browser::run_agent(&args[1..]),
+        "browser-broker" => return browser::run_broker(&args[1..]),
+        _ => {}
+    }
     if subcommand != "mcp" {
         eprintln!("error: unknown subcommand `{subcommand}`; expected `coffer mcp` (docs/20 §5.2)");
         return exit_code::CONFIG_ERROR;
@@ -750,6 +768,771 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("error: stdio serve failed: {e}");
             exit_code::PROTOCOL_FATAL
         }
+    }
+}
+
+// ===========================================================================
+// 浏览器扩展子命令（G-B，docs/31 §2.1 D-2 / §3.2 认证链 ②③）
+// ===========================================================================
+// `coffer browser-agent`（native messaging host，薄中继）+ `coffer browser-broker`
+//（长驻 daemon，持解锁会话）——复用嵌套 bundle coffer 二进制（D-2），分发到
+// cf-browser（HostRelay / BrokerEndpoint）。经 `coffer-store` feature 门控
+//（docs/32 §8 #1 裁决）+ macOS 双门控（`os::macos` SecCode / `LOCAL_PEERPID`
+// 平台惯例，同 cf-uds-sys）；两门控关闭时子命令不注册 → run() 落 unknown-
+// subcommand fail-closed。
+//
+// 生命周期（docs/31 §3.1「三段通道第 3 段」）：v2.3.0 单会话范围；broker 由
+// App（G-D）解锁时 spawn、锁定时 kill（锁态镜像）。本模块只做进程/通道层：
+// host 验父进程（②，8001）、broker 验 peer（③，8002）、E2E 会话编排
+//（BrokerEndpoint）、app 请求分发（锁定 → broker_locked 8003；Lock → 杀进程）。
+//
+// ## 解锁契约（G-B 版 = env 注入；生产装配 = G-D 在 App 解锁后 spawn 时注入）
+//
+// `COFFER_BROKER_DEK_HEX` + `COFFER_BROKER_VAULT_UUID_HEX` + `COFFER_BROKER_PSK_HEX`
+// 使 broker 派生确定性身份（`BrokerIdentity::derive`，docs/31 §4.2）并建立 E2E；
+// `COFFER_BROKER_UNLOCKED` 标记存在 = 已解锁（可服务 app 请求），缺省 = 锁定态
+//（E2E 可握手，但取密/列表 → broker_locked 8003）。PSK 持久化（配对时写入
+// keychain）与 vault 取密接线为 G-D/G-T merge-time 集成点（见 [`list_entries`] /
+// [`handle_request`] 文档）。
+//
+// ## 退出码（复用 docs/20 §5.3，映射表见 run_agent / run_broker）
+//
+// 0 干净（连接 EOF / Lock / 拒连为已处理事件）/ 1 配置错（缺 --uds、缺 pairing
+// env、父进程拒签 8001、bind 失败）/ 2 协议致命 / 3 身份缺失（身份派生失败）。
+//
+// ## 日志纪律
+//
+// host 的 stdout 是 native messaging 协议面、broker 的 stdout 未用——两子命令
+// 一切诊断只走 `--log` 文件或 stderr（与 `coffer mcp` 同款 [`Logger`]），
+// 且**不产生任何通道内容日志**（盲传/解密面零落盘，docs/31 §3.1）。
+#[cfg(all(feature = "coffer-store", target_os = "macos"))]
+mod browser {
+    use std::fs;
+    use std::io::{self, Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::{Path, PathBuf};
+
+    use cf_browser::broker::{BrokerEndpoint, BrokerIdentity};
+    use cf_browser::e2e::Session;
+    use cf_browser::host::HostRelay;
+    use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, EntryInfo, HandshakeMessage};
+    use cf_browser::CfBrowserError;
+
+    use super::exit_code;
+    use super::{Logger, McpCliOptions};
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt};
+
+    // ---------------- 环境变量契约（G-B 版 broker 解锁 / host 定位） ----------------
+
+    /// broker UDS 监听路径（G-D spawn `browser-broker --uds $COFFER_BROKER_UDS` 时
+    /// 设置；`browser-agent` 亦读它以定位 broker，host 与 broker 共享同一 socket）。
+    pub const ENV_BROKER_UDS: &str = "COFFER_BROKER_UDS";
+    /// broker 身份 DEK（32 字节 hex）。G-B 版 = env 注入（生产 = G-D 在 App 解锁后
+    /// spawn 注入；PSK 持久化/配对流 = G-D/G-T merge-time 集成点，见模块文档）。
+    const ENV_BROKER_DEK: &str = "COFFER_BROKER_DEK_HEX";
+    /// broker 身份派生用 vault uuid（16 字节 hex，`BrokerIdentity::derive`）。
+    const ENV_BROKER_VAULT_UUID: &str = "COFFER_BROKER_VAULT_UUID_HEX";
+    /// broker 配对 PSK（32 字节 hex；配对流注入，可轮换）。
+    const ENV_BROKER_PSK: &str = "COFFER_BROKER_PSK_HEX";
+    /// broker 解锁会话存在标记（任意非空 = 已解锁；缺省 = 锁定态 8003）。
+    const ENV_BROKER_UNLOCKED: &str = "COFFER_BROKER_UNLOCKED";
+    /// broker 跳过 ③ 层 peer 签名验证（**仅 G-B 自动化测试设置**；生产不设置，
+    /// ③ 层恒开——测试进程非签名二进制无法通过自身签名链）。
+    const ENV_BROKER_SKIP_PEER_VERIFY: &str = "COFFER_BROKER_SKIP_PEER_VERIFY";
+    /// broker 验 peer 的 SecRequirement 覆盖（缺省 = 自有 coffer 二进制签名锚定，
+    /// G-E/G-D 生产装配按真实签名核对）。
+    const ENV_BROKER_REQUIREMENT: &str = "COFFER_BROKER_REQUIREMENT";
+    /// broker 条目夹具（`Vec<EntryInfo>` JSON）。G-B 版条目源；生产 = vault
+    /// ItemStore（G-D/G-T merge-time 集成点，见 [`list_entries`]）。
+    const ENV_BROKER_ENTRIES: &str = "COFFER_BROKER_ENTRIES_JSON";
+
+    /// 单帧 payload 上限（内存安全守卫：E2E 帧 ~100 字节、握手 JSON ~300 字节，
+    /// 64 MiB 远够且防恶意长度前缀的分配炸弹；native messaging 理论 4 GiB 不追求）。
+    const MAX_FRAME_LEN: usize = 64 * 1024 * 1024;
+
+    /// socket 文件权限 0600（对齐 uds.rs `SOCKET_FILE_MODE`，docs/20 §3.6）。
+    const SOCKET_FILE_MODE: u32 = 0o600;
+    /// socket 父目录权限 0700（对齐 uds.rs `SOCKET_DIR_MODE`）。
+    const SOCKET_DIR_MODE: u32 = 0o700;
+
+    /// ② 层浏览器白名单 `(identifier, TeamID)`——公开稳定常量。P-S spike 实证
+    /// DR/TeamID 锚定跨浏览器原地自更新稳定（docs/31 §3.2 ②），TeamID 非密钥。
+    const BROWSER_WHITELIST: &[(&str, &str)] = &[
+        ("com.google.Chrome", "EQHXZ8M8AV"),
+        ("com.microsoft.edgemac", "UBF8T346G9"),
+        ("org.mozilla.firefox", "43AQ936H96"),
+    ];
+
+    /// 缺省 broker 验 peer 的 SecRequirement：自有 coffer 二进制（DR/TeamID 锚定）。
+    /// TeamID/identifier 为公开签名常量（escrow keychain 组
+    /// `A6DS985SJJ.app.coffer.Coffer` 见 docs/31 §7），非密钥；G-E/G-D 生产装配
+    /// 可经 [`ENV_BROKER_REQUIREMENT`] 覆盖。
+    const DEFAULT_BROKER_REQUIREMENT: &str = "identifier \"app.coffer.Coffer\" and anchor apple generic \
+                                              and certificate leaf[subject.OU] = \"A6DS985SJJ\"";
+
+    // ---------------- 8xxx 错误码（docs/03 §12 冻结；本模块产生 8001/8002/8003，
+    // 认证链 8001/8002/8004、不可用 8003、交互/授权面 8005-8008） ----------------
+
+    /// host 拒签：父进程非签名浏览器（docs/31 §3.2 ②，fail-closed；认证链）。
+    pub const ERR_HOST_PARENT_UNVERIFIED: u16 = 8001;
+    /// broker 拒连：peer host 非自有 coffer 二进制（docs/31 §3.2 ③；认证链）。
+    pub const ERR_BROKER_PEER_UNVERIFIED: u16 = 8002;
+    /// broker 锁定：无解锁会话（docs/31 §4.1，popup 引导打开 App 解锁）。
+    ///
+    /// 与 [`ERR_BROKER_UNAVAILABLE`] 同属 docs/03 §12 `BrokerUnavailable`（8003）
+    /// ——「Coffer 未运行或未解锁」即本码；此常量仅用于 BrokerLocked 响应日志
+    /// （响应本体是 `AppResponse::BrokerLocked` 变体，不携带码值）。
+    pub const ERR_BROKER_LOCKED: u16 = 8003;
+    /// broker 不可用（docs/03 §12 `BrokerUnavailable` = 8003）：该操作当前不可用。
+    ///
+    /// G-B 版 app 请求未接线 vault 取密/写入（vault 集成 = G-D/G-T merge-time
+    /// 点）与 broker 进程不可达，均属「当前不可用」→ 本码；G-B 不产生 8006
+    /// `UserDenied`（用户拒绝流程未实现，docs/03 §12 冻结语义）。
+    pub const ERR_BROKER_UNAVAILABLE: u16 = 8003;
+
+    /// ② 层：验父进程是否为白名单签名浏览器（docs/31 §3.2 ②，P-S spike 实证）。
+    ///
+    /// 经 `SecCodeCopyGuestWithAttributes(PID)` + `SecCodeCheckValidity`
+    /// （security-framework 安全封装，免 entitlement / 免 TCC，P-S 实证）。
+    /// fail-closed：PID 不存在 / 无签名信息 / 非白名单 → `false`。
+    ///
+    /// **runtime CDHash 次校验**（`kSecCodeInfoUnique` 现取，docs/31 §3.2 ②）：
+    /// security-framework 不暴露该 info 字典 API（G-B 实测），本版仅实现
+    /// **主锚定 = DR/TeamID 签名验证**；CDHash 次校验列为 G-R/G-E 后续（需独立
+    /// sys crate 封装 `SecCodeCopySigningInformation`，report 已声明）。
+    fn parent_is_trusted_browser() -> bool {
+        let ppid = std::os::unix::process::parent_id();
+        BROWSER_WHITELIST.iter().any(|(identifier, team_id)| {
+            let requirement = format!(
+                "identifier \"{identifier}\" and anchor apple generic \
+                 and certificate leaf[subject.OU] = \"{team_id}\""
+            );
+            // `parent_id()` 返回 u32；PID 恒 < 2^31（macOS 默认上限远低于此），
+            // `as i32` 无损。peer_pid（`cf-uds-sys`）为 `libc::pid_t` = i32，故
+            // 验证函数统一以 i32 承载。
+            verify_code_signature(ppid as i32, &requirement)
+        })
+    }
+
+    /// SecCode by PID 代码签名验证（docs/31 §3.2 ②③，P-S spike 实证机制）。
+    ///
+    /// 任何失败（PID 不存在 / 无签名 / 签名不符 / requirement 非法）→ `false`，
+    /// 绝不降级（fail-closed）。
+    fn verify_code_signature(pid: i32, requirement: &str) -> bool {
+        use security_framework::os::macos::code_signing::{
+            Flags, GuestAttributes, SecCode, SecRequirement,
+        };
+        let mut attrs = GuestAttributes::new();
+        attrs.set_pid(pid);
+        let code = match SecCode::copy_guest_with_attribues(None, &attrs, Flags::NONE) {
+            Ok(code) => code,
+            Err(_) => return false,
+        };
+        let req: SecRequirement = match requirement.parse() {
+            Ok(req) => req,
+            Err(_) => return false,
+        };
+        code.check_validity(Flags::NONE, &req).is_ok()
+    }
+
+    /// ③ 层：验 peer host（docs/31 §3.2 ③）。
+    ///
+    /// `getpeereid` 同用户 + SecCode 签名（自有 coffer 二进制锚定，DR/TeamID）。
+    /// [`ENV_BROKER_SKIP_PEER_VERIFY`] 设置时跳过签名校验（**仅自动化测试**；
+    /// 生产装配绝不设置，③ 层恒开）。
+    fn peer_is_verified(stream: &UnixStream) -> bool {
+        if env_flag(ENV_BROKER_SKIP_PEER_VERIFY) {
+            return true;
+        }
+        let peer_euid = match cf_uds_sys::peer_euid(stream) {
+            Ok(u) => u,
+            Err(_) => return false,
+        };
+        if peer_euid != cf_uds_sys::self_euid() {
+            return false;
+        }
+        let pid = match cf_uds_sys::peer_pid(stream) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let requirement = std::env::var(ENV_BROKER_REQUIREMENT)
+            .unwrap_or_else(|_| DEFAULT_BROKER_REQUIREMENT.to_string());
+        verify_code_signature(pid, &requirement)
+    }
+
+    /// 读环境布尔标记（任意非空 = `true`）。
+    fn env_flag(name: &str) -> bool {
+        std::env::var(name)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    // ---------------- browser-agent：native messaging host（薄中继） ----------------
+
+    /// `coffer browser-agent` 入口（docs/31 §3.1 第 2 段，薄中继）。
+    ///
+    /// 流程：② 层验父进程（8001 fail-closed）→ 定位 broker UDS → 连 broker →
+    /// 中继循环（stdin 帧 → broker → stdout 帧，**零逻辑盲传**，仅经 [`HostRelay`]
+    /// 做帧长校验与重组，不解密/不解析/不落盘）。
+    ///
+    /// 退出码（复用 docs/20 §5.3）：
+    /// - `0` 干净（stdin EOF，扩展关闭端口）；
+    /// - `1` 配置错：父进程非签名浏览器（8001）/ 缺 `$COFFER_BROKER_UDS` /
+    ///   broker 不可达（8003）；
+    /// - `2` 协议致命：中继 IO / 帧长异常。
+    ///
+    /// 日志纪律：stdout 是 native messaging 协议面，一切诊断只走 `--log` / stderr。
+    pub fn run_agent(args: &[String]) -> i32 {
+        let log_path = match parse_agent_args(args) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: browser agent: {e}");
+                return exit_code::CONFIG_ERROR;
+            }
+        };
+        let mut logger = match build_logger(log_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("error: browser agent: {e}");
+                return exit_code::CONFIG_ERROR;
+            }
+        };
+
+        if !parent_is_trusted_browser() {
+            logger.error(&format!(
+                "error: browser host: parent process is not a trusted browser ({ERR_HOST_PARENT_UNVERIFIED}); refusing to relay"
+            ));
+            return exit_code::CONFIG_ERROR;
+        }
+
+        let Some(uds) = std::env::var(ENV_BROKER_UDS)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(PathBuf::from)
+        else {
+            logger.error(&format!(
+                "error: browser host: missing ${ENV_BROKER_UDS}（broker socket 路径，docs/31 §3.1）"
+            ));
+            return exit_code::CONFIG_ERROR;
+        };
+
+        logger.info(&format!(
+            "browser host: relaying via uds {} (parent verified)",
+            uds.display()
+        ));
+        match relay_loop(&uds) {
+            Ok(()) => {
+                logger.info("browser host: channel closed, exiting");
+                exit_code::CLEAN
+            }
+            Err(e) => {
+                logger.error(&format!("error: browser host: {e}"));
+                exit_code::PROTOCOL_FATAL
+            }
+        }
+    }
+
+    /// 解析 `browser-agent` 参数：仅 `--log PATH`（可选）。未知 flag / 缺值 → Err。
+    fn parse_agent_args(args: &[String]) -> Result<Option<PathBuf>, String> {
+        let mut log_path = None;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--log" => {
+                    let next = i + 1;
+                    if next >= args.len() {
+                        return Err("flag `--log` requires a value".into());
+                    }
+                    log_path = Some(PathBuf::from(&args[next]));
+                    i += 2;
+                }
+                other => return Err(format!("unknown flag: {other}")),
+            }
+        }
+        Ok(log_path)
+    }
+
+    /// 按 `--log` 构造 [`Logger`]（缺省 stderr；复用 `coffer mcp` 的日志纪律）。
+    fn build_logger(log_path: Option<PathBuf>) -> Result<Logger, String> {
+        let options = McpCliOptions {
+            provider: "browser".to_string(),
+            provider_explicit: false,
+            vault: None,
+            log_path,
+            no_audit: true,
+            uds: None,
+        };
+        Logger::new(&options).map_err(|e| e.to_string())
+    }
+
+    /// 中继主循环：stdin（native messaging）→ broker UDS → stdout（native messaging）。
+    ///
+    /// 盲传纪律（docs/31 §3.1）：不解密、不解析、不落盘、不缓存内容；仅经
+    /// [`HostRelay::wrap`] 做帧长校验与重组。每帧 lockstep 一进一出（单会话 E2E
+    /// 的请求-响应一一对应，握手三消息同样流经此中继）。
+    fn relay_loop(uds: &Path) -> Result<(), String> {
+        let mut broker = UnixStream::connect(uds).map_err(|e| {
+            format!(
+                "broker unreachable ({ERR_BROKER_UNAVAILABLE}): connect {}: {e}",
+                uds.display()
+            )
+        })?;
+        let relay = HostRelay;
+        let stdin = io::stdin();
+        let stdout = io::stdout();
+        let mut stdin = stdin.lock();
+        let mut stdout = stdout.lock();
+        // while-let：stdin EOF（扩展关闭 native port）→ 干净退出。每帧 lockstep
+        // 一进一出。
+        while let Some(payload) =
+            read_frame(&mut stdin).map_err(|e| format!("stdin read failed: {e}"))?
+        {
+            // 扩展 → broker：读一帧（4B LE + payload），校验重组，转发 broker。
+            let framed = relay.wrap(&payload).map_err(|e| format!("frame invalid: {e}"))?;
+            broker
+                .write_all(&framed)
+                .map_err(|e| format!("broker write failed: {e}"))?;
+            // broker → 扩展：读响应帧，原样写回 stdout（native messaging 帧）。
+            let Some(resp) = read_frame(&mut broker)
+                .map_err(|e| format!("broker read failed: {e}"))?
+            else {
+                return Err("broker closed connection (channel lost)".into());
+            };
+            stdout
+                .write_all(&resp)
+                .map_err(|e| format!("stdout write failed: {e}"))?;
+            stdout.flush().map_err(|e| format!("stdout flush failed: {e}"))?;
+        }
+        Ok(())
+    }
+
+    // ---------------- browser-broker：长驻 daemon（持解锁会话） ----------------
+
+    /// `coffer browser-broker` 入口（docs/31 §2.1 D-2，长驻 daemon）。
+    ///
+    /// 流程：解析 `--uds`（必填）/ `--log`（可选）→ 解锁契约（pairing env 必填，
+    /// 缺 → 配置错 1）→ 派生身份（失败 → 身份缺失 3）→ bind UDS（socket 0600 /
+    /// 父目录 0700）→ accept 循环：每连接 ③ 层验 peer（8002 拒连）→ E2E 握手
+    ///（失败拒绝）→ app 请求分发（锁定 → broker_locked 8003；Lock → 响应后退出 0）。
+    ///
+    /// 退出码（复用 docs/20 §5.3）：
+    /// - `0` 干净（连接 EOF / 收到 Lock；peer 拒连为已处理事件，daemon 继续）；
+    /// - `1` 配置错：缺 `--uds` / 缺 pairing env / bind 失败；
+    /// - `2` 协议致命：accept 循环致命错误；
+    /// - `3` 身份缺失：broker 身份密钥派生失败。
+    pub fn run_broker(args: &[String]) -> i32 {
+        let (uds, log_path) = match parse_broker_args(args) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("error: browser broker: {e}");
+                return exit_code::CONFIG_ERROR;
+            }
+        };
+        let mut logger = match build_logger(log_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("error: browser broker: {e}");
+                return exit_code::CONFIG_ERROR;
+            }
+        };
+
+        // 解锁契约：pairing 材料必填（缺 → 配置错 1，fail-closed；测试断言此路径）。
+        let Some(secrets) = resolve_broker_secrets() else {
+            logger.error(
+                "error: browser broker: 缺 pairing env（$COFFER_BROKER_DEK_HEX / \
+                 $COFFER_BROKER_VAULT_UUID_HEX / $COFFER_BROKER_PSK_HEX），fail-closed 退出",
+            );
+            return exit_code::CONFIG_ERROR;
+        };
+
+        let identity = match BrokerIdentity::derive(&secrets.dek, &secrets.vault_uuid) {
+            Ok(id) => id,
+            Err(e) => {
+                logger.error(&format!(
+                    "error: browser broker: 身份派生失败 ({}): {e}",
+                    e.code()
+                ));
+                return exit_code::IDENTITY_MISSING;
+            }
+        };
+        let endpoint = BrokerEndpoint::new(identity, secrets.psk);
+
+        let listener = match bind_broker_socket(&uds) {
+            Ok(l) => l,
+            Err(e) => {
+                logger.error(&format!(
+                    "error: browser broker: bind `{}` failed: {e}",
+                    uds.display()
+                ));
+                return exit_code::CONFIG_ERROR;
+            }
+        };
+        let _guard = SocketGuard { path: uds.clone() };
+
+        let locked = !secrets.unlocked;
+        logger.info(&format!(
+            "browser broker: serving on uds {} (locked={locked})",
+            uds.display()
+        ));
+
+        loop {
+            match listener.accept() {
+                Ok((stream, _addr)) => match serve_connection(stream, &endpoint, locked, &mut logger)
+                {
+                    // 单连接处理完毕（EOF / 拒连 / 握手失败）→ daemon 继续 accept；
+                    // 仅 Lock / 致命错误返回退出码。
+                    ServerResult::Continue => {}
+                    ServerResult::Exit(code) => return code,
+                },
+                Err(e) => {
+                    logger.error(&format!("error: browser broker: accept failed: {e}"));
+                    return exit_code::PROTOCOL_FATAL;
+                }
+            }
+        }
+    }
+
+    /// 解析 `browser-broker` 参数：`--uds PATH`（必填）+ `--log PATH`（可选）。
+    fn parse_broker_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
+        let mut uds = None;
+        let mut log_path = None;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--uds" => {
+                    let next = i + 1;
+                    if next >= args.len() {
+                        return Err("flag `--uds` requires a value".into());
+                    }
+                    uds = Some(PathBuf::from(&args[next]));
+                    i += 2;
+                }
+                "--log" => {
+                    let next = i + 1;
+                    if next >= args.len() {
+                        return Err("flag `--log` requires a value".into());
+                    }
+                    log_path = Some(PathBuf::from(&args[next]));
+                    i += 2;
+                }
+                other => return Err(format!("unknown flag: {other}")),
+            }
+        }
+        let Some(uds) = uds else {
+            return Err("missing `--uds PATH`（broker socket 路径必填）".into());
+        };
+        Ok((uds, log_path))
+    }
+
+    /// 单连接服务结果：daemon 继续 or 退出。
+    enum ServerResult {
+        /// 连接处理完毕（EOF / 拒连 / 握手失败），daemon 继续 accept。
+        Continue,
+        /// 退出 daemon（Lock 请求 → 0；内部致命 → 相应码）。
+        Exit(i32),
+    }
+
+    /// 服务一个连接：③ 层验 peer → E2E 握手 → app 请求循环（docs/31 §4/§5）。
+    fn serve_connection(
+        mut stream: UnixStream,
+        endpoint: &BrokerEndpoint,
+        locked: bool,
+        logger: &mut Logger,
+    ) -> ServerResult {
+        if !peer_is_verified(&stream) {
+            logger.error(&format!(
+                "error: browser broker: peer host not verified ({ERR_BROKER_PEER_UNVERIFIED}); rejecting connection"
+            ));
+            return ServerResult::Continue;
+        }
+        let mut session = match broker_handshake(&mut stream, endpoint) {
+            Ok(s) => s,
+            Err(e) => {
+                logger.error(&format!(
+                    "error: browser broker: E2E handshake failed ({}): {e}",
+                    e.code()
+                ));
+                return ServerResult::Continue;
+            }
+        };
+        loop {
+            // read_frame 返回 Result<Option<Frame>, …>：`Ok(None)` = 连接 EOF →
+            // 干净关闭。用单 match 而非 let-else（scrutinee 为 match 表达式触发
+            // 解析限制「}` before `else`」）。
+            let frame = match read_frame(&mut stream) {
+                Ok(Some(f)) => f,
+                Ok(None) => break,
+                Err(e) => {
+                    logger.error(&format!("error: browser broker: read failed: {e}"));
+                    return ServerResult::Continue;
+                }
+            };
+            let msg = match session.decrypt(&frame) {
+                Ok(m) => m,
+                Err(e) => {
+                    // 认证/解密失败统一 8004（info-leak 纪律，cf-browser error.rs）；
+                    // daemon 继续（单会话断开）。
+                    logger.error(&format!(
+                        "error: browser broker: decrypt failed ({}): {e}",
+                        e.code()
+                    ));
+                    return ServerResult::Continue;
+                }
+            };
+
+            // Lock 请求：响应后杀进程（docs/31 §4.1「lock 命令 → 杀进程」）。
+            if matches!(msg, AppMessage::Request(AppRequest::Lock)) {
+                let out = match session.encrypt(&AppMessage::Response(AppResponse::Locked)) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        logger.error(&format!("error: browser broker: encrypt failed: {e}"));
+                        return ServerResult::Exit(exit_code::PROTOCOL_FATAL);
+                    }
+                };
+                if let Err(e) = write_frame(&mut stream, &out) {
+                    logger.error(&format!("error: browser broker: write failed: {e}"));
+                }
+                logger.info("browser broker: lock requested, exiting");
+                return ServerResult::Exit(exit_code::CLEAN);
+            }
+
+            let response = handle_request(msg, locked);
+            // BrokerLocked（8003）记 stderr（对齐 8001/8002/8003 的可观测性模式）。
+            if matches!(response, AppResponse::BrokerLocked) {
+                logger.error(&format!(
+                    "error: browser broker: vault locked ({ERR_BROKER_LOCKED}); refusing request"
+                ));
+            }
+            let out = match session.encrypt(&AppMessage::Response(response)) {
+                Ok(o) => o,
+                Err(e) => {
+                    logger.error(&format!("error: browser broker: encrypt failed: {e}"));
+                    return ServerResult::Exit(exit_code::PROTOCOL_FATAL);
+                }
+            };
+            if let Err(e) = write_frame(&mut stream, &out) {
+                logger.error(&format!("error: browser broker: write failed: {e}"));
+                return ServerResult::Continue;
+            }
+        }
+        ServerResult::Continue
+    }
+
+    /// app 请求分发（docs/31 §5）。
+    ///
+    /// - 锁定态：`get_secret` / `get_entries` → [`AppResponse::BrokerLocked`]（8003，
+    ///   扩展 popup 引导「打开 Coffer 解锁」）；
+    /// - 解锁态：`get_entries` → 条目源（[`ENV_BROKER_ENTRIES`] 夹具，G-B 版）；
+    ///   `get_secret` / `capture_save` → 8003 `BrokerUnavailable`（vault 取密/写入
+    ///   未接线，操作当前不可用；G-D/G-T merge-time 集成点）；`confirm_unbound_origin`
+    ///   → 直接确认（G-B 版无持久化
+    ///   副作用，真实绑定写库 = 集成点）。
+    fn handle_request(msg: AppMessage, locked: bool) -> AppResponse {
+        let AppMessage::Request(req) = msg else {
+            // 请求方向收到响应消息 = 扩展行为异常 → 协议错误（8004 语义）。
+            return AppResponse::Error {
+                code: 8004,
+                message: "unexpected response message from extension".into(),
+            };
+        };
+        match req {
+            AppRequest::GetSecret { .. } => {
+                if locked {
+                    return AppResponse::BrokerLocked;
+                }
+                AppResponse::Error {
+                    code: ERR_BROKER_UNAVAILABLE,
+                    message: "broker secret retrieval 未接线（G-B 版；vault 集成 = G-D/G-T merge-time）"
+                        .into(),
+                }
+            }
+            // GetEntries 不带 gesture（lead 裁定 2026-10-08，docs/31 L261 仅点名
+            // 三消息带手势；get_entries 只读元数据列举不在其列）→ 无需手势校验。
+            AppRequest::GetEntries { origin } => {
+                if locked {
+                    return AppResponse::BrokerLocked;
+                }
+                AppResponse::EntriesResult {
+                    entries: list_entries(&origin),
+                }
+            }
+            AppRequest::CaptureSave { .. } => AppResponse::Error {
+                code: ERR_BROKER_UNAVAILABLE,
+                message: "capture save 未接线（G-B 版；vault 集成 = G-D/G-T merge-time）".into(),
+            },
+            AppRequest::ConfirmUnboundOrigin { .. } => AppResponse::OriginConfirmed,
+            AppRequest::Lock => {
+                // Lock 在 serve_connection 单独处理（需退出信号）；此处兜底（不可达）。
+                AppResponse::Locked
+            }
+        }
+    }
+
+    /// 条目源（G-B 版）：`$COFFER_BROKER_ENTRIES_JSON`（`Vec<EntryInfo>` JSON）夹具；
+    /// 未设 → 空列表。生产 = vault ItemStore（G-D/G-T merge-time 集成点）。
+    fn list_entries(_origin: &str) -> Vec<EntryInfo> {
+        let Ok(json) = std::env::var(ENV_BROKER_ENTRIES) else {
+            return Vec::new();
+        };
+        match serde_json::from_str::<Vec<EntryInfo>>(&json) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("error: browser broker: 非法 ${ENV_BROKER_ENTRIES}: {e}；回落空列表");
+                Vec::new()
+            }
+        }
+    }
+
+    /// 解锁契约：pairing 材料从 env 解析（G-B 版；生产 = G-D spawn 注入）。
+    /// 任一缺失/非法 → `None`（fail-closed，调用方配置错退出 1）。
+    fn resolve_broker_secrets() -> Option<BrokerSecrets> {
+        let dek = parse_hex_array::<32>(std::env::var(ENV_BROKER_DEK).ok()?.as_str())?;
+        let vault_uuid =
+            parse_hex_array::<16>(std::env::var(ENV_BROKER_VAULT_UUID).ok()?.as_str())?;
+        let psk = parse_hex_array::<32>(std::env::var(ENV_BROKER_PSK).ok()?.as_str())?;
+        Some(BrokerSecrets {
+            dek,
+            vault_uuid,
+            psk,
+            unlocked: env_flag(ENV_BROKER_UNLOCKED),
+        })
+    }
+
+    /// broker 解锁材料（身份派生 + 配对 PSK + 解锁态标记）。
+    struct BrokerSecrets {
+        /// vault 数据加密密钥（身份派生输入，docs/31 §4.2）。
+        dek: [u8; 32],
+        /// vault uuid（身份派生输入）。
+        vault_uuid: [u8; 16],
+        /// 配对 PSK（E2E 双向认证，docs/31 §3.3）。
+        psk: [u8; 32],
+        /// 解锁会话存在标记（`false` = 锁定态，app 请求 → broker_locked）。
+        unlocked: bool,
+    }
+
+    /// 解析 hex 字符串为定长数组（长度不符 / 非法 hex → None，fail-closed）。
+    fn parse_hex_array<const N: usize>(hex: &str) -> Option<[u8; N]> {
+        cf_browser::e2e::from_hex(hex).ok()?.try_into().ok()
+    }
+
+    /// E2E 握手（responder 侧，[`BrokerEndpoint`] 编排，docs/31 §3.3）。
+    /// 读 msg1 → 产 msg2 → 读 msg3 → 建会话。任何失败 → Err（统一 8004 语义）。
+    fn broker_handshake(
+        stream: &mut UnixStream,
+        endpoint: &BrokerEndpoint,
+    ) -> Result<Session, CfBrowserError> {
+        let Some(frame) = read_frame(stream)
+            .map_err(|e| CfBrowserError::MalformedMessage(format!("handshake read: {e}")))?
+        else {
+            return Err(CfBrowserError::SessionNotEstablished);
+        };
+        let msg1: HandshakeMessage = serde_json::from_slice(&frame)
+            .map_err(|e| CfBrowserError::MalformedMessage(format!("init: {e}")))?;
+        let (msg2, pending) = endpoint.on_init(&msg1)?;
+        let msg2_bytes = serde_json::to_vec(&msg2)
+            .map_err(|e| CfBrowserError::Serialize(e.to_string()))?;
+        write_frame(stream, &msg2_bytes)
+            .map_err(|e| CfBrowserError::MalformedMessage(format!("write msg2: {e}")))?;
+        let Some(frame3) = read_frame(stream)
+            .map_err(|e| CfBrowserError::MalformedMessage(format!("confirm read: {e}")))?
+        else {
+            return Err(CfBrowserError::SessionNotEstablished);
+        };
+        let msg3: HandshakeMessage = serde_json::from_slice(&frame3)
+            .map_err(|e| CfBrowserError::MalformedMessage(format!("confirm: {e}")))?;
+        pending.on_confirm(&msg3)
+    }
+
+    /// bind broker UDS 监听器（socket 0600 / 父目录 0700，对齐 uds.rs 模式）。
+    ///
+    /// 已存在路径按类型处理：活 socket → `AddrInUse`；陈旧 socket（拒绝连接）→
+    /// 删除重绑；非 socket（普通文件/目录）→ `AddrInUse`（不覆盖用户数据）。
+    fn bind_broker_socket(path: &Path) -> io::Result<UnixListener> {
+        ensure_broker_parent_dir(path)?;
+        if path.exists() {
+            let file_type = fs::metadata(path)?.file_type();
+            if file_type.is_socket() {
+                if UnixStream::connect(path).is_ok() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!("uds path already in use by a live listener: {}", path.display()),
+                    ));
+                }
+                // 陈旧 socket（拒绝连接）→ 删除重绑。
+                let _ = fs::remove_file(path);
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "uds path `{}` exists and is not a socket; refusing to overwrite it",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        let listener = UnixListener::bind(path)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(SOCKET_FILE_MODE))?;
+        Ok(listener)
+    }
+
+    /// 父目录就绪（0700 自建；已存在**不动其权限**，对齐 uds.rs：不对既有共享/
+    /// 系统目录 chmod）。
+    fn ensure_broker_parent_dir(path: &Path) -> io::Result<()> {
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(SOCKET_DIR_MODE);
+        builder.recursive(true);
+        builder.create(&parent)
+    }
+
+    /// socket 文件清理守卫：所有退出路径删除 socket 文件（不留陈旧残留）。
+    struct SocketGuard {
+        path: PathBuf,
+    }
+
+    impl Drop for SocketGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    /// 读一个 native messaging 帧（4B LE 长度前缀 + payload），返回 payload。
+    ///
+    /// EOF（前缀不足 4 字节即断开）→ `None`（调用方按干净关闭处理）；payload
+    /// 超 [`MAX_FRAME_LEN`] → `InvalidData`（内存安全守卫，防分配炸弹）。
+    fn read_frame<R: Read>(r: &mut R) -> io::Result<Option<Vec<u8>>> {
+        let mut len_buf = [0u8; 4];
+        if let Err(e) = r.read_exact(&mut len_buf) {
+            return if e.kind() == io::ErrorKind::UnexpectedEof {
+                Ok(None)
+            } else {
+                Err(e)
+            };
+        }
+        let len = u32::from_le_bytes(len_buf) as usize;
+        if len > MAX_FRAME_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("frame payload too large: {len} bytes (max {MAX_FRAME_LEN})"),
+            ));
+        }
+        let mut payload = vec![0u8; len];
+        r.read_exact(&mut payload)?;
+        Ok(Some(payload))
+    }
+
+    /// 写一个 native messaging 帧（4B LE 长度前缀 + payload），写后 flush。
+    fn write_frame<W: Write>(w: &mut W, payload: &[u8]) -> io::Result<()> {
+        let len = u32::try_from(payload.len()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "frame payload too large")
+        })?;
+        w.write_all(&len.to_le_bytes())?;
+        w.write_all(payload)?;
+        w.flush()
     }
 }
 

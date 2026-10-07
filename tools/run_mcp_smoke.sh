@@ -117,7 +117,39 @@ if grep -q '"jsonrpc"' "${STDERR_F}"; then
   fail "stderr 出现协议帧（§3.1：stdout 永为协议帧，stderr 只做日志）"
 fi
 
+# —— 协议致命路径（L-7 / §5.3 退出码 2）：超限行 → 7005 拒收帧 + 退出码 2 ——
+say "==> 协议致命路径：超限行 → 7005 + 退出码 2"
+STDOUT2_F="${TMP}/stdout2"
+STDERR2_F="${TMP}/stderr2"
+STDIN_FIFO2="${TMP}/stdin2.fifo"
+mkfifo "${STDIN_FIFO2}"
+COFFER_OP_BIN="${FAKE_OP}" "${COFFER_BIN}" mcp < "${STDIN_FIFO2}" > "${STDOUT2_F}" 2> "${STDERR2_F}" &
+COFFER_PID=$!
+exec 9>"${STDIN_FIFO2}"
+
+# 等待进程就绪（同首段：stdout 出内容或进程退出，最多 5s）
+for _ in $(seq 1 50); do
+  [ -s "${STDOUT2_F}" ] || ! kill -0 "${COFFER_PID}" 2>/dev/null && break
+  sleep 0.1
+done
+kill -0 "${COFFER_PID}" 2>/dev/null || fail "coffer 启动即退出（stderr 见 ${STDERR2_F}）"
+
+# 超限行（64KB+1，无需换行：第 65537 字节即触发 TooLong）。不把 64KB 字符串
+# 内联进命令行（/dev/zero 生成）。coffer 检测超限即写 7005 并退出 → 残余写入
+# EPIPE 属预期，用 `|| true` 容忍（SIGPIPE 由子进程承接，脚本不退）。
+{ head -c $((64 * 1024 + 1)) /dev/zero | tr '\0' 'x' >&9; } 2>/dev/null || true
+exec 9>&-   # EOF
+
+# wait 退出码非零（coffer 按 §5.3 以 2 退出）——用 || 捕获，避免 set -e 中断
+wait "${COFFER_PID}" && OVER_EXIT=0 || OVER_EXIT=$?
+COFFER_PID=""
+say "==> 协议致命退出码：${OVER_EXIT}"
+[ "${OVER_EXIT}" -eq 2 ] || fail "期望协议致命退出码 2（§5.3），实得 ${OVER_EXIT}（stdout 见 ${STDOUT2_F}）"
+grep -q '"code":7005' "${STDOUT2_F}" || fail "stdout 须含 7005 拒收帧（L-7，见 ${STDOUT2_F}）"
+grep -q '"id":null' "${STDOUT2_F}" || fail "7005 拒收帧 id 恒 null（帧同步不可恢复，见 ${STDOUT2_F}）"
+
 say "----------------------------------------"
 say "smoke: 构建 + 握手 + tools/call + 退出码 0 全部通过（${FRAME_COUNT} 帧协议帧）"
+say "      + 协议致命路径 7005 + 退出码 2 通过"
 say "log   : ${LOG}"
 say "SMOKE: OK"

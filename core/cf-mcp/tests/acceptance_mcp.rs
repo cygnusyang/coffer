@@ -31,6 +31,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use cf_mcp::protocol::MAX_LINE_BYTES;
+
 /// 编译产物 `coffer` 二进制绝对路径（cargo 在集成测试构建期注入）。
 fn coffer_bin() -> &'static str {
     env!("CARGO_BIN_EXE_coffer")
@@ -420,6 +422,33 @@ fn identity_missing_exits_3() {
     assert!(
         stderr.contains("identity missing") || stderr.contains("7002"),
         "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn overlimit_line_protocol_fatal_exits_2() {
+    // L-7 协议致命路径（§5.3 退出码 2）：超限行（> MAX_LINE_BYTES）→ stdout 出
+    // 7005 拒收帧（id 恒 null，帧同步已不可恢复）→ 服务退出码 2。
+    let mut c = spawn_mcp(&["mcp"], &[]);
+
+    let overlong = "x".repeat(MAX_LINE_BYTES + 1);
+    c.send(&overlong);
+
+    // 超限拒收帧：7005（protocol.rs，L-7 建议码）；id 恒 null（无法取回合法 id）。
+    let frame = c.read_frame();
+    assert_eq!(frame["error"]["code"], json!(7005), "超限拒收帧须报 7005，got {frame}");
+    assert!(frame["id"].is_null(), "超限拒收帧 id 恒 null，got {frame}");
+    assert!(
+        frame["error"]["message"].as_str().is_some_and(|m| m.contains("MAX_LINE_BYTES")),
+        "错误消息须可操作（说明超限语义），got {frame}"
+    );
+
+    // 服务随即退出 → §5.3 退出码 2（协议致命）。
+    let (code, stderr) = c.finish();
+    assert_eq!(
+        code,
+        Some(2),
+        "协议致命（L-7 超限）→ 退出码 2，stderr: {stderr}"
     );
 }
 

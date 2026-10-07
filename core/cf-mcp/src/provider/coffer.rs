@@ -27,8 +27,8 @@
 //! | 最后轮换时间 | secret 条目上的保留标签 [`ROTATED_TAG_PREFIX`]`<unix>` |
 //!
 //! 标签即数据：移除标签即撤消约定，不产生孤儿行，也不改变条目的类别/字段，
-//! 因此**可逆**。轮换新值用时间 nonce（与门面同源）；生产级随机源属安全决策，
-//! 一并挂 U-4 追认。
+//! 因此**可逆**。轮换新值用 Coffer 生成器强随机值（`cf_audit::generate_password`
+//! 默认档，MEDIUM-2，docs/27 裁定 B），不再用可预测时间戳 nonce。
 //!
 //! ## 不变量
 //!
@@ -47,6 +47,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use cf_audit::{generate_password, PasswordGenOptions};
 use cf_domain::category::ItemCategory;
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::{FieldDraft, ItemDraft, ItemState, ItemSummary, SectionDraft, UrlDraft};
@@ -430,7 +431,7 @@ impl CofferStoreProvider {
     pub fn rotate_secret(&self, secret: &str) -> Result<(), ProviderError> {
         let item = self.resolve_secret(secret)?;
         let mut draft = draft_from_details(&item);
-        let new_value = rotated_value();
+        let new_value = rotated_value()?;
         let mut rotated = false;
         for f in &mut draft.fields {
             if f.designation == Some(Designation::Password) {
@@ -510,13 +511,13 @@ fn agent_tag(agent: &str) -> String {
     format!("{AGENT_TAG_PREFIX}{agent}")
 }
 
-/// 轮换新值（时间 nonce，与门面同源；生产级随机源待 U-4 / 安全评审追认）。
-fn rotated_value() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("rotated-{nanos}")
+/// 轮换新值（MEDIUM-2，docs/27 裁定 B）：Coffer 生成器强随机值，按
+/// `PasswordGenOptions::default()` 默认档（20 位、四类字符齐全、排除易混淆字符，
+/// CSPRNG 后端，cf-audit/lib.rs:86-98）。生成失败静态不可达（默认参数恒合法），
+/// 仍显式映射 [`ProviderError::Internal`]（7006，不静默降级、不 unwrap）。
+fn rotated_value() -> Result<String, ProviderError> {
+    generate_password(&PasswordGenOptions::default())
+        .map_err(|reason| ProviderError::Internal(format!("password generation failed: {reason}")))
 }
 
 /// 当前 unix 秒（标签时间戳用）。

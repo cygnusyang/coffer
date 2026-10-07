@@ -1,5 +1,5 @@
 // McpStatusConfig.swift —— MCP 设置页配置常量 / 持久化 / 注册命令构造
-// （docs/20 §5.2/§5.4/§6.1）。
+// （docs/20 §5.2/§5.4/§6.1；docs/29 §7.1 翻转）。
 //
 // 与 TouchIDStatus（Support/TouchIDStatus.swift）分离的原因：MCP 域把
 // 「状态判定」「配置持久化」「命令构造」三类纯逻辑集中在此，供
@@ -7,17 +7,17 @@
 
 import Foundation
 
-/// MCP provider 常量（docs/20 §6.1 Provider 下拉）。
-/// MVP 恒「1Password CLI」（docs/20 D-2：数据源 = op），Coffer 自家库灰态预留。
+/// MCP provider 常量（docs/20 §6.1 Provider 下拉；docs/29 §7.1 翻转后
+/// coffer 取消灰态、默认 coffer）。
 enum McpProvider: String, CaseIterable, Equatable {
-    /// 1Password CLI（MVP 数据源，docs/20 §4.2 OpProvider）
+    /// 1Password CLI（docs/20 §4.2 OpProvider；v2.2.0 转可选）
     case op
-    /// Coffer 自家库（灰态预留，feature 门控，docs/20 §4.5）
+    /// Coffer 自家库（docs/20 §4.5 CofferStoreProvider；v2.2.0 转正默认）
     case coffer
 
-    /// CLI flag 值（`--provider <rawValue>`，docs/20 §5.2）。
-    /// rawValue 即 `coffer mcp --provider op` 用的值；展示名见 displayName。
-    static let defaultProvider = McpProvider.op
+    /// 默认 provider（docs/29 §7.1：coffer 转正）。
+    /// rawValue 即 `coffer mcp --provider <rawValue>` 用的值；展示名见 displayName。
+    static let defaultProvider = McpProvider.coffer
 
     /// 设置页展示名（1Password 对齐文案）。
     var displayName: String {
@@ -27,8 +27,8 @@ enum McpProvider: String, CaseIterable, Equatable {
         }
     }
 
-    /// 本版（MVP）是否可用。恒 op 可用（D-2）；coffer 灰态预留。
-    var isAvailableInMvp: Bool { self == .op }
+    /// 本版是否可用（docs/29 §7.1：coffer 取消灰态，两个 provider 均可用）。
+    var isAvailableInMvp: Bool { self == .op || self == .coffer }
 }
 
 /// MCP 设置持久化（docs/20 §6.1 开关 / Vault 配置项）。
@@ -82,33 +82,47 @@ enum McpSettings {
 }
 
 /// 注册命令构造（docs/20 §5.4：设置页「复制」输出，对齐 1Password
-/// 「Connect to Claude」一键复制）。
+/// 「Connect to Claude」一键复制；docs/29 §7.1：coffer 版随 provider 分支）。
 ///
 /// 输出形如：
 ///   claude mcp add coffer -- coffer mcp --provider op --vault <vault>
-/// 用户前置：`op signin`（1Password 集成会话）+ `coffer` 在 PATH
-/// （随 App 分发，docs/20 §6.2）。
+///   claude mcp add coffer -e COFFER_VAULT_DIR=<vaultDirPath> -- coffer mcp --provider coffer
+/// 用户前置：op 路径需 `op signin`（1Password 集成会话）+ `coffer` 在 PATH
+/// （随 App 分发，docs/20 §6.2）；coffer 路径只需 `coffer` 在 PATH（解锁走
+/// MCP 托管，**不含密码 env**——docs/29 §7.1 本版收口核心）。
 enum McpRegisterCommand {
     /// 无需引号的「安全字符集」：字母数字 + 常见路径/域内标点。
-    /// 仅当 vault 名含此集合以外的字符（空格、单引号等）才加引号——简单名
-    /// 保持 §5.4 示例的自然形态（`--vault Personal`），特殊字符才包裹。
+    /// 仅当 vault 名 / 目录路径含此集合以外的字符（空格、单引号等）才加引号
+    /// ——简单名保持 §5.4 示例的自然形态（`--vault Personal`），特殊字符才包裹。
     private static let safeUnquotedCharacters = "._-@/%+=:,"
 
-    /// 生成注册命令。vault 为空/全空白则省略 `--vault`；非空则按需 shell
-    /// 单引号包裹（含内嵌单引号转义）——用户把命令粘贴到终端即原样执行，
-    /// vault 名含空格/引号也能正确解析。
+    /// 生成注册命令。op 路径：vault 为空/全空白则省略 `--vault`，非空则按需
+    /// shell 单引号包裹（含内嵌单引号转义）；coffer 路径：出
+    /// `-e COFFER_VAULT_DIR=<vaultDirPath>` 版（目录路径同样按需引号包裹）。
+    /// 命令粘贴到终端即原样执行，vault 名 / 路径含空格或引号也能正确解析。
     ///
     /// - Parameters:
-    ///   - provider: `McpProvider` 的 rawValue（如 `"op"`，docs/20 §5.2）。
-    ///   - vault: 默认 vault 名（nil / 空 / 全空白 → 省略 `--vault`）。
+    ///   - provider: `McpProvider` 的 rawValue（如 `"op"` / `"coffer"`，
+    ///     docs/29 §7.1 注册命令随 provider 分支）。
+    ///   - vault: 默认 vault 名（仅 op 分支消费；nil / 空 / 全空白 → 省略
+    ///     `--vault`）。
+    ///   - vaultDirPath: 自家库目录路径（docs/29 §7.1，仅 coffer 分支消费；
+    ///     空/全空白 → 仍输出 `-e COFFER_VAULT_DIR=` 空值——UI 侧无会话时应
+    ///     禁用复制入口）。
     /// - Returns: 可直接粘贴执行的 `claude mcp add …` 命令。
-    static func build(provider: String, vault: String?) -> String {
-        let trimmed = vault.map(McpSettings.normalizedVaultName) ?? ""
-        var parts = ["claude mcp add coffer -- coffer mcp --provider \(provider)"]
-        if !trimmed.isEmpty {
-            parts.append("--vault \(shellQuoteIfNeeded(trimmed))")
+    static func build(provider: String, vault: String?, vaultDirPath: String? = nil) -> String {
+        switch provider {
+        case "coffer":
+            let dir = (vaultDirPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return "claude mcp add coffer -e COFFER_VAULT_DIR=\(shellQuoteIfNeeded(dir)) -- coffer mcp --provider coffer"
+        default:
+            let trimmed = vault.map(McpSettings.normalizedVaultName) ?? ""
+            var parts = ["claude mcp add coffer -- coffer mcp --provider \(provider)"]
+            if !trimmed.isEmpty {
+                parts.append("--vault \(shellQuoteIfNeeded(trimmed))")
+            }
+            return parts.joined(separator: " ")
         }
-        return parts.joined(separator: " ")
     }
 
     /// 按需加引号：vault 名仅含安全字符则原样输出（对齐 §5.4 自然形态）；

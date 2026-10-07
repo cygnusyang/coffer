@@ -842,16 +842,20 @@ mod browser {
     const ENV_BROKER_VAULT_UUID: &str = "COFFER_BROKER_VAULT_UUID_HEX";
     /// broker 配对 PSK（32 字节 hex；配对流注入，可轮换）。
     const ENV_BROKER_PSK: &str = "COFFER_BROKER_PSK_HEX";
-    /// broker 解锁会话存在标记（任意非空 = 已解锁；缺省 = 锁定态 8003）。
+    /// broker 解锁会话存在标记（**显式 `=1` 才解锁**，见 [`env_flag`]；
+    /// 缺省 = 锁定态 8003）。
     const ENV_BROKER_UNLOCKED: &str = "COFFER_BROKER_UNLOCKED";
-    /// broker 跳过 ③ 层 peer 签名验证（**仅 G-B 自动化测试设置**；生产不设置，
-    /// ③ 层恒开——测试进程非签名二进制无法通过自身签名链）。
+    /// broker 跳过 ③ 层 peer 签名验证——**仅 debug 构建**且显式 `=1` 才生效
+    ///（G-B 自动化测试设置；release 编译期剔除，生产不可达，③ 层恒开——测试
+    /// 进程非签名二进制无法通过自身签名链）。
     const ENV_BROKER_SKIP_PEER_VERIFY: &str = "COFFER_BROKER_SKIP_PEER_VERIFY";
-    /// broker 验 peer 的 SecRequirement 覆盖（缺省 = 自有 coffer 二进制签名锚定，
-    /// G-E/G-D 生产装配按真实签名核对）。
+    /// broker 验 peer 的 SecRequirement 覆盖——**仅 debug 构建**读取（release
+    /// 恒用 [`DEFAULT_BROKER_REQUIREMENT`]，防同用户 `launchctl setenv` 放宽
+    /// ③ 层到任意 Apple 签名进程）；缺省 = 自有 coffer 二进制签名锚定。
     const ENV_BROKER_REQUIREMENT: &str = "COFFER_BROKER_REQUIREMENT";
-    /// broker 条目夹具（`Vec<EntryInfo>` JSON）。G-B 版条目源；生产 = vault
-    /// ItemStore（G-D/G-T merge-time 集成点，见 [`list_entries`]）。
+    /// broker 条目夹具（`Vec<EntryInfo>` JSON）——**仅 debug 构建**读取（release
+    /// 恒空列表）。G-B 版条目源；生产 = vault ItemStore（G-D/G-T merge-time
+    /// 集成点，见 [`list_entries`]）。
     const ENV_BROKER_ENTRIES: &str = "COFFER_BROKER_ENTRIES_JSON";
 
     /// broker well-known UDS 落点常量（docs/31 §4.2 / HIGH2-3-INTEGRATION §4.1；
@@ -891,8 +895,8 @@ mod browser {
 
     /// 缺省 broker 验 peer 的 SecRequirement：自有 coffer 二进制（DR/TeamID 锚定）。
     /// TeamID/identifier 为公开签名常量（escrow keychain 组
-    /// `A6DS985SJJ.app.coffer.Coffer` 见 docs/31 §7），非密钥；G-E/G-D 生产装配
-    /// 可经 [`ENV_BROKER_REQUIREMENT`] 覆盖。
+    /// `A6DS985SJJ.app.coffer.Coffer` 见 docs/31 §7），非密钥。release 恒用此值
+    ///（[`ENV_BROKER_REQUIREMENT`] 覆盖仅 debug 构建读取）。
     const DEFAULT_BROKER_REQUIREMENT: &str = "identifier \"app.coffer.Coffer\" and anchor apple generic \
                                               and certificate leaf[subject.OU] = \"A6DS985SJJ\"";
 
@@ -964,10 +968,11 @@ mod browser {
     /// ③ 层：验 peer host（docs/31 §3.2 ③）。
     ///
     /// `getpeereid` 同用户 + SecCode 签名（自有 coffer 二进制锚定，DR/TeamID）。
-    /// [`ENV_BROKER_SKIP_PEER_VERIFY`] 设置时跳过签名校验（**仅自动化测试**；
-    /// 生产装配绝不设置，③ 层恒开）。
+    /// [`ENV_BROKER_SKIP_PEER_VERIFY`] 在 **debug 构建**且显式 `=1` 时跳过签名校验
+    ///（**仅自动化测试**；release 编译期剔除（`cfg!(debug_assertions)`），生产不可达——
+    /// 同用户 `launchctl setenv` 无法影响 release broker，③ 层恒开）。
     fn peer_is_verified(stream: &UnixStream) -> bool {
-        if env_flag(ENV_BROKER_SKIP_PEER_VERIFY) {
+        if cfg!(debug_assertions) && env_flag(ENV_BROKER_SKIP_PEER_VERIFY) {
             return true;
         }
         let peer_euid = match cf_uds_sys::peer_euid(stream) {
@@ -981,15 +986,22 @@ mod browser {
             Ok(p) => p,
             Err(_) => return false,
         };
-        let requirement = std::env::var(ENV_BROKER_REQUIREMENT)
-            .unwrap_or_else(|_| DEFAULT_BROKER_REQUIREMENT.to_string());
+        // release 编译期剔除覆盖旋钮：生产 SecRequirement 恒为默认锚定
+        //（HIGH-1 修复，M-3 release-inert 原则）。
+        let requirement = if cfg!(debug_assertions) {
+            std::env::var(ENV_BROKER_REQUIREMENT)
+                .unwrap_or_else(|_| DEFAULT_BROKER_REQUIREMENT.to_string())
+        } else {
+            DEFAULT_BROKER_REQUIREMENT.to_string()
+        };
         verify_code_signature(pid, &requirement)
     }
 
-    /// 读环境布尔标记（任意非空 = `true`）。
+    /// 读环境布尔标记（**显式 `"1"` 才为 `true`**；`"0"`/空/缺省均 `false`，
+    /// 防 `=0` 误开启——HIGH-1 修复，含 [`ENV_BROKER_UNLOCKED`] 语义）。
     fn env_flag(name: &str) -> bool {
         std::env::var(name)
-            .map(|v| !v.trim().is_empty())
+            .map(|v| v.trim() == "1")
             .unwrap_or(false)
     }
 
@@ -1394,8 +1406,12 @@ mod browser {
     }
 
     /// 条目源（G-B 版）：`$COFFER_BROKER_ENTRIES_JSON`（`Vec<EntryInfo>` JSON）夹具；
-    /// 未设 → 空列表。生产 = vault ItemStore（G-D/G-T merge-time 集成点）。
+    /// **debug 构建**才读（M-3 release-inert 原则，HIGH-1 防御纵深）；release 恒空列表。
+    /// 生产 = vault ItemStore（G-D/G-T merge-time 集成点）。
     fn list_entries(_origin: &str) -> Vec<EntryInfo> {
+        if !cfg!(debug_assertions) {
+            return Vec::new();
+        }
         let Ok(json) = std::env::var(ENV_BROKER_ENTRIES) else {
             return Vec::new();
         };
@@ -1857,6 +1873,53 @@ mod browser {
                 "$COFFER_BROKER_UDS 显式覆盖优先"
             );
             std::env::remove_var(ENV_BROKER_UDS);
+        }
+
+        /// HIGH-1 语义回归：`env_flag` 仅显式 `"1"` 为真，`"0"`/空/缺省均假
+        ///（防 `=0` 误开启跳过/解锁旋钮）。
+        #[test]
+        fn env_flag_only_true_on_exact_1() {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            for (value, expect) in [
+                (Some("1"), true),
+                (Some("0"), false),
+                (Some(""), false),
+                (Some("true"), false),
+                (None, false),
+            ] {
+                match value {
+                    Some(v) => std::env::set_var(ENV_BROKER_SKIP_PEER_VERIFY, v),
+                    None => std::env::remove_var(ENV_BROKER_SKIP_PEER_VERIFY),
+                }
+                assert_eq!(
+                    env_flag(ENV_BROKER_SKIP_PEER_VERIFY),
+                    expect,
+                    "value={value:?} 须映射到 {expect}"
+                );
+            }
+            std::env::remove_var(ENV_BROKER_SKIP_PEER_VERIFY);
+        }
+
+        /// HIGH-1 语义回归：env 降级路径 `UNLOCKED=0`（旧夹具写法）→ 锁定态
+        ///（`=0` 不再被误判为已解锁；`=1` → 解锁态）。
+        #[test]
+        fn env_unlocked_zero_means_locked() {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            std::env::set_var(ENV_BROKER_DEK, "a1".repeat(32));
+            std::env::set_var(ENV_BROKER_VAULT_UUID, "b2".repeat(16));
+            std::env::set_var(ENV_BROKER_PSK, "c3".repeat(32));
+            std::env::set_var(ENV_BROKER_UNLOCKED, "0");
+            let locked = resolve_broker_secrets_from_env().expect("env 材料齐全可解析");
+            assert!(!locked.unlocked, "UNLOCKED=0 → 锁定态（HIGH-1 语义）");
+            std::env::set_var(ENV_BROKER_UNLOCKED, "1");
+            let unlocked = resolve_broker_secrets_from_env().expect("env 材料齐全可解析");
+            assert!(unlocked.unlocked, "UNLOCKED=1 → 解锁态");
+            std::env::remove_var(ENV_BROKER_UNLOCKED);
+            let default = resolve_broker_secrets_from_env().expect("env 材料齐全可解析");
+            assert!(!default.unlocked, "缺 UNLOCKED → 锁定态");
+            for name in [ENV_BROKER_DEK, ENV_BROKER_VAULT_UUID, ENV_BROKER_PSK] {
+                std::env::remove_var(name);
+            }
         }
     }
 }

@@ -420,6 +420,56 @@ fn broker_rejects_unverified_host() {
 }
 
 // ===========================================================================
+// HIGH-1 release-inert 行为验证（M-3）：release 构建下 ③ 层旋钮无效果
+// ===========================================================================
+
+/// release 构建（`not(debug_assertions)`）下，即使显式设置
+/// `COFFER_BROKER_SKIP_PEER_VERIFY=1`（模拟 HIGH-1 攻击链：同用户
+/// `launchctl setenv` → GUI App 继承 env → broker spawn 继承），broker 仍必须
+/// 走 ③ 层 peer 签名校验 → 伪造 peer（裸 UnixStream，无 coffer 签名）被拒
+/// （8002）。证明 M-3 旋钮 **release 编译期剔除、生产不可达**。
+///
+/// 编译期 `not(debug_assertions)` 门控：仅 `cargo test --release` 编译并运行；
+/// debug 构建此用例不存在（debug 下 ③ 恒开的对应用例是
+/// `broker_rejects_unverified_host`，无 SKIP env）。
+#[test]
+#[cfg(all(feature = "coffer-store", not(debug_assertions)))]
+fn release_broker_skips_nothing_when_env_set() {
+    let dir = temp_dir("broker-release-inert");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    // stdin 交付配对材料（release 下 env 降级恒走不通）+ 显式 SKIP=1 继承链。
+    let mut child = spawn_broker_stdin(
+        &uds,
+        &log,
+        Some(&stdin_frame("1")),
+        &[("COFFER_BROKER_SKIP_PEER_VERIFY", "1")],
+    );
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+
+    // 伪造 peer：裸 UnixStream（测试进程，无 coffer 签名）。release 下 SKIP=1
+    // 必须无效，③ 层仍拒连 → EOF。
+    let mut stream = UnixStream::connect(&uds).expect("connect broker");
+    let mut probe = [0u8; 1];
+    let eof = stream
+        .read(&mut probe)
+        .map(|n| n == 0)
+        .unwrap_or_else(|e| e.kind() == std::io::ErrorKind::UnexpectedEof);
+    assert!(eof, "release 下 SKIP=1 无效，伪造 peer 应被 ③ 层拒连");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(log_text.contains("8002"), "release 下 8002 仍落日志: {log_text}");
+}
+
+// ===========================================================================
 // 判据 5：broker 无解锁会话 → broker_locked（docs/32 §1.2-5，8003）
 // ===========================================================================
 

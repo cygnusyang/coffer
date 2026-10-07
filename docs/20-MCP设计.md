@@ -307,9 +307,10 @@ coffer mcp [--provider op|coffer] [--uds PATH] [--log PATH] [--vault NAME] [--no
 | `--no-audit` | 关闭审计记录（缺省开启，若 §4.6 方案 A 落定） |
 
 > **调用路径（D-6 已裁定冻结，2026-10-07，docs/29 §8 D-6）**：coffer 二进制随 App bundle 分发
-> （`Coffer.app/Contents/MacOS/coffer`），**不入 PATH**；与 App 同 bundle 同身份同 profile 签名
-> （`keychain-access-groups` entitlement）。CLI 一律经包内路径调用（§5.4 注册命令同源）——**拷出
-> App 路径运行会因 AMFI 找不到 provisioning profile 被 SIGKILL**，不得拷贝/重打包后单独运行。
+> （嵌套 bundle `Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`），**不入 PATH**；
+> 与 App 同 bundle 同身份同 profile 签名（`keychain-access-groups` entitlement）。CLI 一律经包内
+> 路径调用（§5.4 注册命令同源）——**拷出 App 路径运行会因 AMFI 找不到 provisioning profile 被
+> SIGKILL**，不得拷贝/重打包后单独运行。
 
 ### 5.3 退出码
 
@@ -318,15 +319,16 @@ coffer mcp [--provider op|coffer] [--uds PATH] [--log PATH] [--vault NAME] [--no
 ### 5.4 注册命令（设置页「复制」输出，对齐 1Password「Connect to Claude」）
 
 ```bash
-claude mcp add coffer -- Coffer.app/Contents/MacOS/coffer mcp --provider op --vault <vault>
+claude mcp add coffer -- Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider op --vault <vault>
 ```
 
 用户侧前置：`op signin`（1Password 集成会话）。
 
 > **拷出即 SIGKILL（D-6 用户可见纪律，2026-10-07，docs/29 §8 D-6）**：注册命令与文档展示一律用
-> **App 包内路径** `Coffer.app/Contents/MacOS/coffer`——**拷出 App 路径运行会因 AMFI 找不到
-> provisioning profile 被 SIGKILL**，不得拷贝/重打包后单独运行。`--provider coffer` 版注册命令
-> 同用包内路径，另带 `COFFER_VAULT_DIR` env、**不含密码 env**（docs/29 §7.1）。
+> **App 包内嵌套 bundle 路径** `Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`——
+> **拷出 App 路径运行会因 AMFI 找不到 provisioning profile 被 SIGKILL**，不得拷贝/重打包后单独运行。
+> `--provider coffer` 版注册命令同用包内路径，另带 `COFFER_VAULT_DIR` env、**不含密码 env**
+> （docs/29 §7.1）。
 
 ---
 
@@ -349,7 +351,7 @@ claude mcp add coffer -- Coffer.app/Contents/MacOS/coffer mcp --provider op --va
 ### 6.2 进程边界与构建面（关键决策）
 
 - **主 App 不宿主 MCP 服务器**：MCP 服务器 = 独立 `coffer` 进程（由 Claude Code 经 stdio spawn，或 --uds 下由 App/launchd spawn）。主 App 只写配置、发注册命令、显示状态。**App 自身无外部网络连接判据不受影响**（docs/16 判据② 测主 App PID；本机内 UDS 传输由独立 coffer 进程承载，主 App 不监听——docs/27 D-4 新口径）。
-- 分发：**D-6 已裁定（2026-10-07，docs/29 §8 D-6）**——coffer 二进制随 App 包内 `Contents/MacOS/coffer` 分发，与 App 同 bundle 同身份同 profile 签名，**不并入 PATH**（须经包内路径调用，§5.2/§5.4；拷出即 AMFI SIGKILL）；对齐 1Password 把 op 作为集成组件分发的先例。构建脚本 `tools/build_macos_app.sh` 增装配步骤（G5，v2.2.0 落地）。
+- 分发：**D-6 已裁定（2026-10-07，docs/29 §8 D-6）**——coffer 二进制随 App 包内**嵌套 bundle** `Contents/Helpers/coffer.app/Contents/MacOS/coffer` 分发，与 App 同 bundle 同身份同 profile 签名，**不并入 PATH**（须经包内路径调用，§5.2/§5.4；拷出即 AMFI SIGKILL）；对齐 1Password 把 op 作为集成组件分发的先例。构建脚本 `tools/build_macos_app.sh` 增装配步骤（G5，v2.2.0 落地，嵌套 bundle 装配）。
 
 ### 6.3 UI 纪律（沿用 docs/07 §2.4 + docs/17 §6）
 
@@ -445,5 +447,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.9 | 2026-10-07 | **§3.1 可选传输行 peer 凭据简写对齐（lead 裁定收编批）**：「(macOS `getpeereid`)」→「(macOS `LOCAL_PEERPID` 判 peer PID + `getpeereid` 判同用户，§3.6 ②)」，与 §3.6 机制注记同款。修订记录历史行不改写 |
 | r0.10 | 2026-10-07 | **v2.1.0 发版前终审收编批（dev-reviewer-v210，lead 裁定）**：§3.1 补 UDS 部署约束（spawner 须用专用私有父目录、不得共享可写目录；预置活监听者 / 抢占重绑窗口 = 本机 DoS 可用性、非凭据泄露，MEDIUM-1）；§3.6 补已知面注记——① 单连接槽同用户抢占为单次 connect 设计固有已知面（LOW-2）、③ challenge 非对同用户保密、macOS 主门为 peer PID（LOW-4）；§3.5 补 L-5 tracing 事件载荷纪律（secret 名可进事件、值一律不进，LOW-3）。LOW-5 信息级不立案；LOW-1（读超时）tester 顺延。修订记录历史行不改写 |
 | r0.11 | 2026-10-07 | **G1e 核销批次（v2.2.0）**：§4.3 env 表增 `COFFER_MCP_UDS_READ_TIMEOUT_SECS` 行（缺省 120 s / 下限 10 s / 无 0=off / 数据到达重置 / 握手同受窗约束，LOW-1 核销，G1d 实现锚点 `core/cf-mcp/src/uds.rs`）+ `COFFER_VAULT_PASSWORD` 行随取密语义转可选 + 表后补 coffer provider 取密语义补记（escrow 优先、read 门 = header `mcp_wrap.available`、env 兜底仅限托管不存在、托管存在但读取/解锁失败 fail-closed 退出 1 绝不回落 env，D-4，来源 docs/29 §6 + `core/cf-mcp/src/cli.rs`）；§4.5「已接入」随取密语义更新（`COFFER_VAULT_PASSWORD` 转可选）；§5.2 补调用路径注（bundle 内路径、不入 PATH）+ §5.4 注册命令改 `Coffer.app/Contents/MacOS/coffer` + 拷出即 AMFI SIGKILL 纪律 + §6.2 分发行随 D-6 对齐（D-6 裁定 2026-10-07）。修订记录历史行不改写 |
+| r0.12 | 2026-10-07 | **D-6 路径修订追平（lead 裁定 2026-10-07，G5 真机实证，commit 7456c47，docs/29 §8 D-6 路径修订记录）**：§5.2 调用路径注 / §5.4 注册命令与 blockquote / §6.2 分发行全部由 `Coffer.app/Contents/MacOS/coffer` 改为**嵌套 bundle 路径** `Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`（原路径 case-insensitive APFS 与主可执行文件 `Coffer` 同名冲突 + AMFI 不覆盖嵌套裸 Mach-O → 137；决策实质不变：bundle 分发 / 同身份 / 拷出即 SIGKILL）。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

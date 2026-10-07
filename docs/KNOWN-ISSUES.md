@@ -1096,6 +1096,90 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ---
 
+## M-6（🟡 顺延登记）：Swift spawn 写 stdin 非 throwing `write(payload)`——broker 早退时 EPIPE 触发 NSFileHandleOperationException → App 崩溃
+
+**登记日期**：2026-10-08
+**发现环境**：v2.3.0 集成轮 G-R 复审（da237da 5 文件独立验证）MEDIUM-1
+**分级**：S3（当前 dormant——brokerStdinSecrets()=nil 不 spawn，接线后暴露）/ P2 / 来源版本 v2.3.0（集成轮）/ 发现版本 v2.3.0
+**状态**：🟡 顺延登记——归 merge-time 接线轮（§8 第 4 项 DEK 来源接线时一并处理）
+**核销记录**：—（merge-time 接线轮，G-R 建议「接线前处理」，lead 裁定 2026-10-08）
+**证据**：macos/Coffer/Platform/BrowserIntegration.swift spawn 内 `stdinPipe.fileHandleForWriting.write(payload)`；G-D §8 第 4 项未接线
+
+### 现象（预期/实际 分行写）
+
+- 预期：broker 在 spawn 后即时死亡（如 --uds 参数异常早退）→ 写 stdin 失败 → App 进入 .failed 状态（fail-closed 呈现）。
+- 实际：`write(payload)` 非 throwing → EPIPE 触发 `NSFileHandleOperationException`（Objective-C 异常，非 Swift error）→ **App 崩溃**而非 .failed。
+
+### 根因（已实证）
+
+Foundation `FileHandle.write` 对 EPIPE 抛 Objective-C 异常而非 Swift error；当前 seam nil 处于 dormant，接线后 spawn 路径激活即暴露。
+
+### 修复路径
+
+（merge-time 接线轮）改 throwing 变体 `try write(contentsOf:)` + catch 归入 spawn 失败路径（.brokerSpawnFailed / .failed 呈现）；随 §8 第 4 项 DEK/UUID/PSK 取值接线同一提交落地。
+
+### 复现与诊断
+
+不适用（dormant——brokerStdinSecrets() 现恒 nil，spawn 未被调用）。处置依据：G-R MEDIUM-1 + lead 裁定 2026-10-08。
+
+---
+
+## M-7（🟡 已接受残余）：Swift zeroize COW 脆弱性——只零化序列化副本，源串/中间拷贝不零化（best-effort 纵深）
+
+**登记日期**：2026-10-08
+**发现环境**：v2.3.0 集成轮 G-R 复审（da237da）MEDIUM-2
+**分级**：S3（纵深卫生——H-3 实质成果「密钥不经 env/argv」不因此受损）/ P3 / 来源版本 v2.3.0（集成轮）/ 发现版本 v2.3.0
+**状态**：🟡 已接受残余——归 merge-time 引入密钥类型（SecretString 单 owner）时收口；同类：read_stdin_to_eof 超时后 reader 线程缓冲 dropped 不零化（进程将退出，边际）+ 512B chunk 栈数组不零化（G-R LOW L-1）一并在此账
+**核销记录**：—（merge-time 密钥类型轮，lead 裁定 2026-10-08）
+**证据**：macos/Coffer/Platform/BrowserIntegration.swift `zeroize` 仅零化传入的 inout Data 副本；源 String（CoW）恒不零化
+
+### 现象（预期/实际 分行写）
+
+- 预期：DEK/UUID/PSK 材料生命周期内所有缓冲副本零化。
+- 实际：spawn 内 `var local = payload` + `zeroize(&local)` 只零化 COW 拷贝（真实缓冲靠 AppModel 引用计数回 1 后释放）；`secrets` 的 hex String 永不零化；spawn 栈帧中间 Data 拷贝释放不零化。属 best-effort 纵深。
+
+### 根因（已实证）
+
+Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享底层缓冲；密钥类型未引入（merge-time）。
+
+### 修复路径
+
+（merge-time 密钥类型轮）引入单 owner 缓冲 / `SecretString` 类持有并在生命周期终点零化；stdin 源串接线时一并处理。本次不修（H-3 实质不损）。
+
+### 复现与诊断
+
+不适用（纵深卫生项）。处置依据：G-R MEDIUM-2 + lead 裁定 2026-10-08。
+
+---
+
+## LOW-2（🟡 merge-time 核验项）：well-known UDS 两端取径须一致——Swift userHomeDirectory(getpwuid) vs Rust $HOME
+
+**登记日期**：2026-10-08
+**发现环境**：v2.3.0 集成轮 G-R 复审 LOW L-3
+**分级**：S4 / P3 / 来源版本 v2.3.0（集成轮）/ 发现版本 v2.3.0
+**状态**：🟡 merge-time 核验项——正常 GUI 启动路径 $HOME==pw_dir（Design Y 非沙盒）；自定义 HOME 启动会错位 → fail-closed 功能断（非安全缺口）
+**核销记录**：—（merge-time 接线轮核验，lead 裁定 2026-10-08）
+**证据**：Swift `BrowserStatusProbe.userHomeDirectory()` = getpwuid(pw_dir)；Rust `well_known_broker_uds()` = `$HOME`（冻结 §4.2/§6 明示许可「libc getpwuid 或 $HOME 兜底」）
+
+### 现象（预期/实际 分行写）
+
+- 预期：App spawn broker 传 `--uds <getpwuid路径>`，host 以 `$HOME` 计算 well-known——正常路径两侧一致。
+- 实际：`launchctl setenv HOME=...` 或自定义启动环境使 $HOME ≠ pw_dir → App（getpwuid）与 host（$HOME）计算不同 socket 路径 → host 连不上 broker → fail-closed 功能断（无安全后果）。
+
+### 根因（已实证）
+
+冻结规格对 Rust 侧明示允许 $HOME；两侧取径源不同，依赖 GUI 会话 $HOME==pw_dir 的常态成立。
+
+### 修复路径
+
+（merge-time 核验）接线轮在真实启动环境核验两侧落点一致；若需抗 HOME 篡改可后续引入 sys 封装 getpwuid（cf-uds-sys 先例）。本次不修。
+
+### 复现与诊断
+
+不适用（核验项）。处置依据：G-R LOW L-3 + lead 裁定 2026-10-08。
+
+---
+
 ## 模板（新条目按此格式追加）
 
 ```

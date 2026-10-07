@@ -685,16 +685,18 @@ grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` �
 
 ---
 
-## L-5（🟡 显式顺延 v2.1）：tools.rs `tracing::warn!` 无 subscriber——审计失败告警恒被丢弃
+## L-5（✅ 已核销）：tools.rs `tracing::warn!` 无 subscriber——审计失败告警恒被丢弃
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（其 L-1，LOW）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
-**状态**：🟡 显式顺延 v2.1（2026-10-07 lead 裁定，不修复不核销）
-**核销记录**：非修复项——显式顺延 v2.1（lead 裁定：v2.0.0 本版 NoopAudit 不可达、不构成实际缺陷；D-3 JSONL 落地时随审计链路一并处理，届时若需告警路径再补 subscriber）
+**状态**：✅ 已核销（v2.1.0，2026-10-07 回填）
+**核销记录**：修复 = commit `a2cbd36`（v2.1.0：手写 `DiagnosticSubscriber`，cli.rs:333-347、接线 :526，只放行 WARN/ERROR，**零新依赖**——不引 tracing-subscriber）；复验 = `src/cli.rs::audit_failure_warn_observable_through_server`（真实 McpServer + FailingAudit 走 run_with_secret → tools.rs warn! → 诊断通道，断言 [WARN] + "audit record failed" + error/secret 平铺无值，且审计失败**不阻断协议** isError=false / exit_code=0）+ `tracing_warn_is_routed_to_diagnostic_sink` + `tracing_error_is_routed_but_debug_is_filtered`（docs/28 §1.3 全判据已验收）
 **证据**：`core/cf-mcp/src/tools.rs:242` `tracing::warn!(error = ?e, secret = %secret, "audit record failed")`——仓库从未初始化 tracing subscriber
 
 当前 NoopAudit 不会失败（不可达），但 D-3 JSONL 落地后审计失败将**静默**（违反「错误不静默吞」纪律）。修复 = 改用 `cli::Logger` 或初始化 subscriber / 文档化。
+
+> **回填修订（2026-10-07，browser-docs G-F 追加任务）**：本条目此前状态为「🟡 显式顺延 v2.1（2026-10-07 lead 裁定，不修复不核销）」——v2.1.0 发版批（docs/09 r2.17）未回填本条目，致实际已核销（docs/28 §1.3：a2cbd36 手写 DiagnosticSubscriber + `audit_failure_warn_observable_through_server` 已验收，docs/28 行 76「v2.1.0 落位」）但登记簿滞留 🟡。本条为核销回填：标题/状态/核销记录按 v2.1.0 实况更新，**历史登记行（登记日期/发现环境/分级/证据/分析段）不改写**，仅追加本说明。
 
 ---
 
@@ -947,6 +949,66 @@ accept 后的读循环无超时窗；`set_read_timeout`（SO_RCVTIMEO）未设�
 ### 复现与诊断
 
 `coffer mcp --uds <path>` 建立连接后不发数据 → 修复前 server 无限挂起；修复后超过超时值干净退出 0（socket 文件清理）。
+
+---
+
+## B-1（🟡 设计期登记）：item 模型新增 `origin_bindings` 字段的格式兼容——D-3 存储冻结后改格式须迁移
+
+**登记日期**：2026-10-07（v2.3.0 设计期，docs/31 §10 风险 4「G-F 登记」）
+**发现环境**：docs/31 §10 风险登记；docs/31a D-3（origin 三型冻结，🔴 不可逆存储格式类）
+**分级**：S3（旧库升级路径，additive 字段非数据损坏）/ P2 / 来源版本 v2.3.0（计划）/ 发现版本 v2.3.0（设计期）
+**状态**：🟡 设计期登记——D-3 已随用户批准冻结（2026-10-07），**实施待 G-A 落**（`origin_bindings` 字段 additive + `#[serde(default)]` 兼容旧库，零 format_version / DDL 变更）
+**核销记录**：—（实现后回填；预期 = G-A `cf-domain` item 模型新增字段 + 旧库读取回归全绿）
+**证据**：docs/31 §10 风险 4；docs/31a D-3
+
+### 现象（预期/实际 分行写）
+
+- 预期：v2.3.0 新增 item 结构化 `origin_bindings` 字段后，旧版本库文件仍可正常打开读写，既有条目不丢。
+- 实际：当前为设计期登记、实施未落地；若字段非 additive 破坏既有序列化布局，旧库升级将失败（待 G-A 实现后以测试核验）。
+
+### 根因（已实证 / 待查）
+
+待查（设计期）。缓解设计 = additive 字段 + `#[serde(default)]`（docs/29 D-3 先例），D-3 已冻结格式为三型
+（exact / subdomain / domain，无 regex，匹配优先级 exact > subdomain > domain）；**发布后改格式 / 改类型集 =
+既有条目绑定需迁移**（🔴 不可逆，docs/31a D-3）。
+
+### 修复路径
+
+G-A 实施时按 additive + `#[serde(default)]` 加字段（对齐 docs/29 §5.1 先例），零 format_version / DDL 变更；旧库读取单测覆盖；
+发布后格式变更走 D-3 迁移流程（用户裁定后）。
+
+### 复现与诊断
+
+（实施后补）旧版库 → 升级新二进制读取 → 断言 `origin_bindings` 缺省为空、既有条目不丢、可正常写回。
+
+---
+
+## B-2（🟡 已接受残余）：扩展侧配对 PSK 存于 chrome.storage 的窃取面——PSK 单独不足以冒充
+
+**登记日期**：2026-10-07（v2.3.0 设计期，docs/31 §10 风险 8「文档声明」）
+**发现环境**：docs/31 §10 风险登记 8（T-7）
+**分级**：S4（安全残余，非缺口——PSK 单因子不足）/ P3 / 来源版本 v2.3.0（计划）/ 发现版本 v2.3.0（设计期）
+**状态**：🟡 已接受残余——缓解已定（认证链④须签名浏览器 ② 层 + 签名 host ③ 层才可建立会话；PSK 可轮换），本文档声明即缓解落地
+**核销记录**：—（无修复意图；随 v2.3.0 安全门禁 G-R 按 docs/10 §5 纪律复核）
+**证据**：docs/31 §10 风险 8、§3.3（「扩展零密钥材料」界定：传输层材料属扩展持有边界）
+
+### 现象（预期/实际 分行写）
+
+- 预期：扩展侧配对 PSK 被窃取（chrome.storage 非安全存储面）不构成通道冒充。
+- 实际：PSK 单独不足以冒充——认证链④仍须签名浏览器 + 签名 host 才可建立会话；PSK 泄露仅暴露重放面，可轮换，
+  且 E2E 每会话独立密钥（ephemeral ECDH，前向保密）不使泄露回溯既往会话。
+
+### 根因（已实证）
+
+chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料，非库密钥——与「扩展零密钥材料」界定显式区分，docs/31 §3.3）。
+
+### 修复路径
+
+不修（已接受残余）；缓解 = 认证链④依赖 ②③ 层签名验证 + PSK 轮换路径 + 本文档声明。G-R 安全门禁复核本条。
+
+### 复现与诊断
+
+（设计期接受项，不适用复现）实现后由 G-R 按 docs/10 §5 纪律复核本条边界声明是否与实现一致。
 
 ---
 

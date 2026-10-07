@@ -58,6 +58,14 @@ pub const LABEL_ROOT_MAC: &str = "cf/root-mac/v1";
 /// （v0.2 `audit_key` 先例，第 10 把子密钥）。
 pub const LABEL_PASSKEY_IDX: &str = "cf/passkey-idx/v1";
 
+/// MCP 托管子密钥用途字面量（docs/29 §3.2 D-1，v2.2.0）。
+///
+/// 用途：`mcp_key = HKDF(DEK, vault_uuid, "cf/mcp/v1")`，用于 MCP 解锁托管
+/// （解封 header 里的 `wrapped_dek_mcp`）。与既有 10 个 label 前缀无碰撞 →
+/// 派生的第 11 把独立密钥。纯运行时派生：不进 [`SubKeys`] 容器（docs/29
+/// §2 末段，已托管条目与既有子密钥零耦合）。
+pub const LABEL_MCP: &str = "cf/mcp/v1";
+
 // ---------------------------------------------------------------- 容器
 
 /// `docs/03-详细设计.md` §2.4 定义的全部子密钥。
@@ -106,6 +114,33 @@ impl SubKeys {
             passkey_idx_key: SessionKey::new(derive_subkey(dek, vault_uuid, LABEL_PASSKEY_IDX)?),
         })
     }
+}
+
+/// 派生 MCP 托管子密钥（docs/29 §3，v2.2.0 escrow）。
+///
+/// 复用 [`crate::kdf::derive_subkey`] 同一通道：HKDF-SHA256，salt =
+/// `vault_uuid`，ikm = `dek`，info = `"cf/mcp/v1"`，输出 32 字节。
+/// 与既有 10 把子密钥同方案、label 独立 → 第 11 把互异密钥
+/// （一钥一用延伸，docs/30 §1.1）。
+///
+/// **不进 [`SubKeys`] 容器**——已托管条目的解锁只依赖「header 里的
+/// `wrapped_dek_mcp` + Keychain 里的 mcp_key」，与既有子密钥零耦合
+/// （docs/29 §2 末段）；编排（recover_dek → 派生 → 封/解封 DEK）由
+/// `cf-session` 承接。
+///
+/// # 参数
+///
+/// - `dek`：数据加密密钥（32 字节）。
+/// - `vault_uuid`：保险库 UUID 的 16 字节原始形式，作为 HKDF 的 salt，
+///   保证不同保险库派生的 mcp_key 互不相同。
+///
+/// # 返回值
+///
+/// 32 字节 mcp_key。错误映射同 [`crate::kdf::derive_subkey`]
+/// （理论不失败，但按本 crate 纪律不 `.expect()`，仍返回
+/// [`Result`]，失败为 [`CfCryptoError::KdfFailed`]）。
+pub fn derive_mcp_key(dek: &[u8; 32], vault_uuid: &[u8; 16]) -> Result<[u8; 32], CfCryptoError> {
+    derive_subkey(dek, vault_uuid, LABEL_MCP)
 }
 
 // ---------------------------------------------------------------- 测试
@@ -305,5 +340,76 @@ mod tests {
             keys.passkey_idx_key.as_bytes(),
             keys.root_mac_key.as_bytes()
         );
+    }
+
+    // ------------------------------------------------------------ mcp_key（v2.2.0 escrow）
+
+    /// mcp_key 已知答案测试（docs/29 §3.2 D-1 冻结契约，docs/30 §1.1）。
+    ///
+    /// 期望值由独立 Python 实现按相同输入计算（2026-10-07，随 v2.2.0 G1a
+    /// 引入 `cf/mcp/v1` label 时首算）：HKDF-SHA256，salt = vault_uuid，
+    /// ikm = dek，info = label，L = 32。计算脚本与 audit_key KAT 同构，
+    /// 且先用 audit_key 输入复算出冻结值 93ec…a6ae、root_mac 输入复算出
+    /// bc8a…e2b、passkey-idx 输入复算出 13eb…ef52 交叉验证了脚本本身；
+    /// 再由 cryptography 库独立实现复算同一输入 → da64…f651 一致。
+    #[test]
+    fn mcp_key与已知答案一致() {
+        let dek = [0x42u8; 32];
+        let vault_uuid = [0x11u8; 16];
+
+        let mcp_key = derive_mcp_key(&dek, &vault_uuid).expect("派生成功");
+        let expected: Vec<u8> = "da6415dfae33eaf94de8e4def815d69bca880063296541c10d00b9009619f651"
+            .as_bytes()
+            .chunks(2)
+            .map(|h| {
+                u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16)
+                    .expect("hex digit")
+            })
+            .collect();
+        assert_eq!(mcp_key.as_slice(), expected.as_slice());
+
+        // 直接走 label 派生必须与导出函数一致（防两处漂移）
+        let direct = crate::kdf::derive_subkey(&dek, &vault_uuid, LABEL_MCP).expect("派生成功");
+        assert_eq!(mcp_key.as_slice(), direct.as_slice());
+    }
+
+    /// mcp_key 与其余十把子密钥用途分离：不同 label 必派生不同密钥
+    /// （一钥一用延伸，docs/30 §1.1）。
+    #[test]
+    fn mcp_key与其他子密钥互不相同() {
+        let keys = SubKeys::derive(&test_dek(), &test_vault_uuid()).expect("派生成功");
+        let mcp_key = derive_mcp_key(&test_dek(), &test_vault_uuid()).expect("派生成功");
+        let all = [
+            &keys.meta_key,
+            &keys.item_key,
+            &keys.field_key,
+            &keys.file_key,
+            &keys.hist_key,
+            &keys.manifest_key,
+            &keys.attach_mac_key,
+            &keys.audit_key,
+            &keys.root_mac_key,
+            &keys.passkey_idx_key,
+        ];
+
+        for k in all {
+            assert_ne!(mcp_key.as_slice(), k.as_bytes(), "mcp_key 与子密钥重复");
+        }
+    }
+
+    /// mcp_key 派生是确定性的（同输入两次派生逐字节相等，docs/30 §1.1）。
+    #[test]
+    fn mcp_key派生是确定性的() {
+        let a = derive_mcp_key(&test_dek(), &test_vault_uuid()).expect("派生成功");
+        let b = derive_mcp_key(&test_dek(), &test_vault_uuid()).expect("派生成功");
+        assert_eq!(a.as_slice(), b.as_slice());
+    }
+
+    /// 不同保险库 → mcp_key 不同（uuid 作为 HKDF salt，跨库天然隔离）。
+    #[test]
+    fn 不同vault_uuid派生出不同mcp_key() {
+        let a = derive_mcp_key(&test_dek(), &[0x11u8; 16]).expect("派生成功");
+        let b = derive_mcp_key(&test_dek(), &[0x22u8; 16]).expect("派生成功");
+        assert_ne!(a.as_slice(), b.as_slice());
     }
 }

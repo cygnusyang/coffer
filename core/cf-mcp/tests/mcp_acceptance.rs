@@ -563,6 +563,51 @@ fn rotate_secret_changes_value() {
 }
 
 #[test]
+#[cfg(feature = "coffer-store")]
+fn rotate_secret_new_value_is_generator_strength_not_nonce() {
+    // MEDIUM-2（docs/27 裁定 B）facade 侧：rotate 新值不得再是 `rotated-\d+`
+    // 时间戳 nonce 形态，须为 Coffer 生成器默认档强随机值（cf_audit
+    // `generate_password(PasswordGenOptions::default())`，与 provider 同源，
+    // lib.rs mcp facade）。`--no-default-features` 构建下 cf-audit 不在依赖树，
+    // 本判据不适用（slim 构建仅门禁验证、facade 为测试种子 mock 不落生产）。
+    let _g = env_guard();
+    let home = temp_dir("rotate-gen");
+    let secret = unique_var("ROTG");
+    let dir = temp_dir("rotate-gen-capture");
+    std::env::set_var("COFFER_MCP_TEST_HOME", &home);
+    std::env::set_var(format!("COFFER_MCP_TEST_SECRET_{secret}"), "sk-old");
+
+    mcp::rotate_secret(&secret).expect("rotate_secret must not error");
+    let after = capture_secret_via_subprocess(&secret, &dir)
+        .expect("must be able to observe value after rotate");
+    assert!(
+        !after.starts_with("rotated-"),
+        "轮换新值不得为时间戳 nonce 形态，got: {after}"
+    );
+    assert!(
+        after.len() >= 20,
+        "长度须 ≥ 20（生成器默认档），got len={} val={after}",
+        after.len()
+    );
+    assert!(
+        after.chars().any(|c| c.is_ascii_digit()),
+        "须含数字: {after}"
+    );
+    assert!(
+        after.chars().any(|c| c.is_ascii_lowercase()),
+        "须含小写: {after}"
+    );
+    assert!(
+        after.chars().any(|c| c.is_ascii_uppercase()),
+        "须含大写: {after}"
+    );
+    assert!(
+        after.chars().any(|c| !c.is_ascii_alphanumeric()),
+        "须含符号: {after}"
+    );
+}
+
+#[test]
 // D-1 未确认收缩范围：本用例对应工具顺延 v2.x（docs/20 §1.3/§3.3，用户确认中，保持可逆）。保留为 v2.x 回归基线，不删、不跳过。
 fn rotate_secret_updates_metadata() {
     // 判据（AS-9）：rotate 后 metadata 反映最近轮换（last_rotated_at 等）。

@@ -346,11 +346,43 @@ fn rotate_secret_changes_value_and_stamps() {
         .find(|f| f.designation == Some(Designation::Password))
         .unwrap();
     let new_val = pw.value.as_ref().unwrap().expose();
-    assert!(new_val.starts_with("rotated-"), "got: {new_val}");
+    assert_generator_default_strength(new_val);
     assert_ne!(new_val, "old-value");
-    let stamps = tag_of(&d, ROTATED_TAG_PREFIX);
+    // 连续两次轮换值须不同（MEDIUM-2：不可预测，docs/27 裁定 B）。
+    prov.rotate_secret("api-key").unwrap();
+    let d2 = prov.session.get_item(&id).unwrap().unwrap();
+    let pw2 = d2
+        .fields
+        .iter()
+        .find(|f| f.designation == Some(Designation::Password))
+        .unwrap();
+    let new_val2 = pw2.value.as_ref().unwrap().expose();
+    assert_generator_default_strength(new_val2);
+    assert_ne!(new_val2, new_val, "连续两次轮换值须不同");
+    let stamps = tag_of(&d2, ROTATED_TAG_PREFIX);
     assert_eq!(stamps.len(), 1);
     assert!(stamps[0].starts_with("coffer:rotated:"));
+}
+
+/// 轮换新值须满足生成器默认档（MEDIUM-2，docs/27 裁定 B）：非时间戳形态、
+/// 长度 ≥ 20、四类字符齐全、排除易混淆字符（cf-audit `PasswordGenOptions::default`，
+/// cf-audit/lib.rs:86-98）。
+fn assert_generator_default_strength(v: &str) {
+    assert!(
+        !v.starts_with("rotated-"),
+        "不得为时间戳 nonce 形态，got: {v}"
+    );
+    assert!(v.len() >= 20, "长度须 ≥ 20，got len={} val={v}", v.len());
+    assert!(v.chars().any(|c| c.is_ascii_digit()), "须含数字: {v}");
+    assert!(v.chars().any(|c| c.is_ascii_lowercase()), "须含小写: {v}");
+    assert!(v.chars().any(|c| c.is_ascii_uppercase()), "须含大写: {v}");
+    assert!(
+        v.chars().any(|c| !c.is_ascii_alphanumeric()),
+        "须含符号: {v}"
+    );
+    for similar in ['i', 'I', '1', 'l', 'o', 'O', '0', '"', '\'', '`', '|'] {
+        assert!(!v.contains(similar), "不得含易混淆字符 {similar:?}: {v}");
+    }
 }
 
 #[test]

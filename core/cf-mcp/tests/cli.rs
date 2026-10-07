@@ -1,10 +1,12 @@
-//! `coffer mcp` CLI 集成测试（docs/20 §5，G-D）。
+//! `coffer mcp` CLI 集成测试（docs/20 §5，G-D；docs/27 D-2 缺省翻转）。
 //!
 //! 直接 spawn 编译产物 `coffer` 二进制（`env!("CARGO_BIN_EXE_coffer")`），以
 //! fake `op` fixture 驱动 OpProvider（tests/fixtures/op/op），验证：
 //!
 //! - 参数解析（§5.2 冻结签名）：合法 flag / 未知 flag / 缺省值（env / 内置缺省）；
 //! - provider 选择与退出码映射（§5.3）：0 干净 / 1 配置错误 / 3 身份缺失；
+//!   **缺省 provider = coffer**（D-2，docs/27）：op 路径用例显式 `--provider op`
+//!   隔离「op 行为不变」的 D-1 冻结面；
 //! - `--vault` 传递：flag 覆盖 `$COFFER_OP_VAULT` 缺省；
 //! - `--log PATH` 落文件、stdout 永为协议帧（§3.1）；
 //! - stdio 生命周期冒烟（initialize → tools/list → tools/call → EOF → 干净退出）。
@@ -176,8 +178,12 @@ fn uds_flag_reports_unimplemented_exit_1() {
 
 #[test]
 fn provider_unavailable_exits_1() {
+    // 显式 `--provider op`：缺省已翻转为 coffer（D-2），本用例专测 op 不可用面。
     let missing = std::env::temp_dir().join("definitely-not-an-op-binary-xyz");
-    let out = run_coffer(&["mcp"], &[("COFFER_OP_BIN", missing.to_str().unwrap())]);
+    let out = run_coffer(
+        &["mcp", "--provider", "op"],
+        &[("COFFER_OP_BIN", missing.to_str().unwrap())],
+    );
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -202,11 +208,12 @@ fn unsupported_provider_exits_1() {
 
 #[test]
 fn provider_defaults_from_env_when_flag_absent() {
+    // env 显式选择 op（D-2 缺省已翻转 coffer；env 给定即显式，非内置缺省）。
     let out = run_coffer(&["mcp"], &[("COFFER_MCP_PROVIDER", "op")]);
     assert_eq!(
         out.status.code(),
         Some(0),
-        "缺省 provider=op（env）→ 干净退出"
+        "env 显式 provider=op → 干净退出"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("provider=op"), "stderr: {stderr}");
@@ -328,14 +335,107 @@ fn coffer_provider_wrong_password_exits_3() {
 }
 
 // ===========================================================================
+// D-2 缺省 provider = coffer（docs/27 D-2；无 --provider 且无
+// $COFFER_MCP_PROVIDER → coffer；feature 关闭时回落 op / 不可用退出 1）
+// ===========================================================================
+
+#[cfg(feature = "coffer-store")]
+#[test]
+fn default_provider_is_coffer_missing_env_config_exits_1() {
+    // 缺省（无 --provider / 无 $COFFER_MCP_PROVIDER）→ coffer：缺库配置 →
+    // 配置错误退出 1，消息可操作（D-2 翻转后的缺省面）。
+    let out = run_coffer(&["mcp"], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "缺省 coffer 缺库配置 → 退出码 1"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("COFFER_VAULT_DIR") || stderr.contains("COFFER_VAULT_PASSWORD"),
+        "缺省 coffer 路径错误消息须指明缺失 env，stderr: {stderr}"
+    );
+}
+
+#[cfg(feature = "coffer-store")]
+#[test]
+fn default_provider_serves_coffer_with_valid_vault() {
+    let (vault_dir, password) = create_fast_vault("cli-default-coffer");
+    let out = run_coffer(
+        &["mcp"],
+        &[
+            ("COFFER_VAULT_DIR", vault_dir.to_str().expect("utf8 path")),
+            ("COFFER_VAULT_PASSWORD", &password),
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "缺省 coffer + 合法库 → 干净退出 0"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("provider=coffer"), "stderr: {stderr}");
+}
+
+#[cfg(not(feature = "coffer-store"))]
+#[test]
+fn default_provider_falls_back_to_op_when_coffer_off() {
+    // feature 关闭构建下缺省 coffer 不可用 → 回落 op（op 可用则 op），日志告警。
+    let out = run_coffer(&["mcp"], &[]);
+    assert_eq!(out.status.code(), Some(0), "回落 op → 干净退出 0");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("defaulting to `op`"),
+        "须日志告警回落 op，stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("provider=op"),
+        "实际 provider 须为 op: {stderr}"
+    );
+}
+
+#[cfg(not(feature = "coffer-store"))]
+#[test]
+fn default_provider_exits_1_when_coffer_off_and_op_unavailable() {
+    // op 亦不可用 → 7001 退出 1（D-1 退出码契约不破坏，非 panic/挂死）。
+    let missing = std::env::temp_dir().join("definitely-not-an-op-binary-xyz");
+    let out = run_coffer(&["mcp"], &[("COFFER_OP_BIN", missing.to_str().unwrap())]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "缺省 coffer 不可用 + op 不可用 → 退出码 1（7001）"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("provider unavailable") || stderr.contains("7001"),
+        "stderr: {stderr}"
+    );
+}
+
+#[cfg(not(feature = "coffer-store"))]
+#[test]
+fn explicit_env_coffer_unsupported_when_feature_off() {
+    // env 显式 coffer（非内置缺省）→ 同任意未知 provider → 退出 1（D-1）。
+    let out = run_coffer(&["mcp"], &[("COFFER_MCP_PROVIDER", "coffer")]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "feature 关闭 + env 显式 coffer → 退出码 1（unsupported）"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unsupported provider"), "stderr: {stderr}");
+}
+
+// ===========================================================================
 // 退出码映射（§5.3）
 // ===========================================================================
 
 #[test]
 fn identity_missing_exits_3() {
     // fake op 在 OP_SESSION == 哨兵值时按「账号未登录」失败 → 7002 → 退出码 3。
+    // 显式 `--provider op`（缺省已翻转 coffer，D-2）。
     let out = run_coffer(
-        &["mcp"],
+        &["mcp", "--provider", "op"],
         &[("COFFER_OP_SESSION_TOKEN", FAKE_OP_EXPIRED_SESSION)],
     );
     assert_eq!(out.status.code(), Some(3), "身份缺失（7002）→ 退出码 3");
@@ -352,7 +452,8 @@ fn identity_missing_exits_3() {
 
 #[test]
 fn vault_flag_is_used_for_provider() {
-    let out = run_coffer(&["mcp", "--vault", "Personal"], &[]);
+    // 显式 `--provider op`：`--vault` 是 op 侧参数（D-2 缺省已翻转 coffer）。
+    let out = run_coffer(&["mcp", "--provider", "op", "--vault", "Personal"], &[]);
     assert_eq!(out.status.code(), Some(0), "合法 vault → 干净退出");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -363,7 +464,10 @@ fn vault_flag_is_used_for_provider() {
 
 #[test]
 fn vault_defaults_to_env_when_flag_absent() {
-    let out = run_coffer(&["mcp"], &[("COFFER_OP_VAULT", "Personal")]);
+    let out = run_coffer(
+        &["mcp", "--provider", "op"],
+        &[("COFFER_OP_VAULT", "Personal")],
+    );
     assert_eq!(out.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -375,7 +479,7 @@ fn vault_defaults_to_env_when_flag_absent() {
 #[test]
 fn vault_flag_overrides_env_default() {
     let out = run_coffer(
-        &["mcp", "--vault", "Personal"],
+        &["mcp", "--provider", "op", "--vault", "Personal"],
         &[("COFFER_OP_VAULT", "OtherVault")],
     );
     assert_eq!(out.status.code(), Some(0));
@@ -396,7 +500,7 @@ fn vault_flag_overrides_env_default() {
 
 #[test]
 fn no_audit_flag_is_observable() {
-    let out = run_coffer(&["mcp", "--no-audit"], &[]);
+    let out = run_coffer(&["mcp", "--provider", "op", "--no-audit"], &[]);
     assert_eq!(out.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -409,7 +513,16 @@ fn no_audit_flag_is_observable() {
 fn log_flag_writes_to_file_not_stderr() {
     let dir = temp_dir("logfile");
     let log_path = dir.join("coffer.log");
-    let out = run_coffer(&["mcp", "--log", log_path.to_str().unwrap()], &[]);
+    let out = run_coffer(
+        &[
+            "mcp",
+            "--provider",
+            "op",
+            "--log",
+            log_path.to_str().unwrap(),
+        ],
+        &[],
+    );
     assert_eq!(out.status.code(), Some(0));
     // stdout 永为协议帧、日志只去 --log 文件（§3.1）：stderr 不应再含运行时日志。
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -430,7 +543,8 @@ fn log_flag_writes_to_file_not_stderr() {
 
 #[test]
 fn stdio_lifecycle_initialize_list_call_and_clean_exit() {
-    let mut c = spawn_mcp(&["mcp"]);
+    // 显式 `--provider op`：本用例是 D-1 冻结面冒烟（op 路径，D-2 缺省已翻转）。
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"]);
 
     // initialize → 协议版本 + capabilities + serverInfo
     c.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#);
@@ -472,7 +586,7 @@ fn stdio_lifecycle_initialize_list_call_and_clean_exit() {
 #[test]
 fn run_with_secret_works_end_to_end_through_stdio() {
     // 全栈冒烟：协议帧 → 工具分发 → OpProvider → fake op 注入值到子进程 env。
-    let mut c = spawn_mcp(&["mcp"]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"]);
     c.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#);
     let _ = c.read_frame();
     c.send(

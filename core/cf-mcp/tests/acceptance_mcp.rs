@@ -21,6 +21,10 @@
 //!
 //! 进程级环境变量隔离：每个子进程独立 env（`Command::env`），无跨用例污染。
 //! fake op 的「未登录」哨兵 = `COFFER_FAKE_OP_EXPIRED_SESSION`（fixture 内定义）。
+//!
+//! D-2 缺省翻转（docs/27）：缺省 provider 已由 op → coffer，本文件全部 op 面
+//! 用例显式 `--provider op`，隔离「op 行为不变」的 D-1 冻结面（缺省 coffer 面
+//! 见 tests/cli.rs 的 default_provider_* 用例）。
 
 #![forbid(unsafe_code)]
 
@@ -203,7 +207,7 @@ fn initialize_request() -> &'static str {
 
 #[test]
 fn initialize_handshake_first_frame_is_protocol_frame() {
-    let mut c = spawn_mcp(&["mcp"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
 
     c.send(initialize_request());
     let init = c.read_frame();
@@ -235,7 +239,7 @@ fn initialize_handshake_first_frame_is_protocol_frame() {
 fn stdout_carries_only_protocol_frames_across_lifecycle() {
     // 全生命周期逐帧断言 stdout 恒为 JSON-RPC 2.0（read_frame 内建），
     // 并核对 stdout 无日志噪声（[INFO]/[WARN] 只去 stderr/--log，§3.1）。
-    let mut c = spawn_mcp(&["mcp"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
 
     c.send(initialize_request());
     let _ = c.read_frame();
@@ -263,7 +267,7 @@ fn stdout_carries_only_protocol_frames_across_lifecycle() {
 
 #[test]
 fn tools_list_and_call_roundtrip_redacted_metadata_no_plaintext() {
-    let mut c = spawn_mcp(&["mcp"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
     c.send(initialize_request());
     let _ = c.read_frame();
 
@@ -352,7 +356,7 @@ fn tools_list_and_call_roundtrip_redacted_metadata_no_plaintext() {
 #[test]
 fn get_secret_metadata_never_contains_secret_value() {
     // AS-14 可用不可见（usable without visible）：get_secret_metadata 只回元数据。
-    let mut c = spawn_mcp(&["mcp"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
     c.send(initialize_request());
     let _ = c.read_frame();
     c.send(
@@ -379,7 +383,7 @@ fn get_secret_metadata_never_contains_secret_value() {
 
 #[test]
 fn clean_eof_exits_0() {
-    let (code, stderr) = run_coffer(&["mcp"], &[]);
+    let (code, stderr) = run_coffer(&["mcp", "--provider", "op"], &[]);
     assert_eq!(code, Some(0), "干净 EOF → §5.3 退出码 0，stderr: {stderr}");
 }
 
@@ -410,8 +414,9 @@ fn uds_unimplemented_exits_1() {
 #[test]
 fn identity_missing_exits_3() {
     // fake op 在 OP_SESSION == 哨兵值时按「账号未登录」失败 → 7002 → 退出码 3（§5.3）。
+    // 显式 `--provider op`（缺省已翻转 coffer，D-2）。
     let (code, stderr) = run_coffer(
-        &["mcp"],
+        &["mcp", "--provider", "op"],
         &[("COFFER_OP_SESSION_TOKEN", FAKE_OP_EXPIRED_SESSION)],
     );
     assert_eq!(
@@ -429,17 +434,23 @@ fn identity_missing_exits_3() {
 fn overlimit_line_protocol_fatal_exits_2() {
     // L-7 协议致命路径（§5.3 退出码 2）：超限行（> MAX_LINE_BYTES）→ stdout 出
     // 7005 拒收帧（id 恒 null，帧同步已不可恢复）→ 服务退出码 2。
-    let mut c = spawn_mcp(&["mcp"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
 
     let overlong = "x".repeat(MAX_LINE_BYTES + 1);
     c.send(&overlong);
 
     // 超限拒收帧：7005（protocol.rs，L-7 建议码）；id 恒 null（无法取回合法 id）。
     let frame = c.read_frame();
-    assert_eq!(frame["error"]["code"], json!(7005), "超限拒收帧须报 7005，got {frame}");
+    assert_eq!(
+        frame["error"]["code"],
+        json!(7005),
+        "超限拒收帧须报 7005，got {frame}"
+    );
     assert!(frame["id"].is_null(), "超限拒收帧 id 恒 null，got {frame}");
     assert!(
-        frame["error"]["message"].as_str().is_some_and(|m| m.contains("MAX_LINE_BYTES")),
+        frame["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("MAX_LINE_BYTES")),
         "错误消息须可操作（说明超限语义），got {frame}"
     );
 
@@ -459,7 +470,7 @@ fn overlimit_line_protocol_fatal_exits_2() {
 #[test]
 fn vault_flag_overrides_env_default() {
     let mut c = spawn_mcp(
-        &["mcp", "--vault", "Personal"],
+        &["mcp", "--provider", "op", "--vault", "Personal"],
         &[("COFFER_OP_VAULT", "OtherVault")],
     );
     c.send(initialize_request());
@@ -478,7 +489,7 @@ fn vault_flag_overrides_env_default() {
 
 #[test]
 fn no_audit_flag_accepted() {
-    let mut c = spawn_mcp(&["mcp", "--no-audit"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op", "--no-audit"], &[]);
     c.send(initialize_request());
     let _ = c.read_frame();
     let (code, stderr) = c.finish();
@@ -494,7 +505,16 @@ fn log_flag_writes_to_file_and_stderr_has_no_protocol_frames() {
     let dir = temp_dir("logfile");
     let log_path = dir.join("coffer-acc.log");
 
-    let mut c = spawn_mcp(&["mcp", "--log", log_path.to_str().unwrap()], &[]);
+    let mut c = spawn_mcp(
+        &[
+            "mcp",
+            "--provider",
+            "op",
+            "--log",
+            log_path.to_str().unwrap(),
+        ],
+        &[],
+    );
     c.send(initialize_request());
     let _ = c.read_frame();
     let (code, stderr) = c.finish();
@@ -522,7 +542,7 @@ fn log_flag_writes_to_file_and_stderr_has_no_protocol_frames() {
 
 #[test]
 fn child_process_is_reaped_no_leftover() {
-    let mut c = spawn_mcp(&["mcp"], &[]);
+    let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
     let pid = c.child.id();
     c.send(initialize_request());
     let _ = c.read_frame();
@@ -540,7 +560,7 @@ fn child_process_is_reaped_no_leftover() {
 fn drop_cleans_up_child_without_explicit_finish() {
     // 不调 finish/kill，直接 drop：Drop 兜底须 kill + wait，无残留（进程纪律）。
     let pid = {
-        let mut c = spawn_mcp(&["mcp"], &[]);
+        let mut c = spawn_mcp(&["mcp", "--provider", "op"], &[]);
         c.send(initialize_request());
         let _ = c.read_frame();
         c.child.id()

@@ -27,12 +27,19 @@ cf-session = { workspace = true, optional = true }
 # 本处直列仅为让 in-crate 测试可命名 `KdfParams` 走快速建库档（避免默认 256 MiB
 # KDF 的秒级建库）。feature 关闭时依赖树不含 cf-crypto（docs/20 §2.2 只下不上）。
 cf-crypto = { workspace = true, optional = true }
+# 仅在 coffer-store feature 下需要：MEDIUM-2 轮换新值用 Coffer 生成器强随机值
+# （cf-audit `generate_password`，FR-3.2 CSPRNG，docs/27 MEDIUM-2 裁定 B）。注意
+# **仅**复用其生成器，**不**复用其审计轨迹（§2.3 分层语义，AS-10 审计归本包
+# `audit` 模块，cf-audit 是弱/重复/陈旧密码体检 FR-6）。feature 关闭时依赖树
+# 不含 cf-audit（docs/20 §2.2 只下不上；check_no_network 基线随 default 重标）。
+cf-audit = { workspace = true, optional = true }
 
 [features]
-# 启用 Coffer 自家 Secret Store provider（v2.x 存储模型 U-4 落定前的生产实现，
-# 存储映射为可逆临时约定，待用户追认）。启用后 workspace 依赖树新增
-# cf-mcp → cf-session 边（docs/20 §9.2 互斥核对）。
-coffer-store = ["dep:cf-session", "dep:cf-crypto"]
+default = ["coffer-store"]
+# 启用 Coffer 自家 Secret Store provider（D-2 用户裁定：缺省 provider = coffer，
+# coffer-store 转 default feature，docs/27 D-2）。依赖边 cf-mcp → cf-session →
+# cf-store（docs/20 §2.2，§9.2 互斥核对）；`--no-default-features` 才瘦依赖树。
+coffer-store = ["dep:cf-session", "dep:cf-crypto", "dep:cf-audit"]
 
 # `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
 # 沿用 cf-ffi `uniffi-bindgen` 先例），未来 `coffer list/run/…` 扩进同一 bin 或

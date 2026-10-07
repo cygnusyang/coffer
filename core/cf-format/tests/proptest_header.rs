@@ -26,9 +26,9 @@ use cf_crypto::kdf::{
     MAX_M_COST_KIB, MAX_P_COST, MAX_T_COST, MIN_M_COST_KIB, MIN_P_COST, MIN_T_COST,
 };
 use cf_format::header::{
-    AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, VerifierSection, WrappedKey,
-    AEAD_ALGO, ARGON2_VERSION, FORMAT_VERSION, KDF_ALGO, NONCE_LEN, SALT_LEN, VERIFIER_CT_MIN,
-    WRAPPED_DEK_CT_MIN,
+    AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, McpWrap, VerifierSection,
+    WrappedKey, AEAD_ALGO, ARGON2_VERSION, FORMAT_VERSION, KDF_ALGO, NONCE_LEN, SALT_LEN,
+    VERIFIER_CT_MIN, WRAPPED_DEK_CT_MIN,
 };
 use cf_format::validate_header;
 use proptest::prelude::*;
@@ -75,6 +75,12 @@ fn valid_header(
             ct_b64: b64(&[0x44u8; VERIFIER_CT_MIN]),
         },
         biometric_wrap: BiometricWrap {
+            available: false,
+            provider: None,
+            key_alias: None,
+            wrapped_dek_b64: None,
+        },
+        mcp_wrap: McpWrap {
             available: false,
             provider: None,
             key_alias: None,

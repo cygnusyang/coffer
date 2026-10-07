@@ -59,7 +59,7 @@ pub use container::{
 };
 pub use error::CfFormatError;
 pub use header::{
-    validate_header, AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, VerifierSection,
-    WrappedKey, FORMAT_VERSION,
+    validate_header, AeadSection, BiometricWrap, Header, HeaderFlags, KdfSection, McpWrap,
+    VerifierSection, WrappedKey, FORMAT_VERSION,
 };
 pub use manifest::{verify_manifest, write_manifest, Manifest, ManifestEntry};

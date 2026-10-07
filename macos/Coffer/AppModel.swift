@@ -543,6 +543,8 @@ final class AppModel: ObservableObject {
             lockBackoffDeadline = nil
             // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
             evaluateBackupReminder()
+            // 解锁成功 → 浏览器集成已启用则 spawn broker（锁态镜像 docs/31 §2.1）
+            startBrowserBrokerIfNeeded()
         } catch {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
@@ -596,6 +598,8 @@ final class AppModel: ObservableObject {
         phase = session != nil ? .locked : .noVault
         refreshTouchIDStatus()
         refreshMcpEscrowStatus()
+        // 锁定 → kill broker（锁态镜像 docs/31 §2.1：扩展锁态恒等于 App 锁态）
+        stopBrowserBroker()
     }
 
     /// 把当前超时配置应用到会话（0 或负数 = 禁用自动锁定）。
@@ -700,6 +704,8 @@ final class AppModel: ObservableObject {
             lockBackoffDeadline = nil
             // 解锁成功即评估备份提醒（FR-8.5，T-G）：仅解锁态可调（1001 门禁）
             evaluateBackupReminder()
+            // 解锁成功 → 浏览器集成已启用则 spawn broker（锁态镜像 docs/31 §2.1）
+            startBrowserBrokerIfNeeded()
         } catch {
             // 错误分派（reviewer HIGH 处置，docs/08 §7.3/§7.6，用户 2026-10-03
             // 裁定；authFailed 瞬时/持久分道为 PL-7，2026-10-03 用户反馈）：
@@ -969,13 +975,191 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 浏览器集成（docs/31 §6.2 / §9.1 G-D：manifest + broker 生命周期 + 配对）
+
+    /// 「启用浏览器集成」开关（非敏感布尔，UserDefaults；镜像 McpSettings 纪律）。
+    @Published private(set) var browserIntegrationEnabled: Bool = BrowserIntegrationSettings.loadEnabled()
+
+    /// broker 运行态（App 解锁 spawn / 锁定 kill，锁态镜像 docs/31 §2.1 状态机）。
+    /// `.failed` 携带可呈现文案（spawn 失败 / 缺 escrow 等，fail-closed）。
+    @Published private(set) var browserBrokerState: BrowserBrokerRuntime = .stopped
+
+    /// 待用户确认的配对请求（docs/31 §4.2：显式批准才下发 PSK + 公钥；密钥
+    /// 材料不经 App——本属性只携带请求元数据，PSK/公钥由 broker 生成下发）。
+    @Published var pendingPairingRequest: BrowserPairingRequest?
+
+    /// 当前 broker 进程句柄（App 是 broker 的父进程，锁定/退出即杀，docs/31 §2.1）。
+    private var browserBrokerProcess: Process?
+
+    /// 配对决策转发（G-B broker IPC 集成前为内存记录，见 BrowserIntegration 注释）。
+    private var browserPairingResponder: BrowserPairingResponder = RecordingBrowserPairingResponder()
+
+    /// 开关切换（docs/31 §2.3 启/配对流）：启用 = 写 manifest + spawn broker；
+    /// 停用 = kill broker + 删 manifest（幂等）。
+    ///
+    /// 错误路径 fail-closed：启用时任一浏览器写失败 → 不 spawn broker、不落
+    /// 开关（无半启用态，可重试）；停用时删除失败仅报错不回滚开关（停用优先，
+    /// 保证不残留运行态）。
+    ///
+    /// - Parameter enabled: 目标开关值。
+    /// - Returns: 是否成功（false = 错误文案已置 lastErrorMessage，开关回滚）。
+    @discardableResult
+    func setBrowserIntegration(_ enabled: Bool) async -> Bool {
+        guard phase == .unlocked, session != nil else {
+            lastErrorMessage = "请先解锁密码库后再更改浏览器集成设置。"
+            return false
+        }
+        if enabled {
+            // 先置开关再启用：enableBrowserIntegration 内 startBrowserBrokerIfNeeded
+            // 以 browserIntegrationEnabled == true 为前置（顺序敏感，勿调换）。
+            browserIntegrationEnabled = true
+            let ok = await enableBrowserIntegration()
+            if ok {
+                BrowserIntegrationSettings.saveEnabled(true)
+            } else {
+                // 失败回滚开关（未落盘，无半启用态）
+                browserIntegrationEnabled = false
+            }
+            return ok
+        } else {
+            await disableBrowserIntegration()
+            browserIntegrationEnabled = false
+            BrowserIntegrationSettings.saveEnabled(false)
+            return true
+        }
+    }
+
+    /// 启用：写三浏览器 manifest + spawn broker。
+    /// 顺序裁定（docs/31 §2.3 配对流）：① 校验 coffer 二进制 → ② 写 manifest
+    /// （任一失败 → 报错返回 false，不 spawn、不落开关）→ ③ spawn broker。
+    private func enableBrowserIntegration() async -> Bool {
+        guard let binary = McpStatusProbe.cofferBinaryPath() else {
+            lastErrorMessage = BrowserIntegrationError.missingCofferBinary.userText
+            return false
+        }
+        let home = BrowserStatusProbe.userHomeDirectory()
+        do {
+            for browser in BrowserKind.allCases {
+                try BrowserManifest.write(
+                    browser: browser,
+                    shimPath: BrowserManifest.shimPath(cofferBinaryPath: binary),
+                    homeDirectory: home)
+            }
+        } catch {
+            let errText = (error as? BrowserIntegrationError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            return false
+        }
+        startBrowserBrokerIfNeeded()
+        return true
+    }
+
+    /// 停用：kill broker（幂等）+ 删三浏览器 manifest（幂等）。
+    /// 顺序裁定：先停进程后删文件（优先保证不残留运行态）；删除失败仅报错
+    /// 不回滚开关（停用优先：docs/31 §6.2「停用即删除」语义不因单浏览器失败
+    /// 而阻塞，开关恒关闭）。返回 Void——停用为 best-effort，无失败态。
+    private func disableBrowserIntegration() async {
+        stopBrowserBroker()
+        let home = BrowserStatusProbe.userHomeDirectory()
+        do {
+            for browser in BrowserKind.allCases {
+                try BrowserManifest.delete(browser: browser, homeDirectory: home)
+            }
+        } catch {
+            let errText = (error as? BrowserIntegrationError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+        }
+    }
+
+    /// 解锁态 spawn broker（unlock / unlockWithTouchID 成功路径调用）。
+    ///
+    /// 前置（docs/31 §4.1）：开关开 + 解锁态 + coffer 二进制存在 + escrow 托管
+    /// 启用（broker 免密解锁 = escrow 路径）——任一不满足 → 不 spawn，状态行
+    /// 呈现缺项（fail-closed）。幂等：已运行不重复 spawn。
+    func startBrowserBrokerIfNeeded() {
+        guard browserIntegrationEnabled, phase == .unlocked,
+              let binary = McpStatusProbe.cofferBinaryPath() else {
+            return
+        }
+        guard mcpEscrowStatus == .enabled else {
+            browserBrokerState = .failed("未启用 MCP 解锁托管，broker 无法免密解锁")
+            return
+        }
+        if let process = browserBrokerProcess, process.isRunning {
+            return
+        }
+        let libraryDir = libraryDirectoryPath()
+        do {
+            try BrowserBroker.prepareSocketDirectory(baseLibraryDirectory: libraryDir)
+        } catch {
+            DiagLog.append("BrowserBroker socket 目录准备失败：\(error.localizedDescription)")
+            browserBrokerState = .failed("broker socket 目录准备失败")
+            return
+        }
+        let socketPath = BrowserBroker.brokerSocketPath(baseLibraryDirectory: libraryDir)
+        do {
+            let process = try BrowserBroker.spawn(
+                executable: binary,
+                arguments: [BrowserBroker.SpawnConfig.subcommand,
+                            BrowserBroker.SpawnConfig.udsFlag, socketPath],
+                environment: [BrowserBroker.SpawnConfig.vaultDirEnv: vaultDirPath])
+            browserBrokerProcess = process
+            browserBrokerState = .running(pid: process.processIdentifier)
+        } catch {
+            let errText = (error as? BrowserIntegrationError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            browserBrokerState = .failed(errText)
+        }
+    }
+
+    /// 锁定 / 退出 / 停用：kill broker（幂等，docs/31 §2.1 killed；会话密钥随
+    /// 进程销毁 docs/31 §3.4）。
+    func stopBrowserBroker() {
+        BrowserBroker.kill(process: browserBrokerProcess)
+        browserBrokerProcess = nil
+        browserBrokerState = .stopped
+    }
+
+    /// 配对请求到达（G-B broker IPC 集成后由 listener 调用；docs/31 §4.2）。
+    func submitPendingPairing(_ request: BrowserPairingRequest) {
+        pendingPairingRequest = request
+    }
+
+    /// 用户显式批准（docs/31 §5.3：批准才触发 broker 下发 PSK + 公钥）。密钥
+    /// 材料不经 App、不进日志——本方法只转发决策元数据。
+    func approvePendingPairing() {
+        guard let request = pendingPairingRequest else { return }
+        browserPairingResponder.respond(
+            BrowserPairingDecision(browser: request.browser, extensionID: request.extensionID,
+                                   approved: true, decidedAt: Date()))
+        pendingPairingRequest = nil
+    }
+
+    /// 用户拒绝配对（docs/31 §4.2 拒绝路径）。
+    func rejectPendingPairing() {
+        guard let request = pendingPairingRequest else { return }
+        browserPairingResponder.respond(
+            BrowserPairingDecision(browser: request.browser, extensionID: request.extensionID,
+                                   approved: false, decidedAt: Date()))
+        pendingPairingRequest = nil
+    }
+
+    /// App Library 目录（沙盒内为容器路径；broker UDS socket 私有父目录根）。
+    private func libraryDirectoryPath() -> String {
+        FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?.path
+            ?? (NSHomeDirectory() as NSString).appendingPathComponent("Library")
+    }
+
     /// 进程退出兜底（AppDelegate.applicationWillTerminate 调用）。
     nonisolated func lockAllForTermination() {
         MainActor.assumeIsolated {
             factory.lockAll()
+            // 退出 → kill broker（锁态镜像 docs/31 §2.1；会话密钥随进程销毁）
+            stopBrowserBroker()
         }
     }
-
     // MARK: - 密码强度（非门禁展示用）
 
     /// 强度估算：走 Rust 工厂版 zxcvbn（纯计算、无会话依赖，建库前

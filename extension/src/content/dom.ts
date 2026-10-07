@@ -70,15 +70,19 @@ export function formActionUrl(form: HTMLFormElement | null): string | null {
   }
 }
 
-/** Does the form submit to the same origin as the current page? */
-export function isSameOriginAction(form: HTMLFormElement | null): boolean {
-  const url = formActionUrl(form);
-  if (!url) return false;
+/** Pure: does an action URL belong to the given origin? Null/unparseable → false. */
+export function sameOriginUrl(actionUrl: string | null, origin: string): boolean {
+  if (!actionUrl) return false;
   try {
-    return new URL(url).origin === window.location.origin;
+    return new URL(actionUrl).origin === origin;
   } catch {
     return false;
   }
+}
+
+/** Does the form submit to the same origin as the current page? (HIGH-1 fill gate.) */
+export function isSameOriginAction(form: HTMLFormElement | null): boolean {
+  return sameOriginUrl(formActionUrl(form), window.location.origin);
 }
 
 export interface CredentialSnapshot {

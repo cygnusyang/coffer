@@ -47,6 +47,17 @@
       return null;
     }
   }
+  function sameOriginUrl(actionUrl, origin) {
+    if (!actionUrl) return false;
+    try {
+      return new URL(actionUrl).origin === origin;
+    } catch {
+      return false;
+    }
+  }
+  function isSameOriginAction(form) {
+    return sameOriginUrl(formActionUrl(form), window.location.origin);
+  }
   function setNativeValue(input, value) {
     const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
@@ -128,7 +139,34 @@
     }
   });
 
+  // src/content/fill_auth.ts
+  function authorizeFill(opts) {
+    if (!opts.target) return { ok: false, reason: "no_target" };
+    if (opts.currentOrigin !== opts.approvedOrigin) return { ok: false, reason: "origin_mismatch" };
+    if (!opts.target.passwordConnected) return { ok: false, reason: "target_disconnected" };
+    if (!opts.target.sameOriginAction) return { ok: false, reason: "cross_origin_action" };
+    return {
+      ok: true,
+      targets: {
+        usernameEl: opts.target.usernameConnected ? opts.target.usernameEl : null,
+        passwordEl: opts.target.passwordEl
+      }
+    };
+  }
+
   // src/content/fill.ts
+  var capturedTarget = null;
+  function currentTargetForAuth() {
+    if (!capturedTarget) return null;
+    const form = capturedTarget.passwordEl?.form ?? capturedTarget.passwordEl?.closest("form") ?? null;
+    return {
+      usernameEl: capturedTarget.usernameEl,
+      passwordEl: capturedTarget.passwordEl,
+      usernameConnected: capturedTarget.usernameEl?.isConnected ?? false,
+      passwordConnected: capturedTarget.passwordEl?.isConnected ?? false,
+      sameOriginAction: isSameOriginAction(form)
+    };
+  }
   async function fetchEntries(origin, action) {
     try {
       const res = await chrome.runtime.sendMessage({
@@ -151,10 +189,15 @@
       if (isMenuOpen()) return;
       const fields = findLoginFields();
       if (!fields.password || fields.password !== target && fields.username !== target) {
+        capturedTarget = null;
         hideInlineMenu();
         return;
       }
-      if (fields.password.disabled) return;
+      if (fields.password.disabled) {
+        capturedTarget = null;
+        return;
+      }
+      capturedTarget = { usernameEl: fields.username, passwordEl: fields.password };
       const origin = window.location.origin;
       const action = formActionUrl(fields.form);
       void (async () => {
@@ -171,10 +214,17 @@
   );
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg || msg.type !== "fill_values") return;
-    const fields = findLoginFields();
-    if (!fields.password) return;
-    if (fields.username) fillField(fields.username, msg.username);
-    fillField(fields.password, msg.password);
+    const auth = authorizeFill({
+      approvedOrigin: msg.origin,
+      currentOrigin: window.location.origin,
+      target: currentTargetForAuth()
+    });
+    if (!auth.ok) {
+      wipeSecrets({ username: msg.username, password: msg.password });
+      return;
+    }
+    if (auth.targets?.usernameEl) fillField(auth.targets.usernameEl, msg.username);
+    if (auth.targets?.passwordEl) fillField(auth.targets.passwordEl, msg.password);
     wipeSecrets({ username: msg.username, password: msg.password });
     hideInlineMenu();
   });

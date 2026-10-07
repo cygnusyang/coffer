@@ -90,6 +90,16 @@ export function canonicalOrigin(input: string): string | null {
 }
 
 /**
+ * Extract the canonical origin from a tab URL for re-verification (HIGH-1). Returns
+ * null for anything unverifiable — undefined, opaque (about:/data:), or non-http(s) —
+ * so callers fail closed.
+ */
+export function originOfUrl(raw: string | undefined | null): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  return canonicalOrigin(raw);
+}
+
+/**
  * Validate + normalize a binding. Returns null for malformed patterns (fail fast —
  * never trust user-entered binding text). `baseHost` is the normalized hostname for
  * host-only types and null for exact.

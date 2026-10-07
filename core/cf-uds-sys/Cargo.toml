@@ -1,0 +1,10 @@
+[package]
+name = "cf-uds-sys"
+description = "macOS UDS peer 凭据 syscall 安全封装（cf-mcp `--uds` 传输，docs/20 §3.6 ②）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = { workspace = true }

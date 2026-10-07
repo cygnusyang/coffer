@@ -436,6 +436,7 @@ final class AppModel: ObservableObject {
         lockBackoffDeadline = nil
         phase = .locked
         refreshTouchIDStatus()
+        refreshMcpEscrowStatus()
         UserDefaults.standard.set(brief.vaultUuid, forKey: Self.lastVaultUUIDDefaultsKey)
     }
 
@@ -594,6 +595,7 @@ final class AppModel: ObservableObject {
         lockBackoffDeadline = nil
         phase = session != nil ? .locked : .noVault
         refreshTouchIDStatus()
+        refreshMcpEscrowStatus()
     }
 
     /// 把当前超时配置应用到会话（0 或负数 = 禁用自动锁定）。
@@ -846,6 +848,123 @@ final class AppModel: ObservableObject {
             DiagLog.append(errText)
             lastErrorMessage = errText
             refreshTouchIDStatus()
+            return false
+        }
+    }
+
+    // MARK: - MCP 解锁托管（docs/29 §5.2 生命周期，镜像 Touch ID D-9 编排）
+
+    /// MCP 解锁托管三态（docs/29 §5.2，镜像 touchIDStatus）。
+    @Published private(set) var mcpEscrowStatus: McpEscrowStatus = .disabled
+
+    /// 刷新三态：纯读操作（header 布尔 + Keychain 属性查询），无密钥操作。
+    /// 组合逻辑委托 McpEscrowStatus.resolve 纯函数（docs/29 §5.2）。
+    func refreshMcpEscrowStatus() {
+        guard let session, !vaultUUID.isEmpty else {
+            mcpEscrowStatus = .disabled
+            return
+        }
+        mcpEscrowStatus = McpEscrowStatus.resolve(
+            headerMcpWrapAvailable: session.hasMcpWrap(),
+            keychainItemExists: McpEscrowKeychain().itemExists(vaultUUID: vaultUUID)
+        )
+    }
+
+    /// 启用 MCP 解锁托管（docs/29 §5.2 enable 流程，镜像 enableTouchID 编排）。
+    ///
+    /// 顺序裁定（docs/29 §5.2，先 Keychain 后 header，同 Touch ID D-9）：
+    ///   ① FFI `derive_mcp_key(password)`：recover_dek → HKDF 确定性派生
+    ///      mcp_key（慢调用，Argon2id 约 1s，Task.detached 包裹）；
+    ///   ② Swift `McpEscrowKeychain.save`：无 ACL + ThisDeviceOnly + access
+    ///      group（失败 → 直接报错，header 未动，无半启用态）；
+    ///   ③ FFI `enable_mcp_escrow(password, mcp_key)`：recover_dek → seal →
+    ///      原子重写 header `mcp_wrap`（失败 → 补偿删除 Keychain 项，不留
+    ///      孤儿半启用态）。
+    ///
+    /// 主密码只作参数传入，用后即弃（docs/07 §2.4 同纪律）；mcp_key 拷贝进
+    /// Task 闭包，本函数返回后局部变量即弃（docs/29 §5.3）。
+    ///
+    /// - Parameter password: 主密码（仅作参数传入，用后即弃，不落状态）。
+    /// - Returns: 是否启用成功（调用方据此关闭对话框）。
+    @discardableResult
+    func enableMcpEscrow(password: String) async -> Bool {
+        guard let session, !isBusy, phase == .unlocked, !vaultUUID.isEmpty else {
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+
+        let uuid = vaultUUID
+        do {
+            let target = session
+            // ① mcp_key：HKDF 确定性派生（docs/29 §3；DEK 派生，换主密码不吊销）
+            let mcpKey = try await Task.detached(priority: .userInitiated) {
+                try target.deriveMcpKey(password: password)
+            }.value
+            // ② 先 Keychain（§5.2 顺序）：无 ACL 条目，ThisDeviceOnly + access group
+            try McpEscrowKeychain().save(key: mcpKey, vaultUUID: uuid)
+            // ③ 后 header：recover_dek → seal → 原子重写（慢调用，Task.detached）
+            try await Task.detached(priority: .userInitiated) {
+                try target.enableMcpEscrow(password: password, mcpKey: mcpKey)
+            }.value
+            refreshMcpEscrowStatus()
+            return true
+        } catch {
+            // 失败补偿（docs/29 §5.2）：删除刚写入的 Keychain 项（幂等），
+            // header 保持原样（Rust 失败时不重写文件）。密码错 1002 / 派生
+            // 失败 / Keychain 失败均经错误文案呈现（镜像 enableTouchID catch）。
+            _ = try? McpEscrowKeychain().delete(vaultUUID: uuid)
+            let errText = (error as? McpEscrowKeychainError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            refreshMcpEscrowStatus()
+            return false
+        }
+    }
+
+    /// 关闭 MCP 解锁托管（docs/29 §5.2 disable 流程，镜像 disableTouchID）。
+    ///
+    /// 顺序裁定（docs/29 §5.2，先删 Keychain 再改 header，D-9 反向同款）：
+    ///   ① Swift `McpEscrowKeychain.delete`（幂等；失败 → 报错，header 未动，
+    ///      功能未关可重试）；
+    ///   ② FFI `disable_mcp_escrow`（header 原子重写 available=false；失败非
+    ///      致命——Keychain 已删，MCP 实际已不可用，可重试关闭）。
+    ///
+    /// - Returns: 是否关闭成功。
+    @discardableResult
+    func disableMcpEscrow() async -> Bool {
+        guard let session, !isBusy, phase == .unlocked, !vaultUUID.isEmpty else {
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+
+        let uuid = vaultUUID
+        // ① 先删 Keychain（§5.2 关闭顺序，镜像 disableTouchID；幂等）
+        do {
+            try McpEscrowKeychain().delete(vaultUUID: uuid)
+        } catch {
+            // 删除失败属系统层异常：header 未动，功能未关，可重试
+            let errText = (error as? McpEscrowKeychainError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            return false
+        }
+        // ② 后 header：原子重写 → 禁用态（幂等）
+        do {
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.disableMcpEscrow()
+            }.value
+            refreshMcpEscrowStatus()
+            return true
+        } catch {
+            // header 写失败：非致命（docs/29 §5.2）——Keychain 已删，MCP 实际
+            // 已不可用；header 残留 mcp_wrap 密文无泄露面，可重试关闭
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            refreshMcpEscrowStatus()
             return false
         }
     }

@@ -48,19 +48,6 @@ cf-audit = { workspace = true, optional = true }
 # 在该 crate 内表达（workspace 惯例：Cargo.toml 无 target 门控，同 cf-uds-sys；
 # 非 macOS 分支编译期不触 FFI）。feature 关闭时依赖树不含（docs/20 §2.2 只下不上）。
 cf-escrow-keychain = { path = "../cf-escrow-keychain", optional = true }
-# 仅在 coffer-store feature 下需要：浏览器扩展通道（docs/31 §3，G-B 主任务）——
-# cf-browser 提供 E2E AEAD 会话（host 中继 / broker 端点），`browser-agent` /
-# `browser-broker` 子命令的宿主。并入 coffer-store 而非新开 browser feature
-# （docs/32 §8 #1 裁决）：slim no-default 构建面不变，浏览器功能随 coffer-store
-# 一同启停。cf-browser 自身无 unsafe / 无网络（纯 crypto + 本地 socket）。
-# feature 关闭时依赖树不含（docs/20 §2.2 只下不上；check_no_network 基线不变）。
-cf-browser = { path = "../cf-browser", optional = true }
-# 仅在 coffer-store feature 下需要：② 层父进程 / 宿主代码签名验证（docs/31 §3.2，
-# P-S spike 实证 SecCodeCopyGuestWithAttributes + SecStaticCodeCheckValidity 免
-# entitlement / 免 TCC）。security-framework 3.7.0 是安全封装（unsafe 面在其内部，
-# cf-mcp 保持 forbid(unsafe_code)，cf-mcp → cf-escrow-keychain 先例同构）。仅 macOS
-# 有意义；同 workspace 惯例（Cargo.toml 无 target 门控），非 macOS 分支编译期不触。
-security-framework = { version = "3.7.0", optional = true }
 
 [features]
 default = ["coffer-store"]
@@ -72,8 +59,6 @@ coffer-store = [
     "dep:cf-crypto",
     "dep:cf-audit",
     "dep:cf-escrow-keychain",
-    "dep:cf-browser",
-    "dep:security-framework",
 ]
 
 # `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
@@ -85,8 +70,4 @@ path = "src/main.rs"
 
 [dev-dependencies]
 serde_json = { workspace = true }
-# G-B 集成测试（tests/browser_subcommand.rs）：cf-browser 提供 E2E initiator 侧
-# 真实驱动（InitiatorHandshake + Session，对 broker 走真协议）；cf-domain 提供
-# 条目/类别类型。仅 dev 构建面，不影响 slim 正常构建依赖树。
-cf-browser = { path = "../cf-browser" }
 cf-domain = { workspace = true }

@@ -55,7 +55,7 @@
 //! ## v2.3.0 merge-time 接线（裁定书 R1/R2）
 //!
 //! - **R2 直开**：[`unlock_store_with_dek`]（`finish_unlock` 薄封装）——
-//!   供 cf-mcp browser-broker 用 DEK 直开（[`crate::vault::VaultSession::unlock_with_dek`]），
+//!   供 DEK 直开解锁使用（[`crate::vault::VaultSession::unlock_with_dek`]），
 //!   DEK 正确性由 `verify_integrity` 天然校验（错 → 1002），不新增独立校验。
 //! - **R1 保留**：三条解锁内核（`unlock_store` / `unlock_store_with_bio` /
 //!   `unlock_store_with_mcp_key`）返回值改为 `(ItemStore, SessionKey)`，

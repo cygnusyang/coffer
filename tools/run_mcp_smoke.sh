@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # run_mcp_smoke.sh —— `coffer mcp` 端到端冒烟（docs/20 §3/§5，G-G）。
 #
-# 构建 `coffer` bin → spawn `coffer mcp`（fake op fixture 驱动）→ 握手 +
+# 构建 `coffer` bin → spawn `coffer mcp --provider op`（fake op fixture 驱动，D-2
+# 缺省已翻转为 coffer、需 $COFFER_VAULT_DIR，冒烟显式选 op 保自包含）→ 握手 +
 # tools/call → 断言：
 #   - stdout 永为协议帧（§3.1：首帧是 JSON-RPC 2.0，含 serverInfo.name=coffer）；
 #   - tools/call 往返返回 fixture secret 名（§3.3），且 stdout **无明文值**（§3.5-1）；
@@ -61,7 +62,7 @@ cleanup() {
 trap cleanup EXIT
 
 say "==> spawn coffer mcp"
-COFFER_OP_BIN="${FAKE_OP}" "${COFFER_BIN}" mcp < "${STDIN_FIFO}" > "${STDOUT_F}" 2> "${STDERR_F}" &
+COFFER_OP_BIN="${FAKE_OP}" "${COFFER_BIN}" mcp --provider op < "${STDIN_FIFO}" > "${STDOUT_F}" 2> "${STDERR_F}" &
 COFFER_PID=$!
 # 打开 FIFO 写端：coffer 启动后阻塞读 stdin 直到我们写 / 关闭
 exec 9>"${STDIN_FIFO}"
@@ -123,7 +124,7 @@ STDOUT2_F="${TMP}/stdout2"
 STDERR2_F="${TMP}/stderr2"
 STDIN_FIFO2="${TMP}/stdin2.fifo"
 mkfifo "${STDIN_FIFO2}"
-COFFER_OP_BIN="${FAKE_OP}" "${COFFER_BIN}" mcp < "${STDIN_FIFO2}" > "${STDOUT2_F}" 2> "${STDERR2_F}" &
+COFFER_OP_BIN="${FAKE_OP}" "${COFFER_BIN}" mcp --provider op < "${STDIN_FIFO2}" > "${STDOUT2_F}" 2> "${STDERR2_F}" &
 COFFER_PID=$!
 exec 9>"${STDIN_FIFO2}"
 

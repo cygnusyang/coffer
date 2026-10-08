@@ -118,7 +118,7 @@ check(
 
 // ---- 5. BrowserManifest.json 内容构造（纯函数）----
 
-let shim = "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/browser-agent"
+let shim = "/Applications/Coffer.app/Contents/Helpers/coffer-shim"
 
 func jsonString(_ dict: [String: Any], _ key: String) -> String? { dict[key] as? String }
 func jsonArray(_ dict: [String: Any], _ key: String) -> [String]? { dict[key] as? [String] }
@@ -154,18 +154,21 @@ check(
     "Firefox 无 allowed_origins 键（Firefox 用 allowed_extensions）"
 )
 
-// ---- 6. BrowserManifest.shimPath 派生（docs/31 §6.2 shim 与二进制同级）----
+// ---- 6. BrowserManifest.shimPath 派生（docs/31 §6.2 L314：shim 装配
+//      `Contents/Helpers/coffer-shim`，manifest path → shim → exec coffer
+//      browser-agent，故从 coffer 二进制上溯到 bundle `Contents/Helpers`
+//      层拼 shim 文件名，而非二进制同级）----
 
 let cofferBin = "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer"
 check(
     BrowserManifest.shimPath(cofferBinaryPath: cofferBin)
-        == "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/browser-agent",
-    "shim 路径 = coffer 二进制同级 browser-agent"
+        == "/Applications/Coffer.app/Contents/Helpers/coffer-shim",
+    "shim 路径 = Contents/Helpers/coffer-shim（bundle 装配层，非二进制同级）"
 )
 check(
-    BrowserManifest.shimPath(cofferBinaryPath: "/tmp/x/y/coffer")
-        == "/tmp/x/y/browser-agent",
-    "任意前缀下 shim 与二进制同级"
+    BrowserManifest.shimPath(cofferBinaryPath: "/tmp/x/Helpers/coffer.app/Contents/MacOS/coffer")
+        == "/tmp/x/Helpers/coffer-shim",
+    "任意前缀下 shim 上溯至 Contents/Helpers 层"
 )
 
 // ---- 7. BrowserManifest.write / delete（显式 I/O，临时根目录）----

@@ -68,7 +68,10 @@ enum BrowserManifest {
     /// 浏览器仍成立）。shim 位于签名 bundle 内（受 seal 覆盖）、无受限
     /// entitlement（AMFI 门禁不适用）。**合并期验收项**：确切路径由 G-E
     /// build_macos_app.sh step 3.5 装配，此处为 G-D 侧约定（改动即本常量一处）。
-    static let shimFilename = "browser-agent"
+    /// docs/31 §6.2 L314：签名 Mach-O shim 装配 `Contents/Helpers/coffer-shim`
+    /// （G-E step 3.5，tools/coffer-shim.c），manifest path → shim → exec
+    /// coffer browser-agent。
+    static let shimFilename = "coffer-shim"
 
     // D-4 冻结占位（docs/31 §6.1 / 31a D-4，发布前必须定稿）：
     // 与 G-C extension manifest 对齐（G-C 2026-10-07 答复 verbatim：
@@ -79,20 +82,28 @@ enum BrowserManifest {
     // 非合法公钥、unpacked 按路径派发随机 ID），故本清单在 D-4 定稿前**不具
     // 运行可用性**——本地端到端调试须临时改成本机 chrome://extensions 实际 ID
     // （不进版本库），发布前统一替换回真实值。见合并期验收项 4。
-    /// Chrome 扩展 ID 占位（allowed_origins 引用，对齐 G-C key 占位串）。
+    /// 【本地调试覆盖，不进版本库】Chrome 扩展 ID（与本地临时 key 派生 ID 一致，
+    /// eadkgomgfkeopaopjlakjelokhakpile）；D-4 定稿时统一替换回正式值。
     static let chromeExtensionID = "PENDING_COFFER_CHROME_EXTENSION_KEY_BASE64"
-    /// Edge 扩展 ID 占位（allowed_origins 引用，对齐 G-C key 占位串）。
+    /// 【本地调试覆盖，不进版本库】Edge 扩展 ID（同上）。
     static let edgeExtensionID = "PENDING_COFFER_CHROME_EXTENSION_KEY_BASE64"
     /// Firefox 扩展 GUID 占位（allowed_extensions 引用，对齐 G-C gecko.id 占位串）。
     static let firefoxGUID = "PENDING_COFFER_GECKO_ID"
 
-    /// shim 绝对路径：coffer 二进制所在目录下的 shimFilename（同目录，
-    /// `Contents/Helpers/coffer.app/Contents/MacOS/`，docs/31 §6.2）。
+    /// shim 绝对路径（docs/31 §6.2 L314：manifest path → shim → exec coffer
+    /// browser-agent）。shim 装配于 bundle `Contents/Helpers/` 层
+    /// （`Contents/Helpers/coffer-shim`，G-E step 3.5），而 coffer 二进制在
+    /// 嵌套 bundle `Contents/Helpers/coffer.app/Contents/MacOS/coffer`——
+    /// 故从 coffer 二进制上溯 4 级（MacOS/Contents/coffer.app → Helpers）
+    /// 再拼 shimFilename，而非二进制同级（旧 `browser-agent` 语义作废）。
     static func shimPath(cofferBinaryPath: String) -> String {
-        URL(fileURLWithPath: cofferBinaryPath)
-            .deletingLastPathComponent()
-            .appendingPathComponent(shimFilename)
-            .path
+        var url = URL(fileURLWithPath: cofferBinaryPath)
+        // 上溯到 `Contents/Helpers` 层：coffer.app/Contents/MacOS/coffer
+        // → Helpers（4 级：MacOS → Contents → coffer.app → Helpers）。
+        for _ in 0..<4 {
+            url = url.deletingLastPathComponent()
+        }
+        return url.appendingPathComponent(shimFilename).path
     }
 
     /// 生成 manifest 字典（纯函数，可单测断言字段）。

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::category::ItemCategory;
 use crate::field::{Designation, FieldType};
+use crate::origin::OriginBinding;
 use crate::secret::SecretString;
 use crate::totp_data::TotpData;
 use crate::{AttachmentId, FieldId, ItemId, SectionId, UrlId};
@@ -131,6 +132,11 @@ pub struct Item {
     pub totp: Option<TotpData>,
     /// 附件元数据
     pub attachments: Vec<AttachmentMeta>,
+    /// origin 绑定（D-3，docs/31 §5.3）：浏览器填充/捕获的站点绑定集合。
+    ///
+    /// 存储侧以 `item_origins` 从表承载（batch-replace 语义）；本字段为
+    /// 领域模型的完整态。匹配语义见 [`crate::origin`] 与 cf-browser。
+    pub origin_bindings: Vec<OriginBinding>,
 }
 
 /// 条目创建/更新的草稿（用户输入，明文）。

@@ -197,6 +197,8 @@ pub(crate) fn snapshot_current(
         None => None,
     };
 
+    let origin_bindings = repos.origins.read_for_item(item_id)?;
+
     Ok(ItemSnapshot {
         uuid: uuid::Uuid::parse_str(&row.uuid)
             .map_err(|_| CfError::Corrupted("item uuid is not a valid uuid".into()))?,
@@ -214,6 +216,7 @@ pub(crate) fn snapshot_current(
         totp,
         // 附件（FR-9）v0.2 未实现：快照恒为空
         attachments: Vec::new(),
+        origin_bindings,
     })
 }
 
@@ -289,7 +292,7 @@ pub(crate) fn draft_from_snapshot(snap: &ItemSnapshot) -> Result<ItemDraft, CfEr
 /// 顺序扰动按序列比较即可）、`updated_at`（update 必然推进）。比较
 /// 维度：类别 / 状态 / 收藏 / 标题 / 标签（多重集合）/ URL 序列 /
 /// 分区序列（标题）/ 字段序列（名称、类型、语义、值、所属分区标题）/
-/// TOTP 全量（含 secret）。
+/// TOTP 全量（含 secret）/ origin 绑定（D-3，序列比较）。
 pub(crate) fn snapshot_content_eq(a: &ItemSnapshot, b: &ItemSnapshot) -> bool {
     if a.category != b.category
         || a.state != b.state
@@ -297,6 +300,8 @@ pub(crate) fn snapshot_content_eq(a: &ItemSnapshot, b: &ItemSnapshot) -> bool {
         || a.fav_index != b.fav_index
         || a.title != b.title
         || a.totp != b.totp
+        // origin 绑定：序列比较（顺序对 best_match 优先级同档选首个有语义）
+        || a.origin_bindings != b.origin_bindings
     {
         return false;
     }

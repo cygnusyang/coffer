@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::category::ItemCategory;
 use crate::field::{Designation, FieldType};
 use crate::item::{AttachmentStorage, ItemState};
+use crate::origin::OriginBinding;
 use crate::totp_data::TotpData;
 use crate::{AttachmentId, FieldId, ItemId, SectionId, UrlId};
 
@@ -43,6 +44,13 @@ pub struct ItemSnapshot {
     pub totp: Option<TotpData>,
     /// 附件元数据快照列表
     pub attachments: Vec<AttachmentMetaSnapshot>,
+    /// origin 绑定（D-3，docs/31 §5.3）。
+    ///
+    /// `#[serde(default)]`：**旧库历史快照**（无该字段的 CBOR/JSON）反序列化
+    /// 回退为空 Vec——存储兼容负路径（docs/32 §4.4、KNOWN-ISSUES B-1）的
+    /// 序列化落点：快照是条目唯一的 serde 序列化形态（history 表）。
+    #[serde(default)]
+    pub origin_bindings: Vec<OriginBinding>,
 }
 
 /// URL 快照。
@@ -163,6 +171,10 @@ mod tests {
                 content_mac: "base64mac==".to_owned(),
                 created_at: 1_700_000_000,
             }],
+            origin_bindings: vec![crate::origin::OriginBinding {
+                kind: crate::origin::OriginBindingKind::Exact,
+                value: "https://example.com".to_owned(),
+            }],
         }
     }
 
@@ -173,5 +185,21 @@ mod tests {
         ciborium::into_writer(&snap, &mut buf).unwrap();
         let back: ItemSnapshot = ciborium::from_reader(buf.as_slice()).unwrap();
         assert_eq!(snap, back, "CBOR 往返后快照应逐字段相等");
+    }
+
+    /// 兼容负路径（docs/32 §4.4 / KNOWN-ISSUES B-1）：旧库快照 JSON **无**
+    /// `origin_bindings` 字段 → 反序列化回落为空 Vec，既有字段不丢。
+    ///
+    /// 镜像 docs/29 D-3 先例 `old_json_without_mcp_wrap_uses_default`。
+    #[test]
+    fn old_snapshot_without_origin_bindings_uses_default() {
+        let snap = sample_snapshot();
+        let mut json = serde_json::to_value(&snap).unwrap();
+        json.as_object_mut().unwrap().remove("origin_bindings");
+
+        let back: ItemSnapshot = serde_json::from_value(json).unwrap();
+        assert!(back.origin_bindings.is_empty(), "旧快照缺省必须为空 Vec");
+        assert_eq!(back.title, "示例登录");
+        assert_eq!(back.fields.len(), 1);
     }
 }

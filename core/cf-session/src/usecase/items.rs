@@ -17,6 +17,7 @@
 //! 必填校验由 `validate_item` 的模板表驱动，此处无需按类别分支。
 
 use cf_domain::item::{ItemDraft, ItemState, ItemSummary};
+use cf_domain::origin::OriginBinding;
 use cf_domain::secret::SecretString;
 use cf_domain::totp_data::TotpUpdate;
 use cf_domain::CfError;
@@ -28,8 +29,22 @@ use crate::types::{FieldDetail, ItemDetails, SectionDetail, TotpDetail, UrlDetai
 /// 新建条目：校验 → 单事务写库（items + 从表 + meta.item_count）。
 ///
 /// 返回新条目 ID（UUIDv7 文本）。校验失败（[`CfError::InvalidArgument`]）
-/// 不产生任何写入。
+/// 不产生任何写入。origin 绑定恒为空（新条目无绑定）；带绑定新建走
+/// [`create_item_with_origin_bindings`]。
 pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, CfError> {
+    create_item_with_origin_bindings(store, draft, Vec::new())
+}
+
+/// 新建条目并写入 origin 绑定（D-3，docs/31 §5.3）。
+///
+/// 语义与 [`create_item`] 一致，额外把 `origin_bindings` 随同一事务写入
+/// `item_origins` 从表。供 broker `capture_save` 建条目 + 绑定站点用
+/// （merge-time 接线；vault.rs 薄封装由组 E/组 A 收编）。
+pub fn create_item_with_origin_bindings(
+    store: &mut ItemStore,
+    draft: &ItemDraft,
+    origin_bindings: Vec<OriginBinding>,
+) -> Result<String, CfError> {
     cf_domain::validate::validate_item(draft)?;
 
     let item_uuid = uuid::Uuid::now_v7().to_string();
@@ -58,7 +73,7 @@ pub fn create_item(store: &mut ItemStore, draft: &ItemDraft) -> Result<String, C
             .clone()
             .map(TotpUpdate::Replace)
             .unwrap_or(TotpUpdate::Remove);
-        write_children(repos, &item_uuid, draft, &totp)?;
+        write_children(repos, &item_uuid, draft, &totp, &origin_bindings)?;
         repos.meta.add_item_count(1)?;
         Ok(())
     })?;
@@ -139,6 +154,11 @@ pub fn update_item_with_totp(
             )));
         }
 
+        // origin 绑定不在草稿内（ItemDraft 无该字段，避免全仓 78 处
+        // 构造点 + cf-ffi/cf-mcp 越界）：编辑**保留**既有绑定（与收藏态
+        // 继承同款语义）。显式改绑定走 [`set_item_origin_bindings`]。
+        let old_bindings = repos.origins.read_for_item(item_id)?;
+
         // FR-2.9：替换前对当前状态做快照写入 history 表（同事务；
         // 内容无变化不写，见 usecase::history::snapshot_before_update）
         crate::usecase::history::snapshot_before_update(repos, item_id, now)?;
@@ -158,7 +178,7 @@ pub fn update_item_with_totp(
             position: old.position,
         })?;
         repos.items.update_title(item_id, &title)?;
-        write_children(repos, item_id, draft, &totp)?;
+        write_children(repos, item_id, draft, &totp, &old_bindings)?;
         Ok(())
     })
 }
@@ -260,6 +280,7 @@ pub fn get_item(store: &ItemStore, item_id: &str) -> Result<Option<ItemDetails>,
         }),
         None => None,
     };
+    let origin_bindings = repos.origins.read_for_item(item_id)?;
 
     Ok(Some(ItemDetails {
         uuid: row.uuid,
@@ -275,7 +296,50 @@ pub fn get_item(store: &ItemStore, item_id: &str) -> Result<Option<ItemDetails>,
         sections,
         fields,
         totp,
+        origin_bindings,
     }))
+}
+
+/// 显式改写条目 origin 绑定（D-3，docs/31 §5.3）。
+///
+/// 独立于 update_item 的专用入口（ItemDraft 不含绑定字段，见
+/// [`update_item_with_totp`] 注释）：替换前写 history 快照（FR-2.9，
+/// 绑定变化同样进版本历史）、事务内删旧插新、推进 `updated_at`。
+///
+/// 供 broker `capture_save` 对既有条目追加/改写绑定用。条目不存在 →
+/// [`CfError::ItemNotFound`]。
+pub fn set_item_origin_bindings(
+    store: &mut ItemStore,
+    item_id: &str,
+    origin_bindings: Vec<OriginBinding>,
+) -> Result<(), CfError> {
+    let now = crate::unix_now()?;
+    store.with_tx(|repos| {
+        let old = repos.items.get_row(item_id)?.ok_or(CfError::ItemNotFound)?;
+        crate::usecase::history::snapshot_before_update(repos, item_id, now)?;
+        let rows: Vec<cf_store::repo::origin::OriginBindingRow> = origin_bindings
+            .iter()
+            .map(|b| cf_store::repo::origin::OriginBindingRow {
+                uuid: uuid::Uuid::now_v7().to_string(),
+                item_uuid: item_id.to_owned(),
+                kind: b.kind,
+                value: b.value.clone(),
+            })
+            .collect();
+        repos.origins.replace_for_item(item_id, &rows)?;
+        repos.items.update_row(&ItemRow {
+            uuid: item_id.to_owned(),
+            category: old.category,
+            state: old.state,
+            is_favorite: old.is_favorite,
+            fav_index: old.fav_index,
+            created_at: old.created_at,
+            updated_at: now,
+            trashed_at: old.trashed_at,
+            position: old.position,
+        })?;
+        Ok(())
+    })
 }
 
 /// 按需取字段明文值（密码等敏感值，随取随走）。
@@ -329,6 +393,7 @@ pub(crate) fn write_children(
     item_uuid: &str,
     draft: &ItemDraft,
     totp: &TotpUpdate,
+    origin_bindings: &[OriginBinding],
 ) -> Result<(), CfError> {
     // 分区：草稿下标 → 生成 uuid，供字段挂接引用
     let sections: Vec<SectionRow> = draft
@@ -413,6 +478,19 @@ pub(crate) fn write_children(
             }
         }
     }
+
+    // origin 绑定：删旧插新（D-3）。调用方决定内容——create 传草稿带的
+    // 绑定（或空）、update 传既有绑定（保留语义）、cross_copy 传快照绑定
+    let binding_rows: Vec<cf_store::repo::origin::OriginBindingRow> = origin_bindings
+        .iter()
+        .map(|b| cf_store::repo::origin::OriginBindingRow {
+            uuid: uuid::Uuid::now_v7().to_string(),
+            item_uuid: item_uuid.to_owned(),
+            kind: b.kind,
+            value: b.value.clone(),
+        })
+        .collect();
+    repos.origins.replace_for_item(item_uuid, &binding_rows)?;
     Ok(())
 }
 
@@ -422,5 +500,201 @@ fn algo_to_str(algo: cf_domain::totp_data::TotpAlgo) -> &'static str {
         cf_domain::totp_data::TotpAlgo::Sha1 => "sha1",
         cf_domain::totp_data::TotpAlgo::Sha256 => "sha256",
         cf_domain::totp_data::TotpAlgo::Sha512 => "sha512",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cf_crypto::subkeys::SubKeys;
+    use cf_domain::category::ItemCategory;
+    use cf_domain::field::{Designation, FieldType};
+    use cf_domain::item::{FieldDraft, UrlDraft};
+    use cf_domain::origin::{OriginBinding, OriginBindingKind};
+    use rusqlite::Connection;
+
+    /// 内存库 + 固定子密钥的 ItemStore（不走解锁流，专注编排逻辑）。
+    fn memory_store() -> ItemStore {
+        let conn = Connection::open_in_memory().unwrap();
+        let subkeys = SubKeys::derive(&[0x42u8; 32], &[0x11u8; 16]).unwrap();
+        ItemStore::open(conn, subkeys).unwrap()
+    }
+
+    /// 最小 Login 草稿（满足模板必填：username + password）。
+    fn login_draft(title: &str) -> ItemDraft {
+        ItemDraft {
+            title: title.to_owned(),
+            category: ItemCategory::Login,
+            urls: vec![UrlDraft {
+                label: None,
+                url: "https://example.com".to_owned(),
+                is_primary: true,
+                position: 0,
+            }],
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![
+                FieldDraft {
+                    name: "username".to_owned(),
+                    value: Some("alice".to_owned()),
+                    field_type: FieldType::Text,
+                    designation: Some(Designation::Username),
+                    section_index: None,
+                    position: 0,
+                },
+                FieldDraft {
+                    name: "password".to_owned(),
+                    value: Some("s3cret".to_owned()),
+                    field_type: FieldType::Concealed,
+                    designation: Some(Designation::Password),
+                    section_index: None,
+                    position: 1,
+                },
+            ],
+            totp: None,
+        }
+    }
+
+    fn binding(kind: OriginBindingKind, value: &str) -> OriginBinding {
+        OriginBinding {
+            kind,
+            value: value.to_owned(),
+        }
+    }
+
+    /// create_item_with_origin_bindings → get_item：绑定写读一致
+    #[test]
+    fn create_with_bindings_round_trip() {
+        let mut store = memory_store();
+        let id = create_item_with_origin_bindings(
+            &mut store,
+            &login_draft("带绑定"),
+            vec![
+                binding(OriginBindingKind::Exact, "https://example.com"),
+                binding(OriginBindingKind::Domain, "example.org"),
+            ],
+        )
+        .unwrap();
+
+        let d = get_item(&store, &id).unwrap().unwrap();
+        assert_eq!(d.origin_bindings.len(), 2);
+        assert_eq!(
+            d.origin_bindings,
+            vec![
+                binding(OriginBindingKind::Exact, "https://example.com"),
+                binding(OriginBindingKind::Domain, "example.org"),
+            ]
+        );
+    }
+
+    /// 普通 create_item：无绑定条目 → get_item 读回为空 Vec
+    #[test]
+    fn plain_create_has_empty_bindings() {
+        let mut store = memory_store();
+        let id = create_item(&mut store, &login_draft("无绑定")).unwrap();
+        assert!(get_item(&store, &id)
+            .unwrap()
+            .unwrap()
+            .origin_bindings
+            .is_empty());
+    }
+
+    /// set_item_origin_bindings：显式替换绑定；get_item 读回一致
+    #[test]
+    fn set_bindings_replaces() {
+        let mut store = memory_store();
+        let id = create_item(&mut store, &login_draft("改绑定")).unwrap();
+
+        set_item_origin_bindings(
+            &mut store,
+            &id,
+            vec![binding(OriginBindingKind::Subdomain, "example.com")],
+        )
+        .unwrap();
+        assert_eq!(
+            get_item(&store, &id).unwrap().unwrap().origin_bindings,
+            vec![binding(OriginBindingKind::Subdomain, "example.com")]
+        );
+
+        // 再替换：旧绑定被覆盖
+        set_item_origin_bindings(&mut store, &id, Vec::new()).unwrap();
+        assert!(get_item(&store, &id)
+            .unwrap()
+            .unwrap()
+            .origin_bindings
+            .is_empty());
+    }
+
+    /// update_item 保留既有绑定（ItemDraft 不含绑定字段，编辑不静默清空）
+    #[test]
+    fn update_preserves_bindings() {
+        let mut store = memory_store();
+        let id = create_item_with_origin_bindings(
+            &mut store,
+            &login_draft("原题"),
+            vec![binding(OriginBindingKind::Exact, "https://example.com")],
+        )
+        .unwrap();
+
+        // 编辑标题（update_item 整换语义下 bindings 不在草稿内 → 保留）
+        let draft = login_draft("改题");
+        update_item(&mut store, &id, &draft).unwrap();
+
+        let d = get_item(&store, &id).unwrap().unwrap();
+        assert_eq!(d.title.expose(), "改题");
+        assert_eq!(
+            d.origin_bindings,
+            vec![binding(OriginBindingKind::Exact, "https://example.com")]
+        );
+    }
+
+    /// set_item_origin_bindings 对不存在条目 → ItemNotFound
+    #[test]
+    fn set_bindings_missing_item() {
+        let mut store = memory_store();
+        let missing = uuid::Uuid::now_v7().to_string();
+        assert!(matches!(
+            set_item_origin_bindings(
+                &mut store,
+                &missing,
+                vec![binding(OriginBindingKind::Domain, "example.com")]
+            ),
+            Err(CfError::ItemNotFound)
+        ));
+    }
+
+    /// 旧库兼容负路径（docs/32 §4.4 / KNOWN-ISSUES B-1）：旧库无
+    /// `item_origins` 表 → 重新打开（幂等建表）→ 既有条目不丢、读回
+    /// 绑定为空、可正常写入绑定。
+    #[test]
+    fn old_vault_without_origins_table_upgrades_cleanly() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let subkeys = SubKeys::derive(&[0x42u8; 32], &[0x11u8; 16]).unwrap();
+        cf_store::schema::init(&mut conn).unwrap();
+        // 模拟旧库：删掉 item_origins 表（旧版本 schema 不存在该表）
+        conn.execute("DROP TABLE item_origins", []).unwrap();
+
+        // 新代码打开（ItemStore::open 幂等建齐 12 表 → 表被重建为空）
+        let mut store = ItemStore::open(conn, subkeys).unwrap();
+        let id = create_item(&mut store, &login_draft("旧库条目")).unwrap();
+        let d = get_item(&store, &id).unwrap().unwrap();
+        assert_eq!(d.title.expose(), "旧库条目");
+        assert!(d.origin_bindings.is_empty(), "旧库条目读回绑定必须为空");
+
+        // 升级后可正常写入绑定（负路径的另一半：可写）
+        set_item_origin_bindings(
+            &mut store,
+            &id,
+            vec![binding(OriginBindingKind::Domain, "example.com")],
+        )
+        .unwrap();
+        assert_eq!(
+            get_item(&store, &id)
+                .unwrap()
+                .unwrap()
+                .origin_bindings
+                .len(),
+            1
+        );
     }
 }

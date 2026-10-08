@@ -6,7 +6,7 @@
 //!   `enc_account` 加密 BLOB（C-2 裁定：以 DDL 为准）；`created_at` 列
 //!   保留（DDL 已回补，docs/03 v1.3）；
 //! - **schema 统一**：不再自建表，改由 [`crate::schema::init`] 幂等建齐
-//!   全部 11 张表；
+//!   全部 12 张表；
 //! - `enc_secret` 的 AAD 钉死在 **totp 行** uuid 上（O-1，2026-09-23
 //!   统一：原钉死在条目 uuid 上，同条目内跨记录搬运可解密——QA 对抗
 //!   验证发现该不一致；现与 `enc_issuer` / `enc_account` 语义对齐，
@@ -292,7 +292,7 @@ impl TotpStore {
     /// 表与索引（docs/03 §3.1 DDL 片段），**不**执行全量
     /// [`crate::schema::init`]——后者会在极简宿主表上因缺列而失败。
     /// 真实保险库路径（T02 的解锁流）应使用 [`crate::ItemStore::open`]，
-    /// 其 [`crate::schema::init`] 幂等建齐全部 11 张表，且 totp DDL
+    /// 其 [`crate::schema::init`] 幂等建齐全部 12 张表，且 totp DDL
     /// 与本片段完全一致（重复执行无冲突）。
     pub fn new(conn: Connection, field_key: SessionKey) -> CfStoreResult<Self> {
         conn.execute_batch(TOTP_DDL).store()?;

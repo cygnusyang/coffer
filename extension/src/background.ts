@@ -33,6 +33,7 @@ import {
   gestureWithinTtl,
   buildPairRequest,
   pairResultToMaterial,
+  pairRejectErrorCode,
   type ResponseFrame,
   type SessionFrame,
   type AppRequest,
@@ -222,9 +223,13 @@ async function handlePairResult(result: PairResultFrame): Promise<void> {
     }
     return;
   }
-  // approved:false — user rejected (8006) or broker timeout / App offline (error in frame).
-  const err = typeof result.error === "number" ? result.error : ErrCode.UserRejected;
-  applyPairingEvent({ kind: "result", approved: false }, err);
+  // approved:false — broker reports why (design §2.4 step3: rejected|timeout|app_unavailable).
+  if (result.reason === "timeout") {
+    // Same semantics as the local 120 s timer (§8.3): plain unpaired, no marker.
+    applyPairingEvent({ kind: "timeout" });
+    return;
+  }
+  applyPairingEvent({ kind: "result", approved: false }, pairRejectErrorCode(result.reason));
 }
 
 // --- pairing storage -----------------------------------------------------------------

@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import {
   buildPairRequest,
   pairResultToMaterial,
+  pairRejectErrorCode,
   hexEncode,
   hexDecode,
   ErrCode,
@@ -124,9 +125,21 @@ test("pair_result frame: approved payload decodes into PairingMaterial (32 B psk
 
 test("pair_result frame: approved:false → null (no keys carried, lead point 3)", () => {
   assert.equal(
-    pairResultToMaterial({ type: "pair_result", approved: false, error: ErrCode.UserRejected }),
+    pairResultToMaterial({ type: "pair_result", approved: false, reason: "rejected" }),
     null,
   );
+});
+
+test("pair_result frame: reject reason maps to errorCode for the popup (design §2.4 step3)", () => {
+  // X-HIGH-1 (G-R WARN): approved:false carries `reason` (string), not a numeric ErrCode.
+  //   rejected        → 8006 配对已拒绝
+  //   app_unavailable → 8003 决策⑥「请打开 Coffer 并启用浏览器集成」
+  //   timeout         → handled as plain unpaired (§8.3, same as the local 120 s timer)
+  assert.equal(pairRejectErrorCode("rejected"), ErrCode.UserRejected);
+  assert.equal(pairRejectErrorCode("app_unavailable"), ErrCode.BrokerUnavailable);
+  // Unknown/missing reason fails safe to rejection (unpaired, 8006).
+  assert.equal(pairRejectErrorCode(undefined), ErrCode.UserRejected);
+  assert.equal(pairRejectErrorCode("bogus" as never), ErrCode.UserRejected);
 });
 
 test("pair_result frame: malformed payload fails closed (missing / short / non-SEC1 pk_b)", () => {
@@ -200,12 +213,28 @@ test("pairing path: rejected pair_result leaves the extension unpaired (approved
   const result = await mock.onPairRequest(req, { approved: false });
   assert.equal(result.type, "pair_result");
   assert.equal(result.approved, false);
-  assert.equal(result.error, ErrCode.UserRejected);
+  // Frozen contract §2.4 step3: reason string, no numeric error, no keys.
+  assert.equal(result.reason, "rejected");
+  assert.equal(pairRejectErrorCode(result.reason), ErrCode.UserRejected);
   assert.equal(result.psk, undefined);
   assert.equal(result.pk_b, undefined);
   // Fail-closed: no material to pin, extension stays unpaired.
   assert.equal(pairResultToMaterial(result), null);
   assert.deepEqual(pairingTransition({ kind: "pairing" }, { kind: "result", approved: false }), { kind: "rejected" });
+});
+
+test("pairing path: broker app_unavailable reason maps to 决策⑥ (8003), not 配对已拒绝", async () => {
+  const identity = await generateBrokerIdentity();
+  const mock = new MockBroker(identity, crypto.getRandomValues(new Uint8Array(32)));
+
+  const req = buildPairRequest("edge", "ext-id-789");
+  const result = await mock.onPairRequest(req, { approved: false, reason: "app_unavailable" });
+  assert.equal(result.type, "pair_result");
+  assert.equal(result.approved, false);
+  assert.equal(result.reason, "app_unavailable");
+  // X-HIGH-1: must surface as App-unreachable, NOT as 配对已拒绝 (8006).
+  assert.equal(pairRejectErrorCode(result.reason), ErrCode.BrokerUnavailable);
+  assert.equal(pairResultToMaterial(result), null);
 });
 
 test("pairing path: malformed pair_request rejected by the broker (fail fast, 8004)", async () => {

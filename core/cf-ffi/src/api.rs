@@ -349,6 +349,34 @@ impl VaultSession {
         self.inner.is_unlocked()
     }
 
+    // ------------------------------------------------------ DEK 保留（R1 seam）
+
+    /// 开启/关闭 DEK 保留（merge-time R1 (a-i)，浏览器集成启用时由 Swift
+    /// 调用；broker / cf-mcp 不开）。幂等开关：重复设置同值无副作用，
+    /// 关闭时立即清零已持有的 DEK（fail-closed）；`lock()` 恒清零。
+    ///
+    /// 安全语义（裁定书 §1.4 / §1.7 R1-1）：开启后解锁态会在 Rust 内存
+    /// 额外保留 DEK（`SessionKey`，`ZeroizeOnDrop`），驻留窗口从「解锁
+    /// 瞬间」扩到「整个解锁会话」。本方法不新增任何持久/日志面——DEK
+    /// 只存于会话内存，随 `lock()` / 关闭 retention 清零。
+    pub fn set_dek_retention(&self, enabled: bool) {
+        self.inner.set_dek_retention(enabled);
+    }
+
+    /// 导出当前会话 DEK（32 字节原始值，UniFFI `Vec<u8>` → Swift `Data`）。
+    /// merge-time R1 (a-i) 刻意设计（裁定书 §1.4）：DEK 只在
+    /// 「Rust session ↔ 短暂 Swift 缓冲 ↔ stdin 管道」内瞬时存在，
+    /// 跨 FFI 取用属既有 H-3 契约的取值落点，不新增任何持久/日志面。
+    ///
+    /// 门禁（fail-closed）：retention 未开启或未解锁（`current_dek` 为
+    /// `None`）→ 5002（InvalidArgument，映射见 crate::error）。
+    ///
+    /// 返回临时副本（非零化 `Vec<u8>`）——调用方（Swift，组 C 纪律）
+    /// 写入 stdin 后立即零化（既有 `zeroize(_:)`）。
+    pub fn export_dek(&self) -> Result<Vec<u8>, FfiError> {
+        self.inner.export_dek().map_err(Into::into)
+    }
+
     /// 记录最后活动时间（Unix 秒，平台事件驱动喂入）。
     pub fn set_last_activity(&self, unix_secs: i64) {
         self.inner.set_last_activity(unix_secs);

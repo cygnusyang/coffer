@@ -31,6 +31,8 @@ swiftc -O \
   "${ROOT_DIR}/macos/Coffer/Support/BrowserStatusProbe.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpStatusProbe.swift" \
   "${ROOT_DIR}/macos/Coffer/Platform/BrowserIntegration.swift" \
+  "${ROOT_DIR}/macos/Coffer/Platform/BrowserPairingKeychain.swift" \
+  "${ROOT_DIR}/macos/Coffer/Platform/BrokerNotifyClient.swift" \
   -o "${OUT_DIR}/BrowserStatusTests"
 
 "${OUT_DIR}/BrowserStatusTests"

@@ -1003,8 +1003,21 @@ final class AppModel: ObservableObject {
     /// 当前 broker 进程句柄（App 是 broker 的父进程，锁定/退出即杀，docs/31 §2.1）。
     private var browserBrokerProcess: Process?
 
-    /// 配对决策转发（G-B broker IPC 集成前为内存记录，见 BrowserIntegration 注释）。
+    /// 配对决策转发（真实实现写 notify.sock pair_decision，契约 §2.3/§4）。
     private var browserPairingResponder: BrowserPairingResponder = RecordingBrowserPairingResponder()
+
+    /// notify.sock 反向通道客户端（App 客户端持长连，契约 §2.3；随 broker
+    /// spawn 建立 / kill 停止）。
+    private var brokerNotifyClient: BrokerNotifyClient?
+
+    /// 最近一次配对弹框结束态（视图呈现 拒绝/超时 文案，契约 §8-3「超时即拒」）。
+    @Published private(set) var lastPairingDismissal: BrowserPairingDismissal?
+
+    /// 配对弹框挂起超时任务（契约 §8 裁定 3：120s，超时即拒关框）。
+    private var pairingTimeoutWorkItem: DispatchWorkItem?
+
+    /// 配对弹框挂起超时秒数（契约 §8 裁定 3 冻结：120s；broker 侧同值）。
+    private static let pairingTimeoutInterval: TimeInterval = 120
 
     /// 开关切换（docs/31 §2.3 启/配对流）：启用 = 写 manifest + spawn broker；
     /// 停用 = kill broker + 删 manifest（幂等）。
@@ -1069,6 +1082,27 @@ final class AppModel: ObservableObject {
             lastErrorMessage = errText
             return false
         }
+        // 决策①：启用集成即生成 PSK 并存 keychain（幂等——重复 enable 不轮换，
+        // 重启用才轮换，契约 §4.1/§4.3）。必须在 spawn 前就绪（broker stdin
+        // PSK_HEX= 必填，缺即 fail-closed exit 1）。生成/落库失败 → 报错返回
+        // false（不 spawn，无半启用态）。
+        do {
+            let keychain = BrowserPairingKeychain()
+            if !keychain.itemExists(vaultUUID: vaultUUID) {
+                guard let psk = BrowserPairingKeychain.randomPSK() else {
+                    let text = BrowserIntegrationError.unexpected("无法生成配对 PSK（系统随机源失败）").userText
+                    DiagLog.append(text)
+                    lastErrorMessage = text
+                    return false
+                }
+                try keychain.save(key: psk, vaultUUID: vaultUUID)
+            }
+        } catch {
+            let errText = (error as? BrowserPairingKeychainError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append("浏览器集成 PSK 生成/落库失败：\(errText)")
+            lastErrorMessage = errText
+            return false
+        }
         // R1-3：浏览器集成使能 → 开启 DEK 保留（startBrowserBrokerIfNeeded 前，
         // 裁定书 §1.7 R1-3；本会话未在解锁时前置开启则本次 spawn fail-closed）
         session?.setDekRetention(enabled: true)
@@ -1092,6 +1126,14 @@ final class AppModel: ObservableObject {
             DiagLog.append(errText)
             lastErrorMessage = errText
         }
+        // 决策①：停用即删 PSK（契约 §4.3：重启用 = 新 PSK，旧扩展失配须重配对）。
+        // 删除失败仅记日志不阻塞停用（停用优先，镜像 manifest 删除语义）。
+        do {
+            try BrowserPairingKeychain().delete(vaultUUID: vaultUUID)
+        } catch {
+            let errText = (error as? BrowserPairingKeychainError)?.userText ?? ErrorPresenter.text(error)
+            DiagLog.append("浏览器集成 PSK keychain 删除失败：\(errText)")
+        }
     }
 
     /// 解锁态 spawn broker（unlock / unlockWithTouchID 成功路径调用）。
@@ -1112,11 +1154,12 @@ final class AppModel: ObservableObject {
             return
         }
         // stdin 私有管道材料（HIGH-3，docs/31 §3.1：DEK/UUID/PSK/unlocked 四行）。
-        // DEK/UUID 已接线（R1，见 brokerStdinSecrets）；PSK 依赖配对集成
-        // merge-time 项（裁定书 §5）→ 当前取不到即返回 nil，fail-closed 不 spawn
-        // ——不留半配置 broker（G-B resolve_broker_secrets 必填缺即 exit 1）。
+        // DEK/UUID 已接线（R1，见 brokerStdinSecrets）；PSK 由 pairingPskHex() 读
+        // keychain（决策①，v2.3.0 配对集成已接线）——四行任一取不到即返回 nil，
+        // fail-closed 不 spawn（不留半配置 broker，G-B resolve_broker_secrets
+        // 必填缺即 exit 1）。
         guard var secrets = brokerStdinSecrets() else {
-            browserBrokerState = .failed("broker 解锁材料接线未完成（merge-time）")
+            browserBrokerState = .failed("broker 解锁材料不齐（PSK/DEK 缺失，fail-closed）")
             return
         }
         let home = BrowserStatusProbe.userHomeDirectory()
@@ -1145,6 +1188,9 @@ final class AppModel: ObservableObject {
                 stdinPayload: payload)
             browserBrokerProcess = process
             browserBrokerState = .running(pid: process.processIdentifier)
+            // 配对集成 V：spawn 成功后建 notify.sock 反向通道（App 客户端）+ 注入
+            // 真实决策 responder（契约 §2.3/§4）。
+            startBrokerNotifyClient(homeDirectory: home)
         } catch {
             let errText = (error as? BrowserIntegrationError)?.userText ?? ErrorPresenter.text(error)
             DiagLog.append(errText)
@@ -1152,16 +1198,41 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 配对集成 V：spawn 成功后建立 notify.sock 反向通道客户端（App 客户端持长连，
+    /// 契约 §2.3）+ 注入真实决策 responder。broker 被杀（断连）→ 客户端清理连接态，
+    /// 挂起弹框由 120s 超时兜底关框。帧回调从客户端读线程触发——经 `Task { @MainActor }`
+    /// hop 回主线程（pendingPairingRequest / @Published 均 MainActor 隔离）。
+    private func startBrokerNotifyClient(homeDirectory: String) {
+        let notifyPath = BrowserBroker.notifySocketPath(homeDirectory: homeDirectory)
+        let client = BrokerNotifyClient(
+            socketPath: notifyPath,
+            onPairRequest: { [weak self] request in
+                Task { @MainActor in self?.submitPendingPairing(request) }
+            },
+            onPairCancel: { [weak self] requestId in
+                Task { @MainActor in self?.cancelPendingPairing(requestId: requestId) }
+            },
+            onDisconnect: {
+                // broker 被杀 → 客户端 EOF 清理连接态；挂起弹框由 120s 超时兜底
+            },
+            log: { DiagLog.append($0) })
+        client.start()
+        brokerNotifyClient = client
+        browserPairingResponder = NotifyBrowserPairingResponder(
+            sendFrame: { [weak client] frame in _ = client?.send(frame: frame) },
+            pskHexLoader: { [weak self] in self?.pairingPskHex() },
+            log: { DiagLog.append($0) })
+    }
+
     /// broker stdin 私有管道材料 seam（HIGH-3，docs/31 §3.1 四行）。
     ///
-    /// 取值（merge-time 接线完成，裁定书 §1.4 / §1.7 R1-1）：
+    /// 取值（v2.3.0 配对集成接线完成，裁定书 §1.4 / §1.7 R1-1）：
     ///   - DEK = `session.exportDek()`（Rust session 解锁态保留的 32B 原始值，
     ///     R1 (a-i) seam）——retention 未开 / 未解锁 / 已锁定 → Rust 5002，
     ///     fail-closed 返回 nil（不 spawn，不留半配置 broker）。
     ///   - VAULT_UUID = vaultUUID 去横线（16 字节 hex，32 字符）。
-    ///   - PSK = `pairingPskHex()` seam——配对集成 merge-time 项（裁定书 §5，
-    ///     独立于本裁定，配对 keychain 未接线）→ 当前取不到即返回 nil
-    ///     （fail-closed，绝不伪造占位 PSK 腐蚀确定性身份派生）。
+    ///   - PSK = `pairingPskHex()` 读 keychain（决策①，v2.3.0 已接线）——未启用
+    ///     集成/项缺失 → nil（fail-closed，绝不伪造占位 PSK 腐蚀确定性身份派生）。
     ///
     /// 零化纪律（§1.4 / M-7）：export 出的 DEK Data 与返回结构的 `dekBytes` 共享
     /// COW 缓冲——失败路径在此 `zeroize(&dek)` 覆零（refcount=1 原地），成功路径
@@ -1181,9 +1252,9 @@ final class AppModel: ObservableObject {
         // VAULT_UUID：vaultUUID 去横线（16 字节 hex，32 字符——Rust uuid::Uuid
         // 字符串为横线分隔 36 字符，broker 解析面需 32 字符 hex）。
         let vaultUUIDHex = vaultUUID.replacingOccurrences(of: "-", with: "")
-        // PSK：配对集成 merge-time 项（裁定书 §5）——当前未接线 → nil（fail-closed）
+        // PSK：读 keychain（决策①，v2.3.0 已接线）——取不到 → nil（fail-closed）
         guard let pskHex = pairingPskHex() else {
-            DiagLog.append("broker 配对 PSK 缺失（配对集成 merge-time 项未接线，不 spawn）")
+            DiagLog.append("broker 配对 PSK 缺失（未启用集成/项缺失，fail-closed 不 spawn）")
             return nil
         }
         let secrets = BrokerStdinSecrets(
@@ -1192,12 +1263,22 @@ final class AppModel: ObservableObject {
         return secrets
     }
 
-    /// 配对 PSK 读取 seam（docs/31 §4.2：配对批准时由 broker 生成、App 存入
-    /// keychain）。配对集成 merge-time 项（裁定书 §5，独立于本裁定）未接线前
+    /// 配对 PSK 读取（决策①：PSK 由 App 生成并存 keychain——v2.3.0 配对集成
+    /// 接线，替代原 merge-time nil；spawn stdin 注入与 pair_decision 下发同源）。
     /// 返回 nil → `brokerStdinSecrets` fail-closed 不 spawn。**绝不硬编码/伪造
     /// PSK**——占位材料会腐蚀扩展身份派生（确定性 derive 语义）。
     private func pairingPskHex() -> String? {
-        nil
+        guard !vaultUUID.isEmpty else { return nil }
+        let keychain = BrowserPairingKeychain()
+        guard let key = keychain.load(vaultUUID: vaultUUID) else {
+            DiagLog.append("浏览器集成 PSK keychain 读取失败（未启用/项缺失，fail-closed 不 spawn）")
+            return nil
+        }
+        guard key.count == BrowserPairingKeychain.keyLength else {
+            DiagLog.append("浏览器集成 PSK keychain 长度非法（\(key.count)B，fail-closed 不 spawn）")
+            return nil
+        }
+        return BrowserPairingKeychain.hexString(from: key)
     }
 
     /// 锁定 / 退出 / 停用：kill broker（幂等，docs/31 §2.1 killed；会话密钥随
@@ -1211,22 +1292,34 @@ final class AppModel: ObservableObject {
         session?.setDekRetention(enabled: false)
         BrowserBroker.kill(process: browserBrokerProcess)
         browserBrokerProcess = nil
+        // 配对集成 V：停 broker 同时停 notify 客户端 + 复位 responder + 关挂起
+        // 弹框（broker 已死，配对无法完成；超时定时器一并清）。
+        brokerNotifyClient?.stop()
+        brokerNotifyClient = nil
+        browserPairingResponder = RecordingBrowserPairingResponder()
+        pendingPairingRequest = nil
+        clearPairingTimeout()
         browserBrokerState = .stopped
     }
 
-    /// 配对请求到达（G-B broker IPC 集成后由 listener 调用；docs/31 §4.2）。
+    /// 配对请求到达（BrokerNotifyClient 读线程经 Task hop 主线程调用；docs/31 §4.2）。
+    /// 挂起 120s 超时定时器（契约 §8 裁定 3：超时即拒关框）。
     func submitPendingPairing(_ request: BrowserPairingRequest) {
         pendingPairingRequest = request
+        lastPairingDismissal = nil
+        startPairingTimeout()
     }
 
     /// 用户显式批准（docs/31 §5.3：批准才触发 broker 下发 PSK + 公钥）。密钥
-    /// 材料不经 App、不进日志——本方法只转发决策元数据。
+    /// 材料不经 App、不进日志——本方法只转发决策元数据（含 request_id 回写）。
     func approvePendingPairing() {
         guard let request = pendingPairingRequest else { return }
         browserPairingResponder.respond(
             BrowserPairingDecision(browser: request.browser, extensionID: request.extensionID,
-                                   approved: true, decidedAt: Date()))
+                                   requestId: request.requestId, approved: true, decidedAt: Date()))
         pendingPairingRequest = nil
+        lastPairingDismissal = .approved
+        clearPairingTimeout()
     }
 
     /// 用户拒绝配对（docs/31 §4.2 拒绝路径）。
@@ -1234,8 +1327,41 @@ final class AppModel: ObservableObject {
         guard let request = pendingPairingRequest else { return }
         browserPairingResponder.respond(
             BrowserPairingDecision(browser: request.browser, extensionID: request.extensionID,
-                                   approved: false, decidedAt: Date()))
+                                   requestId: request.requestId, approved: false, decidedAt: Date()))
         pendingPairingRequest = nil
+        lastPairingDismissal = .rejected
+        clearPairingTimeout()
+    }
+
+    /// 扩展断连/超时（broker 经 notify.sock 发 pair_cancel，契约 §2.3）→ 关弹框。
+    /// request_id 匹配才关（防止迟到的旧取消关掉新请求的框）。
+    func cancelPendingPairing(requestId: Int) {
+        guard let request = pendingPairingRequest, request.requestId == requestId else { return }
+        pendingPairingRequest = nil
+        lastPairingDismissal = .cancelled(reason: "扩展断连或配对超时")
+        clearPairingTimeout()
+    }
+
+    /// 配对弹框挂起超时（120s，契约 §8 裁定 3「超时即拒」）：到期关框。broker
+    /// 侧同样 120s 超时并回拒扩展；本侧为兜底（broker 被杀/断连时 pair_cancel
+    /// 可能不达，弹框不能永久挂起）。
+    private func startPairingTimeout() {
+        clearPairingTimeout()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                guard let self, self.pendingPairingRequest != nil else { return }
+                self.pendingPairingRequest = nil
+                self.lastPairingDismissal = .cancelled(reason: "配对超时（120 秒）")
+            }
+        }
+        pairingTimeoutWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pairingTimeoutInterval, execute: work)
+    }
+
+    /// 取消未触发的超时任务（决策已出 / 弹框关闭 / broker 停止时）。
+    private func clearPairingTimeout() {
+        pairingTimeoutWorkItem?.cancel()
+        pairingTimeoutWorkItem = nil
     }
 
     /// 进程退出兜底（AppDelegate.applicationWillTerminate 调用）。

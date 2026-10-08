@@ -6,9 +6,11 @@
 //   ② broker 进程管理（spawn browser-broker / kill；D-2 复用嵌套 bundle coffer
 //      二进制，App 解锁 spawn / 锁定 kill，锁态镜像 docs/31 §2.1/§4.1）
 //   ③ 配对确认请求/响应模型与决策转发 seam（docs/31 §2.3/§4.2/§5.3：显式用户
-//      批准才下发 PSK + broker 公钥）。**本文件不接触任何密钥材料**——PSK/公钥
-//      由 broker（Rust 侧 G-A/G-B）在批准后生成下发，App 侧只做批准门 +
-//      决策转发（BrowserPairingResponder seam）。
+//      批准才下发 PSK + broker 公钥）。**本文件不接触任何密钥材料**——决策①：
+//      PSK 由 App 生成并存 keychain（BrowserPairingKeychain）、经 stdin 注入
+//      broker、批准时随 pair_decision 一次性下发；broker 公钥由 broker 启动自报
+//      （D-B：broker 身份确定性派生，App 侧无 P-256 复刻）。App 侧只做批准门 +
+//      决策转发（BrowserPairingResponder seam，真实实现写 notify.sock）。
 //
 // 沙盒边界（Design Y 冻结，docs/31 r0.7 = d556e65）：生产 App 形态 = 去沙盒
 // （Developer ID 非沙盒分发）——沙盒 `AF_UNIX bind` 被 `deny network*` 拦截 +
@@ -173,9 +175,19 @@ struct BrowserBroker {
         /// 实测 68B << AF_UNIX sun_path 104B（Wave-4 实证，/tmp/coffer-wave4）。
         static let wellKnownUDSPathRelative = "Library/Application Support/Coffer/browser/broker.sock"
 
+        /// well-known notify.sock 相对真实主目录的固定路径（契约 §2.3/§6.1：
+        /// 与 broker.sock 同目录同公式——broker 监听、App 客户端持长连，68B ≪
+        /// AF_UNIX sun_path 104B）。
+        static let notifyUDSPathRelative = "Library/Application Support/Coffer/browser/notify.sock"
+
         /// well-known UDS 绝对路径（homeDirectory 注入便于单测临时根目录）。
         static func wellKnownUDSPath(homeDirectory: String) -> String {
             (homeDirectory as NSString).appendingPathComponent(wellKnownUDSPathRelative)
+        }
+
+        /// well-known notify.sock 绝对路径（homeDirectory 注入便于单测临时根目录）。
+        static func notifyUDSPath(homeDirectory: String) -> String {
+            (homeDirectory as NSString).appendingPathComponent(notifyUDSPathRelative)
         }
     }
 
@@ -183,6 +195,11 @@ struct BrowserBroker {
     /// Design Y 去沙盒后 App/broker/host 共用，host 无需 env 发现）。
     static func brokerSocketPath(homeDirectory: String) -> String {
         SpawnConfig.wellKnownUDSPath(homeDirectory: homeDirectory)
+    }
+
+    /// well-known notify.sock 绝对路径（契约 §2.3：App 客户端连接的目标）。
+    static func notifySocketPath(homeDirectory: String) -> String {
+        SpawnConfig.notifyUDSPath(homeDirectory: homeDirectory)
     }
 
     /// 创建 UDS 私有父目录（docs/31 §3.1：dir 0700）。幂等——已存在不动其权限
@@ -362,7 +379,8 @@ private func setNoSIGPIPE(fileHandle: FileHandle) {
 // MARK: - 配对确认（docs/31 §2.3 / §4.2 / §5.3）
 
 /// 配对确认请求（扩展首连 → broker 上报 App，弹配对确认）。
-/// 纯数据：浏览器 + 扩展 ID + 权限说明 + 时间戳。**不含任何密钥材料**。
+/// 纯数据：浏览器 + 扩展 ID + 权限说明 + request_id + 时间戳。**不含任何密钥
+/// 材料**。
 struct BrowserPairingRequest: Equatable {
     /// 发起配对的浏览器（broker 上报；G-B IPC 集成前为占位来源）。
     let browser: BrowserKind
@@ -370,8 +388,15 @@ struct BrowserPairingRequest: Equatable {
     let extensionID: String
     /// 权限说明（固定文案，随请求下发，UI 呈现给用户复核）。
     let permissionDescription: String
+    /// broker 分配的单调配对 request_id（决策帧回写匹配，契约 §2.3）。
+    let requestId: Int
     /// 请求到达时间（展示时序用）。
     let requestedAt: Date
+
+    /// App 侧常量权限文案（契约 §2.3：不由扩展/broker 供给，防扩展伪造文案
+    /// 诱导；BrokerNotifyClient 组请求与 BrowserSettingsView 呈现共用）。
+    static let defaultPermissionDescription =
+        "访问本机密码库中的已绑定凭据（仅在你显式操作时填充）"
 }
 
 /// 配对决策（批准/拒绝）。**批准才触发 broker 下发 PSK + 公钥**（docs/31 §5.3）
@@ -380,8 +405,20 @@ struct BrowserPairingRequest: Equatable {
 struct BrowserPairingDecision: Equatable {
     let browser: BrowserKind
     let extensionID: String
+    /// 对应配对请求的 request_id（决策帧回写匹配，契约 §2.3）。
+    let requestId: Int
     let approved: Bool
     let decidedAt: Date
+}
+
+/// 配对弹框结束态（视图呈现 拒绝/超时 文案，契约 §8-3「超时即拒」）。
+enum BrowserPairingDismissal: Equatable {
+    /// 用户显式批准。
+    case approved
+    /// 用户显式拒绝。
+    case rejected
+    /// 未获用户决策即关闭：pair_cancel（扩展断连/超时）或 App 侧 120s 超时兜底。
+    case cancelled(reason: String)
 }
 
 /// 配对决策转发 seam（docs/31 §5.3：显式批准才下发 PSK + 公钥）。
@@ -393,11 +430,42 @@ protocol BrowserPairingResponder {
     func respond(_ decision: BrowserPairingDecision)
 }
 
-/// 内存记录 responder（当前默认 + 单测用）：只记录决策元数据，无密钥材料。
+/// 内存记录 responder（默认 + 单测用）：只记录决策元数据，无密钥材料。
 final class RecordingBrowserPairingResponder: BrowserPairingResponder {
     private(set) var decisions: [BrowserPairingDecision] = []
 
     func respond(_ decision: BrowserPairingDecision) {
         decisions.append(decision)
+    }
+}
+
+/// 真实配对决策 responder（决策①③：决策 → notify.sock 写 pair_decision，契约
+/// §2.3/§4）。批准时从 keychain 取回**同一** PSK（psKHexLoader——与 spawn 时
+/// stdin PSK_HEX= 注入同源）随帧下发；拒绝 / PSK 缺失（keychain 项被删）→
+/// approved:false（fail-closed，绝不伪造材料）。sendFrame 注入便于单测记录。
+final class NotifyBrowserPairingResponder: BrowserPairingResponder {
+    private let sendFrame: (NotifyFrame) -> Void
+    private let pskHexLoader: () -> String?
+    private let log: (String) -> Void
+
+    init(sendFrame: @escaping (NotifyFrame) -> Void,
+         pskHexLoader: @escaping () -> String?,
+         log: @escaping (String) -> Void = { _ in }) {
+        self.sendFrame = sendFrame
+        self.pskHexLoader = pskHexLoader
+        self.log = log
+    }
+
+    func respond(_ decision: BrowserPairingDecision) {
+        var pskHex: String?
+        if decision.approved {
+            guard let loaded = pskHexLoader(), !loaded.isEmpty else {
+                log("NotifyBrowserPairingResponder：批准配对但 PSK 缺失（keychain 项被删？），按拒绝处理")
+                sendFrame(.pairDecision(requestId: decision.requestId, approved: false, pskHex: nil))
+                return
+            }
+            pskHex = loaded
+        }
+        sendFrame(.pairDecision(requestId: decision.requestId, approved: decision.approved, pskHex: pskHex))
     }
 }

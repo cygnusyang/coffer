@@ -1000,6 +1000,11 @@ final class AppModel: ObservableObject {
     /// 材料不经 App——本属性只携带请求元数据，PSK/公钥由 broker 生成下发）。
     @Published var pendingPairingRequest: BrowserPairingRequest?
 
+    /// 配对请求到达时的唤醒回调（AppDelegate.attach 注入 → summonMainWindow；
+    /// FR-16.1「解锁态唤醒」）。请求只在解锁态 broker 运行时到达（锁态 broker
+    /// 未 spawn、notify 无监听），故到达即解锁、唤醒无条件——无需再判 phase。
+    var onPairingRequestWake: (() -> Void)?
+
     /// 当前 broker 进程句柄（App 是 broker 的父进程，锁定/退出即杀，docs/31 §2.1）。
     private var browserBrokerProcess: Process?
 
@@ -1353,6 +1358,11 @@ final class AppModel: ObservableObject {
         pendingPairingRequest = request
         lastPairingDismissal = nil
         startPairingTimeout()
+        // FR-16.1 解锁态唤醒：前置主窗口弹批准 sheet。下一 runloop 唤醒（先发布
+        // @Published，再让窗口前置——SwiftUI 在窗口 on-screen 后才 present sheet，
+        // 避免窗口未前置时 sheet 错失呈现）。唤醒回调弱引用 AppDelegate，幂等。
+        let wake = onPairingRequestWake
+        DispatchQueue.main.async { wake?() }
     }
 
     /// 用户显式批准（docs/31 §5.3：批准才触发 broker 下发 PSK + 公钥）。密钥

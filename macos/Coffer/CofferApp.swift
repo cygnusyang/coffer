@@ -96,6 +96,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// MenuBarExtra）；后续重复 onAppear 仅刷新 model 引用，不重复启动。
     func attach(model: AppModel) {
         self.model = model
+        // FR-16.1 配对唤醒（docs/01 FR-16.1）：请求到达 → 前置主窗口弹批准 sheet。
+        // 复用 summonMainWindow(focusText: false)——与热键/菜单栏呼出同款
+        // （activate + makeKeyAndOrderFront）；focusText=false 跳过「已聚焦则隐藏」
+        // 切换语义，恒为前置。attach 幂等（onAppear 可能重复触发，同值覆盖）。
+        model.onPairingRequestWake = { [weak self] in
+            self?.summonMainWindow(focusText: false)
+        }
         guard !statusItemStarted else { return }
         statusItemStarted = true
         statusItemController.start(model: model) { [weak self] focusText in

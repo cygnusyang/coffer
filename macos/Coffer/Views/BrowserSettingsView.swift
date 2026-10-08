@@ -208,7 +208,7 @@ struct BrowserSettingsSection: View {
     private var pairingMessage: String {
         guard let request = model.pendingPairingRequest else { return "" }
         let permission = request.permissionDescription.isEmpty
-            ? "访问本机密码库中的已绑定凭据（仅在你显式操作时填充）"
+            ? BrowserPairingRequest.defaultPermissionDescription
             : request.permissionDescription
         return "\(request.browser.displayName) 上的 Coffer 扩展（ID：\(request.extensionID)）请求与本机密码库配对。\(permission)。"
     }

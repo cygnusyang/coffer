@@ -425,6 +425,12 @@ struct BrowserPairingRequest: Equatable {
         "访问本机密码库中的已绑定凭据（仅在你显式操作时填充）"
 }
 
+// FR-16.1：前置批准 sheet 以 requestId 为 identity（.sheet(item:) 绑定；配对请求
+// 一次一个，requestId 单调唯一，天然可作 sheet 生命周期锚）。
+extension BrowserPairingRequest: Identifiable {
+    var id: Int { requestId }
+}
+
 /// 配对决策（批准/拒绝）。**批准才触发 broker 下发 PSK + 公钥**（docs/31 §5.3）
 /// ——下发动作在 broker（Rust 侧 G-A/G-B），App 侧只做决策门 + 转发。本类型只
 /// 携带决策元数据，**不含 PSK / 公钥**（密钥材料不进 App 状态、不进日志）。

@@ -334,6 +334,28 @@ check(
     "brokerSocketPath 与 wellKnownUDSPath 同落点"
 )
 
+// 11.1b broker spawn --log 接线（B-2 诊断盲区闭环：App spawn 曾不传 --log → broker
+// 日志进 /dev/null，真机配对断点全靠猜；固定日志路径与 socket 同目录——父目录已由
+// prepareSocketDirectory 保证，Logger 不建目录）
+check(BrowserBroker.SpawnConfig.logFlag == "--log",
+      "broker 日志参数 = --log（对齐 G-B parse_broker_args，cli.rs）")
+let probeLog = BrowserBroker.SpawnConfig.brokerLogPath(homeDirectory: probeHome)
+check(
+    probeLog == probeHome + "/Library/Application Support/Coffer/browser/broker.log",
+    "brokerLogPath = home + 固定相对路径（与 broker.sock 同目录）"
+)
+check(
+    probeLog.utf8.count < 104,
+    "broker 日志路径长度合理（实测 \(probeLog.utf8.count)B）"
+)
+let spawnArgs = BrowserBroker.SpawnConfig.brokerArguments(
+    udsPath: probeSocket, logPath: probeLog)
+check(
+    spawnArgs == [BrowserBroker.SpawnConfig.subcommand, "--uds", probeSocket,
+                  "--log", probeLog],
+    "broker spawn 参数 = [subcommand, --uds socket, --log log]（App 接线顺序冻结）"
+)
+
 // 11.2 prepareSocketDirectory：创建 0700 私有父目录 + 幂等（已存在不动权限，
 // 对齐 G-B cli.rs ensure_broker_parent_dir）
 do {

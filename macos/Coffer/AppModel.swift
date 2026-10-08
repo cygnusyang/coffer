@@ -1226,8 +1226,9 @@ final class AppModel: ObservableObject {
             }
             let process = try BrowserBroker.spawn(
                 executable: binary,
-                arguments: [BrowserBroker.SpawnConfig.subcommand,
-                            BrowserBroker.SpawnConfig.udsFlag, socketPath],
+                arguments: BrowserBroker.SpawnConfig.brokerArguments(
+                    udsPath: socketPath,
+                    logPath: BrowserBroker.SpawnConfig.brokerLogPath(homeDirectory: home)),
                 environment: [BrowserBroker.SpawnConfig.vaultDirEnv: vaultDirPath],
                 stdinPayload: payload)
             browserBrokerProcess = process

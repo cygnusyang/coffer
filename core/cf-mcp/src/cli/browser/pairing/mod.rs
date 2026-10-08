@@ -496,7 +496,12 @@ fn finish(
         }
     };
     match write_frame(stream, &bytes) {
-        Ok(()) => ServerResult::Continue,
+        Ok(()) => {
+            // 成功写回也落日志（B-2 观测闭环：与写失败/超时形成三分支，真机断点
+            // 定位不再靠猜——见到本行 = broker 已把决策交给 host 链路）。
+            logger.info(&format!("pairing: pair_result 已写回扩展（approved={}）", result.approved));
+            ServerResult::Continue
+        }
         Err(e) => {
             logger.error(&format!(
                 "pairing: 写 pair_result 至扩展失败（扩展断连）: {e}"

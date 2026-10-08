@@ -187,6 +187,14 @@ struct BrowserBroker {
         /// AF_UNIX sun_path 104B）。
         static let notifyUDSPathRelative = "Library/Application Support/Coffer/browser/notify.sock"
 
+        /// broker 日志参数（B-2 诊断盲区闭环：App spawn 带 `--log` 固定路径，broker
+        /// 配对断点落盘可观测——曾因不传 `--log`、stderr → /dev/null 而每次真机排查
+        /// 靠猜；G-B `parse_broker_args` 接受 `--log PATH` 追加文件，cli.rs）。
+        static let logFlag = "--log"
+        /// broker.log 相对真实主目录的固定路径（与 broker.sock 同目录——父目录已由
+        /// `prepareSocketDirectory` 保证存在；Logger 只 create+append，不建目录）。
+        static let brokerLogPathRelative = "Library/Application Support/Coffer/browser/broker.log"
+
         /// well-known UDS 绝对路径（homeDirectory 注入便于单测临时根目录）。
         static func wellKnownUDSPath(homeDirectory: String) -> String {
             (homeDirectory as NSString).appendingPathComponent(wellKnownUDSPathRelative)
@@ -195,6 +203,17 @@ struct BrowserBroker {
         /// well-known notify.sock 绝对路径（homeDirectory 注入便于单测临时根目录）。
         static func notifyUDSPath(homeDirectory: String) -> String {
             (homeDirectory as NSString).appendingPathComponent(notifyUDSPathRelative)
+        }
+
+        /// well-known broker.log 绝对路径（homeDirectory 注入便于单测临时根目录）。
+        static func brokerLogPath(homeDirectory: String) -> String {
+            (homeDirectory as NSString).appendingPathComponent(brokerLogPathRelative)
+        }
+
+        /// broker spawn 完整参数（App 接线集中点，可单测顺序冻结）：
+        /// `[subcommand, --uds <socket>, --log <log>]`。
+        static func brokerArguments(udsPath: String, logPath: String) -> [String] {
+            [subcommand, udsFlag, udsPath, logFlag, logPath]
         }
     }
 

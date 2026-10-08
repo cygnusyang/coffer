@@ -19,7 +19,8 @@
 //!   → verifier 开封并比对固定常量
 //!   → SubKeys::derive(&dek, vault_uuid_bytes)
 //!   → ItemStore::open(Connection::open(db.sqlite), subkeys)
-//!   → password 明文在此 drop（Zeroizing）；会话只持有 SubKeys
+//!   → password 明文在此 drop（Zeroizing）；会话默认只持 SubKeys；
+//!     retention 开启时额外持 DEK（merge-time R1），lock() 清零
 //! ```
 //!
 //! ## 错误码 1002 三态合并（FR-1.4 / docs/04 §4.2）
@@ -50,6 +51,15 @@
 //! （[`crate::unlock_bio`]）复用：`enable_biometric` 借 `recover_dek`
 //! 重验证主密码并解出 DEK（D-6），`unlock_with_biometric` 借
 //! `finish_unlock` 与主密码路径共享收尾。行为零变化（T01 验收 ①）。
+//!
+//! ## v2.3.0 merge-time 接线（裁定书 R1/R2）
+//!
+//! - **R2 直开**：[`unlock_store_with_dek`]（`finish_unlock` 薄封装）——
+//!   供 cf-mcp browser-broker 用 DEK 直开（[`crate::vault::VaultSession::unlock_with_dek`]），
+//!   DEK 正确性由 `verify_integrity` 天然校验（错 → 1002），不新增独立校验。
+//! - **R1 保留**：三条解锁内核（`unlock_store` / `unlock_store_with_bio` /
+//!   `unlock_store_with_mcp_key`）返回值改为 `(ItemStore, SessionKey)`，
+//!   由会话层按 `retain_dek` 决定是否保留 DEK（安全边界变更，lead L-2 已确认）。
 
 use std::path::Path;
 
@@ -381,13 +391,34 @@ pub(crate) fn finish_unlock(
 ///
 /// **全部失败统一归一为 [`CfError::UnlockFailed`]（1002）**，
 /// 详见模块文档「错误码 1002 三态合并」。
+///
+/// 返回 `(store, dek)`：`dek` 供调用方按 retention 决定是否在会话内保留
+/// （merge-time R1，见 [`crate::vault::VaultSession::set_dek_retention`]）；
+/// 调用方不需要时可忽略，`SessionKey` 离开作用域即 ZeroizeOnDrop 清零。
 pub(crate) fn unlock_store(
     vault_dir: &Path,
     header: &cf_format::Header,
     password: &str,
-) -> SessionResult<cf_store::ItemStore> {
+) -> SessionResult<(cf_store::ItemStore, SessionKey)> {
     let dek = recover_dek(vault_dir, header, password)?;
-    finish_unlock(vault_dir, header, &dek)
+    let store = finish_unlock(vault_dir, header, &dek)?;
+    Ok((store, dek))
+}
+
+/// 直开内核（merge-time R2）：DEK 已知，跳过解封/验主密码，直接
+/// [`finish_unlock`]（SubKeys → ItemStore + verify_integrity）。DEK 正确性
+/// 由完整性校验承担：错 DEK → SubKeys 派生错 → root_mac_key 不匹配 →
+/// 1002（fail-closed，与 1002 三态合并纪律一致）。
+///
+/// 独立命名而非直调 [`finish_unlock`]，是为了与 [`unlock_store_with_mcp_key`](
+/// crate::unlock_mcp::unlock_store_with_mcp_key) 对称，并给「仅供 broker 直开」
+/// 留文档锚点（唯一预期调用方 = [`crate::vault::VaultSession::unlock_with_dek`]）。
+pub(crate) fn unlock_store_with_dek(
+    vault_dir: &Path,
+    header: &cf_format::Header,
+    dek: &SessionKey,
+) -> SessionResult<cf_store::ItemStore> {
+    finish_unlock(vault_dir, header, dek)
 }
 
 // ---------------------------------------------------------------- 内部工具

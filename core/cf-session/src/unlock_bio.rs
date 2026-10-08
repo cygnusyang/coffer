@@ -176,11 +176,15 @@ pub(crate) fn disable_biometric_impl(
 /// - `k_bio` 长度 ≠ 32 → [`CfError::InvalidArgument`]（5002）；
 /// - 其余一切失败（K_bio 错 / 密文篡改 / 跨库搬运 / 库数据异常）→
 ///   **统一 1002**（[`CfError::UnlockFailed`]），不泄露失败原因。
+///
+/// 返回 `(store, dek)`：`dek` 供调用方按 retention 决定是否在会话内保留
+/// （merge-time R1，见 [`crate::vault::VaultSession::set_dek_retention`]）；
+/// 不需要时忽略即可，`SessionKey` 离开作用域即 ZeroizeOnDrop 清零。
 pub(crate) fn unlock_store_with_bio(
     vault_dir: &Path,
     header: &cf_format::Header,
     k_bio: &[u8],
-) -> SessionResult<cf_store::ItemStore> {
+) -> SessionResult<(cf_store::ItemStore, SessionKey)> {
     // D-8：header 侧「用户意图未开启」→ 4001，先于一切密钥操作
     if !header.biometric_wrap.available {
         return Err(CfError::BiometricUnavailable);
@@ -198,7 +202,8 @@ pub(crate) fn unlock_store_with_bio(
     }
 
     let dek = recover_dek_bio(header, wrapped_b64, k_bio)?;
-    finish_unlock(vault_dir, header, &dek)
+    let store = finish_unlock(vault_dir, header, &dek)?;
+    Ok((store, dek))
 }
 
 /// bio 通道的 DEK 解出：open(K_bio, aad=uuid‖"wrapped_dek_bio",

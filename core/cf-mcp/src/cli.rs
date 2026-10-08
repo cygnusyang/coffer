@@ -1445,9 +1445,9 @@ mod browser {
     ///   裁定 2026-10-08）；
     /// - `capture_save`：锁定→8003；手势→8007；按 (origin 绑定 + username) 建/改
     ///   条目并写 `origin_bindings=[绑定(origin)]` → `CaptureSaved{item_id}`；
-    /// - `confirm_unbound_origin`：锁定→8003；手势→8007；**写绑定需目标条目引用
-    ///   而协议未携带 entry 字段（L-4 缺口，lead 已定后续加字段）** → 本轮最小
-    ///   语义 = 手势校验 + 直接确认，不写绑定。
+    /// - `confirm_unbound_origin`（契约 v1.1 已落地，L-4 缺口闭合）：锁定→8003；
+    ///   手势→8007；目标条目不存在→8004；origin 非法→8005；确认后把当前 origin
+    ///   以 Exact 绑定并集写入目标条目 → `OriginConfirmed`（docs/31 §5.2/A.10.1）。
     fn handle_request(
         msg: AppMessage,
         vault: Option<&VaultSession>,
@@ -1627,17 +1627,51 @@ mod browser {
                     ),
                 }
             }
-            AppRequest::ConfirmUnboundOrigin { origin: _, gesture } => {
+            AppRequest::ConfirmUnboundOrigin {
+                entry,
+                origin,
+                gesture,
+            } => {
                 let Some(vault) = vault else {
                     return AppResponse::BrokerLocked;
                 };
                 if !vault.is_unlocked() {
                     return AppResponse::BrokerLocked;
                 }
-                // L-4 缺口：写绑定需目标条目引用而协议未携带 entry 字段（lead 已定
-                // 后续加字段）。本轮最小语义 = 手势校验 + 直接确认，不写绑定。
                 if gestures.validate_and_consume(&gesture, now_ms()).is_err() {
                     return broker_error(ERR_BROKER_GESTURE_INVALID, "手势令牌无效或过期");
+                }
+                // 契约 v1.1：目标条目引用由 entry 字段显式携带（与 get_secret 同
+                // 标识），确认后把当前 origin 以 Exact 绑定并入目标条目（docs/31
+                // §5.2/A.10.1：action 指向异源 → 拒绝，除非用户显式确认）。
+                let item = match vault.get_item(&entry) {
+                    Ok(Some(i)) => i,
+                    Ok(None) => {
+                        return broker_error(ERR_BROKER_PROTOCOL, "目标条目不存在");
+                    }
+                    Err(e) => {
+                        return broker_error(
+                            ERR_BROKER_PROTOCOL,
+                            format!("读取条目失败 ({}): {e}", e.code()),
+                        )
+                    }
+                };
+                // 绑定 = 当前 origin 的 Exact 绑定（与 capture_save 同解析）；非法
+                // origin → 8005（参照 get_secret 的 8005 语义：无有效绑定可写）。
+                let Some(binding) = binding_for_origin(&origin) else {
+                    return broker_error(ERR_BROKER_ORIGIN_NOT_BOUND, "非法 origin，无法建立绑定");
+                };
+                // 并集：读既有绑定 → 当前 origin 的 Exact 绑定（kind+value 全等
+                // 判重）缺则追加、既有全保留（幂等，镜像 capture_save 的并集写法）。
+                let mut merged = item.origin_bindings.clone();
+                if !merged.contains(&binding) {
+                    merged.push(binding);
+                }
+                if let Err(e) = vault.set_item_origin_bindings(&entry, merged) {
+                    return broker_error(
+                        ERR_BROKER_PROTOCOL,
+                        format!("写入绑定失败 ({}): {e}", e.code()),
+                    );
                 }
                 AppResponse::OriginConfirmed
             }

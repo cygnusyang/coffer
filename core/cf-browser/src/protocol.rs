@@ -117,8 +117,12 @@ pub enum AppRequest {
         /// 手势令牌。
         gesture: String,
     },
-    /// 确认未绑定 origin（docs/31 §5.2：action 指向异源 / 未绑定时的用户显式确认）。
+    /// 确认未绑定 origin（docs/31 §5.2/A.10.1：action 指向异源 → 拒绝，除非用户
+    /// 显式 confirm_unbound_origin；确认后 broker 把当前 origin 以 Exact 绑定并入
+    /// 目标条目）。
     ConfirmUnboundOrigin {
+        /// 用户显式确认绑定的目标条目标识（与 `get_secret.entry` 同标识）。
+        entry: String,
         /// 待确认的 origin。
         origin: String,
         /// 手势令牌。

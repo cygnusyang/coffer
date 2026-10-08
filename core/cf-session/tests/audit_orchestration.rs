@@ -123,11 +123,16 @@ fn report_end_to_end() {
 
     let report = session.run_watchtower().unwrap();
 
-    assert_eq!(
-        report.duplicate_groups,
-        vec![vec![dup1.clone(), dup2.clone()]],
-        "恰一组、两条同密码条目"
-    );
+    // 恰一组、两条同密码条目。组内顺序非契约（`ItemStore::list` ORDER BY
+    // updated_at DESC 无次级键，并列顺序不保证，KNOWN-ISSUES BUG-15）——
+    // 按 item_id 排序后比较成员集合，判据只要求命中与无误报（docs/10 §5
+    // TC-WTW-08），不约束组内顺序。
+    assert_eq!(report.duplicate_groups.len(), 1, "恰一组同密码条目");
+    let mut group: Vec<String> = report.duplicate_groups[0].clone();
+    let mut expected: Vec<String> = vec![dup1.clone(), dup2.clone()];
+    group.sort();
+    expected.sort();
+    assert_eq!(group, expected, "组内恰为两条同密码条目");
     assert_eq!(
         report.weak_password_items,
         vec![weak.clone()],

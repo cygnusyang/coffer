@@ -73,22 +73,17 @@ enum BrowserManifest {
     /// coffer browser-agent。
     static let shimFilename = "coffer-shim"
 
-    // D-4 冻结占位（docs/31 §6.1 / 31a D-4，发布前必须定稿）：
-    // 与 G-C extension manifest 对齐（G-C 2026-10-07 答复 verbatim：
-    //   key: "PENDING_COFFER_CHROME_EXTENSION_KEY_BASE64"
-    //   gecko.id: "PENDING_COFFER_GECKO_ID"）。
-    // 占位串带 PENDING_ 标记，防止误当正式 ID 上架（改 ID = 全量重配）。
-    // 注：Chrome/Edge 的 allowed_origins 理论上应是 key 派生出的扩展 ID（占位串
-    // 非合法公钥、unpacked 按路径派发随机 ID），故本清单在 D-4 定稿前**不具
-    // 运行可用性**——本地端到端调试须临时改成本机 chrome://extensions 实际 ID
-    // （不进版本库），发布前统一替换回真实值。见合并期验收项 4。
-    /// 【本地调试覆盖，不进版本库】Chrome 扩展 ID（与本地临时 key 派生 ID 一致，
-    /// eadkgomgfkeopaopjlakjelokhakpile）；D-4 定稿时统一替换回正式值。
-    static let chromeExtensionID = "PENDING_COFFER_CHROME_EXTENSION_KEY_BASE64"
-    /// 【本地调试覆盖，不进版本库】Edge 扩展 ID（同上）。
-    static let edgeExtensionID = "PENDING_COFFER_CHROME_EXTENSION_KEY_BASE64"
-    /// Firefox 扩展 GUID 占位（allowed_extensions 引用，对齐 G-C gecko.id 占位串）。
-    static let firefoxGUID = "PENDING_COFFER_GECKO_ID"
+    // D-4 正式冻结（2026-10-08 定稿，不可逆——改 ID 须全量重配）：
+    // 与 G-C extension manifest 对齐（扩展仓 manifest.json key 派生，3f5a5fd）：
+    //   key SPKI base64 见 coffer-browser-extension/manifest.json
+    //   私钥：~/work/coffer-extension-keys/coffer-extension.pem（仓外，勿泄露）
+    // Chrome/Edge allowed_origins = key 派生 ID；Firefox allowed_extensions = gecko.id。
+    /// Chrome 扩展 ID（正式冻结）：imbfngccmiiocfalfmmijccmnkkhlibe
+    static let chromeExtensionID = "imbfngccmiiocfalfmmijccmnkkhlibe"
+    /// Edge 扩展 ID（正式冻结）：与 Chrome 同 key 派生同 ID。
+    static let edgeExtensionID = "imbfngccmiiocfalfmmijccmnkkhlibe"
+    /// Firefox 扩展 GUID（正式冻结）：coffer@cygnusyang.com（对齐 G-C gecko.id）。
+    static let firefoxGUID = "coffer@cygnusyang.com"
 
     /// shim 绝对路径（docs/31 §6.2 L314：manifest path → shim → exec coffer
     /// browser-agent）。shim 装配于 bundle `Contents/Helpers/` 层

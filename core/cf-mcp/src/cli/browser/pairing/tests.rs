@@ -1,5 +1,5 @@
     use super::super::{
-        build_logger, read_frame, write_frame, Logger, ENV_BROKER_SKIP_PEER_VERIFY,
+        build_logger, read_frame, write_frame, Logger, ENV_BROKER_SKIP_PEER_VERIFY, ENV_LOCK,
     };
     use super::{
         bind_notify_socket, run_notify_listener, serve_pair_request, NotifyPairRequest,
@@ -8,9 +8,6 @@
     use std::os::unix::net::UnixStream;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    /// 环境变量是进程级共享状态，串行化读写（同 cli.rs 外层 tests 纪律）。
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// 临时 notify.sock 路径（唯一；进程 id + 纳秒时间戳）。
     fn temp_sock_path(name: &str) -> PathBuf {

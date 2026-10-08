@@ -1012,13 +1012,13 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ---
 
-## BUG-15（🟡 登记待后续）：cf-session `audit_orchestration::report_end_to_end` 门禁 flake——`updated_at DESC` 并列无次级排序键，同密码条目组内顺序不定
+## BUG-15（✅ 已修复：测试侧组内顺序断言去序化）：cf-session `audit_orchestration::report_end_to_end` 门禁 flake——`updated_at DESC` 并列无次级排序键，同密码条目组内顺序不定
 
 **登记日期**：2026-10-08
 **发现环境**：G-A/G-B 返工后 default 全量门禁（`cargo test --workspace --no-fail-fast --offline -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线`，日志 /tmp/coffer-v200-dev/gb-shape-ws-default-rerun.log）
 **分级**：严重级 S3（测试基建 flake，具门禁否决力——偶发假红）/ 优先级 P2 / 来源版本 v2.2.0（既有测试）/ 发现版本 v2.3.0
-**状态**：🟡 登记待后续——本次合并不阻塞；G-A 隔离 6/6 全绿，后续全量重跑（gb2-*）未复现
-**核销记录**：—（待修）
+**状态**：✅ 已修复（2026-10-08，dev-tester 核销）——归因**测试侧缺陷**：判据（docs/10 §5 TC-WTW-08）只要求「三个清单各命中预期 item_id + 无误报」，**不约束组内顺序**，`report_end_to_end` 断言 `[dup1, dup2]` 属超规格，依赖 `ItemStore::list` 无次级键的并列顺序（非契约）→ 偶发反转。修复 = 重复组断言去序化（排序后比较成员集合），**不改生产代码**。
+**核销记录**：修复 = `core/cf-session/tests/audit_orchestration.rs` `report_end_to_end` 重复组断言改排序后集合比较；复验 = 定向 `report_end_to_end` 连续 12/12 绿、`audit_orchestration` 全 binary 3/3 轮全绿（日志 /tmp/coffer-wave4/bug15-{baseline,fixed,fullbin}.log）
 **证据**：`/tmp/coffer-v200-dev/gb-shape-ws-default-rerun.log:1331`（`report_end_to_end` panic：`duplicate_groups` 两条同密码条目组内顺序反转为 `[dup2, dup1]`，断言期望 `[dup1, dup2]`）
 
 ### 现象（预期/实际 分行写）
@@ -1032,11 +1032,12 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ### 修复路径
 
-（待排期，顺延记录）两选一：① `report_end_to_end` 组内顺序断言改集合比较（或断言前按 item_id 排序）；② `find_duplicate_groups` 输出前按 item_id 稳定排序，使组内顺序契约化。不阻塞本次合并。
+① ✅ **已落地（2026-10-08，dev-tester 核销）**：`report_end_to_end` 重复组断言改为排序后集合比较——判据只要求命中与无误报（docs/10 §5 TC-WTW-08），组内顺序非契约，断言 `[dup1, dup2]` 属超规格。测试侧缺陷，已自行修复，不改生产代码。
+② ⏳ **顺延建议（非阻塞，生产侧）**：`ItemStore::list` `ORDER BY updated_at DESC` 补次级排序键（如 `, uuid`）使 UI 列表并列顺序稳定——S3 级一致性问题，**非报告契约违约**（Watchtower 报告不承诺组内顺序），交 cf-session coder / lead 择期评估；本 flake 修复不依赖其落地。
 
 ### 复现与诊断
 
-随机触发（并列 + SQLite 实现细节），无法可靠本地复现。已记录一次失败证据见上；隔离复验 `cargo test -p cf-session --test audit_orchestration report_end_to_end -- --exact` 连续 6/6 绿。
+随机触发（并列 + SQLite 实现细节），无法可靠本地复现。已记录一次失败证据见上；修复前基线隔离复验 `cargo test -p cf-session --test audit_orchestration report_end_to_end -- --exact` 8/8 绿（flake 随机触发，隔离不可复现属预期）。修复后复验（2026-10-08）：`report_end_to_end` 定向连续 12/12 绿；`audit_orchestration` 全 binary 3 轮全绿——修复消除了顺序依赖本身，故并列翻转不再具失败力。
 
 ---
 

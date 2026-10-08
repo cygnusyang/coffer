@@ -354,11 +354,6 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_copy_item(uint64_t ptr, RustBuff
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_create_item(uint64_t ptr, RustBuffer draft, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DEK_RETAINED
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DEK_RETAINED
-int8_t uniffi_cf_ffi_fn_method_vaultsession_dek_retained(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DELETE_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_DELETE_ITEM
 void uniffi_cf_ffi_fn_method_vaultsession_delete_item(uint64_t ptr, RustBuffer item_id, int8_t hard, RustCallStatus *_Nonnull out_status
@@ -402,11 +397,6 @@ void uniffi_cf_ffi_fn_method_vaultsession_enable_mcp_escrow(uint64_t ptr, RustBu
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_csv(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_DEK
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_DEK
-RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_dek(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_ONE_PUX
@@ -559,11 +549,6 @@ void uniffi_cf_ffi_fn_method_vaultsession_restore_history(uint64_t ptr, RustBuff
 void uniffi_cf_ffi_fn_method_vaultsession_restore_item(uint64_t ptr, RustBuffer item_id, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RETAIN_DEK_WITH_BIO
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RETAIN_DEK_WITH_BIO
-void uniffi_cf_ffi_fn_method_vaultsession_retain_dek_with_bio(uint64_t ptr, RustBuffer k_bio, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SEARCH
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_search(uint64_t ptr, RustBuffer query, RustCallStatus *_Nonnull out_status
@@ -572,11 +557,6 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_search(uint64_t ptr, RustBuffer 
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 void uniffi_cf_ffi_fn_method_vaultsession_set_clipboard_clear_secs(uint64_t ptr, int64_t secs, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_DEK_RETENTION
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_DEK_RETENTION
-void uniffi_cf_ffi_fn_method_vaultsession_set_dek_retention(uint64_t ptr, int8_t enabled, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_FAVORITE
@@ -1041,12 +1021,6 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_create_item(void
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DEK_RETAINED
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DEK_RETAINED
-uint16_t uniffi_cf_ffi_checksum_method_vaultsession_dek_retained(void
-    
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DELETE_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_DELETE_ITEM
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_delete_item(void
@@ -1098,12 +1072,6 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_mcp_escrow(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_csv(void
-    
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_DEK
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_DEK
-uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_dek(void
     
 );
 #endif
@@ -1287,12 +1255,6 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_restore_item(void
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RETAIN_DEK_WITH_BIO
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RETAIN_DEK_WITH_BIO
-uint16_t uniffi_cf_ffi_checksum_method_vaultsession_retain_dek_with_bio(void
-    
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SEARCH
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_search(void
@@ -1302,12 +1264,6 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_search(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_clipboard_clear_secs(void
-    
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_DEK_RETENTION
-#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_DEK_RETENTION
-uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_dek_retention(void
     
 );
 #endif

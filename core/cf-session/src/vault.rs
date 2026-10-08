@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use cf_crypto::aead::SessionKey;
 use cf_domain::item::ItemDraft;
 use cf_domain::item::ItemSummary;
+use cf_domain::origin::OriginBinding;
 use cf_domain::secret::SecretString;
 use cf_domain::totp_data::TotpUpdate;
 use cf_store::ItemListFilter;
@@ -236,6 +237,23 @@ impl VaultSession {
         if !enabled {
             *self.current_dek_guard() = None;
         }
+    }
+
+    /// 导出保留的 DEK（R1 (a-i) 门禁，裁定书 §1.7 R1-3）：仅 `retain_dek`
+    /// 开启**且**解锁态（`current_dek` 为 `Some`）时返回 32B 原始 DEK；
+    /// 否则 fail-closed（retention 未开 / 未解锁 →
+    /// [`CfError::InvalidArgument`]，FFI 层映射 5002）。
+    ///
+    /// 返回值是明文 DEK 副本（`Vec<u8>` 非零化容器）——调用方
+    /// （FFI → Swift）瞬时取用后必须自行零化副本；会话内保留的是
+    /// `SessionKey`（`ZeroizeOnDrop`），FFI 转发出自本方法（组 B 只做
+    /// `self.inner.export_dek()` 转发，会话层方法本体归本文件）。
+    pub fn export_dek(&self) -> SessionResult<Vec<u8>> {
+        let guard = self.current_dek_guard();
+        let dek = guard
+            .as_ref()
+            .ok_or_else(|| CfError::InvalidArgument("dek retention disabled or locked".into()))?;
+        Ok(dek.as_bytes().to_vec())
     }
 
     /// 是否处于解锁态。
@@ -649,6 +667,37 @@ impl VaultSession {
         let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         usecase::items::create_item(&mut state.store, draft)
+    }
+
+    /// 创建条目并写入 origin 绑定（D-3，docs/31 §5.3）：语义与
+    /// [`Self::create_item`] 一致，额外把 `origin_bindings` 随同一事务写入
+    /// `item_origins` 从表。供 broker `capture_save` 建条目 + 绑定站点用
+    /// （merge-time 接线；薄封装转发
+    /// [`usecase::items::create_item_with_origin_bindings`]）。
+    pub fn create_item_with_origin_bindings(
+        &self,
+        draft: &ItemDraft,
+        origin_bindings: Vec<OriginBinding>,
+    ) -> SessionResult<String> {
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::items::create_item_with_origin_bindings(&mut state.store, draft, origin_bindings)
+    }
+
+    /// 显式改写条目 origin 绑定（D-3，docs/31 §5.3）：独立于
+    /// [`Self::update_item`] 的专用入口（`ItemDraft` 不含绑定字段），替换前
+    /// 写 history 快照（FR-2.9，绑定变化同样进版本历史）、事务内删旧插新、
+    /// 推进 `updated_at`。条目不存在 → 1011（ItemNotFound）。供 broker
+    /// `capture_save` 对既有条目追加/改写绑定用（merge-time 接线；薄封装
+    /// 转发 [`usecase::items::set_item_origin_bindings`]）。
+    pub fn set_item_origin_bindings(
+        &self,
+        item_id: &str,
+        origin_bindings: Vec<OriginBinding>,
+    ) -> SessionResult<()> {
+        let mut guard = self.write_guard(LicensedOp::ItemWrite)?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        usecase::items::set_item_origin_bindings(&mut state.store, item_id, origin_bindings)
     }
 
     /// 更新条目：替换前对当前状态写 history 快照（FR-2.9，内容无变化
@@ -1987,5 +2036,83 @@ mod tests {
             expected.as_bytes(),
             "mcp 路径应持有 DEK"
         );
+    }
+
+    /// R1：export_dek 三态门禁——retention 开启 + 解锁 → Ok(32B) 且与
+    /// recover_dek 解出值一致；retention 未开 → Err（InvalidArgument，
+    /// FFI 映射 5002）；开启 + 解锁后 lock() → Err（current_dek 已清零）。
+    #[test]
+    fn export_dek三态门禁() {
+        let base = crate::tests_support::temp_dir("export_dek_gates");
+        let brief = create_vault_with_kdf(&base, "导出库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+
+        // 态 1：retention 关闭（默认）→ Err（5002 语义）
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let err = session.export_dek().unwrap_err();
+        assert_eq!(err.code(), 5002, "retention 未开应 fail-closed");
+
+        // 态 2：开启 + 解锁 → Ok(32B)，与 recover_dek 解出值一致
+        session.set_dek_retention(true);
+        session.lock();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let header = header_of(&vault_dir);
+        let expected = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
+        let exported = session.export_dek().unwrap();
+        assert_eq!(exported.len(), 32);
+        assert_eq!(exported, expected.as_bytes().to_vec());
+
+        // 态 3：lock() 后 → Err（DEK 已清零）
+        session.lock();
+        let err = session.export_dek().unwrap_err();
+        assert_eq!(err.code(), 5002, "lock() 后不应可导出");
+    }
+
+    // ------------------------------------------------ origin 绑定封装（merge-time E 前置）
+
+    /// E 前置：两个 VaultSession 薄封装往返——锁定态 → 1001（write_guard
+    /// 门禁）；建带绑定条目 → get_item 带出断言；set 改写 → get_item 断言
+    /// 更新。usecase 层语义（绑定写读一致性）已由 items.rs 单测覆盖，
+    /// 本测试只验封装转发 + 门禁接线。
+    #[test]
+    fn origin绑定封装往返() {
+        let base = crate::tests_support::temp_dir("origin_binding_wrappers");
+        let brief = create_vault_with_kdf(&base, "绑定库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        let b_exact = cf_domain::origin::OriginBinding {
+            kind: cf_domain::origin::OriginBindingKind::Exact,
+            value: "https://example.com".to_owned(),
+        };
+        let b_domain = cf_domain::origin::OriginBinding {
+            kind: cf_domain::origin::OriginBindingKind::Domain,
+            value: "example.org".to_owned(),
+        };
+
+        // 锁定态：两个封装都应 1001（write_guard 门禁）
+        let err = session
+            .create_item_with_origin_bindings(&draft_item("锁定"), vec![b_exact.clone()])
+            .unwrap_err();
+        assert_eq!(err.code(), 1001);
+        let err = session
+            .set_item_origin_bindings("some-id", vec![b_exact.clone()])
+            .unwrap_err();
+        assert_eq!(err.code(), 1001);
+
+        // 建带绑定条目 → get_item 带出断言
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let id = session
+            .create_item_with_origin_bindings(&draft_item("绑定条目"), vec![b_exact.clone()])
+            .unwrap();
+        let item = session.get_item(&id).unwrap().unwrap();
+        assert_eq!(item.origin_bindings, vec![b_exact.clone()]);
+
+        // set 改写 → get_item 断言更新
+        session
+            .set_item_origin_bindings(&id, vec![b_domain.clone()])
+            .unwrap();
+        let item = session.get_item(&id).unwrap().unwrap();
+        assert_eq!(item.origin_bindings, vec![b_domain.clone()]);
     }
 }

@@ -1209,27 +1209,27 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
-## BUG-16（🔴 待修复：拒绝提示缺失）：批准 sheet 点「拒绝」→ sheet 正常关，但扩展侧无「配对已拒绝」提示
+## BUG-16（✅ 已核销：拒绝提示可达，真机实证）：批准 sheet 点「拒绝」→ 扩展侧「配对已拒绝」提示缺失（初始报告）——实为 popup 不实时刷新所致
 
 **登记日期**：2026-10-08
 **发现环境**：cygnus 真机（FR-16.1 前置批准 sheet 真机验收中，用户主动拒绝测试）
-**分级**：严重级 S3（次要功能——拒绝决策本身已生效（sheet 关、不配对），缺失的是扩展侧用户反馈提示）/ 优先级 P2 / 来源版本 v2.3.0（FR-16.1）/ 发现版本 v2.3.0
-**状态**：🔴 待修复（用户 2026-10-08 指示「等一下记得要把它修改掉」，修复排期 FR-16.1 真机轮后续）
-**核销记录**：（待回填）
-**证据**：用户真机反馈（2026-10-08）：批准 sheet 弹出时点「拒绝」→ sheet 正常关闭，但浏览器扩展侧没有出现「配对已拒绝」提示。
+**分级**：严重级 S3（次要功能——拒绝决策本身已生效（sheet 关、不配对），初始缺失的是扩展侧用户反馈提示）/ 优先级 P2 / 来源版本 v2.3.0（FR-16.1）/ 发现版本 v2.3.0
+**状态**：✅ 已核销（2026-10-08 用户真机实证：**扩展侧可以拿到「配对已拒绝。可重新发起配对。」**，提示正常渲染）
+**核销记录**：真机复核（2026-10-08，用户反馈「浏览器的插件上是可以拿到'配对已拒绝'的」）；代码路径 `src/ui/popup.ts` renderState `ErrCode.UserRejected`（8006）→「未连接 + 配对已拒绝。可重新发起配对。」+ `src/background.ts` `handlePairResult`（approved:false → `applyPairingEvent(result, pairRejectErrorCode(reason))` → 8006）+ `pairing.test.ts` 拒绝态状态机覆盖均已在架（修复前即存在，无需代码改动）。初始「无提示」观察归因 = **popup 不实时刷新**：popup 仅在打开时 `load()` 拉一次 `get_state`（`src/ui/popup.ts` DOMContentLoaded），期间拒绝在 App 侧发生 → 已打开的 popup 保持旧态，需重开 popup（或点「刷新」）才显示拒绝提示——非拒绝链路断裂。残留子项 = popup 无实时状态推送（LOW，见「刷新」按钮决策）。
 
 ### 现象（预期/实际）
 - **预期**：App 点「拒绝」→ sheet 关 → 扩展 popup 显示「配对已拒绝」（契约 §8-3 拒绝路径 + popup 三态文案区分——docs/32 §1.4「pair_result reason 单通道」判据真机复核点）。
-- **实际**：sheet 正常关闭，扩展侧无任何「已拒绝」提示（用户 2026-10-08 真机实证）。
+- **实际（初始）**：sheet 正常关闭，**已打开的**扩展 popup 无任何「已拒绝」提示（popup 打开期间状态不刷新，需重开/刷新才渲染）。
+- **实际（复核）**：重开 popup（重新拉取 `get_state`）→ 正常显示「未连接 + 配对已拒绝。可重新发起配对。」（2026-10-08 用户真机实证）。
 
 ### 根因（已实证 / 待查）
-待查。候选：① 拒绝决策（approved:false）未达 broker/扩展（`AppModel.rejectPendingPairing` → `browserPairingResponder.respond` 转发 seam 断裂）；② pair_result(approved:false, reason:rejected) 已到扩展但 popup 未渲染拒绝态（popup 三态文案区分本就是真机复核点，可能为既有未核销面）；③ 扩展 popup 未打开时结果只落在 background 态、无可见提示。
+**已实证**：拒绝链路完整在架且可达——App `rejectPendingPairing` → responder 转发 → broker pair_result(approved:false, reason:rejected) → 扩展 `handlePairResult` → 8006 → popup 渲染拒绝提示。初始「无提示」= popup 只在打开时拉一次状态、**无 live state push**（background `setState` 虽广播 `{type:"state"}`，但 `popup.ts` 未监听该消息）→ 打开中的 popup 过期不刷新。~~候选①③（seam 断裂 / 结果只落 background）排除~~。
 
 ### 修复路径
-修复排期：FR-16.1 真机轮后续（用户已指示「等一下记得修改」）。预判落点：扩展 popup/background 拒绝态渲染（`pairing.test.ts` 16 项已有状态机/帧覆盖，缺 popup 文案真机面）；若为 seam 断裂则回查 AppModel responder 转发链。
+已核销，无需修复。残留：popup 实时刷新缺失（LOW）——与「刷新」按钮去留联动（见会话记录 / docs/31 §2.4）：若 popup 监听 `{type:"state"}` 实时刷新，「刷新」按钮即冗余可删（用户 2026-10-08 提出两按钮去留评估）。
 
 ### 复现与诊断
-扩展发起配对 → App 弹 sheet → 点「拒绝」→ 观察扩展 popup 是否出现「配对已拒绝」（等待用户锁定态测试完成后复测）。
+扩展发起配对 → App 弹 sheet → 点「拒绝」→ 观察扩展 popup：**保持打开时**无提示（旧态）；**重开 popup** 显示「配对已拒绝。可重新发起配对。」（已核销）。
 
 ---
 

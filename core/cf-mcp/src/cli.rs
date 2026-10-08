@@ -796,8 +796,10 @@ pub fn run(args: &[String]) -> i32 {
 // 生产绝不设置；release inert）。`DEK_HEX`/`VAULT_UUID_HEX` 使 broker 派生确定性
 // 身份（`BrokerIdentity::derive`，docs/31 §4.2）并建立 E2E；`UNLOCKED=1` = 已解锁
 //（可服务 app 请求），缺省/0 = 锁定态（E2E 可握手，但取密/列表 → broker_locked
-// 8003）。PSK 持久化（配对时写入 keychain）与 vault 取密接线为 G-D/G-T merge-time
-// 集成点（见 [`list_entries`] / [`handle_request`] 文档）。
+// 8003）。解锁态另需 `$COFFER_VAULT_DIR`（App 注入）：broker 以 stdin 交付的 DEK
+// 直开 vault（`unlock_with_dek`），开库失败 fail-closed exit 1 不留 socket；
+// 分发语义 = 裁定书 §3.2（见 [`handle_request`] 文档）。PSK 持久化（配对时写入
+// keychain）为 G-D/G-T merge-time 集成点。
 //
 // ## 退出码（复用 docs/20 §5.3，映射表见 run_agent / run_broker）
 //
@@ -817,11 +819,27 @@ mod browser {
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
 
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use cf_browser::broker::{BrokerEndpoint, BrokerIdentity};
     use cf_browser::e2e::Session;
+    use cf_browser::gesture::GestureRegistry;
     use cf_browser::host::HostRelay;
-    use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, EntryInfo, HandshakeMessage};
+    use cf_browser::origin::{self, Origin, OriginBinding as BrowserOriginBinding};
+    use cf_browser::protocol::{
+        AppMessage, AppRequest, AppResponse, EntryFieldRef, EntryInfo, HandshakeMessage,
+    };
     use cf_browser::CfBrowserError;
+
+    use cf_domain::category::ItemCategory;
+    use cf_domain::field::Designation;
+    use cf_domain::item::{FieldDraft, ItemDraft, SectionDraft, UrlDraft};
+    use cf_domain::origin::{
+        OriginBinding as DomainOriginBinding, OriginBindingKind as DomainOriginBindingKind,
+    };
+    use cf_session::open_vault;
+    use cf_session::{ItemDetails, SessionResult, VaultSession};
 
     use super::exit_code;
     use super::{Logger, McpCliOptions};
@@ -845,6 +863,9 @@ mod browser {
     /// broker 解锁会话存在标记（**显式 `=1` 才解锁**，见 [`env_flag`]；
     /// 缺省 = 锁定态 8003）。
     const ENV_BROKER_UNLOCKED: &str = "COFFER_BROKER_UNLOCKED";
+    /// broker 解锁态 vault 目录（App 注入，AppModel.swift:1115；解锁态必填，
+    /// 缺失 → fail-closed exit 1 不留 socket。**非密钥**，仅路径）。
+    const ENV_BROKER_VAULT_DIR: &str = "COFFER_VAULT_DIR";
     /// broker 跳过 ③ 层 peer 签名验证——**仅 debug 构建**且显式 `=1` 才生效
     ///（G-B 自动化测试设置；release 编译期剔除，生产不可达，③ 层恒开——测试
     /// 进程非签名二进制无法通过自身签名链）。
@@ -853,10 +874,6 @@ mod browser {
     /// 恒用 [`DEFAULT_BROKER_REQUIREMENT`]，防同用户 `launchctl setenv` 放宽
     /// ③ 层到任意 Apple 签名进程）；缺省 = 自有 coffer 二进制签名锚定。
     const ENV_BROKER_REQUIREMENT: &str = "COFFER_BROKER_REQUIREMENT";
-    /// broker 条目夹具（`Vec<EntryInfo>` JSON）——**仅 debug 构建**读取（release
-    /// 恒空列表）。G-B 版条目源；生产 = vault ItemStore（G-D/G-T merge-time
-    /// 集成点，见 [`list_entries`]）。
-    const ENV_BROKER_ENTRIES: &str = "COFFER_BROKER_ENTRIES_JSON";
 
     /// broker well-known UDS 落点常量（docs/31 §4.2 / HIGH2-3-INTEGRATION §4.1；
     /// G-D Swift 侧 `BrowserBroker.wellKnownUDS` 同串，**逐字节一致**）：
@@ -897,7 +914,8 @@ mod browser {
     /// TeamID/identifier 为公开签名常量（escrow keychain 组
     /// `A6DS985SJJ.app.coffer.Coffer` 见 docs/31 §7），非密钥。release 恒用此值
     ///（[`ENV_BROKER_REQUIREMENT`] 覆盖仅 debug 构建读取）。
-    const DEFAULT_BROKER_REQUIREMENT: &str = "identifier \"app.coffer.Coffer\" and anchor apple generic \
+    const DEFAULT_BROKER_REQUIREMENT: &str =
+        "identifier \"app.coffer.Coffer\" and anchor apple generic \
                                               and certificate leaf[subject.OU] = \"A6DS985SJJ\"";
 
     // ---------------- 8xxx 错误码（docs/03 §12 冻结；本模块产生 8001/8002/8003，
@@ -919,6 +937,16 @@ mod browser {
     /// 点）与 broker 进程不可达，均属「当前不可用」→ 本码；G-B 不产生 8006
     /// `UserDenied`（用户拒绝流程未实现，docs/03 §12 冻结语义）。
     pub const ERR_BROKER_UNAVAILABLE: u16 = 8003;
+    /// 协议/服务面错误（8004，docs/03 §12 认证链「握手解密失败」同组语义扩至
+    /// 请求服务失败：条目不存在 / 读取错误 / 非法 origin 无法写库等）。UI 一律
+    /// 按「通道不可用，重试或重连」处理（cf-browser error.rs L92-94）。
+    pub const ERR_BROKER_PROTOCOL: u16 = 8004;
+    /// origin 未绑定（8005，docs/31 §5.3 / 31a §附）：`get_secret` 目标条目对
+    /// 当前页 origin 无匹配绑定 → 不填充，popup 提示用户确认绑定。
+    pub const ERR_BROKER_ORIGIN_NOT_BOUND: u16 = 8005;
+    /// 手势令牌无效/过期/重放（8007，docs/31 §5.2 / D-7）：经
+    /// [`GestureRegistry::validate_and_consume`] 单次消费校验失败。
+    pub const ERR_BROKER_GESTURE_INVALID: u16 = 8007;
 
     /// ② 层：验父进程是否为白名单签名浏览器（docs/31 §3.2 ②，P-S spike 实证）。
     ///
@@ -1123,20 +1151,24 @@ mod browser {
             read_frame(&mut stdin).map_err(|e| format!("stdin read failed: {e}"))?
         {
             // 扩展 → broker：读一帧（4B LE + payload），校验重组，转发 broker。
-            let framed = relay.wrap(&payload).map_err(|e| format!("frame invalid: {e}"))?;
+            let framed = relay
+                .wrap(&payload)
+                .map_err(|e| format!("frame invalid: {e}"))?;
             broker
                 .write_all(&framed)
                 .map_err(|e| format!("broker write failed: {e}"))?;
             // broker → 扩展：读响应帧，原样写回 stdout（native messaging 帧）。
-            let Some(resp) = read_frame(&mut broker)
-                .map_err(|e| format!("broker read failed: {e}"))?
+            let Some(resp) =
+                read_frame(&mut broker).map_err(|e| format!("broker read failed: {e}"))?
             else {
                 return Err("broker closed connection (channel lost)".into());
             };
             stdout
                 .write_all(&resp)
                 .map_err(|e| format!("stdout write failed: {e}"))?;
-            stdout.flush().map_err(|e| format!("stdout flush failed: {e}"))?;
+            stdout
+                .flush()
+                .map_err(|e| format!("stdout flush failed: {e}"))?;
         }
         Ok(())
     }
@@ -1174,7 +1206,7 @@ mod browser {
 
         // 解锁契约：pairing 材料必填（缺 → 配置错 1，fail-closed；测试断言此路径）。
         // 主源 = stdin 私有管道（HIGH2-3 §3.3）；env 降级仅 SKIP_PEER_VERIFY+debug。
-        let Some(secrets) = resolve_broker_secrets() else {
+        let Some(mut secrets) = resolve_broker_secrets() else {
             logger.error(
                 "error: browser broker: 缺 pairing 材料（stdin 私有管道 4 行；测试降级 \
                  $COFFER_BROKER_* 仅 SKIP_PEER_VERIFY+debug 门控），fail-closed 退出",
@@ -1194,6 +1226,42 @@ mod browser {
         };
         let endpoint = BrokerEndpoint::new(identity, secrets.psk);
 
+        // 解锁态 → 用 stdin 交付的 DEK 开库（裁定书 §3.1：stdin → 身份 → **开库** →
+        // bind）。开库失败 fail-closed exit 1（bind 尚未发生，**不留 socket**）；
+        // 锁定态 → 不开库，恒 8003。开库成功后 `secrets.dek` 覆零（vault 密钥不再
+        // 需要，`BrokerSecrets` 无 Debug）；`psk` 已移入 [`BrokerEndpoint`]（E2E 配对
+        // 全连接期需要，非 vault 密钥，不在此零化）。
+        let vault = if secrets.unlocked {
+            let Some(dir) = vault_dir_from_env() else {
+                logger.error(
+                    "error: browser broker: 解锁态缺 $COFFER_VAULT_DIR（App 注入），\
+                     fail-closed 退出",
+                );
+                return exit_code::CONFIG_ERROR;
+            };
+            let session = match open_vault(&dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    logger.error(&format!(
+                        "error: browser broker: 打开 vault 失败 ({}): {e}",
+                        e.code()
+                    ));
+                    return exit_code::CONFIG_ERROR;
+                }
+            };
+            if let Err(e) = session.unlock_with_dek(&secrets.dek) {
+                logger.error(&format!(
+                    "error: browser broker: DEK 开库失败 ({}): {e}",
+                    e.code()
+                ));
+                return exit_code::CONFIG_ERROR;
+            }
+            secrets.dek.zeroize();
+            Some(session)
+        } else {
+            None
+        };
+
         let listener = match bind_broker_socket(&uds) {
             Ok(l) => l,
             Err(e) => {
@@ -1206,16 +1274,24 @@ mod browser {
         };
         let _guard = SocketGuard { path: uds.clone() };
 
-        let locked = !secrets.unlocked;
+        let locked = vault.as_ref().is_none_or(|v| !v.is_unlocked());
         logger.info(&format!(
             "browser broker: serving on uds {} (locked={locked})",
             uds.display()
         ));
 
+        // 手势单次消费登记（TTL 淘汰有界，docs/31 §5.2 / D-7）：broker 级持用，
+        // 跨连接共享（同一 nonce 全局只放行一次，replay 防重）。
+        let mut gestures = GestureRegistry::new();
         loop {
             match listener.accept() {
-                Ok((stream, _addr)) => match serve_connection(stream, &endpoint, locked, &mut logger)
-                {
+                Ok((stream, _addr)) => match serve_connection(
+                    stream,
+                    &endpoint,
+                    vault.as_ref(),
+                    &mut gestures,
+                    &mut logger,
+                ) {
                     // 单连接处理完毕（EOF / 拒连 / 握手失败）→ daemon 继续 accept；
                     // 仅 Lock / 致命错误返回退出码。
                     ServerResult::Continue => {}
@@ -1270,10 +1346,15 @@ mod browser {
     }
 
     /// 服务一个连接：③ 层验 peer → E2E 握手 → app 请求循环（docs/31 §4/§5）。
+    ///
+    /// `vault` = broker 持有的开库会话（锁定态 / 未解锁 = `None`，请求分发
+    /// 每请求判定 8003，裁定书 §3.1）；`gestures` = broker 级手势消费登记表
+    ///（跨连接共享，单次消费防重）。
     fn serve_connection(
         mut stream: UnixStream,
         endpoint: &BrokerEndpoint,
-        locked: bool,
+        vault: Option<&VaultSession>,
+        gestures: &mut GestureRegistry,
         logger: &mut Logger,
     ) -> ServerResult {
         if !peer_is_verified(&stream) {
@@ -1333,7 +1414,7 @@ mod browser {
                 return ServerResult::Exit(exit_code::CLEAN);
             }
 
-            let response = handle_request(msg, locked);
+            let response = handle_request(msg, vault, gestures);
             // BrokerLocked（8003）记 stderr（对齐 8001/8002/8003 的可观测性模式）。
             if matches!(response, AppResponse::BrokerLocked) {
                 logger.error(&format!(
@@ -1355,49 +1436,201 @@ mod browser {
         ServerResult::Continue
     }
 
-    /// app 请求分发（docs/31 §5）。
+    /// app 请求分发（docs/31 §5；最小实现语义 = 裁定书 §3.2）。
     ///
-    /// - 锁定态：`get_secret` / `get_entries` → [`AppResponse::BrokerLocked`]（8003，
-    ///   扩展 popup 引导「打开 Coffer 解锁」）；
-    /// - 解锁态：`get_entries` → 条目源（[`ENV_BROKER_ENTRIES`] 夹具，G-B 版）；
-    ///   `get_secret` / `capture_save` → 8003 `BrokerUnavailable`（vault 取密/写入
-    ///   未接线，操作当前不可用；G-D/G-T merge-time 集成点）；`confirm_unbound_origin`
-    ///   → 直接确认（G-B 版无持久化
-    ///   副作用，真实绑定写库 = 集成点）。
-    fn handle_request(msg: AppMessage, locked: bool) -> AppResponse {
+    /// 锁定判定为**每请求**（`vault` 缺失或已锁 → 8003，裁定书 §3.1）：
+    /// - `get_secret`：锁定→8003；手势校验失败→8007；目标条目对当前页 origin 无
+    ///   绑定匹配→8005；逐 fields 取字段值 → `GetSecretResult`；
+    /// - `get_entries`：锁定→8003；vault 查询按 origin 绑定过滤（无手势，lead
+    ///   裁定 2026-10-08）；
+    /// - `capture_save`：锁定→8003；手势→8007；按 (origin 绑定 + username) 建/改
+    ///   条目并写 `origin_bindings=[绑定(origin)]` → `CaptureSaved{item_id}`；
+    /// - `confirm_unbound_origin`：锁定→8003；手势→8007；**写绑定需目标条目引用
+    ///   而协议未携带 entry 字段（L-4 缺口，lead 已定后续加字段）** → 本轮最小
+    ///   语义 = 手势校验 + 直接确认，不写绑定。
+    fn handle_request(
+        msg: AppMessage,
+        vault: Option<&VaultSession>,
+        gestures: &mut GestureRegistry,
+    ) -> AppResponse {
         let AppMessage::Request(req) = msg else {
             // 请求方向收到响应消息 = 扩展行为异常 → 协议错误（8004 语义）。
-            return AppResponse::Error {
-                code: 8004,
-                message: "unexpected response message from extension".into(),
-            };
+            return broker_error(
+                ERR_BROKER_PROTOCOL,
+                "unexpected response message from extension",
+            );
         };
         match req {
-            AppRequest::GetSecret { .. } => {
-                if locked {
+            AppRequest::GetSecret {
+                request_id,
+                entry,
+                fields,
+                origin,
+                gesture,
+            } => {
+                let Some(vault) = vault else {
+                    return AppResponse::BrokerLocked;
+                };
+                if !vault.is_unlocked() {
                     return AppResponse::BrokerLocked;
                 }
-                AppResponse::Error {
-                    code: ERR_BROKER_UNAVAILABLE,
-                    message: "broker secret retrieval 未接线（G-B 版；vault 集成 = G-D/G-T merge-time）"
-                        .into(),
+                if gestures.validate_and_consume(&gesture, now_ms()).is_err() {
+                    return broker_error(ERR_BROKER_GESTURE_INVALID, "手势令牌无效或过期");
                 }
+                // origin 非法 → 视为无绑定可命中（fail-closed，不静默放行）。
+                let Ok(o) = Origin::parse(&origin) else {
+                    return broker_error(ERR_BROKER_ORIGIN_NOT_BOUND, "当前站点未绑定该条目");
+                };
+                let item = match vault.get_item(&entry) {
+                    Ok(Some(i)) => i,
+                    Ok(None) => {
+                        return broker_error(ERR_BROKER_PROTOCOL, "目标条目不存在");
+                    }
+                    Err(e) => {
+                        return broker_error(
+                            ERR_BROKER_PROTOCOL,
+                            format!("读取条目失败 ({}): {e}", e.code()),
+                        )
+                    }
+                };
+                let bindings: Vec<BrowserOriginBinding> =
+                    item.origin_bindings.iter().map(browser_binding).collect();
+                if origin::best_match(&bindings, &o).is_none() {
+                    return broker_error(ERR_BROKER_ORIGIN_NOT_BOUND, "当前站点未绑定该条目");
+                }
+                // 逐 fields：字段名 → uuid 解析自条目详情（get_item 本就为 origin
+                // 绑定取出）；权威明文值走会话按需访问器（随取随走，drop 清零）。
+                let mut values = BTreeMap::new();
+                for name in fields {
+                    let Some(field_uuid) = item
+                        .fields
+                        .iter()
+                        .find(|f| f.name.expose() == name.as_str())
+                        .map(|f| f.uuid.clone())
+                    else {
+                        continue; // 字段不存在 → 不返回该键（扩展自行判断缺项）
+                    };
+                    match vault.get_field_value(&entry, &field_uuid) {
+                        Ok(Some(v)) => {
+                            values.insert(name, v);
+                        }
+                        Ok(None) => {} // 字段存在但无值 → 不返回该键
+                        Err(e) => {
+                            return broker_error(
+                                ERR_BROKER_PROTOCOL,
+                                format!("读取字段失败 ({}): {e}", e.code()),
+                            )
+                        }
+                    }
+                }
+                AppResponse::GetSecretResult { request_id, values }
             }
             // GetEntries 不带 gesture（lead 裁定 2026-10-08，docs/31 L261 仅点名
             // 三消息带手势；get_entries 只读元数据列举不在其列）→ 无需手势校验。
             AppRequest::GetEntries { origin } => {
-                if locked {
+                let Some(vault) = vault else {
+                    return AppResponse::BrokerLocked;
+                };
+                if !vault.is_unlocked() {
                     return AppResponse::BrokerLocked;
                 }
-                AppResponse::EntriesResult {
-                    entries: list_entries(&origin),
+                match vault_entries(vault, &origin) {
+                    Ok(entries) => AppResponse::EntriesResult { entries },
+                    Err(e) => broker_error(
+                        ERR_BROKER_PROTOCOL,
+                        format!("列举条目失败 ({}): {e}", e.code()),
+                    ),
                 }
             }
-            AppRequest::CaptureSave { .. } => AppResponse::Error {
-                code: ERR_BROKER_UNAVAILABLE,
-                message: "capture save 未接线（G-B 版；vault 集成 = G-D/G-T merge-time）".into(),
-            },
-            AppRequest::ConfirmUnboundOrigin { .. } => AppResponse::OriginConfirmed,
+            AppRequest::CaptureSave {
+                origin,
+                username,
+                password,
+                title,
+                category,
+                gesture,
+            } => {
+                let Some(vault) = vault else {
+                    return AppResponse::BrokerLocked;
+                };
+                if !vault.is_unlocked() {
+                    return AppResponse::BrokerLocked;
+                }
+                if gestures.validate_and_consume(&gesture, now_ms()).is_err() {
+                    return broker_error(ERR_BROKER_GESTURE_INVALID, "手势令牌无效或过期");
+                }
+                // 绑定 = 提交 origin 的 Exact 绑定；解析失败（非法 origin）→ 写库
+                // 无意义，协议错（8004）。
+                let Some(binding) = binding_for_origin(&origin) else {
+                    return broker_error(ERR_BROKER_PROTOCOL, "非法 origin，无法建立绑定");
+                };
+                let Ok(o) = Origin::parse(&origin) else {
+                    return broker_error(ERR_BROKER_PROTOCOL, "非法 origin");
+                };
+                // 按 (origin 绑定匹配 + username 字段值相同) 找既有条目：有 → 改，
+                // 无 → 建。`origin_bindings` 恒替换为 `[绑定(origin)]`（裁定书 §3.2）。
+                match find_item_by_origin_and_username(vault, &o, &username) {
+                    Ok(Some(item_id)) => {
+                        let item = match vault.get_item(&item_id) {
+                            Ok(Some(i)) => i,
+                            Ok(None) => {
+                                return broker_error(ERR_BROKER_PROTOCOL, "目标条目不存在");
+                            }
+                            Err(e) => {
+                                return broker_error(
+                                    ERR_BROKER_PROTOCOL,
+                                    format!("读取条目失败 ({}): {e}", e.code()),
+                                )
+                            }
+                        };
+                        // 改：合并既有字段（仅替换 username/password 值，保留其余
+                        // 字段/分区/URL/标签；TOTP 由 update_item Keep 语义保留）。
+                        let draft =
+                            capture_merge_draft(&item, &username, &password, &title, category);
+                        if let Err(e) = vault.update_item(&item_id, &draft) {
+                            return broker_error(
+                                ERR_BROKER_PROTOCOL,
+                                format!("更新条目失败 ({}): {e}", e.code()),
+                            );
+                        }
+                        if let Err(e) = vault.set_item_origin_bindings(&item_id, vec![binding]) {
+                            return broker_error(
+                                ERR_BROKER_PROTOCOL,
+                                format!("写入绑定失败 ({}): {e}", e.code()),
+                            );
+                        }
+                        AppResponse::CaptureSaved { item_id }
+                    }
+                    Ok(None) => {
+                        let draft = capture_create_draft(&username, &password, &title, category);
+                        match vault.create_item_with_origin_bindings(&draft, vec![binding]) {
+                            Ok(item_id) => AppResponse::CaptureSaved { item_id },
+                            Err(e) => broker_error(
+                                ERR_BROKER_PROTOCOL,
+                                format!("创建条目失败 ({}): {e}", e.code()),
+                            ),
+                        }
+                    }
+                    Err(e) => broker_error(
+                        ERR_BROKER_PROTOCOL,
+                        format!("检索既有条目失败 ({}): {e}", e.code()),
+                    ),
+                }
+            }
+            AppRequest::ConfirmUnboundOrigin { origin: _, gesture } => {
+                let Some(vault) = vault else {
+                    return AppResponse::BrokerLocked;
+                };
+                if !vault.is_unlocked() {
+                    return AppResponse::BrokerLocked;
+                }
+                // L-4 缺口：写绑定需目标条目引用而协议未携带 entry 字段（lead 已定
+                // 后续加字段）。本轮最小语义 = 手势校验 + 直接确认，不写绑定。
+                if gestures.validate_and_consume(&gesture, now_ms()).is_err() {
+                    return broker_error(ERR_BROKER_GESTURE_INVALID, "手势令牌无效或过期");
+                }
+                AppResponse::OriginConfirmed
+            }
             AppRequest::Lock => {
                 // Lock 在 serve_connection 单独处理（需退出信号）；此处兜底（不可达）。
                 AppResponse::Locked
@@ -1405,22 +1638,234 @@ mod browser {
         }
     }
 
-    /// 条目源（G-B 版）：`$COFFER_BROKER_ENTRIES_JSON`（`Vec<EntryInfo>` JSON）夹具；
-    /// **debug 构建**才读（M-3 release-inert 原则，HIGH-1 防御纵深）；release 恒空列表。
-    /// 生产 = vault ItemStore（G-D/G-T merge-time 集成点）。
-    fn list_entries(_origin: &str) -> Vec<EntryInfo> {
-        if !cfg!(debug_assertions) {
-            return Vec::new();
+    /// 统一的 8xxx 错误响应。
+    fn broker_error(code: u16, message: impl Into<String>) -> AppResponse {
+        AppResponse::Error {
+            code,
+            message: message.into(),
         }
-        let Ok(json) = std::env::var(ENV_BROKER_ENTRIES) else {
-            return Vec::new();
+    }
+
+    /// 当前 Unix 毫秒（手势 TTL 校验的时钟源，docs/31 §5.2；与扩展 `Date.now()`
+    /// 同向）。`SystemTime` 错误（理论不可达）→ `0`（fail-closed：任何正时间戳
+    /// 手势均判过期/未来拒，不静默放行）。
+    fn now_ms() -> u64 {
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => d.as_millis() as u64,
+            Err(_) => 0,
+        }
+    }
+
+    /// 解锁态 vault 目录来源：`$COFFER_VAULT_DIR`（App 注入，AppModel.swift:1115）。
+    /// 缺失/空 → `None`（fail-closed，调用方 exit 1 不留 socket）。
+    fn vault_dir_from_env() -> Option<PathBuf> {
+        std::env::var_os(ENV_BROKER_VAULT_DIR)
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+    }
+
+    /// 绑定 = 提交 origin 的 Exact 绑定（`https://host:port` 规范化后存值，
+    /// [`BrowserOriginBinding::parse`] 权威解析）。返回 cf-domain 存储形态。
+    fn binding_for_origin(origin: &str) -> Option<DomainOriginBinding> {
+        let b = BrowserOriginBinding::parse(origin).ok()?;
+        Some(domain_binding(&b))
+    }
+
+    /// cf-domain 存储绑定 → cf-browser 匹配绑定（结构同构，仅类型转换；匹配
+    /// 语义以 `cf-browser::origin` 权威为准，裁定书 §3.2「勿改」）。
+    fn browser_binding(b: &DomainOriginBinding) -> BrowserOriginBinding {
+        let kind = match b.kind {
+            DomainOriginBindingKind::Exact => cf_browser::origin::OriginBindingKind::Exact,
+            DomainOriginBindingKind::Subdomain => cf_browser::origin::OriginBindingKind::Subdomain,
+            DomainOriginBindingKind::Domain => cf_browser::origin::OriginBindingKind::Domain,
         };
-        match serde_json::from_str::<Vec<EntryInfo>>(&json) {
-            Ok(entries) => entries,
-            Err(e) => {
-                eprintln!("error: browser broker: 非法 ${ENV_BROKER_ENTRIES}: {e}；回落空列表");
-                Vec::new()
+        BrowserOriginBinding {
+            kind,
+            value: b.value.clone(),
+        }
+    }
+
+    /// cf-browser 匹配绑定 → cf-domain 存储绑定（capture_save 写库用）。
+    fn domain_binding(b: &BrowserOriginBinding) -> DomainOriginBinding {
+        let kind = match b.kind {
+            cf_browser::origin::OriginBindingKind::Exact => DomainOriginBindingKind::Exact,
+            cf_browser::origin::OriginBindingKind::Subdomain => DomainOriginBindingKind::Subdomain,
+            cf_browser::origin::OriginBindingKind::Domain => DomainOriginBindingKind::Domain,
+        };
+        DomainOriginBinding {
+            kind,
+            value: b.value.clone(),
+        }
+    }
+
+    /// 按 (origin 绑定匹配 + username 字段值相同) 查找既有条目 ID（capture_save
+    /// 「改」路径定位；无 → `None` 走「建」）。`username` 匹配 = designation 为
+    /// Username 的字段值相等。
+    fn find_item_by_origin_and_username(
+        vault: &VaultSession,
+        origin: &Origin,
+        username: &cf_domain::secret::SecretString,
+    ) -> SessionResult<Option<String>> {
+        let items = vault.list_items(None)?;
+        for summary in items {
+            let id = summary.uuid.to_string();
+            let Some(item) = vault.get_item(&id)? else {
+                continue;
+            };
+            let bindings: Vec<BrowserOriginBinding> =
+                item.origin_bindings.iter().map(browser_binding).collect();
+            if origin::best_match(&bindings, origin).is_none() {
+                continue;
             }
+            let username_matches = item.fields.iter().any(|f| {
+                f.designation == Some(Designation::Username)
+                    && f.value
+                        .as_ref()
+                        .is_some_and(|v| v.expose() == username.expose())
+            });
+            if username_matches {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// `get_entries` 的 vault 实现（裁定书 §3.2）：`list_items` 全量 → 逐条目取
+    /// 详情 → 按 origin 绑定 `best_match` 过滤 → 元数据投影（非机密；字段仅
+    /// 名 + designation）。非法 origin → 空列表（无绑定可命中）；单条目读取失败
+    /// → 跳过（元数据列举尽力而为，不整单失败）。
+    fn vault_entries(vault: &VaultSession, origin: &str) -> SessionResult<Vec<EntryInfo>> {
+        let Ok(o) = Origin::parse(origin) else {
+            return Ok(Vec::new());
+        };
+        let items = vault.list_items(None)?;
+        let mut out = Vec::new();
+        for summary in items {
+            let id = summary.uuid.to_string();
+            let Ok(Some(item)) = vault.get_item(&id) else {
+                continue;
+            };
+            let bindings: Vec<BrowserOriginBinding> =
+                item.origin_bindings.iter().map(browser_binding).collect();
+            if origin::best_match(&bindings, &o).is_none() {
+                continue;
+            }
+            out.push(EntryInfo {
+                entry: id,
+                title: item.title.expose().to_owned(),
+                category: item.category,
+                fields: item
+                    .fields
+                    .iter()
+                    .filter_map(|f| {
+                        let designation = f.designation.clone()?;
+                        Some(EntryFieldRef {
+                            name: f.name.expose().to_owned(),
+                            designation,
+                        })
+                    })
+                    .collect(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// capture_save 建条目草稿：username + password 双字段（无手势恒拒在分发层）。
+    fn capture_create_draft(
+        username: &cf_domain::secret::SecretString,
+        password: &cf_domain::secret::SecretString,
+        title: &str,
+        category: ItemCategory,
+    ) -> ItemDraft {
+        ItemDraft {
+            title: title.to_owned(),
+            category,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![
+                FieldDraft {
+                    name: "username".to_owned(),
+                    value: Some(username.expose().to_owned()),
+                    field_type: cf_domain::field::FieldType::Text,
+                    designation: Some(Designation::Username),
+                    section_index: None,
+                    position: 0,
+                },
+                FieldDraft {
+                    name: "password".to_owned(),
+                    value: Some(password.expose().to_owned()),
+                    field_type: cf_domain::field::FieldType::Concealed,
+                    designation: Some(Designation::Password),
+                    section_index: None,
+                    position: 1,
+                },
+            ],
+            totp: None,
+        }
+    }
+
+    /// capture_save 改条目草稿：保留既有字段/分区/URL/标签（值 + 元数据），仅替换
+    /// username / password 值 + 标题/类别——不丢既有数据；TOTP 由 update_item 的
+    /// Keep 默认语义保留（draft 的 `totp` 字段在更新路径忽略）。
+    fn capture_merge_draft(
+        item: &ItemDetails,
+        username: &cf_domain::secret::SecretString,
+        password: &cf_domain::secret::SecretString,
+        title: &str,
+        category: ItemCategory,
+    ) -> ItemDraft {
+        let urls = item
+            .urls
+            .iter()
+            .map(|u| UrlDraft {
+                label: u.label.as_ref().map(|l| l.expose().to_owned()),
+                url: u.url.expose().to_owned(),
+                is_primary: u.is_primary,
+                position: u.position as i32,
+            })
+            .collect();
+        let tags = item.tags.iter().map(|t| t.expose().to_owned()).collect();
+        let sections = item
+            .sections
+            .iter()
+            .map(|s| SectionDraft {
+                title: s.title.expose().to_owned(),
+                position: s.position as i32,
+            })
+            .collect();
+        let fields = item
+            .fields
+            .iter()
+            .map(|f| {
+                let value = if f.designation == Some(Designation::Username) {
+                    Some(username.expose().to_owned())
+                } else if f.designation == Some(Designation::Password) {
+                    Some(password.expose().to_owned())
+                } else {
+                    f.value.as_ref().map(|v| v.expose().to_owned())
+                };
+                FieldDraft {
+                    name: f.name.expose().to_owned(),
+                    value,
+                    field_type: f.field_type,
+                    designation: f.designation.clone(),
+                    section_index: f
+                        .section_uuid
+                        .as_ref()
+                        .and_then(|suid| item.sections.iter().position(|s| s.uuid == *suid)),
+                    position: f.position as i32,
+                }
+            })
+            .collect();
+        ItemDraft {
+            title: title.to_owned(),
+            category,
+            urls,
+            tags,
+            sections,
+            fields,
+            totp: None,
         }
     }
 
@@ -1442,7 +1887,9 @@ mod browser {
     /// 与 G-D Swift 侧 `BrowserStatusProbe.userHomeDirectory` 同构）。`$HOME`
     /// 缺失 → `None`（fail-closed）。
     fn well_known_broker_uds() -> Option<PathBuf> {
-        let home = std::env::var("HOME").ok().filter(|v| !v.trim().is_empty())?;
+        let home = std::env::var("HOME")
+            .ok()
+            .filter(|v| !v.trim().is_empty())?;
         Some(PathBuf::from(home).join(BROKER_UDS_SUFFIX))
     }
 
@@ -1590,8 +2037,8 @@ mod browser {
         let msg1: HandshakeMessage = serde_json::from_slice(&frame)
             .map_err(|e| CfBrowserError::MalformedMessage(format!("init: {e}")))?;
         let (msg2, pending) = endpoint.on_init(&msg1)?;
-        let msg2_bytes = serde_json::to_vec(&msg2)
-            .map_err(|e| CfBrowserError::Serialize(e.to_string()))?;
+        let msg2_bytes =
+            serde_json::to_vec(&msg2).map_err(|e| CfBrowserError::Serialize(e.to_string()))?;
         write_frame(stream, &msg2_bytes)
             .map_err(|e| CfBrowserError::MalformedMessage(format!("write msg2: {e}")))?;
         let Some(frame3) = read_frame(stream)
@@ -1616,7 +2063,10 @@ mod browser {
                 if UnixStream::connect(path).is_ok() {
                     return Err(io::Error::new(
                         io::ErrorKind::AddrInUse,
-                        format!("uds path already in use by a live listener: {}", path.display()),
+                        format!(
+                            "uds path already in use by a live listener: {}",
+                            path.display()
+                        ),
                     ));
                 }
                 // 陈旧 socket（拒绝连接）→ 删除重绑。
@@ -1687,9 +2137,8 @@ mod browser {
 
     /// 写一个 native messaging 帧（4B LE 长度前缀 + payload），写后 flush。
     fn write_frame<W: Write>(w: &mut W, payload: &[u8]) -> io::Result<()> {
-        let len = u32::try_from(payload.len()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "frame payload too large")
-        })?;
+        let len = u32::try_from(payload.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame payload too large"))?;
         w.write_all(&len.to_le_bytes())?;
         w.write_all(payload)?;
         w.flush()
@@ -1762,10 +2211,7 @@ mod browser {
                 parse_stdin_frame(missing_psk.as_bytes()).is_none(),
                 "缺必填（PSK_HEX）→ fail-closed"
             );
-            assert!(
-                parse_stdin_frame(b"").is_none(),
-                "空 stdin → fail-closed"
-            );
+            assert!(parse_stdin_frame(b"").is_none(), "空 stdin → fail-closed");
         }
 
         #[test]
@@ -2401,8 +2847,14 @@ mod tests {
             "read_mcp_key 须以 vault_uuid 定位"
         );
         let content = escrow_read_log(&log_path);
-        assert!(content.contains("keychain-escrow"), "须日志托管解锁线索: {content}");
-        assert!(!content.contains("env-fallback"), "托管优先不得走 env 兜底: {content}");
+        assert!(
+            content.contains("keychain-escrow"),
+            "须日志托管解锁线索: {content}"
+        );
+        assert!(
+            !content.contains("env-fallback"),
+            "托管优先不得走 env 兜底: {content}"
+        );
         drop(p);
     }
 
@@ -2427,8 +2879,14 @@ mod tests {
             "available=false 不得触 Keychain read（read 门）"
         );
         let content = escrow_read_log(&log_path);
-        assert!(content.contains("env-fallback"), "须日志 env 兜底线索: {content}");
-        assert!(!content.contains("keychain-escrow"), "未启用托管不得走托管解锁: {content}");
+        assert!(
+            content.contains("env-fallback"),
+            "须日志 env 兜底线索: {content}"
+        );
+        assert!(
+            !content.contains("keychain-escrow"),
+            "未启用托管不得走托管解锁: {content}"
+        );
         drop(p);
     }
 
@@ -2470,7 +2928,10 @@ mod tests {
         .expect("托管 + env 并存 → 托管优先，须解锁成功（env 不覆盖托管）");
         let content = escrow_read_log(&log_path);
         assert!(content.contains("keychain-escrow"), "须走托管: {content}");
-        assert!(!content.contains("env-fallback"), "并存时不得走 env 兜底: {content}");
+        assert!(
+            !content.contains("env-fallback"),
+            "并存时不得走 env 兜底: {content}"
+        );
         drop(p);
     }
 
@@ -2576,6 +3037,9 @@ mod tests {
             content.contains("MCP 托管读取失败"),
             "须含可操作错误，content: {content}"
         );
-        assert!(!content.contains("env-fallback"), "读失败不得回落 env: {content}");
+        assert!(
+            !content.contains("env-fallback"),
+            "读失败不得回落 env: {content}"
+        );
     }
 }

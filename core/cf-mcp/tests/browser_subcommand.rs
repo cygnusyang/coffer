@@ -22,14 +22,22 @@
 //! 另含 `broker_get_entries_unlocked`（G-B「broker 需处理 GetEntries」的端到端
 //! 验证：解锁态 get_entries → EntriesResult，走真 E2E 通道）。
 //!
-//! **构建面拆分（M-3 release-inert）**：三个走 `spawn_broker` env 降级夹具的
-//! 用例（`broker_uds_bind_and_permissions` / `broker_locked_state` /
-//! `broker_get_entries_unlocked`）与配套 helper（`spawn_broker` /
-//! `e2e_client` / `read_frame` / `write_frame` / `drain_stderr`）+ E2E 协议
-//! import 均 `#[cfg(debug_assertions)]` 门控——env 降级仅 debug 生效，release 下
-//! broker 走 stdin fail-closed（语义由 `release_broker_skips_nothing_when_env_set`
-//! + TC-BROKER-1 覆盖），对应用例仅 debug 全量跑、release 不编译。docs/32 判据
-//! 锚点（§1.2-3/5 等）在 debug 门禁口径核销，计数不变。
+//! **构建面拆分（M-3 release-inert）**：走 env 降级夹具的用例（
+//! `broker_uds_bind_and_permissions` / `broker_locked_state` /
+//! `broker_get_entries_unlocked` 及新增 vault 用例）与配套 helper（`spawn_broker` /
+//! `e2e_client` / `read_frame` / `write_frame` / `drain_stderr`）+ E2E 协议 import
+//! 均 `#[cfg(debug_assertions)]` 门控——env 降级仅 debug 生效，release 下 broker 走
+//! stdin fail-closed（语义由 `release_broker_skips_nothing_when_env_set` +
+//! TC-BROKER-1 覆盖），对应用例仅 debug 全量跑、release 不编译。docs/32 判据锚点
+//! （§1.2-3/5 等）在 debug 门禁口径核销，计数不变。
+//!
+//! **merge-time 组 E（broker-wiring，裁定书 §3.1/§3.2）**：解锁态 broker 以
+//! stdin 交付的 DEK 直开 vault（`$COFFER_VAULT_DIR`），`get_secret` /
+//! `capture_save` / `get_entries` 落真实 vault 查询与写入。新增用例
+//! `broker_unlocked_get_secret_e2e` / `broker_capture_save_creates_item_with_binding`
+//! / `broker_capture_save_updates_existing_item`（debug env 夹具 + 真库真 DEK，
+//! 断言手势/8005/字段取值/绑定落库）。`get_entries` 旧 `COFFER_BROKER_ENTRIES_JSON`
+//! 夹具已随 vault 化移除。
 //!
 //! 平台门控：browser-* 子命令仅 `feature="coffer-store"` + macOS 构建注册
 //!（cli.rs `mod browser` 双门控）。故依赖真实子命令的测试以
@@ -61,6 +69,22 @@ use std::time::{Duration, Instant};
 use cf_browser::e2e::Session;
 #[cfg(all(feature = "coffer-store", debug_assertions))]
 use cf_browser::protocol::{AppMessage, AppRequest, AppResponse, EntryFieldRef};
+// vault 建库 / 开库（TC-BROKER-2 与解锁态用例共用；`create_broker_vault` 在
+// debug + release 双构建面都被 `broker_stdin_valid_binds_and_locked_false` 使用，
+// 故仅 feature 门控、不 debug 归位）。
+#[cfg(feature = "coffer-store")]
+use cf_crypto::kdf::KdfParams;
+#[cfg(feature = "coffer-store")]
+use cf_session::{create_vault_with_kdf, open_vault, VaultSession};
+// 种子条目 / 断言用域模型（仅解锁态 debug 用例使用）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+use cf_domain::category::ItemCategory;
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+use cf_domain::field::{Designation, FieldType};
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+use cf_domain::item::{FieldDraft, ItemDraft};
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+use cf_domain::origin::{OriginBinding as DomainBinding, OriginBindingKind};
 
 // ---------------- 共享：spawn 助手 / 帧读写 / socket 等待 ----------------
 
@@ -108,27 +132,33 @@ fn clear_broker_env(cmd: &mut Command) {
         "COFFER_BROKER_UNLOCKED",
         "COFFER_BROKER_SKIP_PEER_VERIFY",
         "COFFER_BROKER_REQUIREMENT",
-        "COFFER_BROKER_ENTRIES_JSON",
     ] {
         cmd.env_remove(key);
     }
+    // `COFFER_VAULT_DIR` 故意**不在**清除列表：解锁态用例需经 `spawn_broker` /
+    // `spawn_broker_stdin` 的 extra_env 注入真实库路径，清除会干扰注入。
 }
 
 /// spawn `coffer browser-broker --uds <uds> --log <log>` + pairing env（**env 降级**）。
 ///
 /// - `overrides`：追加/覆盖环境变量（如 `COFFER_BROKER_UNLOCKED` /
-///   `COFFER_BROKER_ENTRIES_JSON`）；
+///   `COFFER_BROKER_DEK_HEX` / `COFFER_VAULT_DIR`）；
 /// - `omit_skip_verify`：`true` 时不设 `COFFER_BROKER_SKIP_PEER_VERIFY=1`
 ///   （③ 层签名校验恒开 → 伪造 peer 被拒，测 8002 用）。
 ///
 /// env 降级仅 `cfg!(debug_assertions)` 生效（release inert）；本 helper 仅用于
 /// 需要 env 注入的用例（§6-5：env 用例统一在 `COFFER_BROKER_SKIP_PEER_VERIFY=1`
-/// 下运行）。**debug-only 门控**：唯一调用方即三个 env 夹具测试（均
-/// `debug_assertions` 门控）——release 下 env 降级编译期剔除、本 helper 无调用方
+/// 下运行）。**debug-only 门控**：调用方均 `debug_assertions` 门控（锁定态 /
+/// 解锁态 vault 用例）——release 下 env 降级编译期剔除、本 helper 无调用方
 /// 成 dead code，故随测试一并 debug 归位（release 走 stdin 语义由
 /// `release_broker_skips_nothing_when_env_set` + TC-BROKER-1 覆盖）。
 #[cfg(all(feature = "coffer-store", debug_assertions))]
-fn spawn_broker(uds: &Path, log: &Path, overrides: &[(&str, &str)], omit_skip_verify: bool) -> Child {
+fn spawn_broker(
+    uds: &Path,
+    log: &Path,
+    overrides: &[(&str, &str)],
+    omit_skip_verify: bool,
+) -> Child {
     let (dek, uuid, psk) = fake_secrets();
     let mut cmd = Command::new(coffer_bin());
     cmd.args(["browser-broker", "--uds"])
@@ -150,12 +180,138 @@ fn spawn_broker(uds: &Path, log: &Path, overrides: &[(&str, &str)], omit_skip_ve
 }
 
 /// 标准 4 行 stdin 帧（HIGH2-3 §3.1；`unlocked` 取 `"1"` / `"0"`）。
+/// 用确定性 fake 材料（身份派生 / E2E 配对，与 [`e2e_client`] 同源）。
 #[cfg(feature = "coffer-store")]
 fn stdin_frame(unlocked: &str) -> String {
     let (dek, uuid, psk) = fake_secrets();
-    format!(
-        "DEK_HEX={dek}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nUNLOCKED={unlocked}\n"
+    stdin_frame_with(unlocked, &dek, &uuid, &psk)
+}
+
+/// 显式材料的 4 行 stdin 帧（解锁态用例：DEK/UUID 须为真实 vault 的，broker 以
+/// DEK 直开 `$COFFER_VAULT_DIR`；PSK 仍为确定性 fake，仅 E2E 配对用）。
+#[cfg(feature = "coffer-store")]
+fn stdin_frame_with(unlocked: &str, dek: &str, uuid: &str, psk: &str) -> String {
+    format!("DEK_HEX={dek}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nUNLOCKED={unlocked}\n")
+}
+
+/// 建一个独立快速档测试库（8 MiB KDF，与 tests/cli.rs 同款），开锁后以
+/// `set_dek_retention(true)` 保留 DEK 并导出 hex，返回 `(vault_dir, dek_hex,
+/// uuid_hex)`。会话随即 drop（建库/种子后测试进程不再持有库，broker 子进程
+/// 以 DEK 独立直开——避免 SQLite 双进程写锁纠缠）。
+#[cfg(feature = "coffer-store")]
+fn create_broker_vault(tag: &str) -> (PathBuf, String, String) {
+    const P1: &str = "correct-horse-battery-staple-42!";
+    let base = temp_dir(tag);
+    let brief = create_vault_with_kdf(
+        &base,
+        "broker测试库",
+        P1,
+        KdfParams::new(8 * 1024, 1, 1).expect("8 MiB fast KDF params"),
     )
+    .expect("create broker test vault");
+    let vault_dir = base.join(brief.uuid.to_string());
+    let session = open_vault(&vault_dir).expect("open broker test vault");
+    session.set_dek_retention(true);
+    session.unlock(P1).expect("unlock broker test vault");
+    let dek = session.export_dek().expect("export broker test vault DEK");
+    let dek_hex: String = dek.iter().map(|b| format!("{b:02x}")).collect();
+    drop(session);
+    // UUID 须无连字符（32 hex，`parse_hex_array::<16>` / `from_hex` 只认裸 hex；
+    // `Uuid::to_string()` 是带连字符 36 字符，直用会「缺 pairing 材料」）。
+    (vault_dir, dek_hex, brief.uuid.simple().to_string())
+}
+
+/// 重开库 + 主密码解锁（测试进程侧种子/断言用；与 broker 的 DEK 直开不同路径，
+/// 同库不同会话互不干扰）。
+#[cfg(feature = "coffer-store")]
+fn open_broker_vault(vault_dir: &Path) -> VaultSession {
+    const P1: &str = "correct-horse-battery-staple-42!";
+    let session = open_vault(vault_dir).expect("reopen broker test vault");
+    session
+        .unlock(P1)
+        .expect("unlock broker test vault (password)");
+    session
+}
+
+/// 最小 Login 种子草稿（username + password 字段，designation 对齐扩展填充角色）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn broker_login_draft(title: &str, username: &str, password: &str) -> ItemDraft {
+    ItemDraft {
+        title: title.to_owned(),
+        category: ItemCategory::Login,
+        urls: vec![],
+        tags: vec![],
+        sections: vec![],
+        fields: vec![
+            FieldDraft {
+                name: "username".to_owned(),
+                value: Some(username.to_owned()),
+                field_type: FieldType::Text,
+                designation: Some(Designation::Username),
+                section_index: None,
+                position: 0,
+            },
+            FieldDraft {
+                name: "password".to_owned(),
+                value: Some(password.to_owned()),
+                field_type: FieldType::Concealed,
+                designation: Some(Designation::Password),
+                section_index: None,
+                position: 1,
+            },
+        ],
+        totp: None,
+    }
+}
+
+/// 种子/断言用 cf-domain 存储形态绑定。
+///
+/// **值经 cf-browser 权威解析规范化**（与 broker `binding_for_origin` 同源，
+/// 裁定书 §3.2「勿改」匹配语义）：HTTPS 默认端口显式化（`https://github.com`
+/// → `https://github.com:443`）。测试种子/断言须与 broker 实际落库形态一致，
+/// 否则 `best_match` 不命中（8005 / 空列表 / capture 误新建）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn broker_domain_binding(kind: OriginBindingKind, value: &str) -> DomainBinding {
+    let normalized = cf_browser::origin::OriginBinding::parse(value)
+        .expect("canonical origin for seed/assert")
+        .value;
+    DomainBinding {
+        kind,
+        value: normalized,
+    }
+}
+
+/// 合法手势（base64(nonce 16 ‖ issuedAtMs 8 BE)，对齐 G-C 线格式）：nonce 用
+/// pid + 进程内递增计数器保证同进程多手势不重放撞车；`issuedAtMs` = 当前毫秒。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn fresh_gesture() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_millis() as u64;
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let mut raw = [0u8; 24];
+    raw[..8].copy_from_slice(&(std::process::id() as u64).to_be_bytes());
+    raw[8..16].copy_from_slice(&seq.to_be_bytes());
+    raw[16..].copy_from_slice(&now.to_be_bytes());
+    base64_encode_24(&raw)
+}
+
+/// base64 编码恰 24 字节（手势净长）→ 32 字符、无填充（对齐 gesture.rs 解码面）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn base64_encode_24(raw: &[u8; 24]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(32);
+    for chunk in raw.chunks_exact(3) {
+        out.push(TABLE[(chunk[0] >> 2) as usize] as char);
+        out.push(TABLE[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize] as char);
+        out.push(TABLE[(((chunk[1] & 0x0f) << 2) | (chunk[2] >> 6)) as usize] as char);
+        out.push(TABLE[(chunk[2] & 0x3f) as usize] as char);
+    }
+    out
 }
 
 /// spawn `coffer browser-broker --uds <uds> --log <log>`，解锁契约经 **stdin 私有
@@ -178,7 +334,9 @@ fn spawn_broker_stdin(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    cmd.stdin(Stdio::piped()).stderr(Stdio::piped()).stdout(Stdio::piped());
+    cmd.stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn browser-broker");
     let mut child_stdin = child.stdin.take().expect("stdin pipe");
     if let Some(lines) = stdin_lines {
@@ -282,7 +440,10 @@ fn subcommand_dispatch() {
         .expect("run browser-broker");
     assert_eq!(out.status.code(), Some(1), "缺 --uds → 配置错 1");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("browser broker"), "进入 browser-broker 分支: {err}");
+    assert!(
+        err.contains("browser broker"),
+        "进入 browser-broker 分支: {err}"
+    );
     assert!(err.contains("--uds"), "提示缺 --uds: {err}");
 
     // browser-agent：父进程非签名浏览器（测试进程）→ 8001 拒签（进入分支 + fail-closed）。
@@ -294,7 +455,10 @@ fn subcommand_dispatch() {
     assert_eq!(out.status.code(), Some(1), "8001 拒签 → 退出 1");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("8001"), "browser-agent 分支 8001 特征: {err}");
-    assert!(!err.contains("unknown subcommand"), "不得落入未知子命令: {err}");
+    assert!(
+        !err.contains("unknown subcommand"),
+        "不得落入未知子命令: {err}"
+    );
 
     // 未知子命令 → 契约退出码 1 + unknown-subcommand 特征（cli.rs:617 路径）。
     let out = Command::new(coffer_bin())
@@ -304,7 +468,10 @@ fn subcommand_dispatch() {
         .expect("run bogus subcommand");
     assert_eq!(out.status.code(), Some(1), "未知子命令 → 1");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("unknown subcommand"), "unknown-subcommand: {err}");
+    assert!(
+        err.contains("unknown subcommand"),
+        "unknown-subcommand: {err}"
+    );
 
     // `coffer mcp` 既有路径回归：未知 flag → 配置错 1（mcp 分支可达）。
     let out = Command::new(coffer_bin())
@@ -379,7 +546,12 @@ fn broker_uds_bind_and_permissions() {
         .expect("broker dir metadata")
         .permissions()
         .mode();
-    assert_eq!(dir_mode & 0o777, 0o700, "父目录权限须 0700, got {:o}", dir_mode);
+    assert_eq!(
+        dir_mode & 0o777,
+        0o700,
+        "父目录权限须 0700, got {:o}",
+        dir_mode
+    );
 
     // 停止 broker（无 Lock 通道时的生命周期由 App 侧 kill；测试 kill 收尾）。
     child.kill().expect("kill broker");
@@ -411,6 +583,11 @@ fn broker_missing_uds_is_config_error() {
 /// 解锁契约走 **stdin 私有管道**（生产路径）、**不设** `COFFER_BROKER_SKIP_PEER_VERIFY`
 /// → ③ 层签名校验恒开（SKIP env 同时门控 env 降级，8002 用例须走 stdin 才能
 /// 保持 ③ 层真实，HIGH2-3 §6.5）。
+///
+/// **锁定态帧（UNLOCKED=0）**：③ 层验 peer 与解锁态正交（同
+/// `release_broker_skips_nothing_when_env_set` 注释）；组 E 后解锁态开库为硬前提
+/// （UNLOCKED=1 缺 `$COFFER_VAULT_DIR` → fail-closed exit 1，见
+/// `broker_unlocked_missing_vault_dir_fails_closed`），本用例仅专注 ③ 层。
 #[test]
 #[cfg(feature = "coffer-store")]
 fn broker_rejects_unverified_host() {
@@ -419,8 +596,8 @@ fn broker_rejects_unverified_host() {
     let uds = dir.join("coffer.sock");
     let log = dir.join("broker.log");
 
-    // stdin 注入配对材料（不设 COFFER_BROKER_* env）→ ③ 层签名校验恒开。
-    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
+    // stdin 注入配对材料（不设 COFFER_BROKER_* env）→ ③ 层签名校验恒开；锁定态。
+    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("0")), &[]);
     assert!(
         wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
         "socket 未就绪: {}",
@@ -468,10 +645,12 @@ fn release_broker_skips_nothing_when_env_set() {
     let log = dir.join("broker.log");
 
     // stdin 交付配对材料（release 下 env 降级恒走不通）+ 显式 SKIP=1 继承链。
+    // 用锁定态帧（UNLOCKED=0）：③ 层拒连与解锁态正交，且免真实 vault（解锁态
+    // 需 `$COFFER_VAULT_DIR`，release 本用例专注 M-3 旋钮 inert 语义）。
     let mut child = spawn_broker_stdin(
         &uds,
         &log,
-        Some(&stdin_frame("1")),
+        Some(&stdin_frame("0")),
         &[("COFFER_BROKER_SKIP_PEER_VERIFY", "1")],
     );
     assert!(
@@ -493,7 +672,10 @@ fn release_broker_skips_nothing_when_env_set() {
     let _ = child.kill();
     let _ = child.wait();
     let log_text = std::fs::read_to_string(&log).unwrap_or_default();
-    assert!(log_text.contains("8002"), "release 下 8002 仍落日志: {log_text}");
+    assert!(
+        log_text.contains("8002"),
+        "release 下 8002 仍落日志: {log_text}"
+    );
 }
 
 // ===========================================================================
@@ -534,8 +716,11 @@ fn broker_locked_state() {
         origin: "https://github.com".into(),
         gesture: "test-gesture".into(),
     });
-    write_frame(&mut stream, &session.encrypt(&req).expect("encrypt get_secret"))
-        .expect("write get_secret");
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
     let resp_payload = read_frame(&mut stream)
         .expect("read response")
         .expect("broker 须响应 broker_locked");
@@ -553,7 +738,9 @@ fn broker_locked_state() {
     let lock_payload = read_frame(&mut stream)
         .expect("read lock response")
         .expect("broker 须响应 Locked");
-    let lock_resp: AppMessage = session.decrypt(&lock_payload).expect("decrypt lock response");
+    let lock_resp: AppMessage = session
+        .decrypt(&lock_payload)
+        .expect("decrypt lock response");
     assert!(
         matches!(lock_resp, AppMessage::Response(AppResponse::Locked)),
         "lock → Locked: {lock_resp:?}"
@@ -567,16 +754,15 @@ fn broker_locked_state() {
 }
 
 // ===========================================================================
-// GetEntries 端到端（G-B「broker 需处理 GetEntries」，docs/31 §5.2）
+// 解锁态 vault 接线（merge-time 组 E，裁定书 §3.1/§3.2）：get_entries /
+// get_secret / capture_save 落真实 vault。走 env 降级夹具（debug-only），
+// DEK/UUID 为真实建库导出值，broker 以 DEK 直开 `$COFFER_VAULT_DIR`。
 // ===========================================================================
 
-/// 解锁态（`COFFER_BROKER_UNLOCKED=1` + 条目夹具）下 `get_entries` → 真 E2E 返回
-/// `EntriesResult`（夹具条目逐字段断言）；同时断言解锁态 `get_secret` 当前为
-/// G-B 版契约（8003 `BrokerUnavailable` 未接线，vault 集成 = G-D/G-T merge-time 点）。
-///
-/// **debug-only 门控**（同 `broker_locked_state`）：`COFFER_BROKER_UNLOCKED` /
-/// `COFFER_BROKER_ENTRIES_JSON` env 夹具仅 debug 生效；release 下 env 降级剔除 →
-/// 空 stdin fail-closed，本用例语义不成立。判据 debug 门禁口径核销，计数不变。
+/// 解锁态 `get_entries` → 真 E2E 返回 `EntriesResult`（vault 查询 + origin 绑定
+/// 过滤；不带 gesture，lead 裁定 2026-10-08）。种子两条目：GitHub（github 绑定）
+/// 与 AWS（aws 绑定）；`get_entries(github)` 只回 GitHub，`get_entries(example.com)`
+/// 空列表（无绑定）。
 #[test]
 #[cfg(all(feature = "coffer-store", debug_assertions))]
 fn broker_get_entries_unlocked() {
@@ -585,13 +771,39 @@ fn broker_get_entries_unlocked() {
     let uds = dir.join("coffer.sock");
     let log = dir.join("broker.log");
 
-    // fields 结构化（lead 裁定 2026-10-08）：`Vec<EntryFieldRef{name, designation}>`，
-    // designation 为 cf-domain adjacently-tagged 序列化 `{"kind": "..."}`。
-    let fixture = r#"[{"entry":"e1","title":"GitHub","category":"login","fields":[{"name":"username","designation":{"kind":"username"}},{"name":"password","designation":{"kind":"password"}}]},{"entry":"e2","title":"AWS Console","category":"api_credential","fields":[{"name":"username","designation":{"kind":"username"}},{"name":"password","designation":{"kind":"password"}},{"name":"secret_key","designation":{"kind":"other","value":"secret_key"}}]}]"#;
+    let (vault_dir, dek, uuid) = create_broker_vault("broker-entries");
+    let (_, _, psk) = fake_secrets();
+    let seed = open_broker_vault(&vault_dir);
+    let id_github = seed
+        .create_item_with_origin_bindings(
+            &broker_login_draft("GitHub", "alice", "ghp_secret"),
+            vec![broker_domain_binding(
+                OriginBindingKind::Exact,
+                "https://github.com",
+            )],
+        )
+        .expect("seed github item");
+    let _id_aws = seed
+        .create_item_with_origin_bindings(
+            &broker_login_draft("AWS Console", "bob", "awspw"),
+            vec![broker_domain_binding(
+                OriginBindingKind::Exact,
+                "https://console.aws.amazon.com",
+            )],
+        )
+        .expect("seed aws item");
+    drop(seed);
+
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
     let mut child = spawn_broker(
         &uds,
         &log,
-        &[("COFFER_BROKER_UNLOCKED", "1"), ("COFFER_BROKER_ENTRIES_JSON", fixture)],
+        &[
+            ("COFFER_BROKER_UNLOCKED", "1"),
+            ("COFFER_BROKER_DEK_HEX", &dek),
+            ("COFFER_BROKER_VAULT_UUID_HEX", &uuid),
+            ("COFFER_VAULT_DIR", vault_str),
+        ],
         false,
     );
     assert!(
@@ -600,14 +812,17 @@ fn broker_get_entries_unlocked() {
         uds.display()
     );
 
-    let (mut session, mut stream) = e2e_client(&uds, &mut child);
+    let (mut session, mut stream) = e2e_client_with(&uds, &mut child, &dek, &uuid, &psk);
 
-    // get_entries → EntriesResult（夹具逐字段；不带 gesture，lead 裁定）。
+    // get_entries(github) → 仅 GitHub 条目（origin 过滤）。
     let req = AppMessage::Request(AppRequest::GetEntries {
         origin: "https://github.com".into(),
     });
-    write_frame(&mut stream, &session.encrypt(&req).expect("encrypt get_entries"))
-        .expect("write get_entries");
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_entries"),
+    )
+    .expect("write get_entries");
     let resp_payload = read_frame(&mut stream)
         .expect("read response")
         .expect("broker 须响应 entries_result");
@@ -615,47 +830,41 @@ fn broker_get_entries_unlocked() {
     let AppMessage::Response(AppResponse::EntriesResult { entries }) = resp else {
         panic!("解锁态 get_entries → EntriesResult, got: {resp:?}");
     };
-    assert_eq!(entries.len(), 2, "夹具两条");
-    assert_eq!(entries[0].entry, "e1");
+    assert_eq!(entries.len(), 1, "origin 过滤后仅 GitHub: {entries:?}");
+    assert_eq!(entries[0].entry, id_github, "条目 ID 回传");
     assert_eq!(entries[0].title, "GitHub");
-    assert_eq!(entries[0].category, cf_domain::category::ItemCategory::Login);
+    assert_eq!(entries[0].category, ItemCategory::Login);
     assert_eq!(
         entries[0].fields,
         vec![
             EntryFieldRef {
                 name: "username".into(),
-                designation: cf_domain::field::Designation::Username,
+                designation: Designation::Username,
             },
             EntryFieldRef {
                 name: "password".into(),
-                designation: cf_domain::field::Designation::Password,
+                designation: Designation::Password,
             },
         ]
     );
-    assert_eq!(
-        entries[1].category,
-        cf_domain::category::ItemCategory::ApiCredential
-    );
 
-    // 解锁态 get_secret：G-B 版契约 = 8003 未接线（操作不可用，docs/03 §12
-    // `BrokerUnavailable`；vault 集成 = G-D/G-T merge-time）。
-    let req = AppMessage::Request(AppRequest::GetSecret {
-        request_id: 2,
-        entry: "e1".into(),
-        fields: vec!["password".into()],
-        origin: "https://github.com".into(),
-        gesture: "test-gesture".into(),
+    // get_entries(example.com) → 空（无绑定命中）。
+    let req = AppMessage::Request(AppRequest::GetEntries {
+        origin: "https://example.com".into(),
     });
-    write_frame(&mut stream, &session.encrypt(&req).expect("encrypt get_secret"))
-        .expect("write get_secret");
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_entries"),
+    )
+    .expect("write get_entries");
     let resp_payload = read_frame(&mut stream)
         .expect("read response")
-        .expect("broker 须响应");
+        .expect("broker 须响应 entries_result");
     let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
-    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
-        panic!("解锁态 get_secret（G-B 版）→ Error, got: {resp:?}");
+    let AppMessage::Response(AppResponse::EntriesResult { entries }) = resp else {
+        panic!("解锁态 get_entries → EntriesResult, got: {resp:?}");
     };
-    assert_eq!(code, 8003, "G-B 版取密未接线 → 8003 BrokerUnavailable");
+    assert!(entries.is_empty(), "example.com 无绑定 → 空列表");
 
     // 收尾：lock → 干净退出 0。
     let lock = session
@@ -666,6 +875,461 @@ fn broker_get_entries_unlocked() {
     let code = wait_timeout(&mut child, Duration::from_secs(10))
         .expect("broker 应在 lock 后退出（未挂死）");
     assert_eq!(code, 0, "lock → 干净退出 0");
+    let _ = log;
+}
+
+/// 解锁态 `get_secret` 全链路（裁定书 §3.2 表）：
+/// 1. 手势无效 → 8007；2. origin 未绑定 → 8005；3. 条目不存在 → 8004；
+/// 4. 合法手势 + 绑定 + 多字段 → `GetSecretResult`（username/password 值）；
+/// 5. 同手势重放（replay）→ 8007（单次消费，D-7）。
+///    locked → 8003 由 `broker_locked_state`（锁定态启动）覆盖。
+#[test]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn broker_unlocked_get_secret_e2e() {
+    let dir = temp_dir("broker-getsecret");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let (vault_dir, dek, uuid) = create_broker_vault("broker-getsecret");
+    let (_, _, psk) = fake_secrets();
+    let seed = open_broker_vault(&vault_dir);
+    let id_github = seed
+        .create_item_with_origin_bindings(
+            &broker_login_draft("GitHub", "alice", "ghp_secret"),
+            vec![broker_domain_binding(
+                OriginBindingKind::Exact,
+                "https://github.com",
+            )],
+        )
+        .expect("seed github item");
+    let id_unbound = seed
+        .create_item_with_origin_bindings(&broker_login_draft("Unbound", "mallory", "x"), vec![])
+        .expect("seed unbound item");
+    drop(seed);
+
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
+    let mut child = spawn_broker(
+        &uds,
+        &log,
+        &[
+            ("COFFER_BROKER_UNLOCKED", "1"),
+            ("COFFER_BROKER_DEK_HEX", &dek),
+            ("COFFER_BROKER_VAULT_UUID_HEX", &uuid),
+            ("COFFER_VAULT_DIR", vault_str),
+        ],
+        false,
+    );
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+    let (mut session, mut stream) = e2e_client_with(&uds, &mut child, &dek, &uuid, &psk);
+
+    // 1. gesture 畸形 → 8007。
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 1,
+        entry: id_github.clone(),
+        fields: vec!["password".into()],
+        origin: "https://github.com".into(),
+        gesture: "not-a-gesture".into(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("畸形手势 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8007, "畸形手势 → 8007");
+
+    // 2. origin 未绑定 → 8005（对已绑定条目用未绑定 origin）。
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 2,
+        entry: id_github.clone(),
+        fields: vec!["password".into()],
+        origin: "https://example.com".into(),
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("origin 未绑定 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8005, "origin 未绑定 → 8005");
+
+    // 2b. 条目本身无任何绑定 → 8005。
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 3,
+        entry: id_unbound.clone(),
+        fields: vec!["password".into()],
+        origin: "https://example.com".into(),
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("无绑定条目 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8005, "无绑定条目 → 8005");
+
+    // 3. 目标条目不存在 → 8004。
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 4,
+        entry: "no-such-item".into(),
+        fields: vec!["password".into()],
+        origin: "https://github.com".into(),
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("条目不存在 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8004, "条目不存在 → 8004");
+
+    // 4. 合法手势 + 绑定 + 多字段 → GetSecretResult。
+    let good_gesture = fresh_gesture();
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 5,
+        entry: id_github.clone(),
+        fields: vec!["username".into(), "password".into()],
+        origin: "https://github.com".into(),
+        gesture: good_gesture.clone(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 get_secret_result");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::GetSecretResult { request_id, values }) = resp else {
+        panic!("合法 get_secret → GetSecretResult, got: {resp:?}");
+    };
+    assert_eq!(request_id, 5, "request_id 原样回传");
+    assert_eq!(values.len(), 2, "多字段一次返回");
+    assert_eq!(
+        values.get("username").map(|v| v.expose()),
+        Some("alice"),
+        "username 值"
+    );
+    assert_eq!(
+        values.get("password").map(|v| v.expose()),
+        Some("ghp_secret"),
+        "password 值"
+    );
+
+    // 5. 同手势重放（同一 nonce 二次消费）→ 8007（单次，D-7）。
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 6,
+        entry: id_github,
+        fields: vec!["password".into()],
+        origin: "https://github.com".into(),
+        gesture: good_gesture,
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("重放手势 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8007, "重放手势 → 8007（单次消费）");
+
+    // 6. ConfirmUnboundOrigin（L-4 缺口 = 不写绑定，最小语义）：
+    //    a. 坏手势 → 8007；b. 好手势 → OriginConfirmed。
+    let req = AppMessage::Request(AppRequest::ConfirmUnboundOrigin {
+        origin: "https://example.com".into(),
+        gesture: "not-a-gesture".into(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt confirm"),
+    )
+    .expect("write confirm");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("confirm 坏手势 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8007, "confirm 坏手势 → 8007");
+
+    let req = AppMessage::Request(AppRequest::ConfirmUnboundOrigin {
+        origin: "https://example.com".into(),
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt confirm"),
+    )
+    .expect("write confirm");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    assert!(
+        matches!(resp, AppMessage::Response(AppResponse::OriginConfirmed)),
+        "confirm 好手势 → OriginConfirmed, got: {resp:?}"
+    );
+
+    // 收尾：lock → 干净退出 0。
+    let lock = session
+        .encrypt(&AppMessage::Request(AppRequest::Lock))
+        .expect("encrypt lock");
+    write_frame(&mut stream, &lock).expect("write lock");
+    let _ = read_frame(&mut stream).expect("read lock response");
+    let code = wait_timeout(&mut child, Duration::from_secs(10))
+        .expect("broker 应在 lock 后退出（未挂死）");
+    assert_eq!(code, 0, "lock → 干净退出 0");
+    let _ = log;
+}
+
+/// 解锁态 `capture_save` **建**条目（裁定书 §3.2）：无既有 (origin+username) 匹配
+/// → 建新条目 + `origin_bindings=[绑定(origin)]` 落库。收尾后重开库断言绑定与
+/// username/password 字段（绑定落库断言）。
+#[test]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn broker_capture_save_creates_item_with_binding() {
+    let dir = temp_dir("broker-capture-create");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let (vault_dir, dek, uuid) = create_broker_vault("broker-capture-create");
+    let (_, _, psk) = fake_secrets();
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
+    let mut child = spawn_broker(
+        &uds,
+        &log,
+        &[
+            ("COFFER_BROKER_UNLOCKED", "1"),
+            ("COFFER_BROKER_DEK_HEX", &dek),
+            ("COFFER_BROKER_VAULT_UUID_HEX", &uuid),
+            ("COFFER_VAULT_DIR", vault_str),
+        ],
+        false,
+    );
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+    let (mut session, mut stream) = e2e_client_with(&uds, &mut child, &dek, &uuid, &psk);
+
+    // capture_save 新（github, alice, pw1）→ CaptureSaved。
+    let req = AppMessage::Request(AppRequest::CaptureSave {
+        origin: "https://github.com".into(),
+        username: cf_domain::secret::SecretString::from_exposed("alice"),
+        password: cf_domain::secret::SecretString::from_exposed("pw1"),
+        title: "GitHub".into(),
+        category: ItemCategory::Login,
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt capture_save"),
+    )
+    .expect("write capture_save");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 capture_saved");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::CaptureSaved { item_id }) = resp else {
+        panic!("capture_save 建 → CaptureSaved, got: {resp:?}");
+    };
+    assert!(!item_id.is_empty(), "返回新条目标识");
+
+    // 收尾 lock → 干净退出 0（先于重开库断言，broker 释放 vault 文件句柄）。
+    let lock = session
+        .encrypt(&AppMessage::Request(AppRequest::Lock))
+        .expect("encrypt lock");
+    write_frame(&mut stream, &lock).expect("write lock");
+    let _ = read_frame(&mut stream).expect("read lock response");
+    let code = wait_timeout(&mut child, Duration::from_secs(10))
+        .expect("broker 应在 lock 后退出（未挂死）");
+    assert_eq!(code, 0, "lock → 干净退出 0");
+
+    // 绑定落库断言：重开库，条目存在 + origin_bindings=[Exact github] + 字段值。
+    let verify = open_broker_vault(&vault_dir);
+    let item = verify
+        .get_item(&item_id)
+        .expect("get_item")
+        .expect("新建条目存在");
+    assert_eq!(
+        item.origin_bindings,
+        vec![broker_domain_binding(
+            OriginBindingKind::Exact,
+            "https://github.com"
+        )],
+        "绑定落库断言"
+    );
+    let title = item.title.expose().to_owned();
+    assert_eq!(title, "GitHub");
+    let pw_field = item
+        .fields
+        .iter()
+        .find(|f| f.designation == Some(Designation::Password))
+        .expect("password 字段存在");
+    assert_eq!(pw_field.value.as_ref().map(|v| v.expose()), Some("pw1"));
+    let _ = log;
+}
+
+/// 解锁态 `capture_save` **改**既有条目（裁定书 §3.2）：按 (origin 绑定 +
+/// username) 命中既有条目 → 改（密码更新 + `origin_bindings` 替换为
+/// `[绑定(origin)]`）→ 返回**同一** item_id。随后经 broker `get_secret` 断言新
+/// 密码可取（绑定仍在，取密全链路回环）；重开库断言绑定未丢。
+#[test]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn broker_capture_save_updates_existing_item() {
+    let dir = temp_dir("broker-capture-update");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let (vault_dir, dek, uuid) = create_broker_vault("broker-capture-update");
+    let (_, _, psk) = fake_secrets();
+    // 种子：既有 GitHub login（alice / oldpw + github 绑定）。
+    let seed = open_broker_vault(&vault_dir);
+    let id = seed
+        .create_item_with_origin_bindings(
+            &broker_login_draft("GitHub", "alice", "oldpw"),
+            vec![broker_domain_binding(
+                OriginBindingKind::Exact,
+                "https://github.com",
+            )],
+        )
+        .expect("seed github item");
+    drop(seed);
+
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
+    let mut child = spawn_broker(
+        &uds,
+        &log,
+        &[
+            ("COFFER_BROKER_UNLOCKED", "1"),
+            ("COFFER_BROKER_DEK_HEX", &dek),
+            ("COFFER_BROKER_VAULT_UUID_HEX", &uuid),
+            ("COFFER_VAULT_DIR", vault_str),
+        ],
+        false,
+    );
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+    let (mut session, mut stream) = e2e_client_with(&uds, &mut child, &dek, &uuid, &psk);
+
+    // capture_save（github, alice, newpw）→ 命中既有 → 同一 item_id（改）。
+    let req = AppMessage::Request(AppRequest::CaptureSave {
+        origin: "https://github.com".into(),
+        username: cf_domain::secret::SecretString::from_exposed("alice"),
+        password: cf_domain::secret::SecretString::from_exposed("newpw"),
+        title: "GitHub".into(),
+        category: ItemCategory::Login,
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt capture_save"),
+    )
+    .expect("write capture_save");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 capture_saved");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::CaptureSaved { item_id }) = resp else {
+        panic!("capture_save 改 → CaptureSaved, got: {resp:?}");
+    };
+    assert_eq!(item_id, id, "命中既有条目 → 返回同一 item_id（改而非建）");
+
+    // 经 broker get_secret 断言新密码可取 + 绑定仍在（全链路回环）。
+    let req = AppMessage::Request(AppRequest::GetSecret {
+        request_id: 7,
+        entry: item_id.clone(),
+        fields: vec!["password".into()],
+        origin: "https://github.com".into(),
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_secret"),
+    )
+    .expect("write get_secret");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 get_secret_result");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::GetSecretResult { values, .. }) = resp else {
+        panic!("更新后 get_secret → GetSecretResult, got: {resp:?}");
+    };
+    assert_eq!(
+        values.get("password").map(|v| v.expose()),
+        Some("newpw"),
+        "capture_save 改后密码已更新"
+    );
+
+    // 收尾 lock → 干净退出 0。
+    let lock = session
+        .encrypt(&AppMessage::Request(AppRequest::Lock))
+        .expect("encrypt lock");
+    write_frame(&mut stream, &lock).expect("write lock");
+    let _ = read_frame(&mut stream).expect("read lock response");
+    let code = wait_timeout(&mut child, Duration::from_secs(10))
+        .expect("broker 应在 lock 后退出（未挂死）");
+    assert_eq!(code, 0, "lock → 干净退出 0");
+
+    // 绑定落库断言：重开库，条目 origin_bindings 仍在。
+    let verify = open_broker_vault(&vault_dir);
+    let item = verify
+        .get_item(&item_id)
+        .expect("get_item")
+        .expect("条目存在");
+    assert_eq!(
+        item.origin_bindings,
+        vec![broker_domain_binding(
+            OriginBindingKind::Exact,
+            "https://github.com"
+        )],
+        "改后绑定仍落库"
+    );
     let _ = log;
 }
 
@@ -762,7 +1426,10 @@ fn slim_build_subcommands_not_registered() {
         assert_eq!(out.status.code(), Some(1));
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("browser broker"), "default 面注册: {err}");
-        assert!(!err.contains("unknown subcommand"), "不得走未知子命令: {err}");
+        assert!(
+            !err.contains("unknown subcommand"),
+            "不得走未知子命令: {err}"
+        );
     } else {
         // slim（no-default）：两子命令不注册 → unknown-subcommand fail-closed 退出 1。
         for sub in ["browser-agent", "browser-broker"] {
@@ -773,7 +1440,10 @@ fn slim_build_subcommands_not_registered() {
                 .expect("run slim subcommand");
             assert_eq!(out.status.code(), Some(1), "slim 面 `{sub}` → 配置错 1");
             let err = String::from_utf8_lossy(&out.stderr);
-            assert!(err.contains("unknown subcommand"), "slim 面未知子命令: {err}");
+            assert!(
+                err.contains("unknown subcommand"),
+                "slim 面未知子命令: {err}"
+            );
         }
     }
     let _ = dir;
@@ -801,7 +1471,10 @@ fn broker_no_stdin_fails_closed_no_socket() {
 
     // 诊断走 `--log` 文件（broker 缺省日志纪律），断言缺 pairing 特征。
     let log_text = std::fs::read_to_string(&log).unwrap_or_default();
-    assert!(log_text.contains("pairing"), "日志提示缺 pairing: {log_text}");
+    assert!(
+        log_text.contains("pairing"),
+        "日志提示缺 pairing: {log_text}"
+    );
     assert!(
         !uds.exists(),
         "fail-closed 不得留 socket: {}",
@@ -809,10 +1482,14 @@ fn broker_no_stdin_fails_closed_no_socket() {
     );
 }
 
-/// TC-BROKER-2（HIGH2-3 §7）：stdin 4 行正确 → broker 绑定 UDS、日志 `locked=false`
+/// TC-BROKER-2（HIGH2-3 §7）：stdin 4 行正确 + 真实 vault 的 DEK/UUID →
+/// broker 以 DEK 直开库（`$COFFER_VAULT_DIR`）并绑定 UDS，日志 `locked=false`
 ///（UNLOCKED=1 解锁态，可服务 app 请求）。well-known 落点公式本身由 TC-PATH /
 /// TC-HOST-1 单元测试覆盖；此处绑临时路径避免污染真实主目录（App 生产经
 /// `--uds <well-known>` 传参，HIGH2-3 §4.1）。
+///
+/// 组 E 后解锁态开库为硬前提（裁定书 §3.1）：UNLOCKED=1 缺 `$COFFER_VAULT_DIR`
+/// → fail-closed exit 1（见 `broker_unlocked_missing_vault_dir_fails_closed`）。
 #[test]
 #[cfg(feature = "coffer-store")]
 fn broker_stdin_valid_binds_and_locked_false() {
@@ -821,7 +1498,15 @@ fn broker_stdin_valid_binds_and_locked_false() {
     let uds = dir.join("coffer.sock");
     let log = dir.join("broker.log");
 
-    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
+    let (vault_dir, dek, uuid) = create_broker_vault("broker-stdin-ok");
+    let (_, _, psk) = fake_secrets();
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
+    let mut child = spawn_broker_stdin(
+        &uds,
+        &log,
+        Some(&stdin_frame_with("1", &dek, &uuid, &psk)),
+        &[("COFFER_VAULT_DIR", vault_str)],
+    );
     assert!(
         wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
         "socket 未就绪: {}",
@@ -833,7 +1518,7 @@ fn broker_stdin_valid_binds_and_locked_false() {
         .mode();
     assert_eq!(mode & 0o777, 0o600, "socket 权限须 0600, got {:o}", mode);
 
-    // 日志 locked=false（解锁态）。
+    // 日志 locked=false（解锁态 + 开库成功）。
     let _ = child.kill();
     let _ = child.wait();
     let log_text = std::fs::read_to_string(&log).unwrap_or_default();
@@ -841,6 +1526,60 @@ fn broker_stdin_valid_binds_and_locked_false() {
         log_text.contains("locked=false"),
         "日志断言 locked=false: {log_text}"
     );
+}
+
+/// 组 E fail-closed 判据（裁定书 §3.1）：UNLOCKED=1 解锁态缺 `$COFFER_VAULT_DIR`
+/// → 配置错 1 + **不留 socket**（开库先于 bind，fail-closed 语义延续 TC-BROKER-1）。
+#[test]
+#[cfg(feature = "coffer-store")]
+fn broker_unlocked_missing_vault_dir_fails_closed() {
+    let dir = temp_dir("broker-missing-vault-dir");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    // UNLOCKED=1 但不设 COFFER_VAULT_DIR → exit 1 + 无 socket。
+    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
+    let code = wait_timeout(&mut child, Duration::from_secs(15))
+        .expect("broker 应在缺 COFFER_VAULT_DIR 时退出（未挂死）");
+    assert_eq!(code, 1, "解锁态缺 COFFER_VAULT_DIR → 配置错 1");
+    assert!(
+        !uds.exists(),
+        "fail-closed 不得留 socket: {}",
+        uds.display()
+    );
+    let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        log_text.contains("COFFER_VAULT_DIR"),
+        "日志提示缺 COFFER_VAULT_DIR: {log_text}"
+    );
+}
+
+/// 组 E fail-closed 判据（裁定书 §3.1/R2）：UNLOCKED=1 + `$COFFER_VAULT_DIR` 指向
+/// 存在库但 DEK 错 → 开库失败（1002，`verify_integrity` 归一）→ exit 1 + 不留
+/// socket（无半开状态）。
+#[test]
+#[cfg(feature = "coffer-store")]
+fn broker_unlocked_wrong_dek_fails_closed() {
+    let dir = temp_dir("broker-wrong-dek");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let (vault_dir, _, uuid) = create_broker_vault("broker-wrong-dek");
+    // 用 fake DEK（`a1`×32，与真实库 DEK 不同）→ unlock_with_dek 1002 fail-closed。
+    let (wrong_dek, _, psk) = fake_secrets();
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
+    let mut child = spawn_broker_stdin(
+        &uds,
+        &log,
+        Some(&stdin_frame_with("1", &wrong_dek, &uuid, &psk)),
+        &[("COFFER_VAULT_DIR", vault_str)],
+    );
+    let code = wait_timeout(&mut child, Duration::from_secs(15))
+        .expect("broker 应因 DEK 错退出（未挂死）");
+    assert_eq!(code, 1, "DEK 错 → 配置错 1（fail-closed）");
+    assert!(!uds.exists(), "开库失败不得留 socket: {}", uds.display());
 }
 
 /// TC-BROKER-3（HIGH2-3 §7）：stdin 含非法 hex / 未知 key / 超 4 KiB 缓冲 → exit 1
@@ -859,13 +1598,16 @@ fn broker_stdin_invalid_fails_closed() {
         "zz".repeat(32)
     );
     // (b) 未知 key（`FOO=bar`，key 大小写敏感白名单外）→ 1。
-    let unknown_key = format!(
-        "DEK_HEX={dek}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nFOO=bar\nUNLOCKED=1\n"
-    );
+    let unknown_key =
+        format!("DEK_HEX={dek}\nVAULT_UUID_HEX={uuid}\nPSK_HEX={psk}\nFOO=bar\nUNLOCKED=1\n");
     // (c) 超 4 KiB 缓冲（防灌，HIGH2-3 §3.1）→ 1。
     let oversized = stdin_frame("1") + &"x".repeat(5 * 1024);
 
-    for (tag, frame) in [("bad-hex", bad_hex), ("unknown-key", unknown_key), ("oversized", oversized)] {
+    for (tag, frame) in [
+        ("bad-hex", bad_hex),
+        ("unknown-key", unknown_key),
+        ("oversized", oversized),
+    ] {
         let uds = dir.join(format!("{tag}.sock"));
         let mut child = spawn_broker_stdin(&uds, &log, Some(&frame), &[]);
         let code = wait_timeout(&mut child, Duration::from_secs(15))
@@ -882,6 +1624,9 @@ fn broker_stdin_invalid_fails_closed() {
 /// TC-BROKER-4（HIGH2-3 §7，HIGH-3 核销）：`ps eww <broker_pid>` 不含
 /// `COFFER_BROKER_*`、无密钥材料——密钥经 stdin 私有管道交付，绝不落 env / argv /
 /// 日志（`ps eww` 同用户可读 env，即 HIGH-3 泄露面）。
+///
+/// **锁定态帧（UNLOCKED=0）**：ps-env 泄露面与解锁态正交（组 E 后解锁态开库为硬
+/// 前提，UNLOCKED=1 缺 `$COFFER_VAULT_DIR` → fail-closed exit 1，socket 不出现）。
 #[test]
 #[cfg(feature = "coffer-store")]
 fn broker_stdin_secrets_not_in_ps_env() {
@@ -890,7 +1635,7 @@ fn broker_stdin_secrets_not_in_ps_env() {
     let uds = dir.join("coffer.sock");
     let log = dir.join("broker.log");
 
-    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("1")), &[]);
+    let mut child = spawn_broker_stdin(&uds, &log, Some(&stdin_frame("0")), &[]);
     assert!(
         wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
         "socket 未就绪: {}",
@@ -926,30 +1671,43 @@ fn broker_stdin_secrets_not_in_ps_env() {
 // ===========================================================================
 
 /// 建立到 broker 的真 E2E 会话：连接 UDS → IKpsk2 三消息握手（pin broker 公钥，
-/// 从同一 fake pairing 材料派生）→ 返回 `(Session, UnixStream)`——会话与其 UDS
-/// 流绑定，调用方用同一流收发后续 AEAD 帧（broker 单连接单会话）。
+/// 从**同一 fake pairing 材料**派生）→ 返回 `(Session, UnixStream)`——会话与其
+/// UDS 流绑定，调用方用同一流收发后续 AEAD 帧（broker 单连接单会话）。
+///
+/// 锁定态用例的快捷入口（材料 = [`fake_secrets`]）；解锁态用例须用
+/// [`e2e_client_with`] 传真实 vault 的 DEK/UUID（broker 身份派生 + 开库同源）。
 ///
 /// 握手失败时把 broker stderr 并入 panic 消息（中途异常诊断）。
-///
-/// 仅被 debug 门控的 `broker_locked_state` / `broker_get_entries_unlocked` 使用
-/// （release 下走 stdin 语义由 `release_broker_skips_nothing_when_env_set` 覆盖），
-/// 随 debug 归位（防 dead code）。
 #[cfg(all(feature = "coffer-store", debug_assertions))]
 fn e2e_client(uds: &Path, child: &mut Child) -> (Session, UnixStream) {
+    let (dek, uuid, psk) = fake_secrets();
+    e2e_client_with(uds, child, &dek, &uuid, &psk)
+}
+
+/// [`e2e_client`] 的显式材料变体：`dek_hex` / `uuid_hex` / `psk_hex` 全部传入
+///（解锁态用例：dek/uuid = 真实 vault 的，psk = 确定性 fake，与 broker 启动参数
+/// 完全一致）。
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn e2e_client_with(
+    uds: &Path,
+    child: &mut Child,
+    dek_hex: &str,
+    uuid_hex: &str,
+    psk_hex: &str,
+) -> (Session, UnixStream) {
     use cf_browser::broker::BrokerIdentity;
     use cf_browser::e2e::InitiatorHandshake;
     use cf_browser::protocol::HandshakeMessage;
 
-    let (dek, uuid, psk) = fake_secrets();
-    let dek_arr: [u8; 32] = cf_browser::e2e::from_hex(&dek)
+    let dek_arr: [u8; 32] = cf_browser::e2e::from_hex(dek_hex)
         .expect("dek hex")
         .try_into()
         .expect("dek len");
-    let uuid_arr: [u8; 16] = cf_browser::e2e::from_hex(&uuid)
+    let uuid_arr: [u8; 16] = cf_browser::e2e::from_hex(uuid_hex)
         .expect("uuid hex")
         .try_into()
         .expect("uuid len");
-    let psk_arr: [u8; 32] = cf_browser::e2e::from_hex(&psk)
+    let psk_arr: [u8; 32] = cf_browser::e2e::from_hex(psk_hex)
         .expect("psk hex")
         .try_into()
         .expect("psk len");

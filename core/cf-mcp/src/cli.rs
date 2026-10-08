@@ -1157,32 +1157,55 @@ mod browser {
         let stdout = io::stdout();
         let mut stdin = stdin.lock();
         let mut stdout = stdout.lock();
-        // while-let：stdin EOF（扩展关闭 native port）→ 干净退出。每帧 lockstep
-        // 一进一出。
-        while let Some(payload) =
-            read_frame(&mut stdin).map_err(|e| format!("stdin read failed: {e}"))?
-        {
-            // 扩展 → broker：读一帧（4B LE + payload），校验重组，转发 broker。
-            let framed = relay
-                .wrap(&payload)
-                .map_err(|e| format!("frame invalid: {e}"))?;
-            broker
-                .write_all(&framed)
-                .map_err(|e| format!("broker write failed: {e}"))?;
-            // broker → 扩展：读响应帧，原样写回 stdout（native messaging 帧）。
-            let Some(resp) =
-                read_frame(&mut broker).map_err(|e| format!("broker read failed: {e}"))?
-            else {
-                return Err("broker closed connection (channel lost)".into());
-            };
-            stdout
-                .write_all(&resp)
-                .map_err(|e| format!("stdout write failed: {e}"))?;
-            stdout
-                .flush()
-                .map_err(|e| format!("stdout flush failed: {e}"))?;
-        }
+        // stdin EOF（扩展关闭 native port）→ 干净退出；每帧 lockstep 一进一出
+        //（可测核心 [`Self::relay_once`]，BUG-17 回归测试驱动）。
+        while relay_once(&relay, &mut stdin, &mut broker, &mut stdout)? {}
         Ok(())
+    }
+
+    /// 中继**单次**「扩展请求 → broker → 扩展响应」往返（lockstep 一进一出）。
+    ///
+    /// 返回 `Ok(true)` = 处理完一帧；`Ok(false)` = stdin EOF（扩展关闭 native
+    /// port，干净退出）。流参数化以便单测注入（真机 stdin/stdout 是 native
+    /// messaging 协议面，不可进程内替换）。
+    ///
+    /// BUG-17 回归点：broker 响应经 `read_frame` 后是**剥离长度前缀的 payload**，
+    /// 写回扩展 stdout 前必须 `relay.wrap` 重组（4B LE 前缀 + payload）——此前裸写
+    /// stdout，Chrome 收到无前缀 JSON、把 JSON 首 4 字节当长度 → 解析失败 → 判
+    /// host 异常断连（真机「Error when communicating with the native messaging
+    /// host」），配对 pair_result 永远到不了扩展。与前向路径同构对称。
+    fn relay_once(
+        relay: &HostRelay,
+        stdin: &mut impl Read,
+        broker: &mut (impl Read + Write),
+        stdout: &mut impl Write,
+    ) -> Result<bool, String> {
+        // 扩展 → broker：读一帧（4B LE + payload），校验重组，转发 broker。
+        let Some(payload) = read_frame(stdin).map_err(|e| format!("stdin read failed: {e}"))?
+        else {
+            return Ok(false);
+        };
+        let framed = relay
+            .wrap(&payload)
+            .map_err(|e| format!("frame invalid: {e}"))?;
+        broker
+            .write_all(&framed)
+            .map_err(|e| format!("broker write failed: {e}"))?;
+        // broker → 扩展：读响应帧，重组（4B LE 长度前缀 + payload）后写回 stdout。
+        let Some(resp) = read_frame(broker).map_err(|e| format!("broker read failed: {e}"))?
+        else {
+            return Err("broker closed connection (channel lost)".into());
+        };
+        let resp = relay
+            .wrap(&resp)
+            .map_err(|e| format!("frame invalid: {e}"))?;
+        stdout
+            .write_all(&resp)
+            .map_err(|e| format!("stdout write failed: {e}"))?;
+        stdout
+            .flush()
+            .map_err(|e| format!("stdout flush failed: {e}"))?;
+        Ok(true)
     }
 
     // ---------------- browser-broker：长驻 daemon（持解锁会话） ----------------
@@ -2406,6 +2429,55 @@ mod browser {
             assert!(
                 parse_stdin_frame(unknown.as_bytes()).is_none(),
                 "未知 key → fail-closed"
+            );
+        }
+
+        /// BUG-17 回归：broker → 扩展响应写回 stdout 必须带 4B LE 长度前缀。
+        ///
+        /// 根因（真机「Error when communicating with the native messaging host」）：
+        /// `read_frame` 返回剥离长度前缀的 payload，relay 此前裸写 stdout → Chrome
+        /// 收到无前缀 JSON、把 JSON 首 4 字节当长度 → 解析失败 → 判 host 异常断连 →
+        /// 配对 pair_result 永远到不了扩展（approved 后扩展仍无更新）。
+        ///
+        /// 用 socketpair 假 broker + 内存流驱动 [`relay_once`] 单次往返：断言前向
+        /// 转发原样、返回输出**带长度前缀**（与 Chrome native messaging 契约一致）。
+        #[test]
+        fn relay_once_frames_broker_response_for_stdout() {
+            use std::io::Cursor;
+
+            let relay = HostRelay;
+            // 扩展侧请求（盲传内容不透明——取代表性配对帧载荷）。
+            let req_payload =
+                br#"{"type":"pair_request","extension_id":"imbfngccmiiocfalfmmijccmnkkhlibe"}"#;
+            let mut req_framed = Vec::new();
+            write_frame(&mut req_framed, req_payload).expect("frame request");
+            let mut stdin = Cursor::new(req_framed.clone());
+
+            // 假 broker：socketpair，调用前预写响应（broker 收到请求后的回话）。
+            let (mut broker_side, mut agent_side) = UnixStream::pair().expect("socketpair");
+            let resp_payload = br#"{"type":"pair_result","approved":true}"#;
+            let mut resp_framed = Vec::new();
+            write_frame(&mut resp_framed, resp_payload).expect("frame response");
+            broker_side
+                .write_all(&resp_framed)
+                .expect("preload broker response");
+
+            let mut stdout = Vec::new();
+            let ok = relay_once(&relay, &mut stdin, &mut agent_side, &mut stdout)
+                .expect("relay once 不抛错");
+            assert!(ok, "非 EOF 输入 → 处理完一帧返回 true");
+
+            // 前向：扩展请求以 4B LE + payload 原样转发 broker（重组仅补前缀，内容零改写）。
+            let got_req = read_frame(&mut broker_side)
+                .expect("broker 侧读到转发帧")
+                .expect("非 EOF");
+            assert_eq!(got_req, req_payload, "前向转发 payload 原样");
+
+            // 返回：stdout 输出必须 = 4B LE 长度前缀 + payload（BUG-17 回归断言；
+            // 修复前 stdout 是裸 JSON，Chrome 无法解析）。
+            assert_eq!(
+                stdout, resp_framed,
+                "broker 响应写回扩展 stdout 须为 4B LE 长度前缀 + payload（BUG-17）"
             );
         }
 

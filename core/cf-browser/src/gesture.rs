@@ -1,8 +1,9 @@
 //! 手势令牌 `gesture`：格式解析 + TTL 窗口 + 单次消费（docs/31 §5.2 / D-7 / §6.1，8007）。
 //!
-//! 线格式权威 = G-C 扩展侧已冻结实现（`extension/src/protocol.ts`
+//! 线格式权威 = G-C 扩展侧已冻结实现（`coffer-browser-extension/src/protocol.ts`
 //! `makeGesture`/`parseGesture`/`gestureWithinTtl`，`e2e_handshake.test.ts`
-//! 「gesture: format, TTL window」跨语言对拍基准）。
+//! 「gesture: format, TTL window」跨语言对拍基准；扩展源码已拆独立仓库
+//! https://github.com/cygnusyang/coffer-browser-extension）。
 //!
 //! 格式（对齐 protocol.ts L258-287）：
 //! `gesture = base64( 16 字节随机 nonce ‖ 8 字节大端 issuedAtMs )`，共 24 字节 → 32 字符；

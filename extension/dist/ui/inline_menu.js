@@ -67,7 +67,7 @@
     app().innerHTML = `${renderHeader()}<div class="warn">\u6B64\u8868\u5355\u63D0\u4EA4\u5230 ${esc(actionOrigin() ?? "\u672A\u77E5\u7AD9\u70B9")}\u3002\u786E\u8BA4\u586B\u5145\u5417\uFF1F</div><div class="row"><button class="ghost" id="coffer-cancel">\u53D6\u6D88</button><button class="primary" id="coffer-confirm">\u786E\u8BA4\u586B\u5145</button></div>`;
     app().querySelector("#coffer-confirm").addEventListener("click", () => {
       const gesture = makeGesture();
-      send({ type: "menu_cross_origin_confirm", origin: data.origin ?? "", gesture }, (res) => {
+      send({ type: "menu_cross_origin_confirm", entry: id, origin: data.origin ?? "", gesture }, (res) => {
         if (res.ok) {
           crossOriginApproved = true;
           doFill(id);

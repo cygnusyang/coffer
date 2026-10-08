@@ -62,7 +62,7 @@ test("all AppRequest variants round-trip through the session cipher", async () =
       category: "login",
       gesture: "g1",
     },
-    { type: "confirm_unbound_origin", origin: "https://example.com", gesture: "g2" },
+    { type: "confirm_unbound_origin", entry: "demo", origin: "https://example.com", gesture: "g2" },
     { type: "lock" },
     { type: "get_entries", origin: "https://example.com" },
   ];

@@ -87,9 +87,10 @@ function renderList(): void {
 function renderCrossOriginConfirm(id: string): void {
   app().innerHTML = `${renderHeader()}<div class="warn">此表单提交到 ${esc(actionOrigin() ?? "未知站点")}。确认填充吗？</div><div class="row"><button class="ghost" id="coffer-cancel">取消</button><button class="primary" id="coffer-confirm">确认填充</button></div>`;
   (app().querySelector("#coffer-confirm") as HTMLButtonElement).addEventListener("click", () => {
-    // Explicit approval → broker records it (confirm_unbound_origin), then fill proceeds.
+    // Explicit approval → broker records it (confirm_unbound_origin) bound to the clicked
+    // entry, then fill proceeds (docs/31 §5.2 r0.4 — confirm carries entry, contract v1.1).
     const gesture = makeGesture();
-    send({ type: "menu_cross_origin_confirm", origin: data.origin ?? "", gesture }, (res) => {
+    send({ type: "menu_cross_origin_confirm", entry: id, origin: data.origin ?? "", gesture }, (res) => {
       if (res.ok) {
         crossOriginApproved = true;
         doFill(id);

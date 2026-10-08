@@ -754,7 +754,12 @@
       }
       case "menu_cross_origin_confirm": {
         consumeGesture(msg.gesture);
-        const body = await brokerRequest({ type: "confirm_unbound_origin", origin: msg.origin, gesture: wireGesture() });
+        const body = await brokerRequest({
+          type: "confirm_unbound_origin",
+          entry: msg.entry,
+          origin: msg.origin,
+          gesture: wireGesture()
+        });
         if (body.type !== "origin_confirmed") {
           throw new ProtocolError(8004 /* SessionNotEstablished */, "origin not confirmed by broker");
         }

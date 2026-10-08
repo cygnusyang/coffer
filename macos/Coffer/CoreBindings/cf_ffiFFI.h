@@ -399,6 +399,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_enable_mcp_escrow(uint64_t ptr, RustBu
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_csv(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_DEK
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_DEK
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_dek(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_ONE_PUX
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_ONE_PUX
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_one_pux(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
@@ -557,6 +562,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_search(uint64_t ptr, RustBuffer 
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 void uniffi_cf_ffi_fn_method_vaultsession_set_clipboard_clear_secs(uint64_t ptr, int64_t secs, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_DEK_RETENTION
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_DEK_RETENTION
+void uniffi_cf_ffi_fn_method_vaultsession_set_dek_retention(uint64_t ptr, int8_t enabled, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_SET_FAVORITE
@@ -1075,6 +1085,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_csv(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_DEK
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_DEK
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_dek(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_ONE_PUX
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_ONE_PUX
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_one_pux(void
@@ -1264,6 +1280,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_search(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_CLIPBOARD_CLEAR_SECS
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_clipboard_clear_secs(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_DEK_RETENTION
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_SET_DEK_RETENTION
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_set_dek_retention(void
     
 );
 #endif

@@ -532,6 +532,13 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
 
         do {
+            // R1-3 缓解（裁定书 §1.7 R1-3）：浏览器集成已启用 → 解锁前开启 DEK
+            // 保留。必须在 Rust `set_current_dek`（本解锁）之前置位——retention
+            // 只在「开启后触发的解锁」才保留 DEK，解锁后才开则 current_dek 已弃。
+            // 下一行是本链路生效的关键（enable 时开不够，须每轮解锁前置）。
+            if browserIntegrationEnabled {
+                session.setDekRetention(enabled: true)
+            }
             let target = session
             let info = try await Task.detached(priority: .userInitiated) {
                 try target.unlock(password: password)
@@ -691,6 +698,11 @@ final class AppModel: ObservableObject {
             // ③ 后半段走 FFI：open(K_bio, aad) → DEK → SubKeys → ItemStore。
             //    K_bio 拷贝进 Task 闭包，本函数返回后局部变量即弃。
             //    AEAD open 失败（K_bio 不匹配 / 篡改）→ Rust 统一 1002（D-8）。
+            //    R1-3 缓解（同主密码解锁）：浏览器集成已启用 → 解锁前开启 DEK
+            //    保留（须在 Rust set_current_dek 之前置位，本解锁会话才保留 DEK）。
+            if browserIntegrationEnabled {
+                session.setDekRetention(enabled: true)
+            }
             let target = session
             let info = try await Task.detached(priority: .userInitiated) {
                 try target.unlockWithBiometric(kBio: kBio)
@@ -1032,6 +1044,12 @@ final class AppModel: ObservableObject {
     /// 启用：写三浏览器 manifest + spawn broker。
     /// 顺序裁定（docs/31 §2.3 配对流）：① 校验 coffer 二进制 → ② 写 manifest
     /// （任一失败 → 报错返回 false，不 spawn、不落开关）→ ③ spawn broker。
+    ///
+    /// R1-3 缓解（裁定书 §1.7 R1-3）：进入使能路径即开启 DEK 保留（idempotent）。
+    /// 注意：retention 须在 **解锁时**（`set_current_dek`）前置开启才有效——若本
+    /// 会话在 retention 开启前已解锁，本次 `startBrowserBrokerIfNeeded` 的
+    /// `exportDek()` 会 5002 fail-closed 不 spawn，下轮解锁即生效（诚实降级，
+    /// 无半配置 broker）。
     private func enableBrowserIntegration() async -> Bool {
         guard let binary = McpStatusProbe.cofferBinaryPath() else {
             lastErrorMessage = BrowserIntegrationError.missingCofferBinary.userText
@@ -1051,6 +1069,9 @@ final class AppModel: ObservableObject {
             lastErrorMessage = errText
             return false
         }
+        // R1-3：浏览器集成使能 → 开启 DEK 保留（startBrowserBrokerIfNeeded 前，
+        // 裁定书 §1.7 R1-3；本会话未在解锁时前置开启则本次 spawn fail-closed）
+        session?.setDekRetention(enabled: true)
         startBrowserBrokerIfNeeded()
         return true
     }
@@ -1091,9 +1112,10 @@ final class AppModel: ObservableObject {
             return
         }
         // stdin 私有管道材料（HIGH-3，docs/31 §3.1：DEK/UUID/PSK/unlocked 四行）。
-        // 取值接线 = merge-time（§8 第 4 项）；未接线 → fail-closed 不 spawn——
-        // 不留半配置 broker（G-B resolve_broker_secrets 必填缺即 exit 1）。
-        guard let secrets = brokerStdinSecrets() else {
+        // DEK/UUID 已接线（R1，见 brokerStdinSecrets）；PSK 依赖配对集成
+        // merge-time 项（裁定书 §5）→ 当前取不到即返回 nil，fail-closed 不 spawn
+        // ——不留半配置 broker（G-B resolve_broker_secrets 必填缺即 exit 1）。
+        guard var secrets = brokerStdinSecrets() else {
             browserBrokerState = .failed("broker 解锁材料接线未完成（merge-time）")
             return
         }
@@ -1108,13 +1130,19 @@ final class AppModel: ObservableObject {
         let socketPath = BrowserBroker.brokerSocketPath(homeDirectory: home)
         do {
             var payload = secrets.payload
+            // 用后即毁（M-7 纵深，裁定书 §1.4）：defer 保证 spawn 成败两路都覆零——
+            // ① stdin 载荷本地副本（H-3 核销）；② export 出的 DEK 原始字节（R1-2，
+            // 与 brokerStdinSecrets 内局部 dek 共享同一 COW 缓冲，此处覆零即终局）。
+            defer {
+                zeroize(&payload)
+                secrets.zeroizeDek()
+            }
             let process = try BrowserBroker.spawn(
                 executable: binary,
                 arguments: [BrowserBroker.SpawnConfig.subcommand,
                             BrowserBroker.SpawnConfig.udsFlag, socketPath],
                 environment: [BrowserBroker.SpawnConfig.vaultDirEnv: vaultDirPath],
                 stdinPayload: payload)
-            zeroize(&payload)  // 用后即毁：stdin 载荷本地副本覆零（H-3 核销）
             browserBrokerProcess = process
             browserBrokerState = .running(pid: process.processIdentifier)
         } catch {
@@ -1126,17 +1154,61 @@ final class AppModel: ObservableObject {
 
     /// broker stdin 私有管道材料 seam（HIGH-3，docs/31 §3.1 四行）。
     ///
-    /// 取值接线 = merge-time（§8 第 4 项）：DEK = vault 解锁派生（Rust session
-    /// 内部）、VAULT_UUID = vaultUUID 去横线（16 字节 hex）、PSK = 配对 keychain
-    /// （配对时写入，docs/31 §4.2）。未接线 → 返回 nil（fail-closed 不 spawn，
-    /// 避免以占位材料腐蚀确定性身份派生）。
+    /// 取值（merge-time 接线完成，裁定书 §1.4 / §1.7 R1-1）：
+    ///   - DEK = `session.exportDek()`（Rust session 解锁态保留的 32B 原始值，
+    ///     R1 (a-i) seam）——retention 未开 / 未解锁 / 已锁定 → Rust 5002，
+    ///     fail-closed 返回 nil（不 spawn，不留半配置 broker）。
+    ///   - VAULT_UUID = vaultUUID 去横线（16 字节 hex，32 字符）。
+    ///   - PSK = `pairingPskHex()` seam——配对集成 merge-time 项（裁定书 §5，
+    ///     独立于本裁定，配对 keychain 未接线）→ 当前取不到即返回 nil
+    ///     （fail-closed，绝不伪造占位 PSK 腐蚀确定性身份派生）。
+    ///
+    /// 零化纪律（§1.4 / M-7）：export 出的 DEK Data 与返回结构的 `dekBytes` 共享
+    /// COW 缓冲——失败路径在此 `zeroize(&dek)` 覆零（refcount=1 原地），成功路径
+    /// 由调用方写 stdin 后 `secrets.zeroizeDek()` 覆零同一缓冲（用后即毁）。
     private func brokerStdinSecrets() -> BrokerStdinSecrets? {
+        guard let session, phase == .unlocked else { return nil }
+        var dek: Data
+        do {
+            dek = try session.exportDek()
+        } catch {
+            DiagLog.append("broker DEK 导出失败（retention 未开启或未解锁）：\(ErrorPresenter.text(error))")
+            return nil
+        }
+        // 失败路径覆零已取出的 DEK；成功路径交由调用方覆零（同缓冲，二选一执行）
+        var kept = false
+        defer { if !kept { zeroize(&dek) } }
+        // VAULT_UUID：vaultUUID 去横线（16 字节 hex，32 字符——Rust uuid::Uuid
+        // 字符串为横线分隔 36 字符，broker 解析面需 32 字符 hex）。
+        let vaultUUIDHex = vaultUUID.replacingOccurrences(of: "-", with: "")
+        // PSK：配对集成 merge-time 项（裁定书 §5）——当前未接线 → nil（fail-closed）
+        guard let pskHex = pairingPskHex() else {
+            DiagLog.append("broker 配对 PSK 缺失（配对集成 merge-time 项未接线，不 spawn）")
+            return nil
+        }
+        let secrets = BrokerStdinSecrets(
+            dekBytes: dek, vaultUUIDHex: vaultUUIDHex, pskHex: pskHex, unlocked: true)
+        kept = true
+        return secrets
+    }
+
+    /// 配对 PSK 读取 seam（docs/31 §4.2：配对批准时由 broker 生成、App 存入
+    /// keychain）。配对集成 merge-time 项（裁定书 §5，独立于本裁定）未接线前
+    /// 返回 nil → `brokerStdinSecrets` fail-closed 不 spawn。**绝不硬编码/伪造
+    /// PSK**——占位材料会腐蚀扩展身份派生（确定性 derive 语义）。
+    private func pairingPskHex() -> String? {
         nil
     }
 
     /// 锁定 / 退出 / 停用：kill broker（幂等，docs/31 §2.1 killed；会话密钥随
     /// 进程销毁 docs/31 §3.4）。
+    ///
+    /// R1-3 缓解（裁定书 §1.7 R1-3）：停用/锁定即关闭 DEK 保留——Rust 侧立即
+    /// 清零会话内保留的 DEK（`set_dek_retention(false)` → zeroize current_dek），
+    /// 与锁态镜像一致（fail-closed：DEK 只在「浏览器集成启用 + 解锁」窗口驻留）。
+    /// 覆盖三个调用方：lock() / disableBrowserIntegration() / lockAllForTermination()。
     func stopBrowserBroker() {
+        session?.setDekRetention(enabled: false)
         BrowserBroker.kill(process: browserBrokerProcess)
         browserBrokerProcess = nil
         browserBrokerState = .stopped

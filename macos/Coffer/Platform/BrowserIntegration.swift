@@ -229,13 +229,26 @@ struct BrowserBroker {
             throw BrowserIntegrationError.brokerSpawnFailed(error.localizedDescription)
         }
         if let stdinPipe = process.standardInput as? Pipe, let payload = stdinPayload {
-            // 写满 → close stdin（EOF，broker 读满 fail-closed）→ 本副本覆零。
-            // 密钥材料不进日志、不经 env/argv；写失败以 close 收尾仍可让子进程
-            // 走 5s 硬超时（fail-closed），不吞错也不泄露材料。
-            stdinPipe.fileHandleForWriting.write(payload)
-            try? stdinPipe.fileHandleForWriting.close()
+            // M-6 核销（KNOWN-ISSUES.md:1100）：broker 早退写 stdin 不崩 App——
+            //   ① 写端先置 SO_NOSIGPIPE（fcntl F_SETNOSIGPIPE）：子进程关读端后
+            //      write 返回 EPIPE 而非投递 SIGPIPE（SIGPIPE 默认终止进程，会绕过
+            //      catch 直接崩 App——CLI 测试实证 EXIT=141）。
+            //   ② 改用 throwing write(contentsOf:)：EPIPE 抛 Swift 错误（而非
+            //      NSFileHandleOperationException），归入 spawn 失败路径
+            //      （fail-closed 呈现）。
+            // 无论成败：close stdin 收尾（EOF，broker 读满 fail-closed；写失败时
+            // close 仍让子进程走 5s 硬超时）+ 本副本覆零（M-7，不吞错不泄材料）。
             var local = payload
-            zeroize(&local)
+            defer { zeroize(&local) }
+            do {
+                setNoSIGPIPE(fileHandle: stdinPipe.fileHandleForWriting)
+                try stdinPipe.fileHandleForWriting.write(contentsOf: payload)
+                try? stdinPipe.fileHandleForWriting.close()
+            } catch {
+                try? stdinPipe.fileHandleForWriting.close()
+                throw BrowserIntegrationError.brokerSpawnFailed(
+                    "写入 broker stdin 失败（broker 可能已提前退出）：\(error.localizedDescription)")
+            }
         }
         return process
     }
@@ -265,9 +278,20 @@ struct BrowserBroker {
 /// 四行（LF 结尾）：`DEK_HEX` / `VAULT_UUID_HEX` / `PSK_HEX` / `UNLOCKED`，
 /// 与 G-B cli.rs `resolve_broker_secrets` 的解析面一致（env 名即 key）。密钥材料
 /// 仅存在于本结构体内存 + 序列化 Data 中，不进日志、不经 env/argv（H-3 核销）。
+///
+/// 零化纪律（裁定书 §1.4 / KNOWN-ISSUES M-7）：
+///   - `dekBytes` 持 FFI exportDek() 的原始 32 字节（非 hex 串），组帧时
+///     **hex 直编进 Data，不经中间 String**——Swift String 的 ARC/COW 存储无法
+///     可靠覆零，是本链路的唯一薄弱点（§1.4 明令规避）。
+///   - `vaultUUIDHex` / `pskHex` 为源串（CoW Swift String，G-D 裁定**不 zeroize**，
+///     防止过度覆零破坏源串语义）。
+///   - 调用方在 `payload` 写 stdin 后调用 `zeroizeDek()` 覆零 DEK 原始字节副本
+///     （R1-2/M-7 用后即毁；Data 值语义仅覆零当前副本，COW 共享缓冲不触及——
+///     已接受残余）。
 struct BrokerStdinSecrets {
-    /// vault 数据加密密钥（32 字节 hex，64 字符）。
-    let dekHex: String
+    /// vault 数据加密密钥（32 字节原始值，来自 FFI `VaultSession.exportDek()`）。
+    /// `var` 仅服务于 `zeroizeDek()` 的覆零突变，不改语义。
+    var dekBytes: Data
     /// vault UUID（16 字节 hex，32 字符）。
     let vaultUUIDHex: String
     /// 配对 PSK（32 字节 hex，64 字符）。
@@ -276,13 +300,39 @@ struct BrokerStdinSecrets {
     let unlocked: Bool
 
     /// 序列化为 §3.1 四行（LF 结尾）的 UTF-8 载荷。
+    ///
+    /// DEK 十六进制**直接逐字节进 Data**（`appendHex`，不经中间 String）——
+    /// 满足 §1.4 零化纪律；vault_uuid/psk 为源串（CoW String）直接 UTF-8 拷贝。
     var payload: Data {
-        var text = ""
-        text += "DEK_HEX=\(dekHex)\n"
-        text += "VAULT_UUID_HEX=\(vaultUUIDHex)\n"
-        text += "PSK_HEX=\(pskHex)\n"
-        text += "UNLOCKED=\(unlocked ? "1" : "0")\n"
-        return Data(text.utf8)
+        var data = Data()
+        data.append(Data("DEK_HEX=".utf8))
+        appendHex(dekBytes, into: &data)
+        data.append(Data("\nVAULT_UUID_HEX=".utf8))
+        data.append(Data(vaultUUIDHex.utf8))
+        data.append(Data("\nPSK_HEX=".utf8))
+        data.append(Data(pskHex.utf8))
+        data.append(Data("\nUNLOCKED=".utf8))
+        data.append(Data((unlocked ? "1\n" : "0\n").utf8))
+        return data
+    }
+
+    /// 用后即毁（R1-2/M-7 best-effort 纵深）：覆零 DEK 原始字节副本。调用方在
+    /// `payload` 写 stdin 后调用（AppModel.startBrowserBrokerIfNeeded）。Data 值
+    /// 语义下仅覆零当前副本（COW 共享缓冲的其它副本不触及，属 M-7 已接受残余）。
+    mutating func zeroizeDek() {
+        zeroize(&dekBytes)
+    }
+}
+
+/// 把字节流的十六进制编码（小写，2 字符/字节）**直接追加进 Data**——DEK 十六进制
+/// 必经此路径（不经中间 String，§1.4 零化纪律）。hex 表为编译期常量（非密钥材料），
+/// 局部构造无泄漏面。
+private func appendHex(_ bytes: Data, into out: inout Data) {
+    let hexTable: [UInt8] = Array("0123456789abcdef".utf8)
+    out.reserveCapacity(out.count + bytes.count * 2)
+    for byte in bytes {
+        out.append(hexTable[Int(byte >> 4)])
+        out.append(hexTable[Int(byte & 0x0f)])
     }
 }
 
@@ -292,6 +342,20 @@ func zeroize(_ data: inout Data) {
     data.withUnsafeMutableBytes { buffer in
         guard let base = buffer.baseAddress else { return }
         memset(base, 0, buffer.count)
+    }
+}
+
+/// 为 stdin 管道写端设置 SO_NOSIGPIPE（Darwin fcntl F_SETNOSIGPIPE）。
+///
+/// M-6 前置（KNOWN-ISSUES.md:1100）：broker 早退关读端后，未设 SO_NOSIGPIPE 的
+/// write 会投递 SIGPIPE（默认终止进程）→ 绕过 throwing catch 直接崩 App（CLI
+/// 实证 EXIT=141）；设置后 write 返回 EPIPE，由 M-6 的 throwing write 捕获并归入
+/// spawn 失败路径。fcntl 返回 -1（fd 非法等）仅静默忽略——退化回 OS 默认
+/// （SIGPIPE 语义），不额外吞写错误（写路径本身仍 throwing）。
+private func setNoSIGPIPE(fileHandle: FileHandle) {
+    let fd = fileHandle.fileDescriptor
+    if fd >= 0 {
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
     }
 }
 

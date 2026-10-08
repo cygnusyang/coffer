@@ -53,7 +53,7 @@ export type ContentToBackgroundMessage =
 export type MenuToBackgroundMessage =
   | { type: "menu_ready" }
   | { type: "menu_fill"; entry: string; origin: string; action?: string; gesture: string }
-  | { type: "menu_cross_origin_confirm"; origin: string; gesture: string }
+  | { type: "menu_cross_origin_confirm"; entry: string; origin: string; gesture: string }
   | { type: "menu_capture_accept"; origin: string; gesture: string };
 
 // --- background -> inline menu / popup ------------------------------------------------

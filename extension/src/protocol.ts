@@ -225,7 +225,13 @@ export type AppRequest =
       category: string;
       gesture: string;
     }
-  | { type: "confirm_unbound_origin"; origin: string; gesture: string }
+  | {
+      type: "confirm_unbound_origin";
+      /** Target entry id the user explicitly bound this origin to (same id as `get_secret.entry`). */
+      entry: string;
+      origin: string;
+      gesture: string;
+    }
   | { type: "lock" }
   | { type: "get_entries"; origin: string };
 

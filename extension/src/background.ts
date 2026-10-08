@@ -506,7 +506,12 @@ async function handleMessage(
       // User explicitly approved filling a form whose action targets another origin
       // (docs/31 §5.2) — broker records the approval, then the menu retries the fill.
       consumeGesture(msg.gesture);
-      const body = await brokerRequest({ type: "confirm_unbound_origin", origin: msg.origin, gesture: wireGesture() });
+      const body = await brokerRequest({
+        type: "confirm_unbound_origin",
+        entry: msg.entry,
+        origin: msg.origin,
+        gesture: wireGesture(),
+      });
       if (body.type !== "origin_confirmed") {
         throw new ProtocolError(ErrCode.SessionNotEstablished, "origin not confirmed by broker");
       }

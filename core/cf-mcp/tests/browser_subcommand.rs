@@ -1333,6 +1333,167 @@ fn broker_capture_save_updates_existing_item() {
     let _ = log;
 }
 
+/// L-5 并集语义（lead 裁定 2026-10-08）：命中既有条目时绑定取**并集**——当前
+/// origin 的 Exact 绑定缺则追加、既有绑定全保留（幂等，同 kind+value 不重复加）；
+/// 替换语义会把条目已绑定的他源绑定在从当前 origin 捕获时静默丢弃。
+///
+/// 两阶段：
+/// 1. 种子条目预绑 `[Domain github.com]`（B，裸 host，`best_match` 按 host 命中
+///    A=`https://github.com`）→ 从 A capture → 并集 `{B, Exact A}` 落库（A 追加、
+///    B 保留、无重复）；
+/// 2. 再从已绑 A capture → 绑定不变（幂等，无重复追加），密码逐次更新。
+#[test]
+#[cfg(all(feature = "coffer-store", debug_assertions))]
+fn broker_capture_save_merges_origin_bindings_union() {
+    let dir = temp_dir("broker-capture-union");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let uds = dir.join("coffer.sock");
+    let log = dir.join("broker.log");
+
+    let (vault_dir, dek, uuid) = create_broker_vault("broker-capture-union");
+    let (_, _, psk) = fake_secrets();
+    // 种子：既有 GitHub login（alice / oldpw）仅绑 Domain github.com（B）。
+    let b_domain = broker_domain_binding(OriginBindingKind::Domain, "github.com");
+    let seed = open_broker_vault(&vault_dir);
+    let id = seed
+        .create_item_with_origin_bindings(
+            &broker_login_draft("GitHub", "alice", "oldpw"),
+            vec![b_domain.clone()],
+        )
+        .expect("seed github item with domain binding");
+    drop(seed);
+
+    let vault_str = vault_dir.to_str().expect("utf8 vault dir");
+    // 期望并集 = {Domain github.com, Exact https://github.com:443}。
+    let expected_union = vec![
+        b_domain.clone(),
+        broker_domain_binding(OriginBindingKind::Exact, "https://github.com"),
+    ];
+    let spawn_unlocked = |uds: &Path, log: &Path| {
+        spawn_broker(
+            uds,
+            log,
+            &[
+                ("COFFER_BROKER_UNLOCKED", "1"),
+                ("COFFER_BROKER_DEK_HEX", &dek),
+                ("COFFER_BROKER_VAULT_UUID_HEX", &uuid),
+                ("COFFER_VAULT_DIR", vault_str),
+            ],
+            false,
+        )
+    };
+
+    // 阶段 1：从 A capture（alice/newpw）→ 命中既有 → 并集 {A,B}、无重复。
+    let mut child = spawn_unlocked(&uds, &log);
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+    let (mut session, mut stream) = e2e_client_with(&uds, &mut child, &dek, &uuid, &psk);
+    let req = AppMessage::Request(AppRequest::CaptureSave {
+        origin: "https://github.com".into(),
+        username: cf_domain::secret::SecretString::from_exposed("alice"),
+        password: cf_domain::secret::SecretString::from_exposed("newpw"),
+        title: "GitHub".into(),
+        category: ItemCategory::Login,
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt capture_save"),
+    )
+    .expect("write capture_save");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 capture_saved");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::CaptureSaved { item_id }) = resp else {
+        panic!("capture_save 并集 → CaptureSaved, got: {resp:?}");
+    };
+    assert_eq!(item_id, id, "命中既有 → 同一 item_id");
+    let lock = session
+        .encrypt(&AppMessage::Request(AppRequest::Lock))
+        .expect("encrypt lock");
+    write_frame(&mut stream, &lock).expect("write lock");
+    let _ = read_frame(&mut stream).expect("read lock response");
+    let code = wait_timeout(&mut child, Duration::from_secs(10))
+        .expect("broker 应在 lock 后退出（未挂死）");
+    assert_eq!(code, 0, "lock → 干净退出 0");
+
+    // 阶段 1 落库断言：并集 {A,B}，A 追加、B 保留、无重复。
+    let verify = open_broker_vault(&vault_dir);
+    let item = verify
+        .get_item(&item_id)
+        .expect("get_item")
+        .expect("条目存在");
+    assert_eq!(
+        item.origin_bindings, expected_union,
+        "并集落库：A 追加、B 保留、无重复"
+    );
+    drop(verify);
+
+    // 阶段 2：从已绑 A 再 capture（alice/newerpw）→ 绑定不变（幂等）。
+    let mut child = spawn_unlocked(&uds, &log);
+    assert!(
+        wait_for_socket_mode(&uds, 0o600, Duration::from_secs(10)),
+        "socket 未就绪: {}",
+        uds.display()
+    );
+    let (mut session, mut stream) = e2e_client_with(&uds, &mut child, &dek, &uuid, &psk);
+    let req = AppMessage::Request(AppRequest::CaptureSave {
+        origin: "https://github.com".into(),
+        username: cf_domain::secret::SecretString::from_exposed("alice"),
+        password: cf_domain::secret::SecretString::from_exposed("newerpw"),
+        title: "GitHub".into(),
+        category: ItemCategory::Login,
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt capture_save"),
+    )
+    .expect("write capture_save");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 capture_saved");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::CaptureSaved { item_id: id2 }) = resp else {
+        panic!("capture_save 幂等 → CaptureSaved, got: {resp:?}");
+    };
+    assert_eq!(id2, id, "幂等 capture → 同一 item_id");
+    let lock = session
+        .encrypt(&AppMessage::Request(AppRequest::Lock))
+        .expect("encrypt lock");
+    write_frame(&mut stream, &lock).expect("write lock");
+    let _ = read_frame(&mut stream).expect("read lock response");
+    let code = wait_timeout(&mut child, Duration::from_secs(10))
+        .expect("broker 应在 lock 后退出（未挂死）");
+    assert_eq!(code, 0, "lock → 干净退出 0");
+
+    // 阶段 2 落库断言：绑定不变（幂等，无重复追加）+ 密码已更新。
+    let verify = open_broker_vault(&vault_dir);
+    let item = verify
+        .get_item(&item_id)
+        .expect("get_item")
+        .expect("条目存在");
+    assert_eq!(
+        item.origin_bindings, expected_union,
+        "幂等：绑定保持不变、无重复追加"
+    );
+    let pw_field = item
+        .fields
+        .iter()
+        .find(|f| f.designation == Some(Designation::Password))
+        .expect("password 字段存在");
+    assert_eq!(
+        pw_field.value.as_ref().map(|v| v.expose()),
+        Some("newerpw"),
+        "逐次 capture 密码已更新"
+    );
+    let _ = log;
+}
+
 // ===========================================================================
 // 判据 6：退出码契约 0/1/2/3（docs/32 §1.2-6）
 // ===========================================================================

@@ -104,7 +104,10 @@ fn list_secret_names_excludes_environment_containers() {
     seed_secret(&prov, "api-key", "v1");
     seed_secret(&prov, "db-pass", "v2");
     seed_env(&prov, "prod", &[]);
-    let names = prov.list_secret_names(None).unwrap();
+    // 排序后比较：list_secret_names 底层 HashMap 迭代顺序不确定（v2.1.0 引入的
+    // flake，L-7），断言与实现顺序解耦。
+    let mut names = prov.list_secret_names(None).unwrap();
+    names.sort();
     assert_eq!(names, vec!["api-key", "db-pass"]);
 }
 

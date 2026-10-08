@@ -1568,7 +1568,10 @@ mod browser {
                     return broker_error(ERR_BROKER_PROTOCOL, "非法 origin");
                 };
                 // 按 (origin 绑定匹配 + username 字段值相同) 找既有条目：有 → 改，
-                // 无 → 建。`origin_bindings` 恒替换为 `[绑定(origin)]`（裁定书 §3.2）。
+                // 无 → 建。绑定并集语义（L-5，lead 裁定 2026-10-08）：**命中既有**
+                // 时当前 origin 缺则追加、既有绑定全保留（幂等）——替换会把条目已
+                // 绑定的他源绑定在从当前 origin 捕获时静默丢弃；**新建**路径仍
+                // `[绑定(origin)]`（条目本无绑定）。
                 match find_item_by_origin_and_username(vault, &o, &username) {
                     Ok(Some(item_id)) => {
                         let item = match vault.get_item(&item_id) {
@@ -1593,7 +1596,14 @@ mod browser {
                                 format!("更新条目失败 ({}): {e}", e.code()),
                             );
                         }
-                        if let Err(e) = vault.set_item_origin_bindings(&item_id, vec![binding]) {
+                        // 并集：读既有绑定 → 当前 origin 的 Exact 绑定（kind+value
+                        // 全等判重）缺则追加、既有全保留；命中路径 origin 通常已在
+                        // 绑定内（best_match 命中）→ 实际等效 keep-as-is，幂等。
+                        let mut merged = item.origin_bindings.clone();
+                        if !merged.contains(&binding) {
+                            merged.push(binding);
+                        }
+                        if let Err(e) = vault.set_item_origin_bindings(&item_id, merged) {
                             return broker_error(
                                 ERR_BROKER_PROTOCOL,
                                 format!("写入绑定失败 ({}): {e}", e.code()),

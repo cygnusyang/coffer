@@ -30,6 +30,15 @@ struct RootView: View {
                 VaultSwitcherView()
                     .environmentObject(model)
             }
+            // 配对批准前置 sheet（docs/01 FR-16.1）：扩展发起配对时主窗口前置弹
+            // sheet，用户无需进「设置」页。挂 RootView（任何子视图状态下都能弹）；
+            // 请求只在解锁态到达（锁态 broker 未 spawn、notify 无监听），解锁态唤醒
+            // 由 AppDelegate.onPairingRequestWake 触发。批准/拒绝/取消/120s 超时
+            // 清 pendingPairingRequest → sheet 自动关（AppModel 现有逻辑全复用）。
+            .sheet(item: $model.pendingPairingRequest) { _ in
+                BrowserPairingSheet()
+                    .environmentObject(model)
+            }
     }
 
     @ViewBuilder

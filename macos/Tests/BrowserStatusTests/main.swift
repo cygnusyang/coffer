@@ -311,6 +311,10 @@ check(
     "配对决策模型无 PSK 字段（密钥材料不进 App 状态，docs/31 §5.3）"
 )
 
+// ---- 9.2 FR-16.1：BrowserPairingRequest Identifiable（前置 sheet 绑定 id=requestId）----
+
+check(request.id == 1, "BrowserPairingRequest Identifiable: id == request_id（sheet(item:) 绑定）")
+
 // ---- 10. 用户主目录解析（沙盒外 = NSHomeDirectory；沙盒内 getpwuid 真实 home）----
 
 check(!BrowserStatusProbe.userHomeDirectory().isEmpty, "userHomeDirectory 非空")

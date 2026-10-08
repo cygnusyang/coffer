@@ -1071,9 +1071,13 @@ fn broker_unlocked_get_secret_e2e() {
     };
     assert_eq!(code, 8007, "重放手势 → 8007（单次消费）");
 
-    // 6. ConfirmUnboundOrigin（L-4 缺口 = 不写绑定，最小语义）：
-    //    a. 坏手势 → 8007；b. 好手势 → OriginConfirmed。
+    // 6. ConfirmUnboundOrigin（契约 v1.1：entry 字段显式携带目标条目，broker 据此
+    //    把当前 origin 以 Exact 绑定并集写入目标条目）：
+    //    a. 坏手势 → 8007；b. 目标条目不存在 → 8004；c. 好手势 + 目标条目 →
+    //    OriginConfirmed；d. 读回断言：get_entries(example.com) 现命中该条目
+    //    （此前无绑定 → 不命中，等价于 origin_bindings 现含 Exact example.com）。
     let req = AppMessage::Request(AppRequest::ConfirmUnboundOrigin {
+        entry: id_unbound.clone(),
         origin: "https://example.com".into(),
         gesture: "not-a-gesture".into(),
     });
@@ -1091,7 +1095,29 @@ fn broker_unlocked_get_secret_e2e() {
     };
     assert_eq!(code, 8007, "confirm 坏手势 → 8007");
 
+    // b. 目标条目不存在 → 8004（与 get_secret 同语义）。
     let req = AppMessage::Request(AppRequest::ConfirmUnboundOrigin {
+        entry: "no-such-item".into(),
+        origin: "https://example.com".into(),
+        gesture: fresh_gesture(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt confirm"),
+    )
+    .expect("write confirm");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::Error { code, .. }) = resp else {
+        panic!("confirm 条目不存在 → Error, got: {resp:?}");
+    };
+    assert_eq!(code, 8004, "confirm 条目不存在 → 8004");
+
+    // c. 好手势 + 目标条目（此前无绑定）→ OriginConfirmed。
+    let req = AppMessage::Request(AppRequest::ConfirmUnboundOrigin {
+        entry: id_unbound.clone(),
         origin: "https://example.com".into(),
         gesture: fresh_gesture(),
     });
@@ -1108,6 +1134,32 @@ fn broker_unlocked_get_secret_e2e() {
         matches!(resp, AppMessage::Response(AppResponse::OriginConfirmed)),
         "confirm 好手势 → OriginConfirmed, got: {resp:?}"
     );
+
+    // d. 读回断言：绑定已落库 → get_entries(example.com) 现命中该条目（条目
+    //    此前无任何绑定，确认前走 get_entries 应不命中；现 Exact example.com
+    //    绑定在库 → 命中）。
+    let req = AppMessage::Request(AppRequest::GetEntries {
+        origin: "https://example.com".into(),
+    });
+    write_frame(
+        &mut stream,
+        &session.encrypt(&req).expect("encrypt get_entries"),
+    )
+    .expect("write get_entries");
+    let resp_payload = read_frame(&mut stream)
+        .expect("read response")
+        .expect("broker 须响应 entries_result");
+    let resp: AppMessage = session.decrypt(&resp_payload).expect("decrypt response");
+    let AppMessage::Response(AppResponse::EntriesResult { entries }) = resp else {
+        panic!("confirm 后 get_entries → EntriesResult, got: {resp:?}");
+    };
+    assert_eq!(
+        entries.len(),
+        1,
+        "confirm 后 example.com 命中确认条目: {entries:?}"
+    );
+    assert_eq!(entries[0].entry, id_unbound, "命中条目 = 确认目标条目");
+    assert_eq!(entries[0].title, "Unbound");
 
     // 收尾：lock → 干净退出 0。
     let lock = session

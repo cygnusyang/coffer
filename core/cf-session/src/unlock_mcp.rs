@@ -197,14 +197,12 @@ pub(crate) fn disable_mcp_escrow_impl(
 /// - 其余一切失败（mcp_key 错 / 密文篡改 / 跨库搬运 / 库数据异常）→
 ///   **统一 1002**，不泄露失败原因。
 ///
-/// 返回 `(store, dek)`：`dek` 供调用方按 retention 决定是否在会话内保留
-/// （merge-time R1，见 [`crate::vault::VaultSession::set_dek_retention`]）；
-/// 不需要时忽略即可，`SessionKey` 离开作用域即 ZeroizeOnDrop 清零。
+/// 返回已打开的 [`cf_store::ItemStore`]：DEK 已转入 `SubKeys`，会话不持 DEK。
 pub(crate) fn unlock_store_with_mcp_key(
     vault_dir: &Path,
     header: &cf_format::Header,
     mcp_key: &[u8],
-) -> SessionResult<(cf_store::ItemStore, SessionKey)> {
+) -> SessionResult<cf_store::ItemStore> {
     const UNLOCK_FAILED: CfError = CfError::UnlockFailed;
 
     // 用户意图未开启（available=false）或畸形（缺密文）→ 1002，
@@ -224,8 +222,7 @@ pub(crate) fn unlock_store_with_mcp_key(
     }
 
     let dek = recover_dek_mcp(header, wrapped_b64, mcp_key)?;
-    let store = finish_unlock(vault_dir, header, &dek)?;
-    Ok((store, dek))
+    finish_unlock(vault_dir, header, &dek)
 }
 
 /// MCP 通道的 DEK 解出：open(mcp_key, aad=uuid‖"wrapped_dek_mcp",

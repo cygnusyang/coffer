@@ -1116,12 +1116,6 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func createItem(draft: FfiItemDraft) throws  -> String
     
     /**
-     * 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。Swift 侧
-     * 探测「是否需补种」用本方法——**不导出明文 DEK**，避免跨桥明文往返。
-     */
-    func dekRetained()  -> Bool
-    
-    /**
      * 删除条目：`hard = false` 进回收站，`hard = true` 级联硬删。
      */
     func deleteItem(itemId: String, hard: Bool) throws 
@@ -1217,20 +1211,6 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 调用本方法——内核不提供也不应绕过该门禁（D-11 默认关闭）。
      */
     func exportCsv(outPath: String) throws  -> FfiCsvExportResult
-    
-    /**
-     * 导出当前会话 DEK（32 字节原始值，UniFFI `Vec<u8>` → Swift `Data`）。
-     * merge-time R1 (a-i) 刻意设计（裁定书 §1.4）：DEK 只在
-     * 「Rust session ↔ 短暂 Swift 缓冲 ↔ stdin 管道」内瞬时存在，
-     * 跨 FFI 取用属既有 H-3 契约的取值落点，不新增任何持久/日志面。
-     *
-     * 门禁（fail-closed）：retention 未开启或未解锁（`current_dek` 为
-     * `None`）→ 5002（InvalidArgument，映射见 crate::error）。
-     *
-     * 返回临时副本（非零化 `Vec<u8>`）——调用方（Swift，组 C 纪律）
-     * 写入 stdin 后立即零化（既有 `zeroize(_:)`）。
-     */
-    func exportDek() throws  -> Data
     
     /**
      * 1PUX 明文导出（FR-8.2，v0.7.0-T04；docs/23 TC-EXP 组；锁定态 → 1001）。
@@ -1461,21 +1441,6 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func restoreItem(itemId: String) throws 
     
     /**
-     * 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
-     *
-     * 用户解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
-     * 无效（R1 只在解锁瞬间填 DEK）→ 用生物识别材料补种 DEK 供 broker 导出。
-     * 与 `unlock_with_biometric` 的关键差异：**无幂等短路**（已解锁也补种），
-     * 且**不改变解锁态**（只补 DEK，零 ItemStore 重建）。
-     *
-     * # 错误（fail-fast，镜像 `export_dek` 门禁语义 + D-8）
-     *
-     * 锁定态 → 1001；retention 未开启 → 5002；bio 未启用 → 4001；
-     * k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
-     */
-    func retainDekWithBio(kBio: Data) throws 
-    
-    /**
      * 标题搜索（多关键词全命中，仅 Active 态；空查询返回空结果）。
      */
     func search(query: String) throws  -> [FfiItemSummary]
@@ -1490,18 +1455,6 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * UI 选择器。
      */
     func setClipboardClearSecs(secs: Int64) throws 
-    
-    /**
-     * 开启/关闭 DEK 保留（merge-time R1 (a-i)，浏览器集成启用时由 Swift
-     * 调用；broker / cf-mcp 不开）。幂等开关：重复设置同值无副作用，
-     * 关闭时立即清零已持有的 DEK（fail-closed）；`lock()` 恒清零。
-     *
-     * 安全语义（裁定书 §1.4 / §1.7 R1-1）：开启后解锁态会在 Rust 内存
-     * 额外保留 DEK（`SessionKey`，`ZeroizeOnDrop`），驻留窗口从「解锁
-     * 瞬间」扩到「整个解锁会话」。本方法不新增任何持久/日志面——DEK
-     * 只存于会话内存，随 `lock()` / 关闭 retention 清零。
-     */
-    func setDekRetention(enabled: Bool) 
     
     /**
      * 设置 / 取消收藏。
@@ -1770,19 +1723,6 @@ open func createItem(draft: FfiItemDraft)throws  -> String  {
 }
     
     /**
-     * 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。Swift 侧
-     * 探测「是否需补种」用本方法——**不导出明文 DEK**，避免跨桥明文往返。
-     */
-open func dekRetained() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_cf_ffi_fn_method_vaultsession_dek_retained(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * 删除条目：`hard = false` 进回收站，`hard = true` 级联硬删。
      */
 open func deleteItem(itemId: String, hard: Bool)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -1941,27 +1881,6 @@ open func exportCsv(outPath: String)throws  -> FfiCsvExportResult  {
     uniffi_cf_ffi_fn_method_vaultsession_export_csv(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(outPath),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * 导出当前会话 DEK（32 字节原始值，UniFFI `Vec<u8>` → Swift `Data`）。
-     * merge-time R1 (a-i) 刻意设计（裁定书 §1.4）：DEK 只在
-     * 「Rust session ↔ 短暂 Swift 缓冲 ↔ stdin 管道」内瞬时存在，
-     * 跨 FFI 取用属既有 H-3 契约的取值落点，不新增任何持久/日志面。
-     *
-     * 门禁（fail-closed）：retention 未开启或未解锁（`current_dek` 为
-     * `None`）→ 5002（InvalidArgument，映射见 crate::error）。
-     *
-     * 返回临时副本（非零化 `Vec<u8>`）——调用方（Swift，组 C 纪律）
-     * 写入 stdin 后立即零化（既有 `zeroize(_:)`）。
-     */
-open func exportDek()throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-        uniffiCallStatus in
-    uniffi_cf_ffi_fn_method_vaultsession_export_dek(
-            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -2430,28 +2349,6 @@ open func restoreItem(itemId: String)throws   {try rustCallWithError(FfiConverte
 }
     
     /**
-     * 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
-     *
-     * 用户解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
-     * 无效（R1 只在解锁瞬间填 DEK）→ 用生物识别材料补种 DEK 供 broker 导出。
-     * 与 `unlock_with_biometric` 的关键差异：**无幂等短路**（已解锁也补种），
-     * 且**不改变解锁态**（只补 DEK，零 ItemStore 重建）。
-     *
-     * # 错误（fail-fast，镜像 `export_dek` 门禁语义 + D-8）
-     *
-     * 锁定态 → 1001；retention 未开启 → 5002；bio 未启用 → 4001；
-     * k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
-     */
-open func retainDekWithBio(kBio: Data)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
-        uniffiCallStatus in
-    uniffi_cf_ffi_fn_method_vaultsession_retain_dek_with_bio(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(kBio),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * 标题搜索（多关键词全命中，仅 Active 态；空查询返回空结果）。
      */
 open func search(query: String)throws  -> [FfiItemSummary]  {
@@ -2478,25 +2375,6 @@ open func setClipboardClearSecs(secs: Int64)throws   {try rustCallWithError(FfiC
     uniffi_cf_ffi_fn_method_vaultsession_set_clipboard_clear_secs(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(secs),uniffiCallStatus
-    )
-}
-}
-    
-    /**
-     * 开启/关闭 DEK 保留（merge-time R1 (a-i)，浏览器集成启用时由 Swift
-     * 调用；broker / cf-mcp 不开）。幂等开关：重复设置同值无副作用，
-     * 关闭时立即清零已持有的 DEK（fail-closed）；`lock()` 恒清零。
-     *
-     * 安全语义（裁定书 §1.4 / §1.7 R1-1）：开启后解锁态会在 Rust 内存
-     * 额外保留 DEK（`SessionKey`，`ZeroizeOnDrop`），驻留窗口从「解锁
-     * 瞬间」扩到「整个解锁会话」。本方法不新增任何持久/日志面——DEK
-     * 只存于会话内存，随 `lock()` / 关闭 retention 清零。
-     */
-open func setDekRetention(enabled: Bool)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_cf_ffi_fn_method_vaultsession_set_dek_retention(
-            self.uniffiCloneHandle(),
-        FfiConverterBool.lower(enabled),uniffiCallStatus
     )
 }
 }
@@ -10102,9 +9980,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_create_item() != 50566) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_dek_retained() != 7319) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_delete_item() != 13382) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10130,9 +10005,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_export_dek() != 34441) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_one_pux() != 64996) {
@@ -10225,16 +10097,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_item() != 32382) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_retain_dek_with_bio() != 40863) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_search() != 35502) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_clipboard_clear_secs() != 5629) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cf_ffi_checksum_method_vaultsession_set_dek_retention() != 22088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_favorite() != 56106) {

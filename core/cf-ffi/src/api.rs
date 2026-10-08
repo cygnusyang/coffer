@@ -349,34 +349,6 @@ impl VaultSession {
         self.inner.is_unlocked()
     }
 
-    // ------------------------------------------------------ DEK 保留（R1 seam）
-
-    /// 开启/关闭 DEK 保留（merge-time R1 (a-i)，浏览器集成启用时由 Swift
-    /// 调用；broker / cf-mcp 不开）。幂等开关：重复设置同值无副作用，
-    /// 关闭时立即清零已持有的 DEK（fail-closed）；`lock()` 恒清零。
-    ///
-    /// 安全语义（裁定书 §1.4 / §1.7 R1-1）：开启后解锁态会在 Rust 内存
-    /// 额外保留 DEK（`SessionKey`，`ZeroizeOnDrop`），驻留窗口从「解锁
-    /// 瞬间」扩到「整个解锁会话」。本方法不新增任何持久/日志面——DEK
-    /// 只存于会话内存，随 `lock()` / 关闭 retention 清零。
-    pub fn set_dek_retention(&self, enabled: bool) {
-        self.inner.set_dek_retention(enabled);
-    }
-
-    /// 导出当前会话 DEK（32 字节原始值，UniFFI `Vec<u8>` → Swift `Data`）。
-    /// merge-time R1 (a-i) 刻意设计（裁定书 §1.4）：DEK 只在
-    /// 「Rust session ↔ 短暂 Swift 缓冲 ↔ stdin 管道」内瞬时存在，
-    /// 跨 FFI 取用属既有 H-3 契约的取值落点，不新增任何持久/日志面。
-    ///
-    /// 门禁（fail-closed）：retention 未开启或未解锁（`current_dek` 为
-    /// `None`）→ 5002（InvalidArgument，映射见 crate::error）。
-    ///
-    /// 返回临时副本（非零化 `Vec<u8>`）——调用方（Swift，组 C 纪律）
-    /// 写入 stdin 后立即零化（既有 `zeroize(_:)`）。
-    pub fn export_dek(&self) -> Result<Vec<u8>, FfiError> {
-        self.inner.export_dek().map_err(Into::into)
-    }
-
     /// 记录最后活动时间（Unix 秒，平台事件驱动喂入）。
     pub fn set_last_activity(&self, unix_secs: i64) {
         self.inner.set_last_activity(unix_secs);
@@ -445,29 +417,6 @@ impl VaultSession {
             self.inner.unlock_with_biometric(&k_bio)
         }))
         .map(Into::into)
-    }
-
-    /// 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
-    ///
-    /// 用户解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
-    /// 无效（R1 只在解锁瞬间填 DEK）→ 用生物识别材料补种 DEK 供 broker 导出。
-    /// 与 `unlock_with_biometric` 的关键差异：**无幂等短路**（已解锁也补种），
-    /// 且**不改变解锁态**（只补 DEK，零 ItemStore 重建）。
-    ///
-    /// # 错误（fail-fast，镜像 `export_dek` 门禁语义 + D-8）
-    ///
-    /// 锁定态 → 1001；retention 未开启 → 5002；bio 未启用 → 4001；
-    /// k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
-    pub fn retain_dek_with_bio(&self, k_bio: Vec<u8>) -> Result<(), FfiError> {
-        self.inner
-            .retain_dek_with_bio(&k_bio)
-            .map_err(Into::into)
-    }
-
-    /// 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。Swift 侧
-    /// 探测「是否需补种」用本方法——**不导出明文 DEK**，避免跨桥明文往返。
-    pub fn dek_retained(&self) -> bool {
-        self.inner.dek_retained()
     }
 
     // -------------------------------------------- MCP 解锁托管（docs/29 G3b）

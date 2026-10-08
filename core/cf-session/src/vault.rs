@@ -30,10 +30,9 @@
 //! 不依赖 UI 状态管理（docs/02 §4.3）。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
-use cf_crypto::aead::SessionKey;
 use cf_domain::item::ItemDraft;
 use cf_domain::item::ItemSummary;
 use cf_domain::origin::OriginBinding;
@@ -51,7 +50,6 @@ use crate::usecase;
 use crate::{SessionResult, TotpSession};
 use cf_domain::license::{LicenseDecision, LicenseDenial, LicenseGate, LicensedOp, PermitAllGate};
 use cf_domain::CfError;
-use zeroize::Zeroizing;
 
 /// 默认空闲超时（FR-1.6 / docs/07 §7 T05：默认 5 分钟，可配置）。
 pub const DEFAULT_IDLE_TIMEOUT_SECS: i64 = 300;
@@ -114,16 +112,6 @@ pub struct VaultSession {
     /// 产物「自编译 = 全功能免费版」契约）；官方装配经
     /// [`Self::set_license_gate`] 注入 cf-license（闭源，私有仓库）。
     license_gate: RwLock<Arc<dyn LicenseGate>>,
-    /// DEK 保留开关（merge-time R1，docs/31 §4.1 / 裁定书 §1.4）：默认关闭。
-    /// 开启时三条解锁内核解出的 DEK 额外保留在 [`Self::current_dek`]（供 App
-    /// 侧 `export_dek` 瞬时取用，FFI 组 B 接线）。仅 Rust 内存
-    /// （`SessionKey` ZeroizeOnDrop）+ `lock()` / `set_dek_retention(false)`
-    /// 恒清。**安全边界变更**（裁定书 §4.3 ②，lead L-2 已确认）。
-    retain_dek: AtomicBool,
-    /// 当前会话保留的 DEK（仅 `retain_dek` 开启**且**解锁态时 `Some`）。
-    /// `lock()` 与 `set_dek_retention(false)` 置 `None`（与 `state` 同清）。
-    /// 与 `state` 同用 `Mutex` 内部可变，`&self` 门面一致。
-    current_dek: Mutex<Option<SessionKey>>,
 }
 
 impl VaultSession {
@@ -142,8 +130,6 @@ impl VaultSession {
             clipboard_clear_secs: AtomicI64::new(DEFAULT_CLIPBOARD_CLEAR_SECS),
             backoff: Mutex::new(UnlockBackoff::new()),
             license_gate: RwLock::new(Arc::new(PermitAllGate)),
-            retain_dek: AtomicBool::new(false),
-            current_dek: Mutex::new(None),
         })
     }
 
@@ -196,16 +182,14 @@ impl VaultSession {
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
-        let (store, dek) = match crate::unlock::unlock_store(&self.vault_dir, &header, password) {
-            Ok(pair) => pair,
+        let store = match crate::unlock::unlock_store(&self.vault_dir, &header, password) {
+            Ok(store) => store,
             Err(e) => {
                 self.backoff_guard().on_failure();
                 return Err(e);
             }
         };
         self.backoff_guard().on_success();
-        // R1：按 retain_dek 决定是否在会话内保留 DEK（默认不保留）
-        self.set_current_dek(dek);
         let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
         self.last_activity
             .store(crate::unix_now().unwrap_or(0), Ordering::Release);
@@ -215,45 +199,9 @@ impl VaultSession {
 
     /// 锁定：立即 drop 解锁态 → 子密钥全链路清零（docs/07 §2.2）。
     ///
-    /// R1：`current_dek` 与 `state` 同清——锁定即回到「不持 DEK」语义。
-    ///
     /// 幂等：锁定态再调用无副作用。
     pub fn lock(&self) {
         *self.state_guard() = None;
-        *self.current_dek_guard() = None;
-    }
-
-    /// 开启/关闭 DEK 保留（merge-time R1，App 侧启用时由 Swift 调用；
-    /// cf-mcp 不开）。
-    ///
-    /// 幂等开关：重复设置同值无副作用。关闭时**立即清零**已持有的 DEK
-    /// （fail-closed，裁定书 §1.7 R1-3 缓解）；`lock()` 恒清。
-    ///
-    /// 安全边界变更（裁定书 §4.3 ② / §1.7 R1-1，lead L-2 已确认）：开启后
-    /// 解锁态会在 Rust 内存额外保留 DEK，驻留窗口从「解锁瞬间」扩到「整个
-    /// 解锁会话」；回退 = `set_dek_retention(false)` 即回「不持 DEK」。
-    pub fn set_dek_retention(&self, enabled: bool) {
-        self.retain_dek.store(enabled, Ordering::Release);
-        if !enabled {
-            *self.current_dek_guard() = None;
-        }
-    }
-
-    /// 导出保留的 DEK（R1 (a-i) 门禁，裁定书 §1.7 R1-3）：仅 `retain_dek`
-    /// 开启**且**解锁态（`current_dek` 为 `Some`）时返回 32B 原始 DEK；
-    /// 否则 fail-closed（retention 未开 / 未解锁 →
-    /// [`CfError::InvalidArgument`]，FFI 层映射 5002）。
-    ///
-    /// 返回值是明文 DEK 副本（`Vec<u8>` 非零化容器）——调用方
-    /// （FFI → Swift）瞬时取用后必须自行零化副本；会话内保留的是
-    /// `SessionKey`（`ZeroizeOnDrop`），FFI 转发出自本方法（组 B 只做
-    /// `self.inner.export_dek()` 转发，会话层方法本体归本文件）。
-    pub fn export_dek(&self) -> SessionResult<Vec<u8>> {
-        let guard = self.current_dek_guard();
-        let dek = guard
-            .as_ref()
-            .ok_or_else(|| CfError::InvalidArgument("dek retention disabled or locked".into()))?;
-        Ok(dek.as_bytes().to_vec())
     }
 
     /// 是否处于解锁态。
@@ -451,69 +399,12 @@ impl VaultSession {
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
-        let (store, dek) = unlock_bio::unlock_store_with_bio(&self.vault_dir, &header, k_bio)?;
-        self.set_current_dek(dek);
+        let store = unlock_bio::unlock_store_with_bio(&self.vault_dir, &header, k_bio)?;
         let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
         self.last_activity
             .store(crate::unix_now().unwrap_or(0), Ordering::Release);
         *guard = Some(UnlockedState { store });
         Ok(info)
-    }
-
-    /// 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
-    ///
-    /// 用户在解锁后才启用 DEK 保留时，`set_dek_retention(true)` 对当前会话
-    /// 无效——R1 只在解锁瞬间按 `retain_dek` 填 `current_dek`，会话已解锁则
-    /// DEK 为空 → `export_dek` 5002 → 无 DEK 可导出。本方法
-    /// **不改变解锁态**（不触 state 机、不重建 store）——直接复用 bio 通道的
-    /// DEK-only 解出 [`unlock_bio::recover_dek_bio`]（open wrapped_dek_bio），
-    /// 仅把解出的 DEK 补入 `current_dek`（按当前 `retain_dek`，LOW-1 锁内双检）。
-    ///
-    /// 与 `unlock_with_biometric` 的关键差异：**无幂等短路**——已解锁也执行
-    /// 补种（unlock_with_biometric :450-452 幂等返回不适用）；零 ItemStore 重建。
-    /// K_bio 非密码 oracle，不触退避计数器。
-    ///
-    /// # 错误（fail-fast，镜像 `export_dek` :251-257 门禁语义 + D-8）
-    ///
-    /// 锁定态 → 1001；retention 未开启 → 5002（InvalidArgument，与 export_dek
-    /// 同码）；bio 未启用 → 4001；k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
-    pub fn retain_dek_with_bio(&self, k_bio: &[u8]) -> SessionResult<()> {
-        // 门禁①：锁定态 → 1001（需已解锁才可补种；镜像 export_dek 语义）
-        self.state_guard()
-            .as_ref()
-            .ok_or(CfError::VaultLocked)?;
-        // 门禁②：retention 未开 → 5002（fail-fast；关闭时补种无意义且会被
-        // set_current_dek 按 LOW-1 静默 drop，显式报错让调用方知晓）
-        if !self.retain_dek.load(Ordering::Acquire) {
-            return Err(CfError::InvalidArgument("dek retention disabled".into()));
-        }
-
-        let header = self.header_snapshot();
-        // bio 封装未启用/缺包裹数据 → 4001（先于一切密钥操作，D-8）
-        if !header.biometric_wrap.available {
-            return Err(CfError::BiometricUnavailable);
-        }
-        let Some(wrapped_b64) = header.biometric_wrap.wrapped_dek_b64.as_deref() else {
-            return Err(CfError::BiometricUnavailable);
-        };
-        if k_bio.len() != unlock_bio::K_BIO_LEN {
-            return Err(CfError::InvalidArgument(format!(
-                "k_bio must be {} bytes, got {}",
-                unlock_bio::K_BIO_LEN,
-                k_bio.len()
-            )));
-        }
-
-        let dek = unlock_bio::recover_dek_bio(&header, wrapped_b64, k_bio)?;
-        self.set_current_dek(dek);
-        Ok(())
-    }
-
-    /// 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。供 Swift 侧
-    /// 探测「是否需补种」——**不导出明文 DEK**，避免跨桥明文往返。
-    #[must_use]
-    pub fn dek_retained(&self) -> bool {
-        self.current_dek_guard().is_some()
     }
 
     // ------------------------------------------------ MCP 解锁托管（docs/29）
@@ -670,44 +561,7 @@ impl VaultSession {
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
-        let (store, dek) =
-            unlock_mcp::unlock_store_with_mcp_key(&self.vault_dir, &header, mcp_key)?;
-        self.set_current_dek(dek);
-        let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
-        self.last_activity
-            .store(crate::unix_now().unwrap_or(0), Ordering::Release);
-        *guard = Some(UnlockedState { store });
-        Ok(info)
-    }
-
-    /// 直开解锁（merge-time R2：调用方已解析出 32B DEK → 直开取密/写库，
-    /// 裁定书 §2）。
-    ///
-    /// 与 [`VaultSession::unlock_with_mcp_key`] 完全同构：幂等（已解锁直接
-    /// 返回当前信息，不重开）、**不触碰退避计数器**（DEK 非密码 oracle，
-    /// 无免费猜测通道）、会话与主密码路径同生共死（`lock()`/自动锁定清零）。
-    /// **不保留 DEK**（`retain_dek` 仅 App 侧能力）。
-    ///
-    /// # 错误（fail-closed）
-    ///
-    /// `dek` 非 32B → 5002（参数错误）；DEK 错/库损坏 → 1002
-    /// （`finish_unlock` 的 `verify_integrity` 天然归一）。
-    pub fn unlock_with_dek(&self, dek: &[u8]) -> SessionResult<VaultInfo> {
-        let header = self.header_snapshot();
-        let mut guard = self.state_guard();
-        if let Some(state) = guard.as_ref() {
-            return vault_info(&state.store, self.vault_uuid, &self.display_name);
-        }
-
-        // 输入切片归调用方所有：入 Zeroizing 副本再进 SessionKey
-        // （ZeroizeOnDrop），长度 ≠ 32 → 5002
-        let dek_copy = Zeroizing::new(dek.to_vec());
-        let dek_key = SessionKey::new(
-            <[u8; 32]>::try_from(dek_copy.as_slice())
-                .map_err(|_| CfError::InvalidArgument("dek must be 32 bytes".into()))?,
-        );
-
-        let store = crate::unlock::unlock_store_with_dek(&self.vault_dir, &header, &dek_key)?;
+        let store = unlock_mcp::unlock_store_with_mcp_key(&self.vault_dir, &header, mcp_key)?;
         let info = vault_info(&store, self.vault_uuid, &self.display_name)?;
         self.last_activity
             .store(crate::unix_now().unwrap_or(0), Ordering::Release);
@@ -1309,28 +1163,6 @@ impl VaultSession {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// current_dek 互斥锁守卫（poison 处理同 [`Self::state_guard`]）。
-    fn current_dek_guard(&self) -> MutexGuard<'_, Option<SessionKey>> {
-        self.current_dek
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// 按 `retain_dek` 决定是否在会话内保留 DEK（三条解锁路径共用，
-    /// merge-time R1）。retention 关闭（直开路径不调用本方法）
-    /// → 直接 drop，`SessionKey` ZeroizeOnDrop 清零，不留副本。
-    fn set_current_dek(&self, dek: SessionKey) {
-        // LOW-1 双检硬化（lead L-6）：先取锁再判 retain_dek，把「检查 + 写入」
-        // 原子化到 current_dek 锁内，杜绝「锁外读到 retain_dek=true 后、
-        // 取锁前并发 set_dek_retention(false) 已清空，晚到的 DEK 仍落库」的
-        // TOCTOU。App 串行化不可达，此为廉价纵深；保留 Acquire 语义，
-        // set_dek_retention(false) 的清空在同一锁内，恒晚于本函数写入。
-        let mut guard = self.current_dek_guard();
-        if self.retain_dek.load(Ordering::Acquire) {
-            *guard = Some(dek);
-        }
-    }
-
     /// header 互斥锁守卫（poison 处理同 [`Self::state_guard`]）。
     fn header_guard(&self) -> MutexGuard<'_, cf_format::Header> {
         self.header
@@ -1803,16 +1635,6 @@ mod tests {
         session.unlock(CHANGE_TO_PASSWORD).unwrap();
     }
 
-    // ------------------------------------------------ DEK 直开（merge-time R2）
-
-    /// 读磁盘 header（供 `recover_dek` 解出 DEK；测试辅助）。
-    fn header_of(vault_dir: &std::path::Path) -> cf_format::Header {
-        match cf_format::open_container(vault_dir).unwrap() {
-            cf_format::OpenOutcome::Current(h) => h,
-            _ => panic!("新建库应可正常打开"),
-        }
-    }
-
     /// 最小 Login 草稿（类别必填的 username / password 字段，attachments
     /// 集成测试同款）。用于给测试库写入一个条目——`with_tx` 由此写入
     /// 完整性基线（`record_count`/`root_mac`），错 DEK 才能被
@@ -1844,445 +1666,6 @@ mod tests {
             ],
             totp: None,
         }
-    }
-
-    /// 建库 + 密码解锁 + 写 1 个条目（建立完整性基线），返回锁定态会话。
-    fn locked_vault_with_item(tag: &str) -> (VaultSession, std::path::PathBuf) {
-        let base = crate::tests_support::temp_dir(tag);
-        let brief = create_vault_with_kdf(&base, "基线库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        session.create_item(&draft_item("基线条目")).unwrap();
-        session.lock();
-        (session, vault_dir)
-    }
-
-    /// R2：DEK 直开解锁成功——建临时 vault（含 1 条目，有完整性基线），
-    /// 用 recover_dek 解出 DEK 直开，解锁态数据访问正常，且直开路径不留
-    /// DEK（无保留语义）。
-    #[test]
-    fn dek直开解锁成功() {
-        let (session, vault_dir) = locked_vault_with_item("dek_unlock_ok");
-
-        let header = header_of(&vault_dir);
-        let dek = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
-
-        let info = session.unlock_with_dek(dek.as_bytes()).unwrap();
-        assert_eq!(info.item_count, 1);
-        assert!(session.is_unlocked());
-        assert_eq!(session.list_items(None).unwrap().len(), 1);
-        assert!(
-            session.current_dek_guard().is_none(),
-            "直开路径不应保留 DEK（无保留语义）"
-        );
-    }
-
-    /// R2：错误 DEK（形状合法 32B 但内容错）→ 1002（fail-closed，
-    /// verify_integrity 的 root_mac 检出），会话保持锁定态。
-    #[test]
-    fn dek直开错误dek失败1002() {
-        let (session, _vault_dir) = locked_vault_with_item("dek_unlock_wrong");
-
-        let wrong = cf_crypto::aead::SessionKey::new([0xABu8; 32]);
-        let err = session.unlock_with_dek(wrong.as_bytes()).unwrap_err();
-        assert_eq!(err.code(), 1002);
-        assert!(!session.is_unlocked());
-    }
-
-    /// R2：DEK 非 32 字节 → 5002（参数错误，非解锁失败），会话保持锁定态。
-    #[test]
-    fn dek直开长度校验5002() {
-        let base = crate::tests_support::temp_dir("dek_unlock_keylen");
-        let brief = create_vault_with_kdf(&base, "长度库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        for bad in [&[0u8; 31][..], &[0u8; 33][..], &[]] {
-            let err = session.unlock_with_dek(bad).unwrap_err();
-            assert_eq!(err.code(), 5002, "len={} 应报 InvalidArgument", bad.len());
-        }
-        assert!(!session.is_unlocked());
-    }
-
-    /// R2：幂等——已解锁后再直开（哪怕传错误 DEK）直接返回当前信息，不重开。
-    #[test]
-    fn dek直开幂等() {
-        let base = crate::tests_support::temp_dir("dek_unlock_idem");
-        let brief = create_vault_with_kdf(&base, "幂等库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        let header = header_of(&vault_dir);
-        let dek = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
-        assert_eq!(
-            session.unlock_with_dek(dek.as_bytes()).unwrap().item_count,
-            0
-        );
-
-        // 已解锁再调（错误 DEK）→ 幂等成功（与 unlock_with_mcp_key 同构）
-        let again = session.unlock_with_dek(&[0xFFu8; 32]).unwrap();
-        assert_eq!(again.item_count, 0);
-        assert!(session.is_unlocked());
-    }
-
-    /// R2：不触碰退避计数器——锁定态直开错 DEK → 1002，门禁剩余时间不变
-    /// （DEK 非密码 oracle，无免费猜测通道）。
-    #[test]
-    fn dek直开不触碰退避() {
-        let (session, _clock) = session_with_fake_clock("backoff_dek_exempt");
-        // 给库建立完整性基线（首个事务写入 root_mac），并回到锁定态
-        session.unlock(STRONG_PASSWORD).unwrap();
-        session.create_item(&draft_item("基线条目")).unwrap();
-        session.lock();
-
-        // 3 次错误密码 → 门禁激活
-        for _ in 0..3 {
-            session.unlock("wrong-password-indeed!").unwrap_err();
-        }
-        let remaining = session.backoff_remaining_secs();
-        assert!(remaining > 0);
-
-        // 锁定态直开错 DEK → 1002（fail-closed），但不计数、不受门禁
-        let wrong = cf_crypto::aead::SessionKey::new([0xCDu8; 32]);
-        let err = session.unlock_with_dek(wrong.as_bytes()).unwrap_err();
-        assert_eq!(err.code(), 1002);
-        assert_eq!(
-            session.backoff_remaining_secs(),
-            remaining,
-            "直开不得影响退避计数"
-        );
-        assert!(!session.is_unlocked());
-    }
-
-    // ------------------------------------------------ DEK 保留（merge-time R1）
-
-    /// R1：set_dek_retention 幂等开关——默认关闭，开/关各重复调用无副作用。
-    #[test]
-    fn dek保留开关幂等() {
-        let base = crate::tests_support::temp_dir("dek_retention_toggle");
-        let brief = create_vault_with_kdf(&base, "保留库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
-
-        assert!(
-            !session
-                .retain_dek
-                .load(std::sync::atomic::Ordering::Acquire),
-            "默认关闭 retention"
-        );
-        session.set_dek_retention(true);
-        session.set_dek_retention(true); // 幂等
-        assert!(session
-            .retain_dek
-            .load(std::sync::atomic::Ordering::Acquire));
-        session.set_dek_retention(false);
-        session.set_dek_retention(false); // 幂等
-        assert!(!session
-            .retain_dek
-            .load(std::sync::atomic::Ordering::Acquire));
-    }
-
-    /// R1：retention 开启时解锁后 current_dek 持有，且与 recover_dek 解出值一致。
-    #[test]
-    fn dek保留开启时解锁持有dek() {
-        let base = crate::tests_support::temp_dir("dek_retention_hold");
-        let brief = create_vault_with_kdf(&base, "保留库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        session.set_dek_retention(true);
-        session.unlock(STRONG_PASSWORD).unwrap();
-
-        let header = header_of(&vault_dir);
-        let expected = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
-        assert_eq!(
-            session.current_dek_guard().as_ref().unwrap().as_bytes(),
-            expected.as_bytes(),
-            "解锁后应持有 DEK"
-        );
-    }
-
-    /// R1：lock() 清零 current_dek（与 state 同清）；重新解锁按 retain 恢复持有。
-    #[test]
-    fn dek保留lock清零且重开恢复() {
-        let base = crate::tests_support::temp_dir("dek_retention_lock");
-        let brief = create_vault_with_kdf(&base, "保留库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-        session.set_dek_retention(true);
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert!(session.current_dek_guard().is_some());
-
-        session.lock();
-        assert!(session.current_dek_guard().is_none(), "lock() 必须清零 DEK");
-        assert!(!session.is_unlocked());
-
-        // 重新解锁 → 重新持有（retention 仍开）
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert!(session.current_dek_guard().is_some());
-    }
-
-    /// R1：retention 关闭时解锁不留 DEK；从开启切换到关闭时立即清零已持有 DEK。
-    #[test]
-    fn dek保留关闭时不留() {
-        let base = crate::tests_support::temp_dir("dek_retention_off");
-        let brief = create_vault_with_kdf(&base, "保留库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        // 默认关闭：解锁不留
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert!(session.current_dek_guard().is_none(), "默认不应持有 DEK");
-
-        // 开启 → 解锁持有 → 关闭立即清零
-        session.set_dek_retention(true);
-        session.lock();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert!(session.current_dek_guard().is_some());
-        session.set_dek_retention(false);
-        assert!(
-            session.current_dek_guard().is_none(),
-            "关闭 retention 应立即清零"
-        );
-
-        // 关闭后重新解锁不留
-        session.lock();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert!(session.current_dek_guard().is_none());
-    }
-
-    /// R1：三条解锁路径（主密码 / bio / mcp）在 retention 开启时均持有 DEK，
-    /// 且持有的是同一 DEK（recover_dek 解出值）。
-    #[test]
-    fn dek保留三条解锁路径均持有() {
-        let base = crate::tests_support::temp_dir("dek_retention_three_paths");
-        let brief = create_vault_with_kdf(&base, "保留库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-        session.set_dek_retention(true);
-
-        let header = header_of(&vault_dir);
-        let expected = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
-
-        // 主密码路径
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert_eq!(
-            session.current_dek_guard().as_ref().unwrap().as_bytes(),
-            expected.as_bytes(),
-            "主密码路径应持有 DEK"
-        );
-
-        // bio 路径（先启用）
-        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
-        session
-            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
-            .unwrap();
-        session.lock();
-        session.unlock_with_biometric(k_bio.as_bytes()).unwrap();
-        assert_eq!(
-            session.current_dek_guard().as_ref().unwrap().as_bytes(),
-            expected.as_bytes(),
-            "bio 路径应持有 DEK"
-        );
-
-        // mcp 路径（先启用）
-        let mcp_key = session.derive_mcp_key(STRONG_PASSWORD).unwrap();
-        session
-            .enable_mcp_escrow(STRONG_PASSWORD, mcp_key.as_bytes())
-            .unwrap();
-        session.lock();
-        session.unlock_with_mcp_key(mcp_key.as_bytes()).unwrap();
-        assert_eq!(
-            session.current_dek_guard().as_ref().unwrap().as_bytes(),
-            expected.as_bytes(),
-            "mcp 路径应持有 DEK"
-        );
-    }
-
-    /// R1：export_dek 三态门禁——retention 开启 + 解锁 → Ok(32B) 且与
-    /// recover_dek 解出值一致；retention 未开 → Err（InvalidArgument，
-    /// FFI 映射 5002）；开启 + 解锁后 lock() → Err（current_dek 已清零）。
-    #[test]
-    fn export_dek三态门禁() {
-        let base = crate::tests_support::temp_dir("export_dek_gates");
-        let brief = create_vault_with_kdf(&base, "导出库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        // 态 1：retention 关闭（默认）→ Err（5002 语义）
-        session.unlock(STRONG_PASSWORD).unwrap();
-        let err = session.export_dek().unwrap_err();
-        assert_eq!(err.code(), 5002, "retention 未开应 fail-closed");
-
-        // 态 2：开启 + 解锁 → Ok(32B)，与 recover_dek 解出值一致
-        session.set_dek_retention(true);
-        session.lock();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        let header = header_of(&vault_dir);
-        let expected = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
-        let exported = session.export_dek().unwrap();
-        assert_eq!(exported.len(), 32);
-        assert_eq!(exported, expected.as_bytes().to_vec());
-
-        // 态 3：lock() 后 → Err（DEK 已清零）
-        session.lock();
-        let err = session.export_dek().unwrap_err();
-        assert_eq!(err.code(), 5002, "lock() 后不应可导出");
-    }
-
-    // ------------------------------------------------ 强制补种 DEK（B1，R1-3 时序缺口修复）
-
-    /// B1 复现 R1-3 缺口：已解锁且 retention 关闭时解锁 → export_dek Err(5002)；
-    /// 之后才 set_dek_retention(true)（浏览器集成启用路径，R1-3）→ 当前会话仍拿
-    /// 不到 DEK（解锁瞬间 retain_dek 才生效，R1 只在解锁时填 current_dek）。
-    /// retain_dek_with_bio 解锁态按 K_bio 补种 DEK → export_dek Ok 且与
-    /// recover_dek 解出值一致（修复验证）。
-    #[test]
-    fn retain_dek_填补解锁后启用retention的dek缺口() {
-        let base = crate::tests_support::temp_dir("retain_dek_r13_gap");
-        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        session
-            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
-            .unwrap();
-
-        // R1-3 时序：先解锁（retention 默认关）→ 后启用 retention（浏览器集成启用路径）
-        session.set_dek_retention(true);
-        let err = session.export_dek().unwrap_err();
-        assert_eq!(
-            err.code(),
-            5002,
-            "解锁后才开 retention，缺口仍在：export_dek 应失败"
-        );
-
-        // B1 修复：retain_dek_with_bio 补种 DEK（不重建 store、不改解锁态）
-        session.retain_dek_with_bio(k_bio.as_bytes()).unwrap();
-        assert!(session.dek_retained(), "补种后应持有 DEK");
-        let header = header_of(&vault_dir);
-        let expected = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
-        let exported = session.export_dek().unwrap();
-        assert_eq!(
-            exported,
-            expected.as_bytes().to_vec(),
-            "补种后应能导出与 recover_dek 一致的 DEK"
-        );
-    }
-
-    /// B1：锁定态调用 retain_dek_with_bio → 1001（先于 retention 门禁，与
-    /// 解锁路径一致）。
-    #[test]
-    fn retain_dek_锁定态返回锁定错误() {
-        let base = crate::tests_support::temp_dir("retain_dek_locked");
-        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
-
-        let err = session.retain_dek_with_bio(&[0u8; 32]).unwrap_err();
-        assert_eq!(err.code(), 1001, "锁定态补种应 1001");
-    }
-
-    /// B1：retain_dek 未开启 → 5002（fail-fast，镜像 export_dek 语义——retention
-    /// 关闭时补种无意义，set_current_dek 也会静默 drop，显式报错让调用方知晓）。
-    #[test]
-    fn retain_dek_未开retention拒绝() {
-        let base = crate::tests_support::temp_dir("retain_dek_retention_off");
-        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
-
-        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        session
-            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
-            .unwrap();
-        // retention 默认关闭 → 补种被拒
-        let err = session.retain_dek_with_bio(k_bio.as_bytes()).unwrap_err();
-        assert_eq!(err.code(), 5002, "retention 未开应 5002");
-        assert!(!session.dek_retained(), "拒绝后不应残留 DEK");
-    }
-
-    /// B1：k_bio 错误 → 1002（与 unlock_with_biometric 一致，K_bio 非密码
-    /// oracle 不计退避）；非 32B → 5002（参数错误，先于密钥操作）。
-    #[test]
-    fn retain_dek_错误材料按语义报错() {
-        let base = crate::tests_support::temp_dir("retain_dek_bad_material");
-        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        session
-            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
-            .unwrap();
-        session.set_dek_retention(true);
-
-        // 错误 k_bio（同长、非本库包裹值）→ 1002
-        let err = session.retain_dek_with_bio(&[0xAB; 32]).unwrap_err();
-        assert_eq!(err.code(), 1002, "错误 k_bio 应 1002");
-        assert!(!session.dek_retained(), "解封失败不应持有 DEK");
-
-        // 非 32B → 5002
-        let err = session.retain_dek_with_bio(&[0xAB; 31]).unwrap_err();
-        assert_eq!(err.code(), 5002, "非 32B k_bio 应 5002");
-    }
-
-    /// B1：retain_dek_with_bio 只补 current_dek，不改变已解锁 store 的数据
-    /// 访问语义——补种前后列表/条目一致、保持解锁态；retention 开启时补种后
-    /// 持有 DEK（与解锁路径同语义）。
-    #[test]
-    fn retain_dek_不改变已解锁store数据访问语义() {
-        let base = crate::tests_support::temp_dir("retain_dek_store_semantics");
-        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
-        session.unlock(STRONG_PASSWORD).unwrap();
-        session
-            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
-            .unwrap();
-        session.set_dek_retention(true);
-        session.create_item(&draft_item("补种前后都在")).unwrap();
-        assert_eq!(session.list_items(None).unwrap().len(), 1, "前置：1 个条目");
-
-        session.retain_dek_with_bio(k_bio.as_bytes()).unwrap();
-
-        assert!(session.is_unlocked(), "补种后仍保持解锁态");
-        assert!(session.dek_retained(), "retention 开启时补种后应持有 DEK");
-        let items = session.list_items(None).unwrap();
-        assert_eq!(items.len(), 1, "补种后条目仍可访问");
-        assert_eq!(items[0].title, "补种前后都在");
-    }
-
-    /// B1：dek_retained 纯读探测三态——retention 关（默认）→ false；
-    /// 开 + 解锁补种 → true；lock() 清零 → false。纯读 `current_dek.is_some()`，
-    /// 不导出明文 DEK（Swift 侧探测专用，避免跨桥明文往返）。
-    #[test]
-    fn dek_retained三态探测() {
-        let base = crate::tests_support::temp_dir("dek_retained_three_state");
-        let brief = create_vault_with_kdf(&base, "探测库", STRONG_PASSWORD, fast_kdf()).unwrap();
-        let vault_dir = base.join(brief.uuid.to_string());
-        let session = open_vault(&vault_dir).unwrap();
-
-        // 态 1：retention 关（默认）→ false
-        session.unlock(STRONG_PASSWORD).unwrap();
-        assert!(!session.dek_retained(), "retention 关应探测 false");
-
-        // 态 2：开 + 解锁补种 → true
-        session.set_dek_retention(true);
-        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
-        session
-            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
-            .unwrap();
-        session.retain_dek_with_bio(k_bio.as_bytes()).unwrap();
-        assert!(session.dek_retained(), "开 + 补种后应探测 true");
-
-        // 态 3：lock() 清零 → false
-        session.lock();
-        assert!(!session.dek_retained(), "lock() 清零后应探测 false");
     }
 
     // ------------------------------------------------ origin 绑定封装（merge-time E 前置）

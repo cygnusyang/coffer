@@ -223,8 +223,8 @@ impl VaultSession {
         *self.current_dek_guard() = None;
     }
 
-    /// 开启/关闭 DEK 保留（merge-time R1，浏览器集成启用时由 Swift 调用；
-    /// broker / cf-mcp 不开）。
+    /// 开启/关闭 DEK 保留（merge-time R1，App 侧启用时由 Swift 调用；
+    /// cf-mcp 不开）。
     ///
     /// 幂等开关：重复设置同值无副作用。关闭时**立即清零**已持有的 DEK
     /// （fail-closed，裁定书 §1.7 R1-3 缓解）；`lock()` 恒清。
@@ -462,9 +462,9 @@ impl VaultSession {
 
     /// 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
     ///
-    /// 用户在解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
+    /// 用户在解锁后才启用 DEK 保留时，`set_dek_retention(true)` 对当前会话
     /// 无效——R1 只在解锁瞬间按 `retain_dek` 填 `current_dek`，会话已解锁则
-    /// DEK 为空 → `export_dek` 5002 → broker 无 stdin DEK 不派生。本方法
+    /// DEK 为空 → `export_dek` 5002 → 无 DEK 可导出。本方法
     /// **不改变解锁态**（不触 state 机、不重建 store）——直接复用 bio 通道的
     /// DEK-only 解出 [`unlock_bio::recover_dek_bio`]（open wrapped_dek_bio），
     /// 仅把解出的 DEK 补入 `current_dek`（按当前 `retain_dek`，LOW-1 锁内双检）。
@@ -680,13 +680,13 @@ impl VaultSession {
         Ok(info)
     }
 
-    /// 直开解锁（merge-time R2，供 cf-mcp browser-broker：stdin 已解析
-    /// 32B DEK → 直开取密/写库，裁定书 §2）。
+    /// 直开解锁（merge-time R2：调用方已解析出 32B DEK → 直开取密/写库，
+    /// 裁定书 §2）。
     ///
     /// 与 [`VaultSession::unlock_with_mcp_key`] 完全同构：幂等（已解锁直接
     /// 返回当前信息，不重开）、**不触碰退避计数器**（DEK 非密码 oracle，
     /// 无免费猜测通道）、会话与主密码路径同生共死（`lock()`/自动锁定清零）。
-    /// **不保留 DEK**（broker 无导出能力，`retain_dek` 仅 App 侧能力）。
+    /// **不保留 DEK**（`retain_dek` 仅 App 侧能力）。
     ///
     /// # 错误（fail-closed）
     ///
@@ -699,8 +699,8 @@ impl VaultSession {
             return vault_info(&state.store, self.vault_uuid, &self.display_name);
         }
 
-        // 输入切片归调用方所有（broker `BrokerSecrets.dek`，cli.rs）：入
-        // Zeroizing 副本再进 SessionKey（ZeroizeOnDrop），长度 ≠ 32 → 5002
+        // 输入切片归调用方所有：入 Zeroizing 副本再进 SessionKey
+        // （ZeroizeOnDrop），长度 ≠ 32 → 5002
         let dek_copy = Zeroizing::new(dek.to_vec());
         let dek_key = SessionKey::new(
             <[u8; 32]>::try_from(dek_copy.as_slice())
@@ -727,9 +727,8 @@ impl VaultSession {
 
     /// 创建条目并写入 origin 绑定（D-3，docs/31 §5.3）：语义与
     /// [`Self::create_item`] 一致，额外把 `origin_bindings` 随同一事务写入
-    /// `item_origins` 从表。供 broker `capture_save` 建条目 + 绑定站点用
-    /// （merge-time 接线；薄封装转发
-    /// [`usecase::items::create_item_with_origin_bindings`]）。
+    /// `item_origins` 从表。供需同时建条目 + 写绑定的调用方使用（薄封装
+    /// 转发 [`usecase::items::create_item_with_origin_bindings`]）。
     pub fn create_item_with_origin_bindings(
         &self,
         draft: &ItemDraft,
@@ -743,9 +742,9 @@ impl VaultSession {
     /// 显式改写条目 origin 绑定（D-3，docs/31 §5.3）：独立于
     /// [`Self::update_item`] 的专用入口（`ItemDraft` 不含绑定字段），替换前
     /// 写 history 快照（FR-2.9，绑定变化同样进版本历史）、事务内删旧插新、
-    /// 推进 `updated_at`。条目不存在 → 1011（ItemNotFound）。供 broker
-    /// `capture_save` 对既有条目追加/改写绑定用（merge-time 接线；薄封装
-    /// 转发 [`usecase::items::set_item_origin_bindings`]）。
+    /// 推进 `updated_at`。条目不存在 → 1011（ItemNotFound）。供需对既有
+    /// 条目追加/改写绑定的调用方使用（薄封装转发
+    /// [`usecase::items::set_item_origin_bindings`]）。
     pub fn set_item_origin_bindings(
         &self,
         item_id: &str,
@@ -1318,7 +1317,7 @@ impl VaultSession {
     }
 
     /// 按 `retain_dek` 决定是否在会话内保留 DEK（三条解锁路径共用，
-    /// merge-time R1）。retention 关闭（含 broker 直开路径不调用本方法）
+    /// merge-time R1）。retention 关闭（直开路径不调用本方法）
     /// → 直接 drop，`SessionKey` ZeroizeOnDrop 清零，不留副本。
     fn set_current_dek(&self, dek: SessionKey) {
         // LOW-1 双检硬化（lead L-6）：先取锁再判 retain_dek，把「检查 + 写入」
@@ -1861,7 +1860,7 @@ mod tests {
 
     /// R2：DEK 直开解锁成功——建临时 vault（含 1 条目，有完整性基线），
     /// 用 recover_dek 解出 DEK 直开，解锁态数据访问正常，且直开路径不留
-    /// DEK（broker 专属，无保留语义）。
+    /// DEK（无保留语义）。
     #[test]
     fn dek直开解锁成功() {
         let (session, vault_dir) = locked_vault_with_item("dek_unlock_ok");
@@ -1875,7 +1874,7 @@ mod tests {
         assert_eq!(session.list_items(None).unwrap().len(), 1);
         assert!(
             session.current_dek_guard().is_none(),
-            "直开路径不应保留 DEK（broker 无导出能力）"
+            "直开路径不应保留 DEK（无保留语义）"
         );
     }
 

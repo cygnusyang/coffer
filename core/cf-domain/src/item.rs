@@ -135,7 +135,7 @@ pub struct Item {
     /// origin 绑定（D-3，docs/31 §5.3）：浏览器填充/捕获的站点绑定集合。
     ///
     /// 存储侧以 `item_origins` 从表承载（batch-replace 语义）；本字段为
-    /// 领域模型的完整态。匹配语义见 [`crate::origin`] 与 cf-browser。
+    /// 领域模型的完整态。匹配语义见 [`crate::origin`]。
     pub origin_bindings: Vec<OriginBinding>,
 }
 

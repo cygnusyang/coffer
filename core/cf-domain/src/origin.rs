@@ -2,19 +2,18 @@
 //!
 //! 本模块是**存储形态**的绑定类型：`item.origin_bindings` 落库、读改写
 //! 的载体（cf-domain → cf-store → cf-session 单向依赖链上唯一可承载的
-//! 绑定类型）。**匹配语义的权威实现在 `cf-browser::origin`**（D-3 冻结，
-//! `exact > subdomain > domain` 优先级、`scheme+host+port` 规范化、
-//! host 校验均在那里）；本处只承载三型枚举 + 绑定串，serde 形态与
-//! cf-browser 冻结类型逐字段一致（`kind` snake_case + `value` 字符串），
-//! 保证存储与匹配两侧无歧义互认。
+//! 绑定类型）。匹配语义按 D-3 冻结（`exact > subdomain > domain` 优先级、
+//! `scheme+host+port` 规范化、host 校验，语义定义见 docs/31 §5.3）；本处
+//! 承载三型枚举 + 绑定串，serde 形态固定（`kind` snake_case + `value`
+//! 字符串），保证存储与匹配两侧无歧义互认。
 //!
-//! 三型语义（与 cf-browser 冻结语义一致）：
+//! 三型语义（冻结）：
 //! - `Exact`：`https://example.com`——scheme+host+port 规范化后全匹配；
 //! - `Subdomain`：`*.example.com`——匹配真子域，不含 apex；
 //! - `Domain`：`example.com`——含 apex + 全部子域。
 //!
 //! 无 regex、无 prefix 通配（D-3 硬约束）。未知 kind 反序列化失败
-//! （三型冻结，不设 `#[serde(other)]` 兜底），与 cf-browser 一致。
+//! （三型冻结，不设 `#[serde(other)]` 兜底）。
 
 use serde::{Deserialize, Serialize};
 
@@ -60,12 +59,12 @@ impl OriginBindingKind {
 
 /// 一条 origin 绑定（kind + 值）。
 ///
-/// `value` 语义随 kind（与 cf-browser 冻结一致）：
+/// `value` 语义随 kind（冻结三型）：
 /// - `Exact`：规范化 `scheme://host:port` 字符串；
 /// - `Subdomain` / `Domain`：小写 host（无 scheme/port/`*.` 前缀）。
 ///
-/// serde 形态与 cf-browser 冻结类型逐字段一致：外部标记结构体 +
-/// `kind` snake_case。存储层读改写、历史快照均用本类型。
+/// serde 形态固定：外部标记结构体 + `kind` snake_case。存储层读改写、
+/// 历史快照均用本类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OriginBinding {
     /// 绑定类型。
@@ -99,7 +98,7 @@ mod tests {
         }
     }
 
-    /// 序列化形态与 cf-browser 冻结类型逐字段一致（kind snake_case）。
+    /// 序列化形态固定（kind snake_case）。
     #[test]
     fn binding_serde_shape_matches_frozen() {
         let b = binding(OriginBindingKind::Exact, "https://example.com");

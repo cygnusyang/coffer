@@ -2,18 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 生产 App 去沙盒（Design Y，docs/31 r0.7）。
-	     沙盒阻断两处容器外写入，真机实证即本行移除的原因：
-	       - 浏览器 native messaging manifest：~/Library/Application Support/
-	         {Google/Chrome,Microsoft Edge,Mozilla}/NativeMessagingHosts/
-	         （沙盒下写入必然报「没有权限保存」）
-	       - well-known broker UDS 目录：~/Library/Application Support/
-	         Coffer/browser/（broker 由非沙盒嵌套 CLI spawn，App 侧仅建目录）
-	     零网络承诺不再以 App Sandbox 为技术基础：改由 check_no_network
-	     代码门禁 + 本 entitlement 无任何 com.apple.security.network.* 保证。
+	<!-- 生产 App 去沙盒（developer-id 渠道）。去沙盒的原始动因（docs/31 浏览器
+	     扩展：native messaging manifest 写入 + broker UDS 目录）已随浏览器集成
+	     于 2026-10-09 移除，本文件暂保留以维持 developer-id 渠道既有行为；
+	     是否简化回沙盒单渠道待裁定（build_macos_app.sh 的 channel 参数）。
+	     零网络承诺不以 App Sandbox 为技术基础：由 check_no_network 代码门禁
+	     保证，本 entitlement 无任何 com.apple.security.network.* 项。
 	     数据保护钥匙串仍由 keychain-access-groups 声明（见下）。
-	     相机权限去沙盒后由 TCC + NSCameraUsageDescription 授予，无需
-	     com.apple.security.device.camera（沙盒时代遗留）。 -->
+	     相机权限由 TCC + NSCameraUsageDescription 授予，无需
+	     com.apple.security.device.camera。 -->
 	<!-- 数据保护钥匙串访问组（TN3137：macOS 的 DP 钥匙串访问组列表
 	     完全由本 entitlement 构建，缺失即 -34018；BUG-2 方案 A.2）。
 	     TeamID 硬编码——codesign 不展开 $(AppIdentifierPrefix) 变量。

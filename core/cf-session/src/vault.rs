@@ -1265,8 +1265,14 @@ impl VaultSession {
     /// merge-time R1）。retention 关闭（含 broker 直开路径不调用本方法）
     /// → 直接 drop，`SessionKey` ZeroizeOnDrop 清零，不留副本。
     fn set_current_dek(&self, dek: SessionKey) {
+        // LOW-1 双检硬化（lead L-6）：先取锁再判 retain_dek，把「检查 + 写入」
+        // 原子化到 current_dek 锁内，杜绝「锁外读到 retain_dek=true 后、
+        // 取锁前并发 set_dek_retention(false) 已清空，晚到的 DEK 仍落库」的
+        // TOCTOU。App 串行化不可达，此为廉价纵深；保留 Acquire 语义，
+        // set_dek_retention(false) 的清空在同一锁内，恒晚于本函数写入。
+        let mut guard = self.current_dek_guard();
         if self.retain_dek.load(Ordering::Acquire) {
-            *self.current_dek_guard() = Some(dek);
+            *guard = Some(dek);
         }
     }
 

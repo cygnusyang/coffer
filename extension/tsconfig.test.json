@@ -13,5 +13,5 @@
     "outDir": "tests-dist",
     "rootDir": "."
   },
-  "include": ["src/origin.ts", "src/crypto/**/*.ts", "src/protocol.ts", "src/tests/**/*.ts"]
+  "include": ["src/origin.ts", "src/crypto/**/*.ts", "src/protocol.ts", "src/pairing_state.ts", "src/tests/**/*.ts"]
 }

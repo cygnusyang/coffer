@@ -2322,13 +2322,19 @@ mod browser {
     // ------------------------------------------------------------------
     // 单元测试（纯解析面：stdin 帧 / well-known 公式 / host UDS 解析；
     // 集成面 spawn `coffer` 二进制见 tests/browser_subcommand.rs）
+    /// 环境变量是进程级共享状态（`ENV_BROKER_SKIP_PEER_VERIFY` / `ENV_BROKER_UDS` / …），
+    /// `browser::tests` 与 `pairing::tests` **共用这一把锁**串行化读写（W-HIGH-1：
+    /// 此前两处各持一把互不协调的锁守护同一 env → cli.rs 测试并发 `remove_var`
+    /// 清掉 pairing 测试 notify 监听线程 `peer_is_app` 读到的门控 → mock App 走真实
+    /// peer 校验被拒连 → flaky 间歇打挂 workspace 门禁）。锁声明上移 `browser` 模块级，
+    /// 两测试子模块经 `super` 引用同一实例。
+    #[cfg(test)]
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ------------------------------------------------------------------
     #[cfg(test)]
     mod tests {
         use super::*;
-
-        /// 环境变量是进程级共享状态，串行化读写（同 cli.rs 外层 tests 纪律）。
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
         /// 确定性 4 行帧（`UNLOCKED` 取 `"1"` / `"0"` / 缺省行）。
         fn frame(unlocked_line: Option<&str>) -> String {

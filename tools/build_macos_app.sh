@@ -41,10 +41,42 @@ CORE_TARGET="${ROOT_DIR}/core/target"
 SRC_DIR="${ROOT_DIR}/macos/Coffer"
 APP_DIR="${ROOT_DIR}/macos/build/Coffer.app"
 
+die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
+step() { printf '\n==> %s\n' "$1"; }
+
 REBUILD_BINDINGS=0
-if [[ "${1:-}" == "--rebuild-bindings" ]]; then
-  REBUILD_BINDINGS=1
+# 分发渠道（v2.3.0 双构建路径，lead 裁定「两者都要」2026-10-08）：
+#   appstore     -> 沙盒版：Coffer.entitlements（Mac App Store 强制 App Sandbox，
+#                    browser native messaging 受沙盒限制 = 浏览器集成在 App Store 版不可用）
+#   developer-id -> 去沙盒版：Coffer.entitlements.desandbox（Design Y，docs/31：
+#                   写 Chrome/Edge/Firefox NativeMessagingHosts + well-known UDS，
+#                   必须关闭沙盒，仅对外分发渠道）
+# 默认 developer-id（当前真机联调口径）；App Store 提交显式 --channel appstore。
+# 环境变量 CHANNEL 与 --channel 参数等价（参数优先）。
+CHANNEL="${CHANNEL:-developer-id}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rebuild-bindings) REBUILD_BINDINGS=1; shift ;;
+    --channel)
+      CHANNEL="${2:?--channel 需要参数: appstore|developer-id}"
+      shift 2
+      ;;
+    *) die "未知参数: $1" ;;
+  esac
+done
+
+case "${CHANNEL}" in
+  appstore|developer-id) ;;
+  *) die "CHANNEL 必须是 appstore 或 developer-id，收到: ${CHANNEL}" ;;
+esac
+
+# 按渠道选择 entitlement 文件；签名段统一引用 ENTITLEMENTS_FILE。
+ENTITLEMENTS_FILE="${SRC_DIR}/Coffer.entitlements"
+if [[ "${CHANNEL}" == "developer-id" ]]; then
+  ENTITLEMENTS_FILE="${SRC_DIR}/Coffer.entitlements.desandbox"
 fi
+[[ -f "${ENTITLEMENTS_FILE}" ]] || die "缺少 entitlement 文件: ${ENTITLEMENTS_FILE}"
 # 官方模式开关（Task 3/4c）：透传 build_swift_bindings.sh + 双 namespace 编译
 OFFICIAL_LICENSE="${OFFICIAL_LICENSE:-0}"
 if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then
@@ -57,9 +89,6 @@ if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then
   # _rc 保留构建原始退出码：restore 失败强制 1，restore 成功不得掩盖构建失败。
   trap '_rc=$?; bash "${SCRIPT_DIR}/restore_corebindings_public.sh" || _rc=1; exit "${_rc}"' EXIT
 fi
-
-die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-step() { printf '\n==> %s\n' "$1"; }
 
 command -v swiftc >/dev/null 2>&1 || die "未找到 swiftc，请安装完整版 Xcode 并 xcode-select --install。"
 
@@ -200,7 +229,7 @@ printf '签名身份: %s\n' "${IDENTITY}"
 cp "${PROFILE}" "${APP_DIR}/Contents/embedded.provisionprofile"
 
 codesign --force --sign "${IDENTITY}" \
-  --entitlements "${SRC_DIR}/Coffer.entitlements" \
+  --entitlements "${ENTITLEMENTS_FILE}" \
   "${APP_DIR}" || die "codesign 失败。"
 
 codesign --verify --strict "${APP_DIR}" || die "签名校验失败。"
@@ -214,4 +243,5 @@ echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
 echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
 echo "  browser host shim: ${APP_DIR}/Contents/Helpers/coffer-shim"
 echo "  （manifest path 指向此 shim；它补 browser-agent 子命令、exec 保父链，见 docs/31 §2.1 D-2）"
+echo "  分发渠道: ${CHANNEL}（entitlements=${ENTITLEMENTS_FILE##*/}）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

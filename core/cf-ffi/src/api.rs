@@ -447,6 +447,29 @@ impl VaultSession {
         .map(Into::into)
     }
 
+    /// 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
+    ///
+    /// 用户解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
+    /// 无效（R1 只在解锁瞬间填 DEK）→ 用生物识别材料补种 DEK 供 broker 导出。
+    /// 与 `unlock_with_biometric` 的关键差异：**无幂等短路**（已解锁也补种），
+    /// 且**不改变解锁态**（只补 DEK，零 ItemStore 重建）。
+    ///
+    /// # 错误（fail-fast，镜像 `export_dek` 门禁语义 + D-8）
+    ///
+    /// 锁定态 → 1001；retention 未开启 → 5002；bio 未启用 → 4001；
+    /// k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
+    pub fn retain_dek_with_bio(&self, k_bio: Vec<u8>) -> Result<(), FfiError> {
+        self.inner
+            .retain_dek_with_bio(&k_bio)
+            .map_err(Into::into)
+    }
+
+    /// 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。Swift 侧
+    /// 探测「是否需补种」用本方法——**不导出明文 DEK**，避免跨桥明文往返。
+    pub fn dek_retained(&self) -> bool {
+        self.inner.dek_retained()
+    }
+
     // -------------------------------------------- MCP 解锁托管（docs/29 G3b）
 
     /// 派生 MCP 托管密钥（docs/29 §5.2 enable 流程 ①）。

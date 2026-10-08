@@ -460,6 +460,62 @@ impl VaultSession {
         Ok(info)
     }
 
+    /// 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
+    ///
+    /// 用户在解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
+    /// 无效——R1 只在解锁瞬间按 `retain_dek` 填 `current_dek`，会话已解锁则
+    /// DEK 为空 → `export_dek` 5002 → broker 无 stdin DEK 不派生。本方法
+    /// **不改变解锁态**（不触 state 机、不重建 store）——直接复用 bio 通道的
+    /// DEK-only 解出 [`unlock_bio::recover_dek_bio`]（open wrapped_dek_bio），
+    /// 仅把解出的 DEK 补入 `current_dek`（按当前 `retain_dek`，LOW-1 锁内双检）。
+    ///
+    /// 与 `unlock_with_biometric` 的关键差异：**无幂等短路**——已解锁也执行
+    /// 补种（unlock_with_biometric :450-452 幂等返回不适用）；零 ItemStore 重建。
+    /// K_bio 非密码 oracle，不触退避计数器。
+    ///
+    /// # 错误（fail-fast，镜像 `export_dek` :251-257 门禁语义 + D-8）
+    ///
+    /// 锁定态 → 1001；retention 未开启 → 5002（InvalidArgument，与 export_dek
+    /// 同码）；bio 未启用 → 4001；k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
+    pub fn retain_dek_with_bio(&self, k_bio: &[u8]) -> SessionResult<()> {
+        // 门禁①：锁定态 → 1001（需已解锁才可补种；镜像 export_dek 语义）
+        self.state_guard()
+            .as_ref()
+            .ok_or(CfError::VaultLocked)?;
+        // 门禁②：retention 未开 → 5002（fail-fast；关闭时补种无意义且会被
+        // set_current_dek 按 LOW-1 静默 drop，显式报错让调用方知晓）
+        if !self.retain_dek.load(Ordering::Acquire) {
+            return Err(CfError::InvalidArgument("dek retention disabled".into()));
+        }
+
+        let header = self.header_snapshot();
+        // bio 封装未启用/缺包裹数据 → 4001（先于一切密钥操作，D-8）
+        if !header.biometric_wrap.available {
+            return Err(CfError::BiometricUnavailable);
+        }
+        let Some(wrapped_b64) = header.biometric_wrap.wrapped_dek_b64.as_deref() else {
+            return Err(CfError::BiometricUnavailable);
+        };
+        if k_bio.len() != unlock_bio::K_BIO_LEN {
+            return Err(CfError::InvalidArgument(format!(
+                "k_bio must be {} bytes, got {}",
+                unlock_bio::K_BIO_LEN,
+                k_bio.len()
+            )));
+        }
+
+        let dek = unlock_bio::recover_dek_bio(&header, wrapped_b64, k_bio)?;
+        self.set_current_dek(dek);
+        Ok(())
+    }
+
+    /// 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。供 Swift 侧
+    /// 探测「是否需补种」——**不导出明文 DEK**，避免跨桥明文往返。
+    #[must_use]
+    pub fn dek_retained(&self) -> bool {
+        self.current_dek_guard().is_some()
+    }
+
     // ------------------------------------------------ MCP 解锁托管（docs/29）
 
     /// 是否启用了 MCP 托管封装（header `mcp_wrap.available`，docs/29 §2：
@@ -2073,6 +2129,161 @@ mod tests {
         session.lock();
         let err = session.export_dek().unwrap_err();
         assert_eq!(err.code(), 5002, "lock() 后不应可导出");
+    }
+
+    // ------------------------------------------------ 强制补种 DEK（B1，R1-3 时序缺口修复）
+
+    /// B1 复现 R1-3 缺口：已解锁且 retention 关闭时解锁 → export_dek Err(5002)；
+    /// 之后才 set_dek_retention(true)（浏览器集成启用路径，R1-3）→ 当前会话仍拿
+    /// 不到 DEK（解锁瞬间 retain_dek 才生效，R1 只在解锁时填 current_dek）。
+    /// retain_dek_with_bio 解锁态按 K_bio 补种 DEK → export_dek Ok 且与
+    /// recover_dek 解出值一致（修复验证）。
+    #[test]
+    fn retain_dek_填补解锁后启用retention的dek缺口() {
+        let base = crate::tests_support::temp_dir("retain_dek_r13_gap");
+        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
+
+        // R1-3 时序：先解锁（retention 默认关）→ 后启用 retention（浏览器集成启用路径）
+        session.set_dek_retention(true);
+        let err = session.export_dek().unwrap_err();
+        assert_eq!(
+            err.code(),
+            5002,
+            "解锁后才开 retention，缺口仍在：export_dek 应失败"
+        );
+
+        // B1 修复：retain_dek_with_bio 补种 DEK（不重建 store、不改解锁态）
+        session.retain_dek_with_bio(k_bio.as_bytes()).unwrap();
+        assert!(session.dek_retained(), "补种后应持有 DEK");
+        let header = header_of(&vault_dir);
+        let expected = crate::unlock::recover_dek(&vault_dir, &header, STRONG_PASSWORD).unwrap();
+        let exported = session.export_dek().unwrap();
+        assert_eq!(
+            exported,
+            expected.as_bytes().to_vec(),
+            "补种后应能导出与 recover_dek 一致的 DEK"
+        );
+    }
+
+    /// B1：锁定态调用 retain_dek_with_bio → 1001（先于 retention 门禁，与
+    /// 解锁路径一致）。
+    #[test]
+    fn retain_dek_锁定态返回锁定错误() {
+        let base = crate::tests_support::temp_dir("retain_dek_locked");
+        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        let err = session.retain_dek_with_bio(&[0u8; 32]).unwrap_err();
+        assert_eq!(err.code(), 1001, "锁定态补种应 1001");
+    }
+
+    /// B1：retain_dek 未开启 → 5002（fail-fast，镜像 export_dek 语义——retention
+    /// 关闭时补种无意义，set_current_dek 也会静默 drop，显式报错让调用方知晓）。
+    #[test]
+    fn retain_dek_未开retention拒绝() {
+        let base = crate::tests_support::temp_dir("retain_dek_retention_off");
+        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
+        // retention 默认关闭 → 补种被拒
+        let err = session.retain_dek_with_bio(k_bio.as_bytes()).unwrap_err();
+        assert_eq!(err.code(), 5002, "retention 未开应 5002");
+        assert!(!session.dek_retained(), "拒绝后不应残留 DEK");
+    }
+
+    /// B1：k_bio 错误 → 1002（与 unlock_with_biometric 一致，K_bio 非密码
+    /// oracle 不计退避）；非 32B → 5002（参数错误，先于密钥操作）。
+    #[test]
+    fn retain_dek_错误材料按语义报错() {
+        let base = crate::tests_support::temp_dir("retain_dek_bad_material");
+        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
+        session.set_dek_retention(true);
+
+        // 错误 k_bio（同长、非本库包裹值）→ 1002
+        let err = session.retain_dek_with_bio(&[0xAB; 32]).unwrap_err();
+        assert_eq!(err.code(), 1002, "错误 k_bio 应 1002");
+        assert!(!session.dek_retained(), "解封失败不应持有 DEK");
+
+        // 非 32B → 5002
+        let err = session.retain_dek_with_bio(&[0xAB; 31]).unwrap_err();
+        assert_eq!(err.code(), 5002, "非 32B k_bio 应 5002");
+    }
+
+    /// B1：retain_dek_with_bio 只补 current_dek，不改变已解锁 store 的数据
+    /// 访问语义——补种前后列表/条目一致、保持解锁态；retention 开启时补种后
+    /// 持有 DEK（与解锁路径同语义）。
+    #[test]
+    fn retain_dek_不改变已解锁store数据访问语义() {
+        let base = crate::tests_support::temp_dir("retain_dek_store_semantics");
+        let brief = create_vault_with_kdf(&base, "补种库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
+        session.set_dek_retention(true);
+        session.create_item(&draft_item("补种前后都在")).unwrap();
+        assert_eq!(session.list_items(None).unwrap().len(), 1, "前置：1 个条目");
+
+        session.retain_dek_with_bio(k_bio.as_bytes()).unwrap();
+
+        assert!(session.is_unlocked(), "补种后仍保持解锁态");
+        assert!(session.dek_retained(), "retention 开启时补种后应持有 DEK");
+        let items = session.list_items(None).unwrap();
+        assert_eq!(items.len(), 1, "补种后条目仍可访问");
+        assert_eq!(items[0].title, "补种前后都在");
+    }
+
+    /// B1：dek_retained 纯读探测三态——retention 关（默认）→ false；
+    /// 开 + 解锁补种 → true；lock() 清零 → false。纯读 `current_dek.is_some()`，
+    /// 不导出明文 DEK（Swift 侧探测专用，避免跨桥明文往返）。
+    #[test]
+    fn dek_retained三态探测() {
+        let base = crate::tests_support::temp_dir("dek_retained_three_state");
+        let brief = create_vault_with_kdf(&base, "探测库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+
+        // 态 1：retention 关（默认）→ false
+        session.unlock(STRONG_PASSWORD).unwrap();
+        assert!(!session.dek_retained(), "retention 关应探测 false");
+
+        // 态 2：开 + 解锁补种 → true
+        session.set_dek_retention(true);
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
+        session.retain_dek_with_bio(k_bio.as_bytes()).unwrap();
+        assert!(session.dek_retained(), "开 + 补种后应探测 true");
+
+        // 态 3：lock() 清零 → false
+        session.lock();
+        assert!(!session.dek_retained(), "lock() 清零后应探测 false");
     }
 
     // ------------------------------------------------ origin 绑定封装（merge-time E 前置）

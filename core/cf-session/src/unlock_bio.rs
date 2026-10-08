@@ -212,7 +212,7 @@ pub(crate) fn unlock_store_with_bio(
 ///
 /// 全部失败统一 1002（D-8）；`plain`（DEK 原始 Vec）在拷贝进
 /// Zeroizing 后显式清零，不留副本。
-fn recover_dek_bio(
+pub(crate) fn recover_dek_bio(
     header: &cf_format::Header,
     wrapped_b64: &str,
     k_bio: &[u8],

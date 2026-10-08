@@ -663,3 +663,111 @@ fn panic载荷含敏感串时message已脱敏() {
         other => panic!("应为 InternalPanic，实际 {other:?}"),
     }
 }
+
+// ================================================== 7. DEK 保留 / 导出 seam（R1）
+
+/// 默认（retention off）解锁后 export_dek → 5002（fail-closed，裁定书
+/// §1.7 R1-3）：解锁时 `set_current_dek` 按 `retain_dek` 直接 drop DEK，
+/// 导出门禁命中 `current_dek == None`。
+#[test]
+fn dek保留默认关闭_解锁后导出5002() {
+    let base = temp_base("dek_retention_off");
+    let brief = setup_vault(&base, "R1默认库");
+    let app = CofferApp::new();
+    let session = unlocked_session(&app, &base, &brief.uuid.to_string());
+
+    assert!(session.is_unlocked(), "前置：会话应处于解锁态");
+    assert_eq!(
+        err_code(session.export_dek()),
+        5002,
+        "retention 未开启应 fail-closed 5002"
+    );
+}
+
+/// set_dek_retention(true) 必须在解锁前开启（保留判定发生在解锁收尾的
+/// `set_current_dek`）；解锁后 export_dek 返回 32 字节原始 DEK。
+#[test]
+fn dek保留开启_解锁后导出32字节() {
+    let base = temp_base("dek_retention_on");
+    let brief = setup_vault(&base, "R1开启库");
+    let app = CofferApp::new();
+    let session = app
+        .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+        .unwrap();
+
+    session.set_dek_retention(true);
+    session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+
+    let dek = session.export_dek().unwrap();
+    assert_eq!(dek.len(), 32, "DEK 应为 32 字节原始值");
+}
+
+/// 关闭 retention 后 export_dek → 5002：关闭即立即清零（幂等门禁，R1-3 缓解）。
+#[test]
+fn dek保留关闭_导出回5002() {
+    let base = temp_base("dek_retention_off_again");
+    let brief = setup_vault(&base, "R1关闭库");
+    let app = CofferApp::new();
+    let session = app
+        .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+        .unwrap();
+    session.set_dek_retention(true);
+    session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+    assert_eq!(
+        session.export_dek().unwrap().len(),
+        32,
+        "前置：开启时应可导出"
+    );
+
+    session.set_dek_retention(false);
+    assert_eq!(
+        err_code(session.export_dek()),
+        5002,
+        "关闭 retention 后应 fail-closed 5002"
+    );
+}
+
+/// lock() 后 export_dek → 5002：`current_dek` 与 state 同清，锁定即不持 DEK。
+#[test]
+fn dek保留开启_锁定后导出5002() {
+    let base = temp_base("dek_retention_lock");
+    let brief = setup_vault(&base, "R1锁定库");
+    let app = CofferApp::new();
+    let session = app
+        .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+        .unwrap();
+    session.set_dek_retention(true);
+    session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+    assert_eq!(
+        session.export_dek().unwrap().len(),
+        32,
+        "前置：解锁态应可导出"
+    );
+
+    session.lock();
+    assert!(!session.is_unlocked(), "lock() 后应处于锁定态");
+    assert_eq!(
+        err_code(session.export_dek()),
+        5002,
+        "锁定后应 fail-closed 5002"
+    );
+}
+
+/// set_dek_retention 幂等：重复 true/false 均无 panic（开关只影响解锁
+/// 收尾的保留判定，可任意切换）；关闭态导出维持 fail-closed。
+#[test]
+fn dek保留开关幂等_重复设置无panic() {
+    let base = temp_base("dek_retention_idempotent");
+    let brief = setup_vault(&base, "R1幂等库");
+    let app = CofferApp::new();
+    let session = unlocked_session(&app, &base, &brief.uuid.to_string());
+
+    session.set_dek_retention(true);
+    session.set_dek_retention(true);
+    session.set_dek_retention(false);
+    session.set_dek_retention(false);
+    session.set_dek_retention(true);
+    // 关闭后导出 fail-closed 不 panic
+    session.set_dek_retention(false);
+    assert_eq!(err_code(session.export_dek()), 5002);
+}

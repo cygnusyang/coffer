@@ -1213,6 +1213,20 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func exportCsv(outPath: String) throws  -> FfiCsvExportResult
     
     /**
+     * 导出当前会话 DEK（32 字节原始值，UniFFI `Vec<u8>` → Swift `Data`）。
+     * merge-time R1 (a-i) 刻意设计（裁定书 §1.4）：DEK 只在
+     * 「Rust session ↔ 短暂 Swift 缓冲 ↔ stdin 管道」内瞬时存在，
+     * 跨 FFI 取用属既有 H-3 契约的取值落点，不新增任何持久/日志面。
+     *
+     * 门禁（fail-closed）：retention 未开启或未解锁（`current_dek` 为
+     * `None`）→ 5002（InvalidArgument，映射见 crate::error）。
+     *
+     * 返回临时副本（非零化 `Vec<u8>`）——调用方（Swift，组 C 纪律）
+     * 写入 stdin 后立即零化（既有 `zeroize(_:)`）。
+     */
+    func exportDek() throws  -> Data
+    
+    /**
      * 1PUX 明文导出（FR-8.2，v0.7.0-T04；docs/23 TC-EXP 组；锁定态 → 1001）。
      *
      * 输出官方 1PUX v3 结构（ZIP + 明文 JSON + `files/` 附件），走
@@ -1455,6 +1469,18 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * UI 选择器。
      */
     func setClipboardClearSecs(secs: Int64) throws 
+    
+    /**
+     * 开启/关闭 DEK 保留（merge-time R1 (a-i)，浏览器集成启用时由 Swift
+     * 调用；broker / cf-mcp 不开）。幂等开关：重复设置同值无副作用，
+     * 关闭时立即清零已持有的 DEK（fail-closed）；`lock()` 恒清零。
+     *
+     * 安全语义（裁定书 §1.4 / §1.7 R1-1）：开启后解锁态会在 Rust 内存
+     * 额外保留 DEK（`SessionKey`，`ZeroizeOnDrop`），驻留窗口从「解锁
+     * 瞬间」扩到「整个解锁会话」。本方法不新增任何持久/日志面——DEK
+     * 只存于会话内存，随 `lock()` / 关闭 retention 清零。
+     */
+    func setDekRetention(enabled: Bool) 
     
     /**
      * 设置 / 取消收藏。
@@ -1881,6 +1907,27 @@ open func exportCsv(outPath: String)throws  -> FfiCsvExportResult  {
     uniffi_cf_ffi_fn_method_vaultsession_export_csv(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(outPath),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 导出当前会话 DEK（32 字节原始值，UniFFI `Vec<u8>` → Swift `Data`）。
+     * merge-time R1 (a-i) 刻意设计（裁定书 §1.4）：DEK 只在
+     * 「Rust session ↔ 短暂 Swift 缓冲 ↔ stdin 管道」内瞬时存在，
+     * 跨 FFI 取用属既有 H-3 契约的取值落点，不新增任何持久/日志面。
+     *
+     * 门禁（fail-closed）：retention 未开启或未解锁（`current_dek` 为
+     * `None`）→ 5002（InvalidArgument，映射见 crate::error）。
+     *
+     * 返回临时副本（非零化 `Vec<u8>`）——调用方（Swift，组 C 纪律）
+     * 写入 stdin 后立即零化（既有 `zeroize(_:)`）。
+     */
+open func exportDek()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_export_dek(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -2375,6 +2422,25 @@ open func setClipboardClearSecs(secs: Int64)throws   {try rustCallWithError(FfiC
     uniffi_cf_ffi_fn_method_vaultsession_set_clipboard_clear_secs(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(secs),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 开启/关闭 DEK 保留（merge-time R1 (a-i)，浏览器集成启用时由 Swift
+     * 调用；broker / cf-mcp 不开）。幂等开关：重复设置同值无副作用，
+     * 关闭时立即清零已持有的 DEK（fail-closed）；`lock()` 恒清零。
+     *
+     * 安全语义（裁定书 §1.4 / §1.7 R1-1）：开启后解锁态会在 Rust 内存
+     * 额外保留 DEK（`SessionKey`，`ZeroizeOnDrop`），驻留窗口从「解锁
+     * 瞬间」扩到「整个解锁会话」。本方法不新增任何持久/日志面——DEK
+     * 只存于会话内存，随 `lock()` / 关闭 retention 清零。
+     */
+open func setDekRetention(enabled: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_set_dek_retention(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(enabled),uniffiCallStatus
     )
 }
 }
@@ -10007,6 +10073,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_export_dek() != 34441) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_one_pux() != 64996) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10101,6 +10170,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_clipboard_clear_secs() != 5629) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_set_dek_retention() != 22088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_set_favorite() != 56106) {

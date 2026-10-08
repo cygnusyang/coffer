@@ -343,22 +343,30 @@ do {
 }
 
 // 11.3 BrokerStdinSecrets.payload：§3.1 四行冻结格式
-let dekHex = String(repeating: "ab", count: 32)   // 64 字符 = 32 字节 hex
+// DEK 以原始字节传入（FFI exportDek 语义），payload 组帧时 hex 直编进 Data
+// （不经中间 String，裁定书 §1.4）；期望 hex 仅在测试侧用 String(format:) 构造
+//（测试代码允许中间 String，生产路径已规避）。
+let dekBytes = Data((0..<32).map { UInt8($0) })         // 00 01 ... 1f（32B 原始）
+let expectedDekHex = (0..<32).map { String(format: "%02x", $0) }.joined()
 let vaultUUIDHex = String(repeating: "cd", count: 16) // 32 字符 = 16 字节 hex
-let pskHex = String(repeating: "ef", count: 32)   // 64 字符 = 32 字节 hex
+let pskHex = String(repeating: "ef", count: 32)       // 64 字符 = 32 字节 hex
 let secrets = BrokerStdinSecrets(
-    dekHex: dekHex, vaultUUIDHex: vaultUUIDHex, pskHex: pskHex, unlocked: true)
-let expectedText = "DEK_HEX=\(dekHex)\n"
+    dekBytes: dekBytes, vaultUUIDHex: vaultUUIDHex, pskHex: pskHex, unlocked: true)
+let expectedText = "DEK_HEX=\(expectedDekHex)\n"
     + "VAULT_UUID_HEX=\(vaultUUIDHex)\n"
     + "PSK_HEX=\(pskHex)\n"
     + "UNLOCKED=1\n"
 check(
     String(data: secrets.payload, encoding: .utf8) == expectedText,
-    "payload = §3.1 四行（LF 结尾，unlocked→1）"
+    "payload = §3.1 四行（LF 结尾，DEK hex 由原始字节直编，unlocked→1）"
+)
+check(
+    secrets.payload.count == expectedText.utf8.count,
+    "payload 字节数 = 期望四行 UTF-8 定长（\(expectedText.utf8.count) B，与内容断言互证）"
 )
 check(
     String(data: BrokerStdinSecrets(
-        dekHex: "d", vaultUUIDHex: "u", pskHex: "p", unlocked: false).payload,
+        dekBytes: Data([0xde, 0xad]), vaultUUIDHex: "u", pskHex: "p", unlocked: false).payload,
            encoding: .utf8)?.hasSuffix("UNLOCKED=0\n") == true,
     "unlocked=false → UNLOCKED=0"
 )
@@ -371,14 +379,26 @@ check(
     "zeroize 覆零且长度不变"
 )
 
-// 11.5 spawn stdin 私有管道机制：写 §3.1 四行 + close stdin → 子进程读到精确
+// 11.5 R1-2/M-7：BrokerStdinSecrets.zeroizeDek 覆零 DEK 原始字节（用后即毁）
+do {
+    var s = BrokerStdinSecrets(
+        dekBytes: Data([0xde, 0xad, 0xbe, 0xef]), vaultUUIDHex: "u", pskHex: "p", unlocked: true)
+    check(s.dekBytes == Data([0xde, 0xad, 0xbe, 0xef]), "zeroizeDek 前 DEK 字节原样")
+    s.zeroizeDek()
+    check(
+        s.dekBytes.allSatisfy { $0 == 0 } && s.dekBytes.count == 4,
+        "zeroizeDek 覆零 DEK 原始字节（长度不变）"
+    )
+}
+
+// 11.6 spawn stdin 私有管道机制：写 §3.1 四行 + close stdin → 子进程读到精确
 // 内容并退出 0（不经 env/argv；关闭在 spawn 内同步完成，无挂起风险）
 do {
     let process = try BrowserBroker.spawn(
         executable: "/bin/sh",
         arguments: ["-c",
                     "IFS= read -r a && IFS= read -r b && IFS= read -r c && IFS= read -r d "
-                        + "&& [ \"$a\" = \"DEK_HEX=\(dekHex)\" ] "
+                        + "&& [ \"$a\" = \"DEK_HEX=\(expectedDekHex)\" ] "
                         + "&& [ \"$b\" = \"VAULT_UUID_HEX=\(vaultUUIDHex)\" ] "
                         + "&& [ \"$c\" = \"PSK_HEX=\(pskHex)\" ] "
                         + "&& [ \"$d\" = \"UNLOCKED=1\" ]"],
@@ -388,6 +408,32 @@ do {
     check(process.terminationStatus == 0, "spawn stdin 载荷被子进程精确读取（4 行 + close）")
 } catch {
     check(false, "spawn stdin 流程未预期抛错：\(error)")
+}
+
+// 11.7 M-6 核销（KNOWN-ISSUES.md:1100）：broker 早退写 stdin（EPIPE）不崩 App——
+// throwing write(contentsOf:) 把 EPIPE 归入 spawn 失败路径（browserSpawnFailed）
+// 而非 NSFileHandleOperationException。用「不读 stdin 立即退出」的子进程 + 大载荷
+//（> pipe buffer）强制 EPIPE 或写成功——两路皆断言「不崩 App」（M-6 本质）。
+do {
+    let big = Data(repeating: 0x61, count: 256 * 1024)
+    let p = try BrowserBroker.spawn(
+        executable: "/bin/sh",
+        arguments: ["-c", "exec 0<&-; exit 0"],   // 关 stdin 立即退出，不读
+        environment: [:],
+        stdinPayload: big)
+    p.waitUntilExit()
+    check(true, "M-6：早退 broker 写 stdin 成功（未触发 EPIPE），不崩 App")
+} catch let error as BrowserIntegrationError {
+    let isSpawnFailed: Bool = {
+        if case .brokerSpawnFailed = error { return true }
+        return false
+    }()
+    check(
+        isSpawnFailed,
+        "M-6：早退 broker 写 stdin 抛 browserSpawnFailed（EPIPE 被 throwing 捕获）而非崩溃：\(error.userText)"
+    )
+} catch {
+    check(false, "M-6：早退 broker 写 stdin 抛非预期错误：\(error)")
 }
 
 print("")

@@ -39,6 +39,7 @@ import {
   type AppMessage,
   type PairRequestFrame,
   type PairResultFrame,
+  type PairRejectReason,
 } from "../protocol";
 
 export class MockBroker {
@@ -69,7 +70,10 @@ export class MockBroker {
    * same material the subsequent E2E handshake uses (constructive consistency, §3.1: the
    * extension pins pair_result.pk_b ≡ msg2.pk_b from the same BrokerIdentity).
    */
-  async onPairRequest(req: PairRequestFrame, opts?: { approved?: boolean }): Promise<PairResultFrame> {
+  async onPairRequest(
+    req: PairRequestFrame,
+    opts?: { approved?: boolean; reason?: PairRejectReason },
+  ): Promise<PairResultFrame> {
     if (
       !req ||
       req.type !== "pair_request" ||
@@ -81,7 +85,8 @@ export class MockBroker {
       throw new ProtocolError(ErrCode.SessionNotEstablished, "malformed pair_request");
     }
     if (opts?.approved === false) {
-      return { type: "pair_result", approved: false, error: ErrCode.UserRejected };
+      // Frozen contract §2.4 step3: approved:false carries `reason` (string), no keys.
+      return { type: "pair_result", approved: false, reason: opts.reason ?? "rejected" };
     }
     return {
       type: "pair_result",

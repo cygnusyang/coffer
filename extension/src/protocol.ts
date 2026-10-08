@@ -173,12 +173,16 @@ export interface PairRequestFrame {
   extension_id: string;
 }
 
+/** approved:false reason on pair_result (design §2.4 step3, frozen contract). */
+export type PairRejectReason = "rejected" | "timeout" | "app_unavailable";
+
 /**
  * Broker → extension: the pairing verdict.
  *   approved:true  → psk (32 B hex) + pk_b (65 B SEC1 hex) — the extension persists these
  *                    and re-opens a fresh E2E connection (分连接, design §8.4).
- *   approved:false → no keys; `error` carries the reason (8006 user rejected / 8003 App
- *                    offline or timeout). Multi-browser contention also lands here (§8.1).
+ *   approved:false → no keys; `reason` carries why (design §2.4 step3 — frozen contract:
+ *                    "rejected" | "timeout" | "app_unavailable"). Multi-browser contention
+ *                    also lands here as "rejected" (§8.1).
  */
 export interface PairResultFrame {
   type: "pair_result";
@@ -187,8 +191,8 @@ export interface PairResultFrame {
   psk?: string;
   /** Broker static identity public key (65 B SEC1), lowercase hex — present only when approved. */
   pk_b?: string;
-  /** ErrCode reason when approved:false (8006 / 8003). */
-  error?: ErrCode;
+  /** approved:false reason (design §2.4 step3 — "rejected" | "timeout" | "app_unavailable"). */
+  reason?: PairRejectReason;
 }
 
 /** Parsed pairing material (structurally `PairingMaterial` — kept independent of crypto/e2e). */
@@ -219,6 +223,15 @@ export function pairResultToMaterial(result: PairResultFrame): ParsedPairingMate
   }
   if (psk.length !== 32 || pkB.length !== SEC1_LEN || pkB[0] !== 0x04) return null;
   return { brokerPublicKeyRaw: pkB, psk };
+}
+
+/**
+ * Map an approved:false pair_result `reason` (§2.4 step3) to the SessionState errorCode the
+ * popup renders. "timeout" is handled separately by the background (plain unpaired, same as
+ * the local 120 s timer — §8.3); unknown/missing reason fails safe to 8006 (rejection).
+ */
+export function pairRejectErrorCode(reason: PairRejectReason | undefined): number {
+  return reason === "app_unavailable" ? ErrCode.BrokerUnavailable : ErrCode.UserRejected;
 }
 
 // --- session frame (b64 of nonce‖ct‖tag‖mac) ------------------------------------------

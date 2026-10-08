@@ -63,6 +63,9 @@
     if (psk.length !== 32 || pkB.length !== SEC1_LEN || pkB[0] !== 4) return null;
     return { brokerPublicKeyRaw: pkB, psk };
   }
+  function pairRejectErrorCode(reason) {
+    return reason === "app_unavailable" ? 8003 /* BrokerUnavailable */ : 8006 /* UserRejected */;
+  }
   function makeGesture(nowMs = Date.now()) {
     const nonce = crypto.getRandomValues(new Uint8Array(GESTURE_NONCE_LEN));
     const out = new Uint8Array(GESTURE_NONCE_LEN + 8);
@@ -569,8 +572,11 @@
       }
       return;
     }
-    const err = typeof result.error === "number" ? result.error : 8006 /* UserRejected */;
-    applyPairingEvent({ kind: "result", approved: false }, err);
+    if (result.reason === "timeout") {
+      applyPairingEvent({ kind: "timeout" });
+      return;
+    }
+    applyPairingEvent({ kind: "result", approved: false }, pairRejectErrorCode(result.reason));
   }
   async function loadPairing() {
     const raw = (await chrome.storage.local.get(PAIRING_KEY))[PAIRING_KEY];

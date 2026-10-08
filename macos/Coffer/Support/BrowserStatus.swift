@@ -1,10 +1,9 @@
 // BrowserStatus.swift —— 浏览器集成设置页就绪状态（docs/31 §6.2 / §9.1 G-D）。
 //
 // 镜像 McpStatus（Support/McpStatus.swift）：状态来源纪律 = 配置（开关）+ 本地
-// 环境探测（coffer 二进制、manifest 落盘、escrow 托管）组合判定，无 socket、
-// 不 spawn 常驻进程。broker 运行态是**独立进程**（App 仅管理其生命周期，docs/31
-// §2.1），由 AppModel 单独持有并呈现（BrowserBrokerRuntime），不参与本处
-// 前置就绪度组合。
+// 环境探测（coffer 二进制、manifest 落盘）组合判定，无 socket、不 spawn 常驻
+// 进程。broker 运行态是**独立进程**（App 仅管理其生命周期，docs/31 §2.1），由
+// AppModel 单独持有并呈现（BrowserBrokerRuntime），不参与本处前置就绪度组合。
 //
 // 组合逻辑抽为纯函数（对齐 McpStatus.resolve / TouchIDStatus.resolve 先例）：
 // 判定只依赖布尔信号，无 IO / 无 FFI / 无进程依赖，可独立单测
@@ -16,9 +15,9 @@
 //     D-2，McpStatusProbe.cofferBinaryPath 定位）
 //   - manifestsInstalled = 三浏览器 native messaging manifest 全部落盘
 //     （Chrome/Edge/Firefox macOS，docs/31 §6.2）
-//   - escrowEnabled = MCP 解锁托管启用（broker 免密解锁 = escrow 路径，docs/31
-//     §4.1，与 coffer mcp --provider coffer 同款取密语义；复用
-//     McpEscrowStatus.resolve == .enabled）
+// 注（G-A3）：broker 契约 = App 解锁 + stdin DEK 交付（docs/31 §4.1 r0.9「broker
+// escrow 免密自解锁」作废），就绪度与 MCP escrow **零耦合**——不再把 escrow 当
+// 前置（McpEscrowStatus 属 MCP 设置面，语义保留在 McpStatusTests 侧）。
 
 import Foundation
 
@@ -28,26 +27,25 @@ enum BrowserStatus: Equatable {
     case disabled
     /// 配置 + 本地前置全部就绪：broker 可 spawn、扩展可配对。
     case ready
-    /// 启用但缺某前置（coffer 二进制 / manifest / escrow 托管）。
+    /// 启用但缺某前置（coffer 二进制 / manifest；G-A3：escrow 已解耦）。
     case notReady(BrowserStatusIssue)
 
-    /// 未就绪的具体缺项（docs/31 §6.2 状态行引导文案按项区分）。
-    enum BrowserStatusIssue: Equatable {
+    /// 未就绪的具体缺项（docs/31 §6.2 状态行引导文案按项区分）。G-A3：就绪度
+    /// 与 escrow 解耦（docs/31 §4.1 r0.9），缺项仅 coffer 二进制 / manifest 两型
+    /// （case 数由 BrowserStatusTests 断言为 2，防回退）。
+    enum BrowserStatusIssue: Equatable, CaseIterable {
         /// 缺 coffer 命令（broker/host 复用二进制，D-2）
         case missingCofferBinary
         /// 缺 native messaging manifest（未写入 / 被删 / 写入被拒）
         case missingManifest
-        /// 缺 MCP 解锁托管（broker 免密解锁依赖 escrow，docs/31 §4.1）
-        case missingEscrow
     }
 
     /// 就绪度判定纯函数（docs/31 §6.2，镜像 McpStatus.resolve 同序）。
     ///
-    /// 组合规则（缺项按优先级报首个缺项）：
+    /// 组合规则（缺项按优先级报首个缺项；G-A3：escrow 不再是前置）：
     ///   - 未启用 → disabled（开关优先，与 McpStatus/TouchIDStatus.resolve 同序）
     ///   - 缺 coffer → missingCofferBinary
     ///   - 缺 manifest → missingManifest
-    ///   - 缺 escrow → missingEscrow
     ///   - 全就绪 → ready
     ///
     /// - Parameters:
@@ -55,17 +53,14 @@ enum BrowserStatus: Equatable {
     ///     集成」配置
     ///   - cofferBinaryAvailable: `BrowserStatusProbe.isCofferBinaryAvailable()`
     ///   - manifestsInstalled: `BrowserStatusProbe.allManifestsInstalled()`
-    ///   - escrowEnabled: `McpEscrowStatus.resolve(...) == .enabled`（docs/31 §4.1）
     static func resolve(
         enabled: Bool,
         cofferBinaryAvailable: Bool,
-        manifestsInstalled: Bool,
-        escrowEnabled: Bool
+        manifestsInstalled: Bool
     ) -> BrowserStatus {
         guard enabled else { return .disabled }
         guard cofferBinaryAvailable else { return .notReady(.missingCofferBinary) }
         guard manifestsInstalled else { return .notReady(.missingManifest) }
-        guard escrowEnabled else { return .notReady(.missingEscrow) }
         return .ready
     }
 
@@ -76,7 +71,6 @@ enum BrowserStatus: Equatable {
         case .ready: return "就绪"
         case .notReady(.missingCofferBinary): return "未找到 coffer 命令"
         case .notReady(.missingManifest): return "未写入浏览器 native messaging manifest"
-        case .notReady(.missingEscrow): return "未启用 MCP 解锁托管"
         }
     }
 }

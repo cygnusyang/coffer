@@ -4,7 +4,8 @@
 // 编译运行：tools/run_browser_status_tests.sh
 //
 // 被测单元（零 AppKit / 零 CoreBindings 依赖，swiftc 可独立编译）：
-//   - BrowserStatus.resolve / label —— 就绪四态判定（docs/31 §6.2）
+//   - BrowserStatus.resolve / label —— 就绪四态判定（docs/31 §6.2；G-A3：
+//     三参签名 enabled/coffer/manifest，escrow 已从就绪度解耦——缺项枚举仅两型）
 //   - BrowserKind / BrowserManifestPaths —— 浏览器清单目标路径构造（纯函数）
 //   - BrowserManifest.json / shimPath —— manifest 内容构造 + shim 路径派生
 //   - BrowserManifest.write / delete —— manifest 写入/删除（显式 I/O，临时
@@ -48,34 +49,41 @@ func makeTempRoot() -> String {
 // ---- 1. BrowserStatus.resolve：disabled 优先级最高（docs/31 §6.2 开关）----
 
 check(
-    BrowserStatus.resolve(enabled: false, cofferBinaryAvailable: false, manifestsInstalled: false, escrowEnabled: false) == .disabled,
+    BrowserStatus.resolve(enabled: false, cofferBinaryAvailable: false, manifestsInstalled: false) == .disabled,
     "未启用 + 前置全缺失 → disabled"
 )
 check(
-    BrowserStatus.resolve(enabled: false, cofferBinaryAvailable: true, manifestsInstalled: true, escrowEnabled: true) == .disabled,
+    BrowserStatus.resolve(enabled: false, cofferBinaryAvailable: true, manifestsInstalled: true) == .disabled,
     "未启用 + 前置全就绪 → disabled（开关优先，镜像 McpStatus 同序）"
 )
-
-// ---- 2. BrowserStatus.resolve：ready 与缺项（coffer → manifest → escrow 顺序）----
-
 check(
-    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: true, manifestsInstalled: true, escrowEnabled: true) == .ready,
-    "启用 + coffer/manifest/escrow 全就绪 → ready"
+    BrowserStatus.resolve(enabled: false, cofferBinaryAvailable: true, manifestsInstalled: false) == .disabled,
+    "未启用 + coffer 就绪缺 manifest → disabled（escrow 无关，G-A3 补全真值表）"
 )
 check(
-    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: false, manifestsInstalled: true, escrowEnabled: true) == .notReady(.missingCofferBinary),
+    BrowserStatus.resolve(enabled: false, cofferBinaryAvailable: false, manifestsInstalled: true) == .disabled,
+    "未启用 + 仅 manifest 就绪 → disabled（escrow 无关，G-A3 补全真值表）"
+)
+
+// ---- 2. BrowserStatus.resolve：ready 与缺项（coffer → manifest 顺序）----
+
+// G-A3 核心回归：enabled + coffer + manifest → .ready **无 escrow 参**——resolve
+// 三参签名 = escrow 不再是就绪前置（docs/31 §4.1 r0.9「broker escrow 免密自解锁」
+// 作废，broker 契约 = App 解锁 + stdin DEK 交付）；修复前 3 参调用不编译 → 恒红。
+check(
+    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: true, manifestsInstalled: true) == .ready,
+    "启用 + coffer/manifest 就绪 → ready（就绪度与 escrow 解耦，G-A3）"
+)
+check(
+    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: false, manifestsInstalled: true) == .notReady(.missingCofferBinary),
     "缺 coffer 二进制 → missingCofferBinary"
 )
 check(
-    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: true, manifestsInstalled: false, escrowEnabled: true) == .notReady(.missingManifest),
+    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: true, manifestsInstalled: false) == .notReady(.missingManifest),
     "缺 manifest → missingManifest"
 )
 check(
-    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: true, manifestsInstalled: true, escrowEnabled: false) == .notReady(.missingEscrow),
-    "缺 escrow 托管 → missingEscrow（broker 免密解锁依赖，docs/31 §4.1）"
-)
-check(
-    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: false, manifestsInstalled: false, escrowEnabled: false) == .notReady(.missingCofferBinary),
+    BrowserStatus.resolve(enabled: true, cofferBinaryAvailable: false, manifestsInstalled: false) == .notReady(.missingCofferBinary),
     "全缺 → 报第一个缺项（coffer 优先，sanity）"
 )
 
@@ -83,14 +91,15 @@ check(
 
 check(BrowserStatus.ready != BrowserStatus.disabled, "ready ≠ disabled（sanity）")
 check(
-    BrowserStatus.notReady(.missingManifest) != BrowserStatus.notReady(.missingEscrow),
+    BrowserStatus.notReady(.missingCofferBinary) != BrowserStatus.notReady(.missingManifest),
     "不同缺项互不相等（sanity）"
 )
 check(BrowserStatus.disabled.label == "已停用", "disabled 文案")
 check(BrowserStatus.ready.label == "就绪", "ready 文案")
 check(BrowserStatus.notReady(.missingCofferBinary).label == "未找到 coffer 命令", "missingCofferBinary 文案")
 check(BrowserStatus.notReady(.missingManifest).label == "未写入浏览器 native messaging manifest", "missingManifest 文案")
-check(BrowserStatus.notReady(.missingEscrow).label == "未启用 MCP 解锁托管", "missingEscrow 文案")
+// G-A3 回归：就绪度缺项枚举仅两型（missingEscrow case 已删；修复前 count=3 → 红）
+check(BrowserStatus.BrowserStatusIssue.allCases.count == 2, "就绪度缺项枚举仅两型（missingEscrow 已删，G-A3）")
 
 // ---- 4. BrowserKind / BrowserManifestPaths 路径构造（纯函数）----
 

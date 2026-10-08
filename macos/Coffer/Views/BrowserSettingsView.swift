@@ -7,7 +7,8 @@
 //   ① 写配置：开关 → UserDefaults（非敏感布尔，BrowserIntegrationSettings）
 //   ② 触发 manifest 写入/删除 + broker spawn/kill（经 AppModel.setBrowserIntegration，
 //      docs/31 §2.3 启/配对流——App 侧不宿主服务器，broker 是独立进程）
-//   ③ 显示状态：本地前置探测（BrowserStatus.resolve，无 socket）
+//   ③ 显示状态：本地前置探测（BrowserStatus.resolve，无 socket；就绪度 = coffer
+//      二进制 + manifest 落盘，G-A3 与 escrow 解耦）
 //   ④ 配对确认（docs/31 §4.2/§5.3）：显式用户批准才触发 broker 下发 PSK + 公钥
 //
 // 呈现纪律（docs/31 §6.2）：manifest 写入失败（含沙盒拒绝）/ broker spawn 失败
@@ -214,17 +215,15 @@ struct BrowserSettingsSection: View {
 
     // MARK: - 刷新
 
-    /// 重算就绪状态（docs/31 §6.2）：本地快路径探测 + escrow 信号（先刷新
-    /// mcpEscrowStatus 再组合——McpEscrowSettingsSection 的 onAppear 先于父节
-    /// 刷新时也能拿到近实时信号）。
+    /// 重算就绪状态（docs/31 §6.2）：本地快路径探测（coffer 二进制 + manifest
+    /// 落盘；G-A3：就绪度与 escrow 解耦——broker 契约 = App 解锁 + stdin DEK
+    /// 交付，broker 运行态由 brokerStateRow 独立呈现）。
     private func refreshStatus() {
-        model.refreshMcpEscrowStatus()
         status = BrowserStatus.resolve(
             enabled: enabled,
             cofferBinaryAvailable: BrowserStatusProbe.isCofferBinaryAvailable(),
             manifestsInstalled: BrowserStatusProbe.allManifestsInstalled(
-                homeDirectory: BrowserStatusProbe.userHomeDirectory()),
-            escrowEnabled: model.mcpEscrowStatus == .enabled
+                homeDirectory: BrowserStatusProbe.userHomeDirectory())
         )
     }
 

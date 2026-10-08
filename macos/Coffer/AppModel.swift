@@ -1018,11 +1018,11 @@ final class AppModel: ObservableObject {
     /// 最近一次配对弹框结束态（视图呈现 拒绝/超时 文案，契约 §8-3「超时即拒」）。
     @Published private(set) var lastPairingDismissal: BrowserPairingDismissal?
 
-    /// 配对弹框挂起超时任务（契约 §8 裁定 3：120s，超时即拒关框）。
+    /// 配对弹框挂起超时任务（契约 §8 裁定 3：30s，超时即拒关框）。
     private var pairingTimeoutWorkItem: DispatchWorkItem?
 
-    /// 配对弹框挂起超时秒数（契约 §8 裁定 3 冻结：120s；broker 侧同值）。
-    private static let pairingTimeoutInterval: TimeInterval = 120
+    /// 配对弹框挂起超时秒数（契约 §8 裁定 3：30s；2026-10-08 用户裁定 120s→30s；broker 侧同值）。
+    private static let pairingTimeoutInterval: TimeInterval = 30
 
     /// 开关切换（docs/31 §2.3 启/配对流）：启用 = 写 manifest + spawn broker；
     /// 停用 = kill broker + 删 manifest（幂等）。
@@ -1250,7 +1250,7 @@ final class AppModel: ObservableObject {
 
     /// 配对集成 V：spawn 成功后建立 notify.sock 反向通道客户端（App 客户端持长连，
     /// 契约 §2.3）+ 注入真实决策 responder。broker 被杀（断连）→ 客户端清理连接态，
-    /// 挂起弹框由 120s 超时兜底关框。帧回调从客户端读线程触发——经 `Task { @MainActor }`
+    /// 挂起弹框由 30s 超时兜底关框。帧回调从客户端读线程触发——经 `Task { @MainActor }`
     /// hop 回主线程（pendingPairingRequest / @Published 均 MainActor 隔离）。
     private func startBrokerNotifyClient(homeDirectory: String) {
         let notifyPath = BrowserBroker.notifySocketPath(homeDirectory: homeDirectory)
@@ -1263,7 +1263,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in self?.cancelPendingPairing(requestId: requestId) }
             },
             onDisconnect: {
-                // broker 被杀 → 客户端 EOF 清理连接态；挂起弹框由 120s 超时兜底
+                // broker 被杀 → 客户端 EOF 清理连接态；挂起弹框由 30s 超时兜底
             },
             log: { DiagLog.append($0) })
         client.start()
@@ -1353,7 +1353,7 @@ final class AppModel: ObservableObject {
     }
 
     /// 配对请求到达（BrokerNotifyClient 读线程经 Task hop 主线程调用；docs/31 §4.2）。
-    /// 挂起 120s 超时定时器（契约 §8 裁定 3：超时即拒关框）。
+    /// 挂起 30s 超时定时器（契约 §8 裁定 3：超时即拒关框）。
     func submitPendingPairing(_ request: BrowserPairingRequest) {
         pendingPairingRequest = request
         lastPairingDismissal = nil
@@ -1397,8 +1397,8 @@ final class AppModel: ObservableObject {
         clearPairingTimeout()
     }
 
-    /// 配对弹框挂起超时（120s，契约 §8 裁定 3「超时即拒」）：到期关框。broker
-    /// 侧同样 120s 超时并回拒扩展；本侧为兜底（broker 被杀/断连时 pair_cancel
+    /// 配对弹框挂起超时（30s，契约 §8 裁定 3「超时即拒」）：到期关框。broker
+    /// 侧同样 30s 超时并回拒扩展；本侧为兜底（broker 被杀/断连时 pair_cancel
     /// 可能不达，弹框不能永久挂起）。
     private func startPairingTimeout() {
         clearPairingTimeout()
@@ -1406,7 +1406,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in
                 guard let self, self.pendingPairingRequest != nil else { return }
                 self.pendingPairingRequest = nil
-                self.lastPairingDismissal = .cancelled(reason: "配对超时（120 秒）")
+                self.lastPairingDismissal = .cancelled(reason: "配对超时（30 秒）")
             }
         }
         pairingTimeoutWorkItem = work

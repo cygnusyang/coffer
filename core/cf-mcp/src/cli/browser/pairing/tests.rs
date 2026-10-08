@@ -383,8 +383,8 @@
         }
     }
 
-    /// 配对超时缺省值 = 120s（docs/31 §2.4 裁定 ③ 契约回归）。
+    /// 配对超时缺省值 = 30s（docs/31 §2.4 裁定 ③ 契约回归；2026-10-08 用户裁定 120s→30s）。
     #[test]
-    fn default_pair_timeout_is_120s() {
-        assert_eq!(PAIR_TIMEOUT, Duration::from_secs(120));
+    fn default_pair_timeout_is_30s() {
+        assert_eq!(PAIR_TIMEOUT, Duration::from_secs(30));
     }

@@ -26,8 +26,8 @@ use super::{
     ENV_BROKER_SKIP_PEER_VERIFY,
 };
 
-/// 配对请求挂起超时（docs/31 §2.4 裁定 ③：120s）。
-const PAIR_TIMEOUT: Duration = Duration::from_secs(120);
+/// 配对请求挂起超时（docs/31 §2.4 裁定 ③：30s；2026-10-08 用户裁定 120s→30s）。
+const PAIR_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `pair_cancel.reason`：扩展断连（App 关框）。
 const CANCEL_REASON_DISCONNECT: &str = "disconnect";

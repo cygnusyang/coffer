@@ -46,11 +46,9 @@ step() { printf '\n==> %s\n' "$1"; }
 
 REBUILD_BINDINGS=0
 # 分发渠道（v2.3.0 双构建路径，lead 裁定「两者都要」2026-10-08）：
-#   appstore     -> 沙盒版：Coffer.entitlements（Mac App Store 强制 App Sandbox，
-#                    browser native messaging 受沙盒限制 = 浏览器集成在 App Store 版不可用）
-#   developer-id -> 去沙盒版：Coffer.entitlements.desandbox（Design Y，docs/31：
-#                   写 Chrome/Edge/Firefox NativeMessagingHosts + well-known UDS，
-#                   必须关闭沙盒，仅对外分发渠道）
+#   appstore     -> 沙盒版：Coffer.entitlements（Mac App Store 强制 App Sandbox）
+#   developer-id -> 去沙盒版：Coffer.entitlements.desandbox（必须关闭沙盒，
+#                   仅对外分发渠道）
 # 默认 developer-id（当前真机联调口径）；App Store 提交显式 --channel appstore。
 # 环境变量 CHANNEL 与 --channel 参数等价（参数优先）。
 CHANNEL="${CHANNEL:-developer-id}"
@@ -208,18 +206,6 @@ codesign --force --sign "${IDENTITY}" \
   --entitlements "${SRC_DIR}/Coffer-cli.entitlements" \
   "${CLI_APP_DIR}" || die "coffer CLI（嵌套 bundle）codesign 失败。"
 
-# v2.3.0 G-E：browser native messaging host shim（docs/31 §2.1 D-2 / L289 / L295）。
-# manifest `path` 不能传参、浏览器把扩展 origin 作为 argv[1] 注入（P-S 实证）——
-# shim 补 `browser-agent` 子命令、丢弃 origin（G-B parse_agent_args 只认 --log）、
-# exec 保 PID/父进程链（auth 层②端点）。**无受限 entitlement**（AMFI 门禁不适用，
-# D-6 纪律），与 coffer 同身份签名；装配为 Contents/Helpers 松散 Mach-O（外层签名
-# 覆盖 seal，codesign --strict 实证可过）。
-step "    构建并装配 browser host shim（tools/coffer-shim.c）"
-SHIM_REL="${APP_DIR}/Contents/Helpers/coffer-shim"
-/usr/bin/clang -O2 -Wall -Wextra -o "${SHIM_REL}" "${ROOT_DIR}/tools/coffer-shim.c" \
-  || die "coffer-shim 编译失败（/usr/bin/clang 缺失 = 无 Xcode CLT）。"
-codesign --force --sign "${IDENTITY}" "${SHIM_REL}" || die "coffer-shim codesign 失败。"
-
 # ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
 step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
 # 签名身份与 profile 已在 3.5 发现/校验（coffer CLI 与 App 同一身份、同一 profile）。
@@ -234,14 +220,11 @@ codesign --force --sign "${IDENTITY}" \
 
 codesign --verify --strict "${APP_DIR}" || die "签名校验失败。"
 codesign --verify --strict "${CLI_APP_DIR}" || die "coffer CLI 嵌套 bundle 签名校验失败。"
-codesign --verify --strict "${APP_DIR}/Contents/Helpers/coffer-shim" || die "coffer-shim 签名校验失败。"
 
 step "完成 ✅"
 echo "  App : ${APP_DIR}"
 echo "  启动: open ${APP_DIR}"
 echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
 echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
-echo "  browser host shim: ${APP_DIR}/Contents/Helpers/coffer-shim"
-echo "  （manifest path 指向此 shim；它补 browser-agent 子命令、exec 保父链，见 docs/31 §2.1 D-2）"
 echo "  分发渠道: ${CHANNEL}（entitlements=${ENTITLEMENTS_FILE##*/}）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

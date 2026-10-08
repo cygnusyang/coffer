@@ -32,6 +32,8 @@ struct BrowserSettingsSection: View {
     @State private var errorMessage: String?
     /// 开关异步编排（manifest 写/删 + broker spawn/kill）进行中标记。
     @State private var isApplying = false
+    /// 配对结束态一次性提示（拒绝/超时文案，契约 §8-3「超时即拒」不静默）。
+    @State private var pairingNotice: String?
 
     var body: some View {
         Section {
@@ -47,6 +49,11 @@ struct BrowserSettingsSection: View {
                 if model.pendingPairingRequest != nil {
                     pairingRow
                 }
+                if let notice = pairingNotice {
+                    Text(notice)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("浏览器集成")
@@ -54,7 +61,26 @@ struct BrowserSettingsSection: View {
             Text(footerText)
         }
         .onAppear { refreshStatus() }
+        .onChange(of: model.lastPairingDismissal) { _, newValue in
+            pairingNotice = Self.noticeText(for: newValue)
+            if newValue != nil {
+                // 一次性提示：3s 后自动清除（配对为一次一个的手动流程，极少碰撞）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    pairingNotice = nil
+                }
+            }
+        }
         .ffiErrorAlert($errorMessage)
+    }
+
+    /// 配对结束态 → 文案（契约 §8-3：拒绝/超时不静默）。
+    private static func noticeText(for dismissal: BrowserPairingDismissal?) -> String? {
+        guard let dismissal else { return nil }
+        switch dismissal {
+        case .approved: return "已批准配对，扩展即将连接。"
+        case .rejected: return "已拒绝配对。"
+        case .cancelled(let reason): return "\(reason)，如需配对请重新发起。"
+        }
     }
 
     // MARK: - 开关编排（docs/31 §2.3 启/配对流）

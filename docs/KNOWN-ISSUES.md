@@ -1181,7 +1181,33 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
-## 模板（新条目按此格式追加）
+## NOTE-1（🟢 知悉项，非缺陷）：空库错 DEK 不被 verify_integrity 检出（自举分支用错 key 重写基线）
+
+**登记日期**：2026-10-08
+**发现环境**：merge-time 接线轮组 A（session-seam）`unlock_with_dek` 直开 seam 实现时如实发现
+**分级**：S4（防御纵深注记，无实际攻击路径）/ P3 / 来源版本 既有 / 发现版本 v2.3.0（merge-time 轮）
+**状态**：🟢 知悉项——cf-store `verify_integrity` 既有行为（docs/07 §5 C-4 旧库兼容自举语义），**非本 seam 引入**；不阻塞
+**核销记录**：—（知悉项；如需空库也 fail-closed 属 cf-store 改动，另议）
+**证据**：`core/cf-store/src/repo/meta.rs:180-215`——`(stored_count, stored_mac)` 任一行缺失 → `bump_integrity(key)` 自举；`core/cf-session/src/unlock.rs:378-388` finish_unlock 调 `verify_integrity(&store.subkeys().root_mac_key)`
+
+### 现象（预期/实际 分行写）
+
+- 预期：错 DEK 直开（`unlock_with_dek`）在任何库态都 1002 fail-closed。
+- 实际：**空库**（无条目、无 root_mac 基线）下错 DEK 走自举分支——用错 key 重写基线 → 返回 Ok。`「错 DEK → 1002」仅在有基线（≥1 条目）时成立`。
+
+### 根因（已实证）
+
+`verify_integrity` 对「meta 基线缺失」采用自举（旧库兼容，docs/07 §5 C-4）：缺行即用传入 key 重算基线落盘。空库首次打开时无基线 → 任何 key 都触发自举。属既有设计，非 unlock_with_dek 引入。
+
+### 修复路径
+
+不修。broker 场景 DEK 恒来自 App 自身解锁会话（正确 DEK），空库 + 错 DEK 无实际到达路径；防御纵深上边际价值有限。若后续需空库也 fail-closed：可在自举分支加「空库快照校验」（如 header wrapped_dek verifier 对照），属 cf-store 改动另议。
+
+### 复现与诊断
+
+空库 + 任意非正确 32B DEK 直开 → Ok（verify_integrity 自举）。处置依据：组 A 如实发现 + lead 裁定 2026-10-08（知悉项，不阻塞）。
+
+---
 
 ```
 ## BUG-N（🔴/🟡/✅ 状态）：一句话标题

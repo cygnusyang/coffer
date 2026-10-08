@@ -84,7 +84,5 @@ logs/
 .claude/
 .codebuddy/
 
-# ---------- 浏览器扩展（v2.3.0 G-C）----------
-# 扩展 node_modules：仅 devDependencies（TypeScript/esbuild），构建产物 build.mjs 产出，不入库
-/extension/node_modules/
-/extension/tests-dist/
+# ---------- 浏览器扩展（已拆独立仓库 coffer-browser-extension，2026-10-08）----------
+# 扩展源码与构建均移入独立仓库；忽略规则随迁（新仓 .gitignore：node_modules/、tests-dist/）

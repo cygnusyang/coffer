@@ -350,7 +350,7 @@ claude mcp add coffer -- Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/c
 
 ### 6.2 进程边界与构建面（关键决策）
 
-- **主 App 不宿主 MCP 服务器**：MCP 服务器 = 独立 `coffer` 进程（由 Claude Code 经 stdio spawn，或 --uds 下由 App/launchd spawn）。主 App 只写配置、发注册命令、显示状态。**App 自身无外部网络连接判据不受影响**（docs/16 判据② 测主 App PID；本机内 UDS 传输由独立 coffer 进程承载，主 App 不监听——docs/27 D-4 新口径）。
+- **主 App 不宿主 MCP 服务器**：MCP 服务器 = 独立 `coffer` 进程（由 Claude Code 经 stdio spawn，或 --uds 下由外部 MCP 客户端 / 终端 spawn）。**（2026-10-09 裁定）App 永不 spawn coffer——CLI 一律由外部 MCP 客户端 / 终端 spawn（沙盒 App 直系子进程 bind AF_UNIX 被 deny network* 拦截的实证，Wave-4 沙盒 UDS 裁定）**主 App 只写配置、发注册命令、显示状态。**App 自身无外部网络连接判据不受影响**（docs/16 判据② 测主 App PID；本机内 UDS 传输由独立 coffer 进程承载，主 App 不监听——docs/27 D-4 新口径）。
 - 分发：**D-6 已裁定（2026-10-07，docs/29 §8 D-6）**——coffer 二进制随 App 包内**嵌套 bundle** `Contents/Helpers/coffer.app/Contents/MacOS/coffer` 分发，与 App 同 bundle 同身份同 profile 签名，**不并入 PATH**（须经包内路径调用，§5.2/§5.4；拷出即 AMFI SIGKILL）；对齐 1Password 把 op 作为集成组件分发的先例。构建脚本 `tools/build_macos_app.sh` 增装配步骤（G5，v2.2.0 落地，嵌套 bundle 装配）。
 
 ### 6.3 UI 纪律（沿用 docs/07 §2.4 + docs/17 §6）

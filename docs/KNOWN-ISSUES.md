@@ -1186,7 +1186,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 **登记日期**：2026-10-08
 **发现环境**：merge-time 接线轮组 A（session-seam）`unlock_with_dek` 直开 seam 实现时如实发现
 **分级**：S4（防御纵深注记，无实际攻击路径）/ P3 / 来源版本 既有 / 发现版本 v2.3.0（merge-time 轮）
-**状态**：🟢 知悉项——cf-store `verify_integrity` 既有行为（docs/07 §5 C-4 旧库兼容自举语义），**非本 seam 引入**；不阻塞
+**状态**：🟢 知悉项——cf-store `verify_integrity` 既有行为（docs/07 §5 C-4 旧库兼容自举语义），**非本 seam 引入**；不阻塞。**失效注记（2026-10-09）**：触发 seam `unlock_with_dek` 已随 v2.4.0 DEK retention 层整体裁除（浏览器集成移除轮），本注记核心关注点（直开 seam 空库错 DEK）路径不再可达；cf-store 自举语义本身不变，登记留档
 **核销记录**：—（知悉项；如需空库也 fail-closed 属 cf-store 改动，另议）
 **证据**：`core/cf-store/src/repo/meta.rs:180-215`——`(stored_count, stored_mac)` 任一行缺失 → `bump_integrity(key)` 自举；`core/cf-session/src/unlock.rs:378-388` finish_unlock 调 `verify_integrity(&store.subkeys().root_mac_key)`
 

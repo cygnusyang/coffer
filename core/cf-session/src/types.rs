@@ -99,6 +99,8 @@ pub struct ItemDetails {
     pub fields: Vec<FieldDetail>,
     /// TOTP 元数据（若有）。
     pub totp: Option<TotpDetail>,
+    /// origin 绑定（D-3，docs/31 §5.3）：浏览器填充/捕获的站点绑定集合。
+    pub origin_bindings: Vec<cf_domain::origin::OriginBinding>,
 }
 
 /// URL 条目读取态（`urls` 表行，解密后）。

@@ -1,6 +1,6 @@
 //! 仓库层（`docs/07-macOS纵切设计.md` §2.1）。
 //!
-//! 十个仓库文件 + [`Repos`] 聚合：
+//! 十一个仓库文件 + [`Repos`] 聚合：
 //!
 //! | 文件 | 职责 |
 //! | --- | --- |
@@ -8,6 +8,7 @@
 //! | [`field`] | fields + sections 表：按 item 批量替换写入、按 item 读出 |
 //! | [`url`] | urls 表：同批量替换模式 |
 //! | [`tag`] | tags 表：同批量替换模式 |
+//! | [`origin`] | item_origins 表：origin 绑定（D-3），同批量替换模式，明文 TEXT 落盘 |
 //! | [`meta`] | meta 表键值读写（item_count、schema_version 等） |
 //! | [`totp`] | TOTP 记录（原 `TotpStore` 迁入改造，`enc_issuer`/`enc_account` 加密列，C-2） |
 //! | [`history`] | history 表（FR-2.9 条目历史版本，快照 = ItemSnapshot CBOR + `hist_key` AEAD） |
@@ -40,6 +41,7 @@ pub mod field;
 pub mod history;
 pub mod item;
 pub mod meta;
+pub mod origin;
 pub mod passkey;
 pub mod tag;
 pub mod totp;
@@ -61,6 +63,8 @@ pub struct Repos<'a> {
     pub urls: url::UrlsRepo<'a>,
     /// tags 表仓库。
     pub tags: tag::TagsRepo<'a>,
+    /// item_origins 表仓库（D-3 origin 绑定，明文 TEXT 落盘）。
+    pub origins: origin::OriginBindingRepo<'a>,
     /// meta 表仓库。
     pub meta: meta::MetaRepo<'a>,
     /// totp 表仓库。
@@ -83,6 +87,7 @@ impl<'a> Repos<'a> {
             fields: field::FieldsRepo::new(conn, subkeys),
             urls: url::UrlsRepo::new(conn, subkeys),
             tags: tag::TagsRepo::new(conn, subkeys),
+            origins: origin::OriginBindingRepo::new(conn),
             meta: meta::MetaRepo::new(conn),
             totp: totp::TotpRepo::new(conn, subkeys),
             history: history::HistoryRepo::new(conn, subkeys),

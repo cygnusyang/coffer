@@ -226,6 +226,7 @@ mod tests {
                 period: 30,
             }),
             attachments: vec![],
+            origin_bindings: vec![],
         }
     }
 

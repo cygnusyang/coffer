@@ -15,10 +15,10 @@
 //!
 //! ## 模块划分（T01）
 //!
-//! - [`schema`]：docs/03 §3.1 全部 11 张表的幂等 DDL + PRAGMA + 版本记录
+//! - [`schema`]：docs/03 §3.1 全部 12 张表的幂等 DDL + PRAGMA + 版本记录
 //! - [`tx`]：`with_tx` 事务框架（失败自动回滚，NFR-REL-01）
-//! - [`repo`]：十个仓库（items / fields / urls / tags / meta / totp / history /
-//!   audit / attachment / passkey）与 [`Repos`] 聚合
+//! - [`repo`]：十一个仓库（items / fields / urls / tags / meta / totp / history /
+//!   audit / attachment / passkey / origin）与 [`Repos`] 聚合
 //! - [`error`]：错误统一（C-6）——cf-store 不自持错误类型，全部用
 //!   [`cf_domain::CfError`]
 //! - [`ItemStore`]：仓库集合门面（持连接 + `SubKeys`），供 cf-session
@@ -78,7 +78,7 @@ pub struct ItemStore {
 }
 
 impl ItemStore {
-    /// 打开存储并确保 schema 就绪（幂等建齐全部 11 张表）。
+    /// 打开存储并确保 schema 就绪（幂等建齐全部 12 张表）。
     pub fn open(conn: Connection, subkeys: SubKeys) -> CfStoreResult<Self> {
         let mut conn = conn;
         schema::init(&mut conn)?;

@@ -2,9 +2,12 @@
 //!
 //! ## 设计要点
 //!
-//! - **一次建齐全部 11 张表 + 索引**：attachments / history / passkeys 三表
+//! - **一次建齐全部 12 张表 + 索引**：attachments / history / passkeys 三表
 //!   只建不用——格式冻结为 v1，避免 v0.2 加表触发 schema 迁移
 //!   （docs/07 §2.1；当前迁移执行体为空，多建表是最便宜的"迁移"）；
+//!   第 12 张 `item_origins`（D-3 origin 绑定从表）同理——新表经
+//!   `CREATE TABLE IF NOT EXISTS` 幂等落位，**不改 schema_version**，
+//!   旧库打开即建表、空表读为空 Vec（存储兼容负路径，KNOWN-ISSUES B-1）；
 //! - **幂等**：全部 `CREATE TABLE/INDEX IF NOT EXISTS`，重复打开不报错；
 //! - **版本记录**：`meta.schema_version = 1`；已存在的版本**高于**当前支持
 //!   时拒绝打开（向前不兼容，[`CfError::UnsupportedFormat`]）；版本值
@@ -103,6 +106,17 @@ CREATE TABLE IF NOT EXISTS tags (
     enc_name  BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tags_item ON tags(item_uuid);
+
+-- origin 绑定（D-3，docs/31 §5.3）：条目 item_origins 结构化字段的从表。
+-- 值非敏感（站点 origin，如 https://example.com），与 designation/category
+-- 同款明文 TEXT 落盘；读改写按 item 批量替换（与 tags/urls 同模式）。
+CREATE TABLE IF NOT EXISTS item_origins (
+    uuid       TEXT PRIMARY KEY,
+    item_uuid  TEXT NOT NULL REFERENCES items(uuid) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    value      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_item_origins_item ON item_origins(item_uuid);
 
 -- 附件
 CREATE TABLE IF NOT EXISTS attachments (
@@ -257,7 +271,7 @@ pub fn verify(conn: &Connection) -> CfStoreResult<()> {
 mod tests {
     use super::*;
 
-    /// 首次 init：11 张表全部建齐，schema_version = 1
+    /// 首次 init：12 张表全部建齐，schema_version = 1
     #[test]
     fn 首次建表写入版本号() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -270,12 +284,13 @@ mod tests {
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table'
                  AND name IN ('meta','items','sections','fields','urls','tags',
-                              'attachments','history','audit_local','totp','passkeys')",
+                              'attachments','history','audit_local','totp','passkeys',
+                              'item_origins')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n_tables, 11, "11 张表必须全部建齐");
+        assert_eq!(n_tables, 12, "12 张表必须全部建齐");
     }
 
     /// 重复执行幂等：不报错、版本不变、表数量不变
@@ -296,7 +311,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        // 11 张业务表 + sqlite 内部表（本用例无 AUTOINCREMENT 序列表，
+        // 12 张业务表 + sqlite 内部表（本用例无 AUTOINCREMENT 序列表，
         // audit_local 的 AUTOINCREMENT 会产生 sqlite_sequence）
         assert!(n >= 11);
     }
@@ -315,8 +330,8 @@ mod tests {
             )
             .unwrap();
         // items 3 + sections 1 + fields 2 + urls 1 + tags 1 + history 1
-        // + audit 1 + totp 1 + passkeys 2 = 13
-        assert_eq!(n, 13, "全部 idx_* 索引必须建齐");
+        // + audit 1 + totp 1 + passkeys 2 + item_origins 1 = 14
+        assert_eq!(n, 14, "全部 idx_* 索引必须建齐");
     }
 
     /// PRAGMA 生效：外键开启、页大小 4096

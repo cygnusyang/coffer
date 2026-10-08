@@ -135,7 +135,13 @@ pub fn copy_item(
         let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
         match state.store.with_tx(|repos| {
             repos.items.insert(&row, &title)?;
-            super::items::write_children(repos, &new_uuid, &draft, &totp)?;
+            super::items::write_children(
+                repos,
+                &new_uuid,
+                &draft,
+                &totp,
+                &payload.snapshot.origin_bindings,
+            )?;
             for att in &payload.attachments {
                 repos
                     .attachments

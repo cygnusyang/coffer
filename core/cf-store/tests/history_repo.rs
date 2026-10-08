@@ -82,6 +82,7 @@ fn sample_snapshot(item_uuid: &str) -> ItemSnapshot {
             period: 30,
         }),
         attachments: vec![],
+        origin_bindings: vec![],
     }
 }
 

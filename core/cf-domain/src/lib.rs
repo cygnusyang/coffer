@@ -29,6 +29,7 @@
 //! - [`category`]：条目类别枚举（22 类 + Custom 兜底）与 opvault 码映射
 //! - [`field`]：字段类型与 designation 语义标识
 //! - [`item`]：条目、字段、分区、URL、附件等核心结构体
+//! - [`origin`]：条目 origin 绑定（D-3 三型 exact/subdomain/domain，存储形态）
 //! - [`snapshot`]：条目历史版本快照（CBOR 序列化）
 //! - [`vault`]：保险库元数据
 //! - [`secret`]：内存安全字符串（析构清零、Debug 打码）
@@ -59,6 +60,7 @@ pub mod error;
 pub mod field;
 pub mod item;
 pub mod license;
+pub mod origin;
 pub mod secret;
 pub mod snapshot;
 pub mod template;

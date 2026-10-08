@@ -16,8 +16,9 @@ open macos/build/Coffer.app         # 启动
   FFI 接口，先跑 `tools/build_swift_bindings.sh`（或给构建脚本加
   `--rebuild-bindings`）。
 - 零网络承诺核查（FR-14.5）：`codesign -d --entitlements - macos/build/Coffer.app`
-  —— 输出只应包含 `app-sandbox` 与 `files.user-selected.read-write`，
-  无任何 `com.apple.security.network.*`。
+  —— 输出除 `app-sandbox`、`files.user-selected.read-write` 外，还含 `device.camera`
+  （FR-5.3 TOTP QR 扫描，T09 裁定 A）与 `keychain-access-groups`（escrow 取密），
+  真实清单见 `Coffer/Coffer.entitlements`；核心断言仍是**无任何** `com.apple.security.network.*`。
 
 ## coffer CLI（MCP 解锁托管，v2.2.0）
 
@@ -133,7 +134,7 @@ macOS **没有** Android 那样的系统级 Autofill 框架，第三方 App 无�
 | --- | --- |
 | 最低系统 | **macOS 14（Sonoma）** —— 该版本同时是 Apple 开放第三方 Passkey 存储的起点 |
 | 架构 | **仅 arm64 原生**，不做 Intel 版本，不做 universal binary |
-| 分发 | Developer ID 签名 + Hardened Runtime + 公证（Notarization） |
+| 分发 | **appstore 沙盒单渠道**（2026-10-09 起，双渠道 developer-id 已取消） |
 
 ---
 

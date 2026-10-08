@@ -45,35 +45,17 @@ die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$1"; }
 
 REBUILD_BINDINGS=0
-# 分发渠道（v2.3.0 双构建路径，lead 裁定「两者都要」2026-10-08）：
-#   appstore     -> 沙盒版：Coffer.entitlements（Mac App Store 强制 App Sandbox）
-#   developer-id -> 去沙盒版：Coffer.entitlements.desandbox（必须关闭沙盒，
-#                   仅对外分发渠道）
-# 默认 developer-id（当前真机联调口径）；App Store 提交显式 --channel appstore。
-# 环境变量 CHANNEL 与 --channel 参数等价（参数优先）。
-CHANNEL="${CHANNEL:-developer-id}"
+# App 恒为沙盒单渠道（Coffer.entitlements：App Sandbox + camera + user-selected + keychain-access-groups）
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rebuild-bindings) REBUILD_BINDINGS=1; shift ;;
-    --channel)
-      CHANNEL="${2:?--channel 需要参数: appstore|developer-id}"
-      shift 2
-      ;;
     *) die "未知参数: $1" ;;
   esac
 done
 
-case "${CHANNEL}" in
-  appstore|developer-id) ;;
-  *) die "CHANNEL 必须是 appstore 或 developer-id，收到: ${CHANNEL}" ;;
-esac
-
-# 按渠道选择 entitlement 文件；签名段统一引用 ENTITLEMENTS_FILE。
+# 签名段统一引用 ENTITLEMENTS_FILE（沙盒单渠道）。
 ENTITLEMENTS_FILE="${SRC_DIR}/Coffer.entitlements"
-if [[ "${CHANNEL}" == "developer-id" ]]; then
-  ENTITLEMENTS_FILE="${SRC_DIR}/Coffer.entitlements.desandbox"
-fi
 [[ -f "${ENTITLEMENTS_FILE}" ]] || die "缺少 entitlement 文件: ${ENTITLEMENTS_FILE}"
 # 官方模式开关（Task 3/4c）：透传 build_swift_bindings.sh + 双 namespace 编译
 OFFICIAL_LICENSE="${OFFICIAL_LICENSE:-0}"
@@ -226,5 +208,5 @@ echo "  App : ${APP_DIR}"
 echo "  启动: open ${APP_DIR}"
 echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
 echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
-echo "  分发渠道: ${CHANNEL}（entitlements=${ENTITLEMENTS_FILE##*/}）"
+echo "  分发渠道: appstore（沙盒单渠道）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

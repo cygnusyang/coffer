@@ -10,6 +10,8 @@
 //!   帧格式（4 字节 LE 长度前缀）；
 //! - [`origin`]：origin 三型绑定与匹配（docs/31 §5.3 D-3，exact/subdomain/domain，
 //!   优先级 exact > subdomain > domain，**无 regex**）；
+//! - [`gesture`]：手势令牌校验与单次消费（docs/31 §5.2 / D-7，base64 nonce‖ts、
+//!   TTL 30 s、replay 防重，8007）；
 //! - [`broker`]：broker 侧会话骨架（确定性身份密钥 + 握手端点编排）；
 //! - [`host`]：host 中继盲传骨架（**零逻辑盲传**，仅帧长度校验，docs/31 §3.1）；
 //! - [`error`]：本 crate 错误类型（浏览器域 8xxx，docs/31a §附）。
@@ -33,6 +35,7 @@
 pub mod broker;
 pub mod e2e;
 pub mod error;
+pub mod gesture;
 pub mod host;
 pub mod origin;
 pub mod protocol;

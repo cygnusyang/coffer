@@ -1215,7 +1215,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 **发现环境**：cygnus 真机（FR-16.1 前置批准 sheet 真机验收中，用户主动拒绝测试）
 **分级**：严重级 S3（次要功能——拒绝决策本身已生效（sheet 关、不配对），初始缺失的是扩展侧用户反馈提示）/ 优先级 P2 / 来源版本 v2.3.0（FR-16.1）/ 发现版本 v2.3.0
 **状态**：✅ 已核销（2026-10-08 用户真机实证：**扩展侧可以拿到「配对已拒绝。可重新发起配对。」**，提示正常渲染）
-**核销记录**：真机复核（2026-10-08，用户反馈「浏览器的插件上是可以拿到'配对已拒绝'的」）；代码路径 `src/ui/popup.ts` renderState `ErrCode.UserRejected`（8006）→「未连接 + 配对已拒绝。可重新发起配对。」+ `src/background.ts` `handlePairResult`（approved:false → `applyPairingEvent(result, pairRejectErrorCode(reason))` → 8006）+ `pairing.test.ts` 拒绝态状态机覆盖均已在架（修复前即存在，无需代码改动）。初始「无提示」观察归因 = **popup 不实时刷新**：popup 仅在打开时 `load()` 拉一次 `get_state`（`src/ui/popup.ts` DOMContentLoaded），期间拒绝在 App 侧发生 → 已打开的 popup 保持旧态，需重开 popup（或点「刷新」）才显示拒绝提示——非拒绝链路断裂。残留子项 = popup 无实时状态推送（LOW，见「刷新」按钮决策）。
+**核销记录**：真机复核（2026-10-08，用户反馈「浏览器的插件上是可以拿到'配对已拒绝'的」）；代码路径 `src/ui/popup.ts` renderState `ErrCode.UserRejected`（8006）→「未连接 + 配对已拒绝。可重新发起配对。」+ `src/background.ts` `handlePairResult`（approved:false → `applyPairingEvent(result, pairRejectErrorCode(reason))` → 8006）+ `pairing.test.ts` 拒绝态状态机覆盖均已在架（修复前即存在，无需代码改动）。初始「无提示」观察归因 = **popup 不实时刷新**：popup 仅在打开时 `load()` 拉一次 `get_state`（`src/ui/popup.ts` DOMContentLoaded），期间拒绝在 App 侧发生 → 已打开的 popup 保持旧态，需重开 popup（或点「刷新」）才显示拒绝提示——非拒绝链路断裂。残留子项 **popup 无实时状态推送（LOW）已闭合**：FR-16.2（用户裁定 2026-10-08）给 popup 加 `chrome.runtime.onMessage` 监听 background `{type:state}` 广播实时重拉，并移除「刷新」按钮（扩展仓 2f0de9b，测试 77/77）。
 
 ### 现象（预期/实际）
 - **预期**：App 点「拒绝」→ sheet 关 → 扩展 popup 显示「配对已拒绝」（契约 §8-3 拒绝路径 + popup 三态文案区分——docs/32 §1.4「pair_result reason 单通道」判据真机复核点）。

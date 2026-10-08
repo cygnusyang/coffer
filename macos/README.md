@@ -43,22 +43,9 @@ open macos/build/Coffer.app         # 启动
 
   注意 `mcp` 子命令**必须显式给出**（CLI 不识别裸 `--help`；缺子命令打印 usage 并以 1 退出）。
 
-## 浏览器扩展 host（v2.3.0 G-E）
+## 浏览器扩展 host（v2.3.0 G-E）—— 已废弃
 
-浏览器 native messaging 的 host 复用嵌套 bundle 里的 `coffer` 二进制（docs/31 §2.1 D-2）：
-
-- **`browser-agent`**（浏览器 spawn 的 host，薄中继）：manifest `path` 不能传参、浏览器
-  把扩展 origin 作为 argv[1] 注入（P-S spike 实证）——故 manifest `path` 指向 **shim**，
-  由 shim 补 `browser-agent` 子命令并 `exec` 真正的 coffer 二进制（保 PID/父进程链，
-  host 验父进程 = 浏览器仍成立）。
-- **shim 路径**：`macos/build/Coffer.app/Contents/Helpers/coffer-shim`（签名 Mach-O，
-  源码 `tools/coffer-shim.c`，构建脚本 step 3.5 自动编译+同身份签名，**无受限
-  entitlement**，AMFI 门禁不适用）。shim 相对自身解析 coffer 二进制路径，App 被移动/
-  重装后无需改 manifest。
-- **`browser-broker`**（长驻 daemon，持解锁会话）：由 App 直接 spawn，**不走 manifest/
-  shim**，无需注册。
-- 真机验证：嵌套 bundle 双 codesign --strict 过；bundle 内调用 exit 0/1（AMFI 放行）、
-  拷出 137（拷出即 SIGKILL 纪律与 coffer CLI 一致）。
+> **废弃注记（2026-10-09）**：浏览器扩展**整体废弃**（用户裁定，扩展连商城上架都不要），App 侧集成已移除。本节 `browser-agent` / `browser-broker` / shim 装配说明作废留档；嵌套 bundle coffer 二进制仍随 App 分发（coffer CLI，见上节），`browser-*` 子命令不再使用。设计文档已归档 `docs/archive/31-v2.3.0设计-浏览器扩展.md`。
 
 ## 当前已有内容
 

@@ -957,7 +957,7 @@ accept 后的读循环无超时窗；`set_read_timeout`（SO_RCVTIMEO）未设�
 **登记日期**：2026-10-07（v2.3.0 设计期，docs/31 §10 风险 4「G-F 登记」）
 **发现环境**：docs/31 §10 风险登记；docs/31a D-3（origin 三型冻结，🔴 不可逆存储格式类）
 **分级**：S3（旧库升级路径，additive 字段非数据损坏）/ P2 / 来源版本 v2.3.0（计划）/ 发现版本 v2.3.0（设计期）
-**状态**：🟡 设计期登记——D-3 已随用户批准冻结（2026-10-07），**实施待 G-A 落**（`origin_bindings` 字段 additive + `#[serde(default)]` 兼容旧库，零 format_version / DDL 变更）
+**状态**：🟡 设计期登记——D-3 已随用户批准冻结（2026-10-07），**实施待 G-A 落**（`origin_bindings` 字段 additive + `#[serde(default)]` 兼容旧库，零 format_version / DDL 变更）。**废弃（2026-10-09）**：浏览器扩展整体废弃（用户裁定，扩展连商城上架都不要），随 v2.3.0 App 侧集成移除；本登记作废留档，不实施
 **核销记录**：—（实现后回填；预期 = G-A `cf-domain` item 模型新增字段 + 旧库读取回归全绿）
 **证据**：docs/31 §10 风险 4；docs/31a D-3
 
@@ -988,7 +988,7 @@ G-A 实施时按 additive + `#[serde(default)]` 加字段（对齐 docs/29 §5.1
 **登记日期**：2026-10-07（v2.3.0 设计期，docs/31 §10 风险 8「文档声明」）
 **发现环境**：docs/31 §10 风险登记 8（T-7）
 **分级**：S4（安全残余，非缺口——PSK 单因子不足）/ P3 / 来源版本 v2.3.0（计划）/ 发现版本 v2.3.0（设计期）
-**状态**：🟡 已接受残余——缓解已定（认证链④须签名浏览器 ② 层 + 签名 host ③ 层才可建立会话；PSK 可轮换），本文档声明即缓解落地
+**状态**：🟡 已接受残余——缓解已定（认证链④须签名浏览器 ② 层 + 签名 host ③ 层才可建立会话；PSK 可轮换），本文档声明即缓解落地。**废弃（2026-10-09）**：浏览器扩展整体废弃，随 v2.3.0 App 侧集成移除；本残余登记作废留档（扩展仓保留，README 已标废弃）
 **核销记录**：—（无修复意图；随 v2.3.0 安全门禁 G-R 按 docs/10 §5 纪律复核）
 **证据**：docs/31 §10 风险 8、§3.3（「扩展零密钥材料」界定：传输层材料属扩展持有边界）
 
@@ -1028,7 +1028,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ### 根因（已定位，非全实证）
 
-`ItemStore::list` 为 `ORDER BY updated_at DESC`（`core/cf-store/src/repo/item.rs:223`）且**无次级排序键**：同毫秒/同精度内先后创建的条目 `updated_at` 并列时，SQLite 对并列行的返回顺序不保证（rowid/插入序为常见实现但非契约）→ `fps` 输入顺序不定 → `find_duplicate_groups`（`core/cf-audit/src/watchtower.rs:87`，BTreeMap 按指纹保序、组内保输入序）组内顺序随之不定。**与 G-A/G-B 改动无关**：cf-session 零依赖 cf-browser/cf-mcp（依赖清单核实）。
+`ItemStore::list` 为 `ORDER BY updated_at DESC`（`core/cf-store/src/repo/item.rs:223`）且**无次级排序键**：同毫秒/同精度内先后创建的条目 `updated_at` 并列时，SQLite 对并列行的返回顺序不保证（rowid/插入序为常见实现但非契约）→ `fps` 输入顺序不定 → `find_duplicate_groups`（`core/cf-audit/src/watchtower.rs:87`，BTreeMap 按指纹保序、组内保输入序）组内顺序随之不定。**与 G-A/G-B 改动无关**：cf-session 不依赖 cf-mcp（依赖清单核实；cf-browser 已随扩展废弃移除）。
 
 ### 修复路径
 
@@ -1046,7 +1046,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 G-R 安全审查（reviewer-browser 首轮，评审面 G-A..G-E 全部改动）MEDIUM 项 M-2
 **分级**：S3（安全卫生，非缺口——派生域可辨，无非预期碰撞）/ P3 / 来源版本 v2.3.0（设计期）/ 发现版本 v2.3.0
-**状态**：🟡 顺延登记——本次不修，随下次 KAT 重冻结窗口协同处理
+**状态**：🟡 顺延登记——本次不修，随下次 KAT 重冻结窗口协同处理。**废弃（2026-10-09）**：浏览器扩展整体废弃（用户裁定，扩展连商城上架都不要），随 v2.3.0 App 侧集成移除；本顺延登记作废留档，不重冻结
 **核销记录**：—（待重冻结时 G-C 协同，lead 裁定 2026-10-08）
 **证据**：docs/31 §3.3 冻结 KAT 帧 md5=`ef82fd23434b8857f010e7fadb93c057`（跨语言字节级断言，G-A/Rust 与 G-C/TS 双侧一致）
 
@@ -1074,7 +1074,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 G-R 安全审查 MEDIUM 项 M-4（手势确认 + 绑定 TTL + 持久化归 G-D/G-T merge-time）
 **分级**：S3（安全卫生——手势/持久化非本次 Wave 落地面）/ P3 / 来源版本 v2.3.0（设计期）/ 发现版本 v2.3.0
-**状态**：🟡 顺延登记——绑定键含 action 触及 D-3 冻结语义，不重开已冻结设计
+**状态**：🟡 顺延登记——绑定键含 action 触及 D-3 冻结语义，不重开已冻结设计。**废弃（2026-10-09）**：浏览器扩展整体废弃（用户裁定，扩展连商城上架都不要），随 v2.3.0 App 侧集成移除；本顺延登记作废留档，不 merge-time 承接
 **核销记录**：—（merge-time 由 G-D 集成方案 / G-T 判据承接，lead 裁定 2026-10-08）
 **证据**：docs/31 §5 填充流（手势确认基线）、D-3 origin_bindings 冻结语义、G-D H-2/3 集成设计
 
@@ -1102,7 +1102,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 集成轮 G-R 复审（da237da 5 文件独立验证）MEDIUM-1
 **分级**：S3（当前 dormant——brokerStdinSecrets()=nil 不 spawn，接线后暴露）/ P2 / 来源版本 v2.3.0（集成轮）/ 发现版本 v2.3.0
-**状态**：🟡 顺延登记——归 merge-time 接线轮（§8 第 4 项 DEK 来源接线时一并处理）
+**状态**：🟡 顺延登记——归 merge-time 接线轮（§8 第 4 项 DEK 来源接线时一并处理）。**废弃（2026-10-09）**：浏览器扩展整体废弃，随 v2.3.0 App 侧集成移除（BrowserIntegration.swift 已删）；本顺延登记作废留档
 **核销记录**：—（merge-time 接线轮，G-R 建议「接线前处理」，lead 裁定 2026-10-08）
 **证据**：macos/Coffer/Platform/BrowserIntegration.swift spawn 内 `stdinPipe.fileHandleForWriting.write(payload)`；G-D §8 第 4 项未接线
 
@@ -1130,7 +1130,7 @@ Foundation `FileHandle.write` 对 EPIPE 抛 Objective-C 异常而非 Swift error
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 集成轮 G-R 复审（da237da）MEDIUM-2
 **分级**：S3（纵深卫生——H-3 实质成果「密钥不经 env/argv」不因此受损）/ P3 / 来源版本 v2.3.0（集成轮）/ 发现版本 v2.3.0
-**状态**：🟡 已接受残余——归 merge-time 引入密钥类型（SecretString 单 owner）时收口；同类：read_stdin_to_eof 超时后 reader 线程缓冲 dropped 不零化（进程将退出，边际）+ 512B chunk 栈数组不零化（G-R LOW L-1）一并在此账
+**状态**：🟡 已接受残余——归 merge-time 引入密钥类型（SecretString 单 owner）时收口；同类：read_stdin_to_eof 超时后 reader 线程缓冲 dropped 不零化（进程将退出，边际）+ 512B chunk 栈数组不零化（G-R LOW L-1）一并在此账。**废弃（2026-10-09）**：具体实例（browser spawn 的 DEK/UUID/PSK zeroize）已随浏览器集成移除（BrowserIntegration.swift 已删）；general 纵深卫生如仍需要，另行登记
 **核销记录**：—（merge-time 密钥类型轮，lead 裁定 2026-10-08）
 **证据**：macos/Coffer/Platform/BrowserIntegration.swift `zeroize` 仅零化传入的 inout Data 副本；源 String（CoW）恒不零化
 
@@ -1158,7 +1158,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 集成轮 G-R 复审 LOW L-3
 **分级**：S4 / P3 / 来源版本 v2.3.0（集成轮）/ 发现版本 v2.3.0
-**状态**：🟡 merge-time 核验项——正常 GUI 启动路径 $HOME==pw_dir（Design Y 非沙盒）；自定义 HOME 启动会错位 → fail-closed 功能断（非安全缺口）
+**状态**：🟡 merge-time 核验项——正常 GUI 启动路径 $HOME==pw_dir（Design Y 非沙盒）；自定义 HOME 启动会错位 → fail-closed 功能断（非安全缺口）。**废弃（2026-10-09）**：well-known broker UDS 已随浏览器集成移除（BrowserStatusProbe 已删），本核验项作废留档
 **核销记录**：—（merge-time 接线轮核验，lead 裁定 2026-10-08）
 **证据**：Swift `BrowserStatusProbe.userHomeDirectory()` = getpwuid(pw_dir)；Rust `well_known_broker_uds()` = `$HOME`（冻结 §4.2/§6 明示许可「libc getpwuid 或 $HOME 兜底」）
 
@@ -1214,7 +1214,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 **登记日期**：2026-10-08
 **发现环境**：cygnus 真机（FR-16.1 前置批准 sheet 真机验收中，用户主动拒绝测试）
 **分级**：严重级 S3（次要功能——拒绝决策本身已生效（sheet 关、不配对），初始缺失的是扩展侧用户反馈提示）/ 优先级 P2 / 来源版本 v2.3.0（FR-16.1）/ 发现版本 v2.3.0
-**状态**：✅ 已核销（2026-10-08 用户真机实证：**扩展侧可以拿到「配对已拒绝。可重新发起配对。」**，提示正常渲染）
+**状态**：✅ 已核销（2026-10-08 用户真机实证：**扩展侧可以拿到「配对已拒绝。可重新发起配对。」**，提示正常渲染）。**废弃（2026-10-09）**：浏览器扩展整体废弃，随 v2.3.0 App 侧集成移除；本核销登记留档
 **核销记录**：真机复核（2026-10-08，用户反馈「浏览器的插件上是可以拿到'配对已拒绝'的」）；代码路径 `src/ui/popup.ts` renderState `ErrCode.UserRejected`（8006）→「未连接 + 配对已拒绝。可重新发起配对。」+ `src/background.ts` `handlePairResult`（approved:false → `applyPairingEvent(result, pairRejectErrorCode(reason))` → 8006）+ `pairing.test.ts` 拒绝态状态机覆盖均已在架（修复前即存在，无需代码改动）。初始「无提示」观察归因 = **popup 不实时刷新**：popup 仅在打开时 `load()` 拉一次 `get_state`（`src/ui/popup.ts` DOMContentLoaded），期间拒绝在 App 侧发生 → 已打开的 popup 保持旧态，需重开 popup（或点「刷新」）才显示拒绝提示——非拒绝链路断裂。残留子项 **popup 无实时状态推送（LOW）已闭合**：FR-16.2（用户裁定 2026-10-08）给 popup 加 `chrome.runtime.onMessage` 监听 background `{type:state}` 广播实时重拉，并移除「刷新」按钮（扩展仓 2f0de9b，测试 77/77）。
 
 ### 现象（预期/实际）

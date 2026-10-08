@@ -993,7 +993,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var browserIntegrationEnabled: Bool = BrowserIntegrationSettings.loadEnabled()
 
     /// broker 运行态（App 解锁 spawn / 锁定 kill，锁态镜像 docs/31 §2.1 状态机）。
-    /// `.failed` 携带可呈现文案（spawn 失败 / 缺 escrow 等，fail-closed）。
+    /// `.failed` 携带可呈现文案（spawn 失败 / 缺解锁材料等，fail-closed）。
     @Published private(set) var browserBrokerState: BrowserBrokerRuntime = .stopped
 
     /// 待用户确认的配对请求（docs/31 §4.2：显式批准才下发 PSK + 公钥；密钥
@@ -1059,10 +1059,11 @@ final class AppModel: ObservableObject {
     /// （任一失败 → 报错返回 false，不 spawn、不落开关）→ ③ spawn broker。
     ///
     /// R1-3 缓解（裁定书 §1.7 R1-3）：进入使能路径即开启 DEK 保留（idempotent）。
-    /// 注意：retention 须在 **解锁时**（`set_current_dek`）前置开启才有效——若本
-    /// 会话在 retention 开启前已解锁，本次 `startBrowserBrokerIfNeeded` 的
-    /// `exportDek()` 会 5002 fail-closed 不 spawn，下轮解锁即生效（诚实降级，
-    /// 无半配置 broker）。
+    /// B1 修复时序缺口（docs/31 §4.1）：retention 只在 **解锁时**
+    /// （`set_current_dek`）前置开启才填 DEK——若本会话在 retention 开启前已
+    /// 解锁，`exportDek()` 会 5002；此时经 `reauthForBrowserIntegration` 强制
+    /// 重认证补回 DEK（单次 Touch ID），仍失败才 fail-closed 不 spawn（保持
+    /// 「锁后重解再启用」的诚实降级路径）。
     private func enableBrowserIntegration() async -> Bool {
         guard let binary = McpStatusProbe.cofferBinaryPath() else {
             lastErrorMessage = BrowserIntegrationError.missingCofferBinary.userText
@@ -1104,10 +1105,55 @@ final class AppModel: ObservableObject {
             return false
         }
         // R1-3：浏览器集成使能 → 开启 DEK 保留（startBrowserBrokerIfNeeded 前，
-        // 裁定书 §1.7 R1-3；本会话未在解锁时前置开启则本次 spawn fail-closed）
+        // 裁定书 §1.7 R1-3）。B1：本会话若已在 retention 开启前解锁（解锁瞬间
+        // retain_dek 未开，R1-3 时序缺口）→ dekRetained() 纯读探测无 DEK → 按
+        // K_bio 补种；失败 fail-closed 不 spawn（guard 提前返回，保留
+        // retainDekForBrowserIntegration 置的可操作状态行，不被下方
+        // startBrowserBrokerIfNeeded 的缺料文案覆盖）。
         session?.setDekRetention(enabled: true)
+        if let session, phase == .unlocked, !session.dekRetained() {
+            guard await retainDekForBrowserIntegration(session: session) else { return true }
+        }
         startBrowserBrokerIfNeeded()
         return true
+    }
+
+    /// B1 按 K_bio 补种保留 DEK：补回当前会话的 DEK（R1-3 时序缺口修复，
+    /// docs/31 §4.1）。
+    ///
+    /// 解锁后启用集成时 `set_dek_retention(true)` 对已解锁会话无效（R1 只在
+    /// 解锁瞬间填 `current_dek`）→ 经 FFI `retainDekWithBio` 解锁态补种 DEK
+    /// （不改解锁态、不换 store，与解锁路径同错误语义；门禁：锁定 1001 /
+    /// retention 未开 5002 / 解封失败 1002）。
+    ///
+    /// 复用 `BiometricKeychain().read` 单次指纹弹窗（localizedReason 同解锁，
+    /// PL-4：不另加 App 侧预认证），不经 `unlockWithTouchID`（其 `phase ==
+    /// .locked` 门禁不适用）。失败（用户取消 / 凭据失效 / 未启用 bio）→
+    /// fail-closed：置 `browserBrokerState` 可操作指引，不 spawn broker。
+    private func retainDekForBrowserIntegration(session: VaultSession) async -> Bool {
+        // 前置门禁（镜像 unlockWithTouchID：避免无谓跨桥，Rust 侧同语义兜底 4001）
+        guard session.hasBiometricWrap(), BiometricKeychain.isBiometricsAvailable() else {
+            let text = "浏览器集成需要重新认证，但生物识别未启用：请锁定后重新解锁，再启用浏览器集成"
+            DiagLog.append(text)
+            browserBrokerState = .failed(text)
+            return false
+        }
+        do {
+            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID)
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.retainDekWithBio(kBio: kBio)
+            }.value
+            DiagLog.append("B1 补种成功：已补回浏览器集成所需 DEK（R1-3 时序缺口修复）")
+            return true
+        } catch {
+            // 用户取消 / 凭据失效 / FFI 失败统一 fail-closed（不 spawn），
+            // 状态行呈现可操作指引（含解锁路径重试）。
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append("B1 补种失败（fail-closed 不 spawn）：\(errText)")
+            browserBrokerState = .failed("浏览器集成需要重新认证（\(errText)）：请锁定后重新解锁，再启用浏览器集成")
+            return false
+        }
     }
 
     /// 停用：kill broker（幂等）+ 删三浏览器 manifest（幂等）。
@@ -1138,16 +1184,14 @@ final class AppModel: ObservableObject {
 
     /// 解锁态 spawn broker（unlock / unlockWithTouchID 成功路径调用）。
     ///
-    /// 前置（docs/31 §4.1）：开关开 + 解锁态 + coffer 二进制存在 + escrow 托管
-    /// 启用（broker 免密解锁 = escrow 路径）——任一不满足 → 不 spawn，状态行
-    /// 呈现缺项（fail-closed）。幂等：已运行不重复 spawn。
+    /// 前置（docs/31 §4.1）：开关开 + 解锁态 + coffer 二进制存在——任一不满足 →
+    /// 不 spawn，状态行呈现缺项（fail-closed）。幂等：已运行不重复 spawn。
+    /// broker 解锁 = App 已解锁态 + stdin DEK 交付（docs/31 §4.1：已否决
+    /// 「broker escrow 免密自解锁」，B1 移除 escrow guard，broker 与 MCP
+    /// 托管零耦合）。
     func startBrowserBrokerIfNeeded() {
         guard browserIntegrationEnabled, phase == .unlocked,
               let binary = McpStatusProbe.cofferBinaryPath() else {
-            return
-        }
-        guard mcpEscrowStatus == .enabled else {
-            browserBrokerState = .failed("未启用 MCP 解锁托管，broker 无法免密解锁")
             return
         }
         if let process = browserBrokerProcess, process.isRunning {

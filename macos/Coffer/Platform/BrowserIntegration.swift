@@ -171,8 +171,9 @@ struct BrowserBroker {
         static let subcommand = "browser-broker"
         /// UDS 参数（docs/31 §9.1 G-B：`coffer browser-broker --uds` 起服务）。
         static let udsFlag = "--uds"
-        /// 库目录 env（escrow 免密解锁，docs/31 §4.1；与 `coffer mcp
-        /// --provider coffer` 同款取密语义，docs/29 §4）。
+        /// 库目录 env（broker stdin DEK 直开：App 解锁后经 stdin 注入
+        /// DEK 以 unlock_with_dek 直开，docs/31 §4.1——broker 与 escrow 零
+        /// 耦合；同款取密语义见 `coffer mcp --provider coffer`，docs/29 §4）。
         static let vaultDirEnv = "COFFER_VAULT_DIR"
         /// well-known UDS 相对真实主目录的固定路径（HIGH-2 ②：host 无法经 env
         /// 拿到 `$COFFER_BROKER_UDS`——Chrome 不注入 env，须 well-known 固定路径；

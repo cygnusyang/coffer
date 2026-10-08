@@ -1116,6 +1116,12 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func createItem(draft: FfiItemDraft) throws  -> String
     
     /**
+     * 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。Swift 侧
+     * 探测「是否需补种」用本方法——**不导出明文 DEK**，避免跨桥明文往返。
+     */
+    func dekRetained()  -> Bool
+    
+    /**
      * 删除条目：`hard = false` 进回收站，`hard = true` 级联硬删。
      */
     func deleteItem(itemId: String, hard: Bool) throws 
@@ -1455,6 +1461,21 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func restoreItem(itemId: String) throws 
     
     /**
+     * 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
+     *
+     * 用户解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
+     * 无效（R1 只在解锁瞬间填 DEK）→ 用生物识别材料补种 DEK 供 broker 导出。
+     * 与 `unlock_with_biometric` 的关键差异：**无幂等短路**（已解锁也补种），
+     * 且**不改变解锁态**（只补 DEK，零 ItemStore 重建）。
+     *
+     * # 错误（fail-fast，镜像 `export_dek` 门禁语义 + D-8）
+     *
+     * 锁定态 → 1001；retention 未开启 → 5002；bio 未启用 → 4001；
+     * k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
+     */
+    func retainDekWithBio(kBio: Data) throws 
+    
+    /**
      * 标题搜索（多关键词全命中，仅 Active 态；空查询返回空结果）。
      */
     func search(query: String) throws  -> [FfiItemSummary]
@@ -1744,6 +1765,19 @@ open func createItem(draft: FfiItemDraft)throws  -> String  {
     uniffi_cf_ffi_fn_method_vaultsession_create_item(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiItemDraft_lower(draft),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 纯读探测：当前会话是否持有保留 DEK（`current_dek` 非空）。Swift 侧
+     * 探测「是否需补种」用本方法——**不导出明文 DEK**，避免跨桥明文往返。
+     */
+open func dekRetained() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_dek_retained(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -2391,6 +2425,28 @@ open func restoreItem(itemId: String)throws   {try rustCallWithError(FfiConverte
     uniffi_cf_ffi_fn_method_vaultsession_restore_item(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(itemId),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 解锁态按 K_bio 补种保留 DEK（B1，docs/31 §4.1 R1-3 时序修复）。
+     *
+     * 用户解锁后才启用浏览器集成时，`set_dek_retention(true)` 对当前会话
+     * 无效（R1 只在解锁瞬间填 DEK）→ 用生物识别材料补种 DEK 供 broker 导出。
+     * 与 `unlock_with_biometric` 的关键差异：**无幂等短路**（已解锁也补种），
+     * 且**不改变解锁态**（只补 DEK，零 ItemStore 重建）。
+     *
+     * # 错误（fail-fast，镜像 `export_dek` 门禁语义 + D-8）
+     *
+     * 锁定态 → 1001；retention 未开启 → 5002；bio 未启用 → 4001；
+     * k_bio 非 32B → 5002；K_bio 解封失败 → 1002。
+     */
+open func retainDekWithBio(kBio: Data)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_retain_dek_with_bio(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(kBio),uniffiCallStatus
     )
 }
 }
@@ -10046,6 +10102,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_create_item() != 50566) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_dek_retained() != 7319) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_delete_item() != 13382) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10164,6 +10223,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_item() != 32382) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_retain_dek_with_bio() != 40863) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_search() != 35502) {

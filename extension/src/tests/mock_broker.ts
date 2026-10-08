@@ -37,6 +37,8 @@ import {
   type ConfirmFrame,
   type SessionFrame,
   type AppMessage,
+  type PairRequestFrame,
+  type PairResultFrame,
 } from "../protocol";
 
 export class MockBroker {
@@ -59,6 +61,34 @@ export class MockBroker {
   /** Broker static identity public key for pinning (65-byte uncompressed point). */
   async publicKeyRaw(): Promise<Uint8Array> {
     return exportRawPublicKey(this.identity.publicKey);
+  }
+
+  /**
+   * Pairing responder (design §2.3 / §3.1): validate a pair_request and emit the verdict.
+   * The psk is the mock's own (constructor) and pk_b its self-reported public key — the
+   * same material the subsequent E2E handshake uses (constructive consistency, §3.1: the
+   * extension pins pair_result.pk_b ≡ msg2.pk_b from the same BrokerIdentity).
+   */
+  async onPairRequest(req: PairRequestFrame, opts?: { approved?: boolean }): Promise<PairResultFrame> {
+    if (
+      !req ||
+      req.type !== "pair_request" ||
+      typeof req.browser !== "string" ||
+      !(["chrome", "edge", "firefox"] as string[]).includes(req.browser) ||
+      typeof req.extension_id !== "string" ||
+      req.extension_id.length === 0
+    ) {
+      throw new ProtocolError(ErrCode.SessionNotEstablished, "malformed pair_request");
+    }
+    if (opts?.approved === false) {
+      return { type: "pair_result", approved: false, error: ErrCode.UserRejected };
+    }
+    return {
+      type: "pair_result",
+      approved: true,
+      psk: hexEncode(this.psk),
+      pk_b: hexEncode(await this.publicKeyRaw()),
+    };
   }
 
   /** Handle msg1 (Init) → msg2 (Response) + pending confirm state. */

@@ -7,7 +7,9 @@
  *   - E2E client session (IKpsk2-style, see crypto/e2e.ts); the session key lives in module
  *     memory ONLY. MV3 SW termination kills it — the next request re-handshakes (docs/31 §2.4,
  *     a security positive, not a defect);
- *   - extension state machine: idle → connecting → paired / awaiting_unlock;
+ *   - extension state machine: idle → connecting → paired / awaiting_unlock; unpaired
+ *     offers a pairing phase (idle → pairing → approved → connecting; rejected / App
+ *     unavailable / 120 s timeout return to idle — design §5.1, §8);
  *   - gesture validation (TTL 30 s, single-use replay cache) — docs/31 §6.1 / D-7;
  *   - message routing between popup / inline menu / content scripts and the broker.
  *
@@ -29,12 +31,23 @@ import {
   b64decode,
   parseGesture,
   gestureWithinTtl,
+  buildPairRequest,
+  pairResultToMaterial,
   type ResponseFrame,
   type SessionFrame,
   type AppRequest,
   type AppResponse,
   type EntryInfo,
+  type BrowserKind,
+  type PairResultFrame,
 } from "./protocol";
+import {
+  pairingTransition,
+  pairingOutcome,
+  PAIRING_TIMEOUT_MS,
+  type PairingPhase,
+  type PairingEvent,
+} from "./pairing_state";
 import { fillableFields } from "./fillable";
 import { originOfUrl } from "./origin";
 import type {
@@ -89,6 +102,8 @@ let handshakeWait: { resolve: () => void; reject: (e: unknown) => void } | null 
 let state: SessionState = { status: "idle", paired: false };
 let retryTimer: number | null = null;
 let retries = 0;
+let pairingPhase: PairingPhase = { kind: "idle" };
+let pairingTimer: number | null = null;
 
 const gestureSeen = new Map<string, number>();
 const pendingQueue: PendingWaiter[] = [];
@@ -110,6 +125,108 @@ function errorOf(e: unknown): ResponseError {
   return { code: ErrCode.SessionNotEstablished, message: String(e) };
 }
 
+// --- pairing (design §5 / §8 — frozen contract) ---------------------------------------
+
+/**
+ * Drive the pairing phase machine and mirror its outcome onto SessionState. `errorCode`
+ * overrides the phase's default when the pair_result carried an explicit reason (e.g. 8003
+ * App offline on approved:false); undefined clears any stale marker (setState merges).
+ */
+function applyPairingEvent(event: PairingEvent, errorCode?: number): void {
+  pairingPhase = pairingTransition(pairingPhase, event);
+  const out = pairingOutcome(pairingPhase);
+  setState({ status: out.status, paired: state.paired, errorCode: errorCode ?? out.defaultErrorCode });
+}
+
+/** Browser identity for pair_request (design §2.3: "chrome|edge|firefox"), UA + getBrowserInfo. */
+async function detectBrowserKind(): Promise<BrowserKind> {
+  const getBrowserInfo = (chrome.runtime as unknown as { getBrowserInfo?: () => Promise<{ name?: string }> }).getBrowserInfo;
+  if (typeof getBrowserInfo === "function") {
+    try {
+      const info = await getBrowserInfo();
+      if (info?.name && /firefox/i.test(info.name)) return "firefox";
+    } catch {
+      /* fall through to UA detection */
+    }
+  }
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (/edg\//i.test(ua)) return "edge";
+  return "chrome";
+}
+
+function clearPairingTimer(): void {
+  if (pairingTimer !== null) {
+    globalThis.clearTimeout(pairingTimer);
+    pairingTimer = null;
+  }
+}
+
+function startPairingTimer(): void {
+  clearPairingTimer();
+  pairingTimer = globalThis.setTimeout(() => {
+    pairingTimer = null;
+    if (pairingPhase.kind !== "pairing") return;
+    applyPairingEvent({ kind: "timeout" }); // §8.3: 120s 超时 → 未配对态
+  }, PAIRING_TIMEOUT_MS);
+}
+
+/** User clicked 「立即配对」: send pair_request over the native port (popup is a trusted page). */
+async function pair(): Promise<void> {
+  if (pairingPhase.kind === "pairing") return; // single-flight (§2.4 — one pending pairing)
+  if (session?.isReady()) return; // a live E2E session — pairing is a no-op (popup never offers it)
+  applyPairingEvent({ kind: "start" });
+  try {
+    if (!port) connect();
+    if (!port) throw new ProtocolError(ErrCode.BrokerUnavailable, "native messaging host not found");
+    port.postMessage(buildPairRequest(await detectBrowserKind(), chrome.runtime.id));
+    startPairingTimer();
+  } catch {
+    // 决策⑥: App/host unreachable — explicit popup hint, no silent failure (design §5.3).
+    applyPairingEvent({ kind: "disconnect" });
+  }
+}
+
+async function handlePairResult(result: PairResultFrame): Promise<void> {
+  if (!result || result.type !== "pair_result") return;
+  clearPairingTimer();
+  if (result.approved === true) {
+    const material = pairResultToMaterial(result);
+    if (!material) {
+      // Malformed approval payload — fail closed, never pin partial material (§3.3).
+      applyPairingEvent({ kind: "timeout" });
+      return;
+    }
+    pairingPhase = pairingTransition(pairingPhase, { kind: "result", approved: true });
+    await chrome.storage.local.set({
+      [PAIRING_KEY]: { brokerPublicKeyRaw: b64encode(material.brokerPublicKeyRaw), psk: b64encode(material.psk) },
+    });
+    // 分连接（§8.4）: close the pairing connection; the E2E handshake gets a fresh one
+    // (serve_connection branches on the first frame's type — pair_request vs init).
+    if (port) {
+      try {
+        port.disconnect();
+      } catch {
+        /* noop */
+      }
+    }
+    port = null;
+    session = null;
+    sessionReady = null;
+    retries = 0;
+    setState({ status: "connecting", paired: true });
+    try {
+      await ensureSession();
+    } catch {
+      // E2E reconnect failed (e.g. broker down) — keep the material, surface App-unreachable.
+      setState({ status: "idle", paired: true, errorCode: ErrCode.BrokerUnavailable });
+    }
+    return;
+  }
+  // approved:false — user rejected (8006) or broker timeout / App offline (error in frame).
+  const err = typeof result.error === "number" ? result.error : ErrCode.UserRejected;
+  applyPairingEvent({ kind: "result", approved: false }, err);
+}
+
 // --- pairing storage -----------------------------------------------------------------
 
 async function loadPairing(): Promise<PairingMaterial | null> {
@@ -128,29 +245,41 @@ async function loadPairing(): Promise<PairingMaterial | null> {
 
 function connect(): void {
   if (port) return;
+  let p: chrome.runtime.Port;
   try {
-    port = chrome.runtime.connectNative(NATIVE_HOST);
+    p = chrome.runtime.connectNative(NATIVE_HOST);
   } catch {
     failHandshake(new ProtocolError(ErrCode.BrokerUnavailable, "native messaging host not found"));
     return;
   }
-  port.onMessage.addListener(onPortMessage);
-  port.onDisconnect.addListener(onPortDisconnect);
+  port = p;
+  p.onMessage.addListener(onPortMessage);
+  p.onDisconnect.addListener(() => onPortDisconnect(p));
 }
 
-function onPortDisconnect(): void {
+function onPortDisconnect(p: chrome.runtime.Port): void {
+  // A stale/self-closed port — e.g. the pairing connection closed after approval (§8.4) —
+  // must not clobber the reconnect it handed off to ensureSession. Only the current port acts.
+  if (port !== p) return;
   const wasPaired = state.paired;
+  const wasPairing = pairingPhase.kind === "pairing";
   port = null;
   session = null;
   sessionReady = null;
   lastSentRequestId = null;
+  clearPairingTimer();
   if (handshakeWait) {
     handshakeWait.reject(new ProtocolError(ErrCode.BrokerUnavailable, "native port closed"));
     handshakeWait = null;
   }
   const q = pendingQueue;
   pendingQueue.length = 0;
-  for (const p of q) p.reject(new ProtocolError(ErrCode.BrokerUnavailable, "native port closed"));
+  for (const w of q) w.reject(new ProtocolError(ErrCode.BrokerUnavailable, "native port closed"));
+  if (wasPairing) {
+    // 决策⑥: App not reachable during pairing — explicit popup hint, no silent failure.
+    applyPairingEvent({ kind: "disconnect" });
+    return;
+  }
   setState({ status: wasPaired ? "awaiting_unlock" : "idle", paired: wasPaired });
   if (wasPaired) scheduleRetry();
 }
@@ -223,6 +352,11 @@ async function onPortMessage(raw: unknown): Promise<void> {
       // Broker vault locked (host relayed it before any E2E session) — prompt to unlock.
       failHandshake(new ProtocolError(ErrCode.BrokerUnavailable, "broker locked"));
       setState({ status: "awaiting_unlock", paired: state.paired });
+      return;
+    }
+    case "pair_result": {
+      // Pre-E2E pairing verdict (approved → persist + reopen E2E; rejected → unpaired).
+      await handlePairResult(frame as unknown as PairResultFrame);
       return;
     }
     case "e2e": {
@@ -311,6 +445,8 @@ function resetSession(): void {
   }
   port = null;
   retries = 0;
+  pairingPhase = { kind: "idle" };
+  clearPairingTimer();
   setState({ status: "idle", paired: false });
 }
 
@@ -578,6 +714,10 @@ async function handleMessage(
       await chrome.storage.local.remove(PAIRING_KEY);
       resetSession();
       return { cleared: true };
+
+    case "pair":
+      await pair();
+      return {};
 
     default:
       return {};

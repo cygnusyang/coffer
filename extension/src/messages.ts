@@ -6,7 +6,7 @@ import type { EntryInfo } from "./protocol";
 
 /** Background state surfaced to popup / inline menu. */
 export interface SessionState {
-  status: "idle" | "connecting" | "paired" | "awaiting_unlock" | "error";
+  status: "idle" | "connecting" | "paired" | "awaiting_unlock" | "pairing" | "error";
   errorCode?: number;
   paired: boolean; // pairing material present in chrome.storage.local
 }
@@ -18,7 +18,8 @@ export type UiToBackgroundMessage =
   | { type: "get_entries"; origin: string; action?: string }
   | { type: "popup_fill"; entry: string; origin: string; gesture: string }
   | { type: "lock" }
-  | { type: "clear_pairing" };
+  | { type: "clear_pairing" }
+  | { type: "pair" };
 
 // --- background -> content script -----------------------------------------------------
 

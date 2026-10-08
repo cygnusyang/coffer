@@ -156,6 +156,71 @@ export interface ConfirmFrame {
 
 export type HandshakeMessage = InitFrame | ResponseFrame | ConfirmFrame;
 
+// --- pairing frames (pre-E2E control, design §2.3 / §5.2 — frozen contract) -----------
+
+/** Browser identity for pair_request (design §2.3: "chrome|edge|firefox"). */
+export type BrowserKind = "chrome" | "edge" | "firefox";
+
+/**
+ * Extension → broker (over the native port, before any E2E session): request a pairing.
+ * The permission description is NOT carried — the App renders its own constant copy
+ * (design §2.3), so a malicious extension cannot spoof the prompt text.
+ */
+export interface PairRequestFrame {
+  type: "pair_request";
+  browser: BrowserKind;
+  /** Extension id, from chrome.runtime.id (the App shows it in the approval box). */
+  extension_id: string;
+}
+
+/**
+ * Broker → extension: the pairing verdict.
+ *   approved:true  → psk (32 B hex) + pk_b (65 B SEC1 hex) — the extension persists these
+ *                    and re-opens a fresh E2E connection (分连接, design §8.4).
+ *   approved:false → no keys; `error` carries the reason (8006 user rejected / 8003 App
+ *                    offline or timeout). Multi-browser contention also lands here (§8.1).
+ */
+export interface PairResultFrame {
+  type: "pair_result";
+  approved: boolean;
+  /** 32-byte PSK, lowercase hex — present only when approved. */
+  psk?: string;
+  /** Broker static identity public key (65 B SEC1), lowercase hex — present only when approved. */
+  pk_b?: string;
+  /** ErrCode reason when approved:false (8006 / 8003). */
+  error?: ErrCode;
+}
+
+/** Parsed pairing material (structurally `PairingMaterial` — kept independent of crypto/e2e). */
+export interface ParsedPairingMaterial {
+  brokerPublicKeyRaw: Uint8Array;
+  psk: Uint8Array;
+}
+
+/** Build the extension's pair_request frame (§7 X — the wire shape the broker validates). */
+export function buildPairRequest(browser: BrowserKind, extensionId: string): PairRequestFrame {
+  return { type: "pair_request", browser, extension_id: extensionId };
+}
+
+/**
+ * Decode + validate an approved pair_result into pairing material. Fail-closed: 32 B PSK,
+ * 65 B SEC1 pk_b with the 0x04 prefix; anything else → null — never pin partial material.
+ */
+export function pairResultToMaterial(result: PairResultFrame): ParsedPairingMaterial | null {
+  if (!result || result.type !== "pair_result" || result.approved !== true) return null;
+  if (typeof result.psk !== "string" || typeof result.pk_b !== "string") return null;
+  let psk: Uint8Array;
+  let pkB: Uint8Array;
+  try {
+    psk = hexDecode(result.psk);
+    pkB = hexDecode(result.pk_b);
+  } catch {
+    return null;
+  }
+  if (psk.length !== 32 || pkB.length !== SEC1_LEN || pkB[0] !== 0x04) return null;
+  return { brokerPublicKeyRaw: pkB, psk };
+}
+
 // --- session frame (b64 of nonce‖ct‖tag‖mac) ------------------------------------------
 
 export interface SessionFrame {

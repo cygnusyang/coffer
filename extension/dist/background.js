@@ -46,6 +46,23 @@
     for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
     return out;
   }
+  function buildPairRequest(browser, extensionId) {
+    return { type: "pair_request", browser, extension_id: extensionId };
+  }
+  function pairResultToMaterial(result) {
+    if (!result || result.type !== "pair_result" || result.approved !== true) return null;
+    if (typeof result.psk !== "string" || typeof result.pk_b !== "string") return null;
+    let psk;
+    let pkB;
+    try {
+      psk = hexDecode(result.psk);
+      pkB = hexDecode(result.pk_b);
+    } catch {
+      return null;
+    }
+    if (psk.length !== 32 || pkB.length !== SEC1_LEN || pkB[0] !== 4) return null;
+    return { brokerPublicKeyRaw: pkB, psk };
+  }
   function makeGesture(nowMs = Date.now()) {
     const nonce = crypto.getRandomValues(new Uint8Array(GESTURE_NONCE_LEN));
     const out = new Uint8Array(GESTURE_NONCE_LEN + 8);
@@ -355,6 +372,46 @@
     return diff === 0;
   }
 
+  // src/pairing_state.ts
+  var PAIRING_TIMEOUT_MS = 12e4;
+  function pairingTransition(phase, event) {
+    switch (phase.kind) {
+      case "idle":
+        return event.kind === "start" ? { kind: "pairing" } : phase;
+      case "pairing":
+        switch (event.kind) {
+          case "result":
+            return event.approved ? { kind: "approved" } : { kind: "rejected" };
+          case "disconnect":
+            return { kind: "app_unavailable" };
+          case "timeout":
+            return { kind: "idle" };
+          case "start":
+            return phase;
+        }
+        return phase;
+      case "approved":
+        return event.kind === "start" ? { kind: "pairing" } : phase;
+      case "app_unavailable":
+      case "rejected":
+        return event.kind === "start" ? { kind: "pairing" } : phase;
+    }
+  }
+  function pairingOutcome(phase) {
+    switch (phase.kind) {
+      case "idle":
+        return { status: "idle" };
+      case "pairing":
+        return { status: "pairing" };
+      case "approved":
+        return { status: "connecting" };
+      case "app_unavailable":
+        return { status: "idle", defaultErrorCode: 8003 /* BrokerUnavailable */ };
+      case "rejected":
+        return { status: "idle", defaultErrorCode: 8006 /* UserRejected */ };
+    }
+  }
+
   // src/fillable.ts
   var PASSWORD_KINDS = /* @__PURE__ */ new Set(["password"]);
   var USERNAME_KINDS = /* @__PURE__ */ new Set(["username", "email"]);
@@ -419,6 +476,8 @@
   var state = { status: "idle", paired: false };
   var retryTimer = null;
   var retries = 0;
+  var pairingPhase = { kind: "idle" };
+  var pairingTimer = null;
   var gestureSeen = /* @__PURE__ */ new Map();
   var pendingQueue = [];
   var menuContexts = /* @__PURE__ */ new Map();
@@ -434,6 +493,85 @@
     if (e instanceof Error) return { code: 8004 /* SessionNotEstablished */, message: e.message };
     return { code: 8004 /* SessionNotEstablished */, message: String(e) };
   }
+  function applyPairingEvent(event, errorCode) {
+    pairingPhase = pairingTransition(pairingPhase, event);
+    const out = pairingOutcome(pairingPhase);
+    setState({ status: out.status, paired: state.paired, errorCode: errorCode ?? out.defaultErrorCode });
+  }
+  async function detectBrowserKind() {
+    const getBrowserInfo = chrome.runtime.getBrowserInfo;
+    if (typeof getBrowserInfo === "function") {
+      try {
+        const info = await getBrowserInfo();
+        if (info?.name && /firefox/i.test(info.name)) return "firefox";
+      } catch {
+      }
+    }
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    if (/edg\//i.test(ua)) return "edge";
+    return "chrome";
+  }
+  function clearPairingTimer() {
+    if (pairingTimer !== null) {
+      globalThis.clearTimeout(pairingTimer);
+      pairingTimer = null;
+    }
+  }
+  function startPairingTimer() {
+    clearPairingTimer();
+    pairingTimer = globalThis.setTimeout(() => {
+      pairingTimer = null;
+      if (pairingPhase.kind !== "pairing") return;
+      applyPairingEvent({ kind: "timeout" });
+    }, PAIRING_TIMEOUT_MS);
+  }
+  async function pair() {
+    if (pairingPhase.kind === "pairing") return;
+    if (session?.isReady()) return;
+    applyPairingEvent({ kind: "start" });
+    try {
+      if (!port) connect();
+      if (!port) throw new ProtocolError(8003 /* BrokerUnavailable */, "native messaging host not found");
+      port.postMessage(buildPairRequest(await detectBrowserKind(), chrome.runtime.id));
+      startPairingTimer();
+    } catch {
+      applyPairingEvent({ kind: "disconnect" });
+    }
+  }
+  async function handlePairResult(result) {
+    if (!result || result.type !== "pair_result") return;
+    clearPairingTimer();
+    if (result.approved === true) {
+      const material = pairResultToMaterial(result);
+      if (!material) {
+        applyPairingEvent({ kind: "timeout" });
+        return;
+      }
+      pairingPhase = pairingTransition(pairingPhase, { kind: "result", approved: true });
+      await chrome.storage.local.set({
+        [PAIRING_KEY]: { brokerPublicKeyRaw: b64encode(material.brokerPublicKeyRaw), psk: b64encode(material.psk) }
+      });
+      if (port) {
+        try {
+          port.disconnect();
+        } catch {
+        }
+      }
+      port = null;
+      session = null;
+      sessionReady = null;
+      retries = 0;
+      setState({ status: "connecting", paired: true });
+      try {
+        await ensureSession();
+      } catch {
+        setState({ status: "idle", paired: true, errorCode: 8003 /* BrokerUnavailable */ });
+      }
+      return;
+    }
+    const err = typeof result.error === "number" ? result.error : 8006 /* UserRejected */;
+    applyPairingEvent({ kind: "result", approved: false }, err);
+  }
   async function loadPairing() {
     const raw = (await chrome.storage.local.get(PAIRING_KEY))[PAIRING_KEY];
     if (!raw || typeof raw.brokerPublicKeyRaw !== "string" || typeof raw.psk !== "string") return null;
@@ -445,28 +583,37 @@
   }
   function connect() {
     if (port) return;
+    let p;
     try {
-      port = chrome.runtime.connectNative(NATIVE_HOST);
+      p = chrome.runtime.connectNative(NATIVE_HOST);
     } catch {
       failHandshake(new ProtocolError(8003 /* BrokerUnavailable */, "native messaging host not found"));
       return;
     }
-    port.onMessage.addListener(onPortMessage);
-    port.onDisconnect.addListener(onPortDisconnect);
+    port = p;
+    p.onMessage.addListener(onPortMessage);
+    p.onDisconnect.addListener(() => onPortDisconnect(p));
   }
-  function onPortDisconnect() {
+  function onPortDisconnect(p) {
+    if (port !== p) return;
     const wasPaired = state.paired;
+    const wasPairing = pairingPhase.kind === "pairing";
     port = null;
     session = null;
     sessionReady = null;
     lastSentRequestId = null;
+    clearPairingTimer();
     if (handshakeWait) {
       handshakeWait.reject(new ProtocolError(8003 /* BrokerUnavailable */, "native port closed"));
       handshakeWait = null;
     }
     const q = pendingQueue;
     pendingQueue.length = 0;
-    for (const p of q) p.reject(new ProtocolError(8003 /* BrokerUnavailable */, "native port closed"));
+    for (const w of q) w.reject(new ProtocolError(8003 /* BrokerUnavailable */, "native port closed"));
+    if (wasPairing) {
+      applyPairingEvent({ kind: "disconnect" });
+      return;
+    }
     setState({ status: wasPaired ? "awaiting_unlock" : "idle", paired: wasPaired });
     if (wasPaired) scheduleRetry();
   }
@@ -531,6 +678,10 @@
       case "broker_locked": {
         failHandshake(new ProtocolError(8003 /* BrokerUnavailable */, "broker locked"));
         setState({ status: "awaiting_unlock", paired: state.paired });
+        return;
+      }
+      case "pair_result": {
+        await handlePairResult(frame);
         return;
       }
       case "e2e": {
@@ -605,6 +756,8 @@
     }
     port = null;
     retries = 0;
+    pairingPhase = { kind: "idle" };
+    clearPairingTimer();
     setState({ status: "idle", paired: false });
   }
   async function brokerRequest(req) {
@@ -817,6 +970,9 @@
         await chrome.storage.local.remove(PAIRING_KEY);
         resetSession();
         return { cleared: true };
+      case "pair":
+        await pair();
+        return {};
       default:
         return {};
     }

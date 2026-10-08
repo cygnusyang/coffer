@@ -29,18 +29,9 @@ open macos/build/Coffer.app     # 建议拖入 /Applications
 | 导出 | 1PUX 兼容 / CSV | CSV 为明文，导出前双重确认 |
 | 备份 | 加密备份 / 恢复 | 改主密码不重加密全库 |
 
-### 浏览器自动填充（独立插件仓库）
+### 浏览器自动填充（独立插件仓库）—— 已废弃
 
-配套浏览器插件已拆分为独立仓库：**[coffer-browser-extension](https://github.com/cygnusyang/coffer-browser-extension)**。
-在浏览器登录表单上经本机 Coffer 保险库自动填充/保存密码，数据不出本机。
-
-```bash
-git clone https://github.com/cygnusyang/coffer-browser-extension.git
-cd coffer-browser-extension && npm install && npm run build
-# Chrome 扩展页「加载已解压的扩展程序」→ 选择 dist/，首次使用在 App 内批准配对
-```
-
-使用前提：本机已装 Coffer 且设置中启用「浏览器集成」。
+> **废弃注记（2026-10-09）**：浏览器扩展**整体废弃**（用户裁定，扩展连商城上架都不要），App 侧集成已移除，不再提供克隆 / 构建 / 配对操作说明。扩展源码仓库保留：**[coffer-browser-extension](https://github.com/cygnusyang/coffer-browser-extension)**（其 README 已标废弃），供历史查阅。
 
 ### 与 AI 工具协同（MCP）
 

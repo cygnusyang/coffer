@@ -394,7 +394,8 @@ impl LogSink {
 /// CLI 运行时日志接收器（stdout 永为协议帧，docs/20 §3.1）。
 ///
 /// 输出目标：`--log PATH` 文件（追加），缺省 stderr。**永不写 stdout**。
-#[derive(Debug)]
+/// `Clone`：notify.sock 监听线程经克隆句柄共享同一诊断通道（配对集成 W）。
+#[derive(Debug, Clone)]
 pub struct Logger {
     sink: LogSink,
 }
@@ -846,6 +847,10 @@ mod browser {
     use std::os::unix::fs::{DirBuilderExt, FileTypeExt};
     use zeroize::Zeroize;
 
+    // 配对集成 W：notify.sock 反向通道 + 配对状态机（docs/31 §2.3/§2.4，独立文件
+    // 抽离——cli.rs 已有 3k+ 行债务，配对逻辑不继续膨胀本文件，docs/31 §6.3 裁定）。
+    mod pairing;
+
     // ---------------- 环境变量契约（G-B 版 broker 解锁 / host 定位） ----------------
 
     /// broker UDS 显式覆盖（host 定位 / broker `--uds` 传参；**非密钥**，仅路径，
@@ -880,6 +885,13 @@ mod browser {
     /// `<real_home>/Library/Application Support/Coffer/browser/broker.sock`。
     /// 本机 68B ≪ AF_UNIX `sun_path` 104 上限（TC-PATH 预算守卫）。
     const BROKER_UDS_SUFFIX: &str = "Library/Application Support/Coffer/browser/broker.sock";
+
+    /// notify.sock well-known 落点常量（docs/31 §2.3/§6.1 契约冻结；配对集成 W，
+    /// 与 broker.sock **同目录同公式**，仅文件名不同）：`.../browser/notify.sock`。
+    /// 本机 69B ≪ AF_UNIX `sun_path` 104 上限（同 TC-PATH 预算守卫）。
+    const NOTIFY_UDS_SUFFIX: &str = "Library/Application Support/Coffer/browser/notify.sock";
+    /// notify.sock 文件名（`run_broker` 以 `--uds` 同目录派生，docs/31 §2.3 同目录）。
+    const NOTIFY_UDS_FILE: &str = "notify.sock";
 
     /// stdin 私有管道帧缓冲上限（4 KiB；超即拒，防灌，HIGH2-3 §3.1）。
     const STDIN_FRAME_LIMIT: usize = 4 * 1024;
@@ -1224,6 +1236,20 @@ mod browser {
                 return exit_code::IDENTITY_MISSING;
             }
         };
+        // 配对集成 W（docs/31 §2.4/D-B）：broker 启动即计算自报 pk_b（SEC1 65B hex，
+        // 身份确定性派生）与 PSK hex（stdin `PSK_HEX=` 既有注入，**broker 不自行生成**，
+        // 决策①）。两者须在 `secrets.psk`/`identity` 移入 [`BrokerEndpoint`] 前取值。
+        let pk_b_hex = match cf_browser::e2e::pub_to_sec1(&identity.public_key()) {
+            Ok(bytes) => cf_browser::e2e::to_hex(&bytes),
+            Err(e) => {
+                logger.error(&format!(
+                    "error: browser broker: 身份公钥 SEC1 编码失败 ({}): {e}",
+                    e.code()
+                ));
+                return exit_code::IDENTITY_MISSING;
+            }
+        };
+        let psk_hex = cf_browser::e2e::to_hex(&secrets.psk);
         let endpoint = BrokerEndpoint::new(identity, secrets.psk);
 
         // 解锁态 → 用 stdin 交付的 DEK 开库（裁定书 §3.1：stdin → 身份 → **开库** →
@@ -1274,6 +1300,41 @@ mod browser {
         };
         let _guard = SocketGuard { path: uds.clone() };
 
+        // 配对集成 W：notify.sock 反向通道（docs/31 §2.3/§6.1 决策⑤，**同目录同公式
+        // 零手填路径**）。notify 路径 = 与 broker.sock **同目录**：生产 `--uds` 为
+        // well-known broker 路径 → 经 [`well_known_notify_uds`] 公式镜像（与 Swift 侧
+        // `notifyUDSPathRelative` 逐字节一致）；其余（测试/操作者自定义 `--uds`）→
+        // `uds.with_file_name` 同目录派生，不污染 `$HOME`。绑定失败 → fail-closed
+        // exit 1（不留部分服务态）；成功后独立线程 accept + 读决策
+        //（docs/31 §2.4「notify 通道在独立线程」）。
+        let pairing = pairing::PairingHandle::new(pk_b_hex, psk_hex);
+        let notify_path = match well_known_broker_uds() {
+            Some(wk) if wk == uds => well_known_notify_uds()
+                .unwrap_or_else(|| uds.with_file_name(NOTIFY_UDS_FILE)),
+            _ => uds.with_file_name(NOTIFY_UDS_FILE),
+        };
+        let notify_listener = match pairing::bind_notify_socket(&notify_path) {
+            Ok(l) => l,
+            Err(e) => {
+                logger.error(&format!(
+                    "error: browser broker: bind notify.sock `{}` failed: {e}",
+                    notify_path.display()
+                ));
+                return exit_code::CONFIG_ERROR;
+            }
+        };
+        let notify_handle = pairing.clone();
+        let notify_logger = logger.clone();
+        let notify_path_thread = notify_path.clone();
+        std::thread::spawn(move || {
+            pairing::run_notify_listener(
+                notify_listener,
+                notify_path_thread,
+                &notify_handle,
+                notify_logger,
+            );
+        });
+
         let locked = vault.as_ref().is_none_or(|v| !v.is_unlocked());
         logger.info(&format!(
             "browser broker: serving on uds {} (locked={locked})",
@@ -1290,6 +1351,7 @@ mod browser {
                     &endpoint,
                     vault.as_ref(),
                     &mut gestures,
+                    &pairing,
                     &mut logger,
                 ) {
                     // 单连接处理完毕（EOF / 拒连 / 握手失败）→ daemon 继续 accept；
@@ -1345,16 +1407,19 @@ mod browser {
         Exit(i32),
     }
 
-    /// 服务一个连接：③ 层验 peer → E2E 握手 → app 请求循环（docs/31 §4/§5）。
+    /// 服务一个连接：③ 层验 peer → 读首帧按 `type` 分支 → app 请求循环 / 配对流
+    ///（docs/31 §4/§5 + §2.4 配对状态机）。
     ///
     /// `vault` = broker 持有的开库会话（锁定态 / 未解锁 = `None`，请求分发
     /// 每请求判定 8003，裁定书 §3.1）；`gestures` = broker 级手势消费登记表
-    ///（跨连接共享，单次消费防重）。
+    ///（跨连接共享，单次消费防重）；`pairing` = 配对状态句柄（notify.sock 反向
+    /// 通道，配对集成 W）。
     fn serve_connection(
         mut stream: UnixStream,
         endpoint: &BrokerEndpoint,
         vault: Option<&VaultSession>,
         gestures: &mut GestureRegistry,
+        pairing: &pairing::PairingHandle,
         logger: &mut Logger,
     ) -> ServerResult {
         if !peer_is_verified(&stream) {
@@ -1363,7 +1428,61 @@ mod browser {
             ));
             return ServerResult::Continue;
         }
-        let mut session = match broker_handshake(&mut stream, endpoint) {
+        // 读首帧按 `type` 分支（docs/31 §2.4 状态机）：`init` → 既有 E2E 握手路径；
+        // `pair_request` → 配对路径（pre-E2E 控制帧，不经 E2E 加密）；未知 → 拒连。
+        let first = match read_frame(&mut stream) {
+            Ok(Some(f)) => f,
+            Ok(None) => return ServerResult::Continue,
+            Err(e) => {
+                logger.error(&format!("error: browser broker: read failed: {e}"));
+                return ServerResult::Continue;
+            }
+        };
+        match first_frame_type(&first) {
+            Ok(t) if t == "init" => {
+                serve_e2e_connection(stream, endpoint, vault, gestures, logger, first)
+            }
+            Ok(t) if t == "pair_request" => {
+                pairing::serve_pair_request(&mut stream, pairing, &first, logger)
+            }
+            Ok(other) => {
+                logger.error(&format!(
+                    "error: browser broker: unexpected first-frame type: {other}"
+                ));
+                ServerResult::Continue
+            }
+            Err(e) => {
+                logger.error(&format!(
+                    "error: browser broker: first frame 非法: {e}"
+                ));
+                ServerResult::Continue
+            }
+        }
+    }
+
+    /// 解析首帧 `type` 标签（`init` | `pair_request` | …；非 JSON / 缺 `type` /
+    /// 非字符串 → Err，fail-closed 拒连）。
+    fn first_frame_type(frame: &[u8]) -> Result<String, String> {
+        let v: serde_json::Value =
+            serde_json::from_slice(frame).map_err(|e| format!("invalid json: {e}"))?;
+        v.get("type")
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "missing `type` field".to_string())
+    }
+
+    /// 既有 E2E 连接路径（首帧 `type:"init"` = msg1，docs/31 §3.3）：握手 → app
+    /// 请求循环。逻辑与原 serve_connection 握手后主体一致（配对集成 W 抽出分支，
+    /// 行为零改动）。
+    fn serve_e2e_connection(
+        mut stream: UnixStream,
+        endpoint: &BrokerEndpoint,
+        vault: Option<&VaultSession>,
+        gestures: &mut GestureRegistry,
+        logger: &mut Logger,
+        first: Vec<u8>,
+    ) -> ServerResult {
+        let mut session = match broker_handshake(&mut stream, endpoint, first) {
             Ok(s) => s,
             Err(e) => {
                 logger.error(&format!(
@@ -1937,6 +2056,21 @@ mod browser {
         Some(PathBuf::from(home).join(BROKER_UDS_SUFFIX))
     }
 
+    /// notify.sock well-known 落点（docs/31 §6.1 决策⑤，配对集成 W）：与 broker.sock
+    /// **同目录同公式**，仅文件名 `notify.sock`（G-D Swift 侧
+    /// `BrowserBroker.SpawnConfig.notifyUDSPathRelative` 同串，逐字节一致）。
+    /// `$HOME` 缺失 → `None`（fail-closed，与 broker 同）。
+    ///
+    /// 运行期 notify 路径经 `--uds` 同目录派生（[`NOTIFY_UDS_FILE`]），本函数为
+    /// 契约公式镜像（host 自发现链 / V 组 Swift 对齐 / 单测引用；生产两者恒等——
+    /// 生产 `--uds` 即 well-known broker 路径）。
+    pub fn well_known_notify_uds() -> Option<PathBuf> {
+        let home = std::env::var("HOME")
+            .ok()
+            .filter(|v| !v.trim().is_empty())?;
+        Some(PathBuf::from(home).join(NOTIFY_UDS_SUFFIX))
+    }
+
     /// 解锁契约解析：**stdin 私有管道**（生产主源，HIGH2-3 §3.3）为主；
     /// env 降级**仅**测试门控（`COFFER_BROKER_SKIP_PEER_VERIFY=1` 且 debug 构建）——
     /// 门控激活时**只用 env**（env 不完整即 fail-closed，不静默改读 stdin，测试
@@ -2068,17 +2202,14 @@ mod browser {
     }
 
     /// E2E 握手（responder 侧，[`BrokerEndpoint`] 编排，docs/31 §3.3）。
-    /// 读 msg1 → 产 msg2 → 读 msg3 → 建会话。任何失败 → Err（统一 8004 语义）。
+    /// 消费 msg1（首帧 `type:"init"`，已由 [`serve_connection`] 预读）→ 产 msg2 →
+    /// 读 msg3 → 建会话。任何失败 → Err（统一 8004 语义）。
     fn broker_handshake(
         stream: &mut UnixStream,
         endpoint: &BrokerEndpoint,
+        first: Vec<u8>,
     ) -> Result<Session, CfBrowserError> {
-        let Some(frame) = read_frame(stream)
-            .map_err(|e| CfBrowserError::MalformedMessage(format!("handshake read: {e}")))?
-        else {
-            return Err(CfBrowserError::SessionNotEstablished);
-        };
-        let msg1: HandshakeMessage = serde_json::from_slice(&frame)
+        let msg1: HandshakeMessage = serde_json::from_slice(&first)
             .map_err(|e| CfBrowserError::MalformedMessage(format!("init: {e}")))?;
         let (msg2, pending) = endpoint.on_init(&msg1)?;
         let msg2_bytes =
@@ -2332,6 +2463,50 @@ mod browser {
                 "落点须以常量后缀结尾: {}",
                 path.display()
             );
+        }
+
+        /// 配对集成 W（docs/31 §6.1 契约）：notify.sock 与 broker.sock **同目录同公式**，
+        /// 仅文件名 `notify.sock`；同 ≤ 104 字节 sun_path 预算守卫。
+        #[test]
+        fn well_known_notify_uds_mirrors_broker_uds() {
+            let notify = well_known_notify_uds().expect("$HOME 存在时须可计算");
+            let broker = well_known_broker_uds().expect("$HOME 存在时须可计算");
+            assert_eq!(
+                notify.parent(),
+                broker.parent(),
+                "notify.sock 与 broker.sock 须同目录"
+            );
+            assert!(
+                notify.ends_with(NOTIFY_UDS_SUFFIX),
+                "落点须以常量后缀结尾: {}",
+                notify.display()
+            );
+            let os = notify.as_os_str().as_encoded_bytes();
+            assert!(
+                os.len() <= 104,
+                "notify.sock 路径须 ≤ 104 字节（AF_UNIX sun_path）: {} ({}B)",
+                notify.display(),
+                os.len()
+            );
+            assert_ne!(
+                notify.file_name(),
+                broker.file_name(),
+                "两 socket 文件名不得相同（broker.sock vs notify.sock）"
+            );
+        }
+
+        /// 首帧 type 分支（docs/31 §2.4）：`init` / `pair_request` 识别，非法帧
+        /// fail-closed（serve_connection 分支依赖，配对集成 W）。
+        #[test]
+        fn first_frame_type_branches() {
+            assert_eq!(first_frame_type(br#"{"type":"init","version":1}"#).as_deref(), Ok("init"));
+            assert_eq!(
+                first_frame_type(br#"{"type":"pair_request","browser":"chrome","extension_id":"x"}"#).as_deref(),
+                Ok("pair_request")
+            );
+            assert!(first_frame_type(br#"{"browser":"chrome"}"#).is_err(), "缺 type → Err");
+            assert!(first_frame_type(br#"{"type":123}"#).is_err(), "type 非字符串 → Err");
+            assert!(first_frame_type(b"not json").is_err(), "非 JSON → Err");
         }
 
         /// TC-HOST-1（HIGH2-3 §7，自动段）：无 `COFFER_BROKER_UDS` env → 回落

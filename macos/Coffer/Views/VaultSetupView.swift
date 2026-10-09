@@ -232,3 +232,239 @@ struct VaultBioEnableOfferView: View {
         }
     }
 }
+
+// MARK: - 首次解锁后的可选「生成恢复码」步骤（v2.5.0 FR-17.2，决策 D-8 stretch）
+
+/// 建库成功并首次解锁后由 RootView 弹出的可选「生成恢复码」引导（镜像
+/// VaultBioEnableOfferView「稍后设置」模式，docs/31 §4.3 决策 D-8）。
+///
+/// - 用户可选择跳过（「以后再说」）：清除 pendingRecoveryOffer，进入主界面，
+///   之后随时可在「安全设置」中开启（RecoveryCodeSettingsSection）——
+///   v2.5.0 首次解锁流程零变化。
+/// - 「生成恢复码」进入 RecoveryCodeSetupSheet 生成流程（说明 → 一次性展示
+///   + 复制 → 主密码确认 → enable_recovery_code，docs/31 §4.3 步骤 1-4）。
+///   生成流程关闭后若 hasRecoveryWrap 已置位（生成成功），引导一并收口。
+///
+/// 呈现时机（pendingRecoveryOffer）由 RootView 侧接线，镜像 pendingBioOffer
+/// （docs/31 集成轮：M-UI-STATE 提供 AppModel 标记 + RootView sheet 挂载，
+/// 解锁态才呈现、interactiveDismissDisabled）。
+struct RecoveryCodeOfferSheet: View {
+    @EnvironmentObject
+    private var model: AppModel
+    @Environment(\.dismiss)
+    private var dismiss
+
+    /// 是否已进入生成流程（sheet 叠 sheet；关闭生成流程回到本引导，除非
+    /// hasRecoveryWrap 已置位——见 onDismiss 收口逻辑）。
+    @State private var showSetup = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "key.horizontal.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.tint)
+            Text("生成恢复码？")
+                .font(.title3.bold())
+            Text("忘记主密码时，可用恢复码重置密码库、找回条目数据。\n恢复码仅显示一次，请抄写并妥善保存。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 12) {
+                Button("以后再说（可在安全设置中开启）") { skip() }
+                Button("生成恢复码") { showSetup = true }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(28)
+        .frame(width: 420)
+        .ffiErrorAlert($model.lastErrorMessage)
+        .sheet(isPresented: $showSetup, onDismiss: {
+            // 生成流程关闭后若恢复码已启用（生成成功路径），引导一并收口；
+            // 取消/放弃路径 hasRecoveryWrap 未变，引导保留可重试。
+            if model.hasRecoveryWrap {
+                model.pendingRecoveryOffer = false
+                dismiss()
+            }
+        }) {
+            // 初始器与 M-UI-GEN 的 RecoveryCodeSetupSheet 对齐（@EnvironmentObject，
+            // 无参 + 环境对象注入，见文件内占位说明）。
+            RecoveryCodeSetupSheet()
+                .environmentObject(model)
+        }
+    }
+
+    /// 跳过：清除标记并关闭引导，不产生任何持久状态变更。
+    private func skip() {
+        model.pendingRecoveryOffer = false
+        dismiss()
+    }
+}
+
+/// 恢复码生成流程 sheet（docs/31 §4.3 步骤 1-4）：
+///   1. 说明屏：「恢复码用于忘记主密码时重置。请抄写并妥善保存。恢复码仅显示一次。」
+///   2. 生成并一次性展示（大号字体 + 复制，走 ClipboardManager 自动清除）+「我已抄写保存」
+///   3. 主密码确认（D-6：先验证身份再写 header）
+///   4. enable_recovery_code → 成功 → 关闭
+///
+/// - 生成（generateRecoveryCode）无落盘（docs/31 §2.4 安全顺序）：本流程只
+///   在确认主密码后才触发 enable（写 recovery_wrap 槽位）；放弃时旧 wrap 不受影响。
+/// - 明文纪律（D-10）：code 仅随本 sheet 的 @State 在内存存活，sheet 关闭即随
+///   视图销毁——磁盘仅 header wrap 密文；密码沿用库内纪律，拷贝进异步调用后
+///   立刻清空本地输入。
+///
+/// ⚠️ 本地占位（v2.5.0 集成轮统一）：M-UI-GEN 并行创建
+/// RecoveryCodeSetupSheet.swift，签名已对齐（@EnvironmentObject + 无参初始器，
+/// 与 offer 内 `RecoveryCodeSetupSheet().environmentObject(model)` 调用一致）。
+/// M-UI-GEN 版本落地后删除本占位（同名重复定义，集成轮二选一保留）。
+struct RecoveryCodeSetupSheet: View {
+    /// 生成流程步骤状态机：code 仅随本 sheet 内存存活（D-10）。
+    enum Step {
+        case intro
+        case generated(String)
+        case confirm(String)
+    }
+
+    @EnvironmentObject
+    private var model: AppModel
+    @Environment(\.dismiss)
+    private var dismiss
+
+    @State private var step: Step = .intro
+    /// 主密码临时输入（D-6：不能预填；拷贝进异步调用后立刻清空）。
+    @State private var password = ""
+    /// enable 慢调用（Argon2id 约 1s）进行中标记。
+    @State private var isEnabling = false
+    @State private var copiedFeedback = false
+
+    var body: some View {
+        Group {
+            switch step {
+            case .intro: introView
+            case .generated(let code): generatedView(code)
+            case .confirm(let code): confirmView(code)
+            }
+        }
+        .padding(28)
+        .frame(width: 440)
+        .ffiErrorAlert($model.lastErrorMessage)
+    }
+
+    // MARK: - 步骤 1：说明屏
+
+    private var introView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "key.horizontal.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.tint)
+            Text("生成恢复码")
+                .font(.title3.bold())
+            Text("恢复码用于忘记主密码时重置密码库、找回条目数据。\n请抄写并妥善保存——恢复码仅显示一次，本机不会保存。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 12) {
+                Button("取消") { dismiss() }
+                Button("生成恢复码") { generate() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    /// 生成恢复码（Rust CSPRNG，128-bit 熵；无落盘，放弃不影响旧 wrap）。
+    private func generate() {
+        guard let code = model.generateRecoveryCode() else { return }
+        step = .generated(code)
+    }
+
+    // MARK: - 步骤 2：一次性展示 + 复制
+
+    private func generatedView(_ code: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.on.clipboard.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.tint)
+            Text("恢复码（仅显示一次）")
+                .font(.title3.bold())
+            Text(code)
+                .font(.system(.title2, design: .monospaced).weight(.semibold))
+                .textSelection(.enabled)
+                .multilineTextAlignment(.center)
+                .padding(14)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.1)))
+            Text("请抄写并妥善保存。关闭本窗口后，恢复码将无法再次查看。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Button {
+                    // 敏感值走自动清除（ClipboardManager.copyWithAutoClear）——
+                    // 尊重 FR-14.2 档位与 changeCount 守卫（同 FieldRowView/大字号
+                    // 复制纪律）。恢复码复制后即进入剪贴板清除定时（docs/31 §4.3
+                    // 「剪贴板 30s 自动清空」，以 AppModel.clipboardClearSecs 档位为准）。
+                    ClipboardManager.shared.copyWithAutoClear(code)
+                    copiedFeedback = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        copiedFeedback = false
+                    }
+                } label: {
+                    Label(copiedFeedback ? "已复制" : "复制",
+                          systemImage: copiedFeedback ? "checkmark" : "doc.on.doc")
+                }
+                Button("我已抄写保存") { step = .confirm(code) }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    // MARK: - 步骤 3：主密码确认（D-6：先验证身份再写 header）
+
+    private func confirmView(_ code: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.tint)
+            Text("确认主密码")
+                .font(.title3.bold())
+            Text("启用前需验证主密码身份。出于安全考虑，主密码不会被保存，需要重新输入一次。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .onSubmit { enable(code: code) }
+
+            if isEnabling {
+                ProgressView { Text("正在启用…（密钥派生约需 1 秒）") }
+            }
+
+            HStack(spacing: 12) {
+                Button("返回") { step = .generated(code) }
+                Button("启用恢复码") { enable(code: code) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(password.isEmpty || isEnabling)
+            }
+        }
+    }
+
+    /// 确认主密码并写入 recovery_wrap（enable_recovery_code，写 header）。
+    /// 失败（密码错 1002 等）经 ErrorPresenter 呈现，本 sheet 保留可重试。
+    private func enable(code: String) {
+        guard !password.isEmpty, !isEnabling else { return }
+        // 密码不落状态：拷贝进异步调用后立刻清空本地输入（docs/07 §2.4）
+        let secret = password
+        password = ""
+        isEnabling = true
+        Task {
+            let ok = await model.enableRecoveryCode(password: secret, code: code)
+            isEnabling = false
+            if ok { dismiss() }
+            // 失败：本 sheet 保留可重试，错误文案经 lastErrorMessage 呈现
+        }
+    }
+}

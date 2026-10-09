@@ -6,16 +6,18 @@
 //   - 恢复码重置：model.hasRecoveryWrap——离线恢复码（用户持有，不落盘）。
 //   两分支均不可用 → 空态文案「此密码库未配置生物识别或恢复码，无法在此重置。」
 //
-// 错误文案不可区分纪律（docs/31 §4.2 / FR-1.4）：两条重置路径失败统一使用
-// 指定字面量，不区分「凭证错 / wrap 损坏 / header 损坏」等具体原因——
-//   恢复码路径：「重置失败：恢复码无效或密码库数据损坏。」
-//   Touch ID 路径：「重置失败：无法完成身份验证或密码库数据损坏。」
+// 错误文案不可区分纪律（docs/31 §4.2 / FR-1.4）：1002 族（凭证错 / wrap
+// 损坏 / header 损坏）统一文案与 1010 弱密码具体引导的分派由 **AppModel
+// 完成**（resetFailedText：code==1002 → 统一不可区分文案；其余 → ErrorPresenter
+// 直出），本视图直接采用模型文案，不再本地改写——
+//   1002 → 「重置失败：恢复码无效或密码库数据损坏。」（恢复码路径）
+//        / 「重置失败：无法完成身份验证或密码库数据损坏。」（Touch ID 路径）
+//   1010 → 弱密码具体提示（可操作修正引导不丢）
 //
-// 判定成败（契约）：model 重置方法为 async Void，失败经
-// model.lastErrorMessage 呈现（与 unlock / unlockWithTouchID 同纪律）——
-// 调用后 lastErrorMessage 非 nil 即失败（含空串，如用户取消认证，宁当
-// 失败也不假报成功）。失败时把模型错误落诊断日志并清 nil（防止 sheet
-// 关闭后残留到 LockView 的 ffiErrorAlert），转成本视图字面量呈现。
+// 判定成败（契约，v2.5.0 集成轮裁定）：model 重置方法返回 **Bool**——
+// true=重置成功；false=失败（lastErrorMessage 承载已映射文案，取用后清 nil
+// 防残留到 LockView 的 ffiErrorAlert）或用户取消生物认证（静默无文案，
+// 保持表单、**不得误报成功**）。
 //
 // 密码纪律（docs/07 §2.4，与 ChangePasswordView 一致）：新密码与恢复码
 // 只在提交瞬间拷贝进 Task 闭包，随即清空 @State；失败后表单虽保留可
@@ -57,11 +59,6 @@ struct RecoveryResetSheet: View {
     /// 成功视图「用新密码解锁」输入（提交即清空，同 LockView 主密码形态）。
     @State private var unlockPassword = ""
     @State private var isUnlocking = false
-
-    /// 两条重置路径的错误文案（docs/31 §4.2 错误文案不可区分纪律，FR-1.4）：
-    /// 不区分「凭证错 / wrap 损坏 / header 损坏」，统一字面量。
-    private static let touchIDResetErrorText = "重置失败：无法完成身份验证或密码库数据损坏。"
-    private static let recoveryResetErrorText = "重置失败：恢复码无效或密码库数据损坏。"
 
     // MARK: - 分支可见性
 
@@ -252,13 +249,18 @@ struct RecoveryResetSheet: View {
         isSubmitting = true
         errorMessage = nil
         Task {
-            let ok = await runReset { await model.resetPasswordWithBio(newPassword: secret) }
+            // 契约（Bool，见文件头）：true=重置成功；false=失败（lastErrorMessage
+            // 承载已映射文案）/ 用户取消认证（静默无文案）。取用文案后清 nil
+            // 防残留到 LockView 的 ffiErrorAlert。
+            let ok = await model.resetPasswordWithBio(newPassword: secret)
             isSubmitting = false
             if ok {
                 didReset = true
-            } else {
-                errorMessage = Self.touchIDResetErrorText
+            } else if let modelError = model.lastErrorMessage {
+                model.lastErrorMessage = nil
+                errorMessage = modelError
             }
+            // 用户取消认证：无文案、保持表单（不得误报成功）
         }
     }
 
@@ -273,31 +275,15 @@ struct RecoveryResetSheet: View {
         isSubmitting = true
         errorMessage = nil
         Task {
-            let ok = await runReset {
-                await model.resetPasswordWithRecoveryCode(newPassword: secret, code: code)
-            }
+            let ok = await model.resetPasswordWithRecoveryCode(newPassword: secret, code: code)
             isSubmitting = false
             if ok {
                 didReset = true
-            } else {
-                errorMessage = Self.recoveryResetErrorText
+            } else if let modelError = model.lastErrorMessage {
+                model.lastErrorMessage = nil
+                errorMessage = modelError
             }
         }
-    }
-
-    /// 执行一次重置调用并判定成败（契约见文件头注释）：model 重置方法为
-    /// async Void，失败经 model.lastErrorMessage 呈现——调用后 lastErrorMessage
-    /// 非 nil 即失败（含空串，如用户取消认证；宁当失败也不假报成功）。
-    /// 失败时把模型错误落诊断日志并清 nil（防止 sheet 关闭后残留到 LockView
-    /// 的 ffiErrorAlert），返回 false；成功返回 true。
-    private func runReset(_ action: @escaping () async -> Void) async -> Bool {
-        await action()
-        if let modelError = model.lastErrorMessage {
-            DiagLog.append(modelError.isEmpty ? "reset failed (empty model error text)" : modelError)
-            model.lastErrorMessage = nil
-            return false
-        }
-        return true
     }
 
     /// 成功视图「用新密码解锁」（docs/31 D-9）：调 model.unlock——重置保持

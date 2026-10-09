@@ -113,6 +113,52 @@ check(
     "多库 + 未弹 + 非忙碌 → 不弹（基础条件优先短路）"
 )
 
+// ---- 6. BUG-17 回归：可见锁定态激活应允许一次提示（v2.5.0）----
+// 触发面扩展（CofferApp summonMainWindow 去 wasHidden 门 + AppDelegate
+// applicationDidBecomeActive 钩子，二者统一调 maybeAutoPromptBiometric）后，
+// 可见窗口锁定态激活与隐藏恢复激活走同一纯函数判定——本函数签名无
+// wasHidden/窗口可见性输入，激活源不可区分；防重入唯一由 firedInLockState
+// 旗标保证。回归目标：扩展触发面 = 每次激活放行一次提示，但不得放宽
+// 基础门禁（单库 / 支持 / enabled）与防重入（fired / isBusy）。
+// （docs/KNOWN-ISSUES.md BUG-17 §修复路径；AppDelegate 接线属 UI 级，
+//   附真机手工核销。）
+
+// 6a. 可见锁定态激活（此前 wasHidden==false 死路径，BUG-17 扩展面）首次
+// → 允许一次提示
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: false, isBusy: false) == true,
+    "可见锁定态激活首次 → 允许一次提示（BUG-17 扩展面）"
+)
+// 6b. 同锁定态再次激活（任何激活源，已 fired）→ 不重复弹——多次激活安全
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: true, isBusy: false) == false,
+    "同锁定态再次激活（已弹过一次）→ 不重复弹"
+)
+// 6c. 激活时自动认证进行中（未 fired 但 isBusy）→ 不并发触发
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .enabled,
+        firedInLockState: false, isBusy: true) == false,
+    "激活时自动认证进行中 → 不并发触发"
+)
+// 6d. 扩展触发面不得放宽基础门禁（可见激活路径同样短路）
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 2, isSupported: true, status: .enabled,
+        firedInLockState: false, isBusy: false) == false,
+    "可见激活 + 多库 → 不弹（基础条件优先短路）"
+)
+check(
+    AutoPromptBiometric.shouldAutoPromptBiometric(
+        vaultCount: 1, isSupported: true, status: .disabled,
+        firedInLockState: false, isBusy: false) == false,
+    "可见激活 + 通道 disabled → 不弹（基础条件优先短路）"
+)
+
 print("")
 print(failed == 0
       ? "AUTO PROMPT BIOMETRIC TESTS OK —— \(passed) 项断言全部通过"

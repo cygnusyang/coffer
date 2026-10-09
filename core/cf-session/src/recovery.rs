@@ -42,9 +42,7 @@
 //!
 //! impl 层（镜像 unlock_bio / unlock_mcp 的 `_impl` 风格）：不持会话门禁、
 //! 不写审计（审计与 backoff 接线由 P1c facade 层 vault.rs 承接，
-//! docs/31 §3.6）。当前仅测试引用、未接 facade，非测试 lib 构建报 unused
-//! 属预期（P1b 与 P1c 并行，facade 独立交付），故模块级 `allow(dead_code)`。
-#![allow(dead_code)]
+//! docs/31 §3.6）。
 
 use std::path::Path;
 

@@ -272,11 +272,6 @@ pub(crate) fn recover_dek_bio(
 /// 返回新 header 供调用方（facade）更新内存副本；调用方负责 license
 /// 门禁（§3.4 license_guard）与审计（PasswordResetByBio 由 facade 层
 /// 接，本模块不做，docs/31 §3.6）。
-///
-/// 待 P1c facade（vault.rs `reset_password_with_bio`，M-SESSION 集成轮）
-/// 接线后移除 `#[allow(dead_code)]`——当前仅测试引用，非测试 lib 构建
-/// 报 unused 属预期（P1b 与 P1c 并行，facade 独立交付）。
-#[allow(dead_code)]
 pub(crate) fn reset_password_with_bio_impl(
     vault_dir: &Path,
     header: &cf_format::Header,

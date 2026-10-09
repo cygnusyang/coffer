@@ -62,6 +62,12 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
+            // v2.4.1：macOS 26 Liquid Glass 默认让 Form 内容延伸到玻璃透明
+            // 标题栏下方、滚动时从标题栏透出（用户反馈「上面应不透明」）。
+            // .toolbarBackground(.visible, for: .windowToolbar) 强制窗口
+            // 标题栏/工具栏区不透明——与主窗口 .windowToolbarStyle(.unified)
+            // 的实体标题栏同视觉纪律；红绿灯仍留在标题栏左上角。
+            .toolbarBackground(.visible, for: .windowToolbar)
             // v2.4.1 终版：关闭由独立窗口标题栏红绿灯承担（Window scene），
             // 本页不再渲染自定义关闭控件；滚动内容时红绿灯仍常驻可随时关闭。
         }

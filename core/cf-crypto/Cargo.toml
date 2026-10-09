@@ -30,6 +30,10 @@ cbc = { workspace = true }
 # cipher：aes/cbc 的 trait 提供者（KeyIvInit / BlockModeDecrypt /
 #           block_padding），opvault 模块直接使用，需显式声明
 cipher = { workspace = true }
+# AES-256-GCM（FR-17.2 恢复码封装，docs/31 §1.2 D-4）：与既有 XChaCha20
+# 并列为本 crate 的第二个 AEAD 原语（唯一 AEAD 入口纪律延伸），
+# 供 cf-session recovery 模块封/解封 wrapped_dek_recovery。
+aes-gcm = { workspace = true }
 hmac = { workspace = true }
 subtle = { workspace = true }
 # base64：opdata01 / item keys `k` 的 base64 解码（OPVault 标准 base64

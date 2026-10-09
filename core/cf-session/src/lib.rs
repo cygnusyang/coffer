@@ -66,6 +66,7 @@ pub mod change_password;
 mod diag;
 mod export_gate;
 pub mod idle;
+pub mod recovery;
 pub mod reminder;
 pub mod testing;
 pub mod types;

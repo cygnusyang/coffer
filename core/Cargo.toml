@@ -85,6 +85,15 @@ cbc = "0.2"
 #           trait（非仅传递依赖），故显式声明。0.5.2 已在 lockfile。
 cipher = "0.5"
 
+# [已确认] AES-256-GCM（FR-17.2 恢复码封装，docs/31 §1.2 D-4）：
+#          RustCrypto AEAD（MIT/Apache-2.0，NFR-LEGAL-02），nonce 96-bit
+#          （Aes256Gcm = AesGcm<Aes256, U12>，与 RECOVERY_WRAP_CT_MIN=28
+#          的 12B nonce + 16B tag 对齐）。内部依赖 aes 0.8 + cipher 0.4，
+#          与 OPVault 的 aes 0.9 / cbc 0.2 双版本并存（0.10.3 已在
+#          lockfile，无新增下载）。cf-crypto 的 aead 模块收口为唯一
+#          AEAD 入口，上层经 `aes_gcm_seal` / `aes_gcm_open` 使用。
+aes-gcm = "0.10"
+
 # [已确认] getrandom 0.4.3 —— 注意：0.4 与 0.2/0.3 的 API 差异较大，
 #          使用前请核对 docs.rs/getrandom/0.4.3
 getrandom = "0.4.3"

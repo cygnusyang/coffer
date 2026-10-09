@@ -1233,13 +1233,13 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
-## BUG-17（🟡 已裁定「是」：超时锁定后窗口可见状态下再次打开不弹 Touch ID）
+## BUG-17（🟡 已实现（待真机核销）：超时锁定后窗口可见状态下再次打开不弹 Touch ID）
 
 **登记日期**：2026-10-09
 **发现环境**：cygnus 真机（v2.4.0 移除轮后，用户手动触发自动锁定后再次打开观察）
 **分级**：严重级 S3（次要交互——解锁可达（LockView 手点），缺的是自动引导便捷性）/ 优先级 P2 / 来源版本 既有（用户 2026-10-03 裁定自动引导起即有，非回归）/ 发现版本 v2.4.0
-**状态**：🟡 **已裁定「是」（2026-10-09 用户裁「是」），随 v2.5.0 实现**——用户 2026-10-09 提出「coffer 超时锁定后再次打开没触发 Touch ID」；**既有已知未裁定行为**（代码注释明示，非回归）：窗口开着时自动锁定后再解锁不自动弹（用户未裁定，不实现）。用户补充动机（2026-10-09 截图+说明）：主密码有时会忘记，期望 Touch ID 始终可解锁——LockView 手点入口已在（L75，「使用 Touch ID 解锁」，`touchIDStatus == .enabled` 时显示），缺的是**可见窗口锁定态激活时自动弹**（需求=启动自动引导同体验）。**深挖**：用户动机暴露的是主密码遗忘恢复缺口 → 已立项 FR-17.1 / FR-17.2（`01-需求分析.md` §5-Q，v2.5.0，用户裁定 A+B 都做）
-**核销记录**：—
+**状态**：🟡 **已裁定「是」（2026-10-09 用户裁「是」），随 v2.5.0 实现**——用户 2026-10-09 提出「coffer 超时锁定后再次打开没触发 Touch ID」；**既有已知未裁定行为**（代码注释明示，非回归）：窗口开着时自动锁定后再解锁不自动弹（用户未裁定，不实现）。用户补充动机（2026-10-09 截图+说明）：主密码有时会忘记，期望 Touch ID 始终可解锁——LockView 手点入口已在（L75，「使用 Touch ID 解锁」，`touchIDStatus == .enabled` 时显示），缺的是**可见窗口锁定态激活时自动弹**（需求=启动自动引导同体验）。**深挖**：用户动机暴露的是主密码遗忘恢复缺口 → 已立项 FR-17.1 / FR-17.2（`01-需求分析.md` §5-Q，v2.5.0，用户裁定 A+B 都做）。**已实现（2026-10-09，v2.5.0）**：commit `6b983a9`（App 侧触发面扩展）+ `5b1e516`（回归测试），完整构建 BUILD_EXIT=0——**待真机核销**（可见窗口锁定态激活弹 Touch ID）
+**核销记录**：修复版本 **v2.5.0**（2026-10-09）；修复 = commit `6b983a9`（App 侧：`summonMainWindow` 去 `wasHidden` 门 + AppDelegate `applicationDidBecomeActive` 钩子，覆盖可见窗口锁定态激活）+ `5b1e516`（回归测试：`AutoPromptBiometricTests` 可见锁定态激活允许一次提示）——完整构建 BUILD_EXIT=0；**待真机核销**（可见窗口锁定态激活弹 Touch ID，核销后回填复验记录）
 **证据**：`macos/Coffer/CofferApp.swift:150-168` summonMainWindow——`let wasHidden = !window.isVisible`，仅 `wasHidden` 才调 `maybeAutoPromptBiometric`；注释「窗口本就可见（自动锁定后直接手点解锁）不自动弹（用户未裁定，不实现）」。`macos/Coffer/AppModel.swift:391-404` maybeAutoPromptBiometric——`phase == .locked` 前置 + `AutoPromptBiometric.shouldAutoPromptBiometric`（vaultCount==1 ∧ 支持 ∧ .enabled ∧ 未弹过 ∧ !isBusy）+ `session.hasBiometricWrap()`；`autoPromptBiometricFired` 一次性旗标（L38，phase 离开 .locked 复位 L44-46）。`macos/Coffer/Support/AutoPromptBiometric.swift` 纯函数判定
 
 ### 现象（预期/实际 分行写）

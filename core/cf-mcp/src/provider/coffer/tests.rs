@@ -63,6 +63,56 @@ fn seed_secret(prov: &CofferStoreProvider, name: &str, value: &str) -> String {
     prov.session.create_item(&draft).unwrap()
 }
 
+/// 建一个带 password + 可选 username/email designation 字段的 secret 条目。
+///
+/// 模拟从浏览器导入的真实登录条目形态（v2.5.0 伴随用户名注入的测试夹具）。
+fn seed_login(
+    prov: &CofferStoreProvider,
+    name: &str,
+    password: &str,
+    username: Option<&str>,
+    email: Option<&str>,
+) -> String {
+    let mut fields = vec![FieldDraft {
+        name: "password".to_string(),
+        value: Some(password.to_string()),
+        field_type: FieldType::Concealed,
+        designation: Some(Designation::Password),
+        section_index: None,
+        position: 0,
+    }];
+    if let Some(u) = username {
+        fields.push(FieldDraft {
+            name: "username".to_string(),
+            value: Some(u.to_string()),
+            field_type: FieldType::Text,
+            designation: Some(Designation::Username),
+            section_index: None,
+            position: 1,
+        });
+    }
+    if let Some(e) = email {
+        fields.push(FieldDraft {
+            name: "email".to_string(),
+            value: Some(e.to_string()),
+            field_type: FieldType::Text,
+            designation: Some(Designation::Email),
+            section_index: None,
+            position: 2,
+        });
+    }
+    let draft = ItemDraft {
+        title: name.to_string(),
+        category: ItemCategory::Password,
+        urls: Vec::new(),
+        tags: Vec::new(),
+        sections: Vec::new(),
+        fields,
+        totp: None,
+    };
+    prov.session.create_item(&draft).unwrap()
+}
+
 /// 建一个环境容器条目（SecureNote + ENV_TAG + 指定字段）。
 fn seed_env(prov: &CofferStoreProvider, name: &str, pairs: &[(&str, &str)]) -> String {
     let draft = ItemDraft {
@@ -159,6 +209,75 @@ fn run_with_secret_injects_value_and_returns_zero() {
         args: vec![
             "-c".to_string(),
             "test \"$MCP_TEST_VALUE\" = \"s3cr3t-value\"".to_string(),
+        ],
+        cwd: None,
+    };
+    assert_eq!(prov.run_with_secret(&spec).unwrap(), 0);
+}
+
+#[test]
+fn run_with_secret_injects_companion_username() {
+    // 判据（v2.5.0 伴随用户名注入）：条目带 `Designation::Username` 字段时，
+    // `run_with_secret` 额外注入 `<ENV>_USERNAME`，主值注入不受影响。
+    let (prov, _) = provider("run_user");
+    seed_login(
+        &prov,
+        "auth.tuya.com",
+        "pw-value",
+        Some("18928433257"),
+        None,
+    );
+    let spec = RunSpec {
+        secret_ref: "auth.tuya.com".to_string(),
+        env_name: "MCP_TEST_VALUE".to_string(),
+        cmd: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "test \"$MCP_TEST_VALUE\" = \"pw-value\" && test \"$MCP_TEST_VALUE_USERNAME\" = \"18928433257\""
+                .to_string(),
+        ],
+        cwd: None,
+    };
+    assert_eq!(prov.run_with_secret(&spec).unwrap(), 0);
+}
+
+#[test]
+fn run_with_secret_username_falls_back_to_email() {
+    // 判据：无 `Designation::Username` 时由 `Designation::Email` 兜底。
+    let (prov, _) = provider("run_email");
+    seed_login(
+        &prov,
+        "github.com",
+        "pw-value",
+        None,
+        Some("ruohuyang@163.com"),
+    );
+    let spec = RunSpec {
+        secret_ref: "github.com".to_string(),
+        env_name: "MCP_TEST_VALUE".to_string(),
+        cmd: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "test \"$MCP_TEST_VALUE_USERNAME\" = \"ruohuyang@163.com\"".to_string(),
+        ],
+        cwd: None,
+    };
+    assert_eq!(prov.run_with_secret(&spec).unwrap(), 0);
+}
+
+#[test]
+fn run_with_secret_without_username_injects_no_companion() {
+    // 判据：纯密码条目（无 Username/Email designation）不注入 `<ENV>_USERNAME`
+    // ——变量必须不存在（与主值「无则不注入」同语义），而非空串。
+    let (prov, _) = provider("run_nouser");
+    seed_secret(&prov, "api-key", "pw-value");
+    let spec = RunSpec {
+        secret_ref: "api-key".to_string(),
+        env_name: "MCP_TEST_VALUE".to_string(),
+        cmd: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "test -z \"${MCP_TEST_VALUE_USERNAME+a}\"".to_string(),
         ],
         cwd: None,
     };

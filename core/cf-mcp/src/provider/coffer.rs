@@ -21,6 +21,7 @@
 //! | 概念 | cf-store 载体 |
 //! | --- | --- |
 //! | Secret | 条目（标题 = secret 名；值 = `Designation::Password` 字段值，无则首个 Concealed，再无则首个有值字段） |
+//! | Secret 伴随用户名 | `run_with_secret` 额外注入 `<ENV>_USERNAME` = `Designation::Username` 字段值（Email 兜底），无则不注入 |
 //! | Secret id | 条目 uuid |
 //! | Environment | `SecureNote` 条目 + 保留标签 [`ENV_TAG`]（字段 = `NAME`/`VALUE` 对） |
 //! | allowed_agents | secret 条目上的保留标签 [`AGENT_TAG_PREFIX`]`<agent>` |
@@ -222,6 +223,23 @@ impl CofferStoreProvider {
             .or_else(|| d.fields.iter().find(|f| f.value.is_some()))
             .and_then(|f| f.value.as_ref())
     }
+
+    /// 条目登录用户名：`Designation::Username` 字段 → `Designation::Email` 兜底 → 无。
+    ///
+    /// 与 [`Self::secret_value`] 同构的借用解析，供 `run_with_secret` 的伴随注入
+    /// （`<ENV>_USERNAME`）使用。仅认显式 designation 的字段——纯 Text 字段
+    /// （如环境容器的 NAME/VALUE 对）不参与，避免误注入。
+    fn username_value(d: &ItemDetails) -> Option<&SecretString> {
+        d.fields
+            .iter()
+            .find(|f| f.designation == Some(Designation::Username) && f.value.is_some())
+            .or_else(|| {
+                d.fields
+                    .iter()
+                    .find(|f| f.designation == Some(Designation::Email) && f.value.is_some())
+            })
+            .and_then(|f| f.value.as_ref())
+    }
 }
 
 impl SecretProvider for CofferStoreProvider {
@@ -289,6 +307,16 @@ impl SecretProvider for CofferStoreProvider {
         // 注入值只在 SecretString 生命周期内存在（ZeroizeOnDrop），用后即毁。
         if let Some(v) = value {
             cmd.env(&spec.env_name, v.expose());
+        }
+        // 伴随用户名注入（v2.5.0，MCP 取密语义补全）：条目带 `Designation::Username`
+        // （或 Email 兜底）字段时，额外注入 `<ENV>_USERNAME`，供 agent 全自动登录
+        // 使用。无该字段则不注入——与主值「无则不注入」同语义。派生名随主名校验，
+        // 非法即跳过（防御式，合法 env_name 派生出的名字恒合法）。
+        if let Some(u) = Self::username_value(&item) {
+            let user_env = format!("{}_USERNAME", spec.env_name);
+            if is_valid_env_name(&user_env) {
+                cmd.env(&user_env, u.expose());
+            }
         }
         let status = cmd.status().map_err(|e| ProviderError::SubprocessFailed {
             exit_code: None,

@@ -8,6 +8,7 @@
 //   ④ 生成器：生成器默认参数（FR-14.3，T08：GeneratorSettingsView）
 //   ⑤ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
+//     + 「恢复码」设置区（RecoveryCodeSettingsSection，FR-17.2）
 //   ⑥ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
 //   ⑦ 诊断与隐私：「诊断信息…」（FR-14.4，T08：DiagnosticsView）
 //     + 「网络能力自证…」（FR-14.5，T08：NetworkSelfCertView）
@@ -201,6 +202,10 @@ struct SettingsView: View {
         } footer: {
             Text("修改主密码只重新封装密码库头部，不重新加密全部条目。")
         }
+
+        // FR-17.2：恢复码设置区（RecoveryCodeSettingsSection 自包含，两态渲染 +
+        // 生成/重生成 sheet 均位于 RecoveryCodeSetupSheet.swift，docs/31 §4.3）
+        RecoveryCodeSettingsSection()
     }
 
     // MARK: - ⑥ 数据（T-H 恢复备份 / T-I 审计日志）

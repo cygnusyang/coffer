@@ -7662,6 +7662,18 @@ public enum FfiAuditEvent: Equatable, Hashable {
      * 跨库复制成功（FR-2.10，源库与目标库各一条）。
      */
     case itemCopy
+    /**
+     * 生物识别重置主密码成功（FR-17.1，v2.5.0）。
+     */
+    case passwordResetByBio
+    /**
+     * 恢复码重置主密码成功（FR-17.2，v2.5.0）。
+     */
+    case passwordResetByRecovery
+    /**
+     * 启用 / 重新生成恢复码成功（FR-17.2，v2.5.0）。
+     */
+    case recoveryCodeEnabled
 
 
 
@@ -7695,6 +7707,12 @@ public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
         
         case 6: return .itemCopy
         
+        case 7: return .passwordResetByBio
+        
+        case 8: return .passwordResetByRecovery
+        
+        case 9: return .recoveryCodeEnabled
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -7725,6 +7743,18 @@ public struct FfiConverterTypeFfiAuditEvent: FfiConverterRustBuffer {
         
         case .itemCopy:
             writeInt(&buf, Int32(6))
+        
+        
+        case .passwordResetByBio:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .passwordResetByRecovery:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .recoveryCodeEnabled:
+            writeInt(&buf, Int32(9))
         
         }
     }

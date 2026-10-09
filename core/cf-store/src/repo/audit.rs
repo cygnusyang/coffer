@@ -10,8 +10,10 @@
 //!
 //! ## 事件类型
 //!
-//! [`AuditEvent`] 是封闭枚举，覆盖 v0.2.0 的四类动作与 v0.4.0 的跨库
-//! 复制（FR-2.10 `item_copy`）；`event` 列以
+//! [`AuditEvent`] 是封闭枚举，覆盖 v0.2.0 的四类动作、v0.4.0 的跨库
+//! 复制（FR-2.10 `item_copy`）与 v2.5.0 的主密码恢复通道（FR-17，
+//! `password_reset_bio` / `password_reset_recovery` /
+//! `recovery_code_enabled`）；`event` 列以
 //! `as_str` 文本落盘，读取时反向解析——遇到本实现不认识的文本（更高
 //! 版本 App 写入）返回 [`CfError::Corrupted`]，**不静默跳过**（与
 //! schema 版本校验的 O-2 纪律一致）。
@@ -45,6 +47,13 @@ pub enum AuditEvent {
     /// 跨库复制条目成功（FR-2.10，v0.4.0）。源库与目标库各打一条，
     /// `detail` = 非敏感上下文（两端库 uuid + 条目 uuid，不含标题）。
     ItemCopy,
+    /// 生物识别重置主密码成功（FR-17.1，v2.5.0）。
+    PasswordResetByBio,
+    /// 恢复码重置主密码成功（FR-17.2，v2.5.0）。
+    PasswordResetByRecovery,
+    /// 启用 / 重新生成恢复码成功（FR-17.2，v2.5.0）；`detail`
+    /// 区分 initial / regenerated。
+    RecoveryCodeEnabled,
 }
 
 impl AuditEvent {
@@ -58,6 +67,9 @@ impl AuditEvent {
             Self::PuxExport => "pux_export",
             Self::PasswordChange => "password_change",
             Self::ItemCopy => "item_copy",
+            Self::PasswordResetByBio => "password_reset_bio",
+            Self::PasswordResetByRecovery => "password_reset_recovery",
+            Self::RecoveryCodeEnabled => "recovery_code_enabled",
         }
     }
 
@@ -71,6 +83,9 @@ impl AuditEvent {
             "pux_export" => Some(Self::PuxExport),
             "password_change" => Some(Self::PasswordChange),
             "item_copy" => Some(Self::ItemCopy),
+            "password_reset_bio" => Some(Self::PasswordResetByBio),
+            "password_reset_recovery" => Some(Self::PasswordResetByRecovery),
+            "recovery_code_enabled" => Some(Self::RecoveryCodeEnabled),
             _ => None,
         }
     }
@@ -235,10 +250,30 @@ mod tests {
             AuditEvent::PuxExport,
             AuditEvent::PasswordChange,
             AuditEvent::ItemCopy,
+            AuditEvent::PasswordResetByBio,
+            AuditEvent::PasswordResetByRecovery,
+            AuditEvent::RecoveryCodeEnabled,
         ] {
             assert_eq!(AuditEvent::parse(event.as_str()), Some(event));
         }
         assert_eq!(AuditEvent::parse("nope"), None);
+    }
+
+    /// v2.5.0 新增三事件的落盘文本规范值（FR-17，docs/31 §3.6）
+    #[test]
+    fn 新事件文本值() {
+        assert_eq!(
+            AuditEvent::PasswordResetByBio.as_str(),
+            "password_reset_bio"
+        );
+        assert_eq!(
+            AuditEvent::PasswordResetByRecovery.as_str(),
+            "password_reset_recovery"
+        );
+        assert_eq!(
+            AuditEvent::RecoveryCodeEnabled.as_str(),
+            "recovery_code_enabled"
+        );
     }
 
     /// 未知事件文本（更高版本写入）→ Corrupted，不静默跳过

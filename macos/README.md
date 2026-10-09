@@ -72,8 +72,7 @@ macos/
 ├── Coffer.xcodeproj
 ├── Coffer/                SwiftUI 应用
 │   ├── Views/
-│   ├── Platform/              平台适配（Keychain / Touch ID / 剪贴板）
-│   └── PasskeyExtension/       凭据提供者扩展（macOS 14+）
+│   └── Platform/              平台适配（Keychain / Touch ID / 剪贴板）
 ├── CoreBindings/              UniFFI 生成的 Swift 绑定
 └── Frameworks/                libcf_ffi.a + modulemap
 ```
@@ -153,18 +152,15 @@ core/ (Rust)
 
 ---
 
-## Passkey 的额外复杂度
+## Passkey 边界声明（降级形态，v2.6.0）
 
-macOS 侧的 Passkey 实现复杂度**显著高于 Android**，原因有二：
+macOS 端 Passkey 为**降级形态**（FR-10.1 导入 / 10.2 查看 / 10.5 删除 / 10.6 保留密码；创建与使用不在本版），三条诚实边界如下：
 
-1. **进程边界**：凭据提供者扩展是**独立进程**，而 DEK 只存在于主 App 会话中。两者之间如何传递凭据需要专门设计。
-2. **能力限制**：扩展有内存与执行时间约束，不能长时间持有解密数据。
+1. **创建/使用能力 absent（TCB-4）**：本版**无凭据提供者扩展**——系统设置里不会出现 Coffer 提供者，网站/App 无法选择 Coffer 创建或使用 Passkey。这不是「有菜单但禁用」，是能力不存在。用户文档明示。
+2. **iCloud 不同步是特性**（lead 裁定沿用）：Passkey 私钥存 Coffer 自有加密库，**不经 iCloud Keychain**（第三方提供者路径下同步从设计上不存在）；跨设备 = 库文件搬运（加密备份/恢复）。用户文档主动声明。
+3. **数据源边界**：桌面端 1PUX **无 Passkey**——1Password 桌面端导出的 1PUX 不含 Passkey（官方明确只有 iOS/Android 能导出）。已用 1Password 桌面版的用户首建数据需 iOS/Android 导出或改用 Bitwarden JSON，或网站重新注册（ADP 后）。这条无法通过技术绕过，用户文档明示。
 
-**已定的设计原则**：**扩展只做轻量代理 —— 向主 App 请求一次签名，DEK 永不进入扩展进程。**
-
-这条原则的作用是把私钥暴露面锁在主 App 内，扩展被攻破也拿不到库密钥。详见 `docs/02-概要设计.md` §4.6。
-
-> ⚠️ 另有一条硬限制：macOS 端 **Passkey 没有数据源** —— 1Password 桌面端导出的 1PUX **不含 Passkey**（官方明确只有 iOS/Android 能导出）。因此 macOS 端首次建立 Passkey 只能靠两条路：① 在网站重新注册；② 从 Android 端库文件搬运。**这条无法通过技术绕过。**
+> 完整版（凭据提供者扩展 + 创建/断言）随 ADP 购买后重启——机制设计见 `docs/02-概要设计.md` §4.6，要点摘录见 `docs/17-v0.5实现方案.md` §9（休眠）。
 
 ---
 

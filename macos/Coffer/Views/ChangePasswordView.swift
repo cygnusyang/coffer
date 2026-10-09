@@ -59,7 +59,9 @@ struct ChangePasswordView: View {
             SecureField("确认新密码", text: $confirmPassword, prompt: Text("再次输入新密码"))
                 .textFieldStyle(.roundedBorder)
 
-            strengthSection
+            // 1010 弱密码门禁要求常驻说明 + 实时强度条（共享组件，同
+            // RecoveryResetSheet；原内联 strengthSection 迁入 PasswordStrengthSection）
+            PasswordStrengthSection(password: $newPassword)
 
             if mismatchHintVisible {
                 Text("两次输入的新密码不一致。")
@@ -92,50 +94,6 @@ struct ChangePasswordView: View {
             }
         } message: {
             Text("请使用新密码重新解锁。")
-        }
-    }
-
-    // MARK: - 强度条（展示用途；门禁在 Rust 侧 1010）
-
-    @ViewBuilder
-    private var strengthSection: some View {
-        if !newPassword.isEmpty {
-            let score = currentScore
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach(0..<5, id: \.self) { index in
-                        Capsule()
-                            .fill(index <= score ? strengthColor(score) : Color.secondary.opacity(0.2))
-                            .frame(height: 5)
-                    }
-                    Text(verbatim: PasswordStrength.label(score))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let estimate = model.estimateStrength(newPassword), !estimate.warnings.isEmpty {
-                    Text(estimate.warnings.joined(separator: "；"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    /// Rust zxcvbn 估算（有会话恒可用；估算失败用本地粗估兜底，同 VaultSetupView）。
-    private var currentScore: Int {
-        if let estimate = model.estimateStrength(newPassword) {
-            return Int(estimate.score)
-        }
-        return PasswordStrength.localScore(newPassword)
-    }
-
-    private func strengthColor(_ score: Int) -> Color {
-        switch score {
-        case 0: return .red
-        case 1: return .orange
-        case 2: return .yellow
-        case 3: return .green
-        default: return .mint
         }
     }
 

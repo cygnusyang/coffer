@@ -138,6 +138,9 @@ struct RecoveryResetSheet: View {
                 .font(.headline)
             SecureField("新主密码", text: $bioPassword, prompt: Text("请输入新主密码"))
                 .textFieldStyle(.roundedBorder)
+            // 1010 弱密码门禁要求常驻说明 + 实时强度条（用户反馈：弹窗只提示
+            // "password too weak" 未说要求——PasswordStrengthSection 补上）
+            PasswordStrengthSection(password: $bioPassword)
             SecureField("确认新密码", text: $bioConfirm, prompt: Text("再次输入新密码"))
                 .textFieldStyle(.roundedBorder)
             if bioMismatchHintVisible {
@@ -162,6 +165,8 @@ struct RecoveryResetSheet: View {
                 .textFieldStyle(.roundedBorder)
             SecureField("新主密码", text: $recoveryPassword, prompt: Text("请输入新主密码"))
                 .textFieldStyle(.roundedBorder)
+            // 1010 弱密码门禁要求常驻说明 + 实时强度条（同 Touch ID 分支）
+            PasswordStrengthSection(password: $recoveryPassword)
             SecureField("确认新密码", text: $recoveryConfirm, prompt: Text("再次输入新密码"))
                 .textFieldStyle(.roundedBorder)
             if recoveryMismatchHintVisible {

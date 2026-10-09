@@ -316,6 +316,8 @@ coffer mcp [--provider op|coffer] [--uds PATH] [--log PATH] [--vault NAME] [--no
 
 `0` 干净退出（连接关闭 / shutdown）；`1` 配置错误（未知 flag / provider 不可用）；`2` 协议致命错误（帧解析死锁态）；`3` 身份缺失（7002）。
 
+> **一次性写子命令退出码（v2.5.0 扩展，docs/34 §5.2 r0.4，lead 裁定 2026-10-10）**：本段 0/1/2/3 是 **MCP server 常驻进程**语义（干净关闭 / 配置错误 / 协议致命 / 身份缺失）。**一次性写子命令**（如 `coffer set-password`）不复用该映射——其退出码为 `0` 成功 / `1` 解锁失败 fail-closed（D-4：托管存在但解锁失败绝不回落 env）/ `2` 未命中或歧义（1011）/ `3` 强度不足（1010，`--force` 绕过）/ `4` 用法错误。两套语义按子命令上下文区分，不得混用。
+
 ### 5.4 注册命令（设置页「复制」输出，对齐 1Password「Connect to Claude」）
 
 ```bash
@@ -449,5 +451,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.11 | 2026-10-07 | **G1e 核销批次（v2.2.0）**：§4.3 env 表增 `COFFER_MCP_UDS_READ_TIMEOUT_SECS` 行（缺省 120 s / 下限 10 s / 无 0=off / 数据到达重置 / 握手同受窗约束，LOW-1 核销，G1d 实现锚点 `core/cf-mcp/src/uds.rs`）+ `COFFER_VAULT_PASSWORD` 行随取密语义转可选 + 表后补 coffer provider 取密语义补记（escrow 优先、read 门 = header `mcp_wrap.available`、env 兜底仅限托管不存在、托管存在但读取/解锁失败 fail-closed 退出 1 绝不回落 env，D-4，来源 docs/29 §6 + `core/cf-mcp/src/cli.rs`）；§4.5「已接入」随取密语义更新（`COFFER_VAULT_PASSWORD` 转可选）；§5.2 补调用路径注（bundle 内路径、不入 PATH）+ §5.4 注册命令改 `Coffer.app/Contents/MacOS/coffer` + 拷出即 AMFI SIGKILL 纪律 + §6.2 分发行随 D-6 对齐（D-6 裁定 2026-10-07）。修订记录历史行不改写 |
 | r0.12 | 2026-10-07 | **D-6 路径修订追平（lead 裁定 2026-10-07，G5 真机实证，commit 7456c47，docs/29 §8 D-6 路径修订记录）**：§5.2 调用路径注 / §5.4 注册命令与 blockquote / §6.2 分发行全部由 `Coffer.app/Contents/MacOS/coffer` 改为**嵌套 bundle 路径** `Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`（原路径 case-insensitive APFS 与主可执行文件 `Coffer` 同名冲突 + AMFI 不覆盖嵌套裸 Mach-O → 137；决策实质不变：bundle 分发 / 同身份 / 拷出即 SIGKILL）。修订记录历史行不改写 |
 | r0.13 | 2026-10-09 | **run_with_secret 伴随用户名注入（v2.5.0，MCP 取密语义补全）**：§4.5 契约补记——条目带 `Designation::Username` 字段（Email 兜底）时 `run_with_secret` 额外注入 `<ENV>_USERNAME`（无则不注入，与主值「无则不注入」同语义）；动机 = agent 全自动登录（浏览器导入条目含用户名字段而 MCP 单值契约只吐密码，真机实证 GitHub 密码接受/涂鸦缺用户名失败）；仅认显式 designation、纯 Text 字段不参与；op provider 不在本批（字段机制不同，顺延）。修订记录历史行不改写 |
+| r0.14 | 2026-10-10 | **一次性写子命令退出码补注（v2.5.0 写面集成轮，lead 裁定）**：§5.3 补注——MCP server 常驻进程退出码（0/1/2/3）与一次性写子命令退出码（0/1/2/3/4，docs/34 §5.2 r0.4，`coffer set-password`）按子命令上下文区分、不得混用。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

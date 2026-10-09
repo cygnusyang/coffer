@@ -39,6 +39,7 @@ use cf_domain::origin::OriginBinding;
 use cf_domain::secret::SecretString;
 use cf_domain::totp_data::TotpUpdate;
 use cf_store::ItemListFilter;
+use rusqlite::Connection;
 
 use crate::backoff::UnlockBackoff;
 use crate::idle;
@@ -1038,6 +1039,211 @@ impl VaultSession {
         Ok(())
     }
 
+    // ------------------------------------ 恢复码与主密码重置（FR-17）
+
+    /// 是否已启用恢复码封装（header `recovery_wrap.available`，docs/31 §1.1：
+    /// 语义 = 「用户意图开启」，锁定态可查）。
+    ///
+    /// 纯读 header，无密钥操作；供 LockView 决定是否显示「忘记密码 → 恢复码
+    /// 重置」入口（docs/31 §4.2）。与 [`Self::has_biometric_wrap`] /
+    /// [`Self::has_mcp_wrap`] 同款（三通道并列查询）。
+    #[must_use]
+    pub fn has_recovery_wrap(&self) -> bool {
+        crate::recovery::has_recovery_wrap(&self.header_snapshot())
+    }
+
+    /// 生成新的 BIP39-12 恢复码（docs/31 §2.4：**只生成、不落盘**）。
+    ///
+    /// 返回的 code 仅存内存，由调用方（Swift 会话局部）一次性展示；用户确认
+    /// 抄写后才经 [`Self::enable_recovery_code`] 写入 header 密文槽位
+    /// （D-10：恢复码明文永不落盘）。无门禁（纯随机生成，无密钥操作、无
+    /// 文件 IO）。
+    ///
+    /// # 错误
+    ///
+    /// 随机源 / 编码失败 → [`CfError::KdfError`]（1007，绝不降级弱随机）。
+    pub fn generate_recovery_code(&self) -> SessionResult<String> {
+        crate::recovery::generate_recovery_code()
+    }
+
+    /// 启用 / 重新生成恢复码封装（docs/31 §3.1 enable，header 侧）。
+    ///
+    /// 门禁：需解锁态（1001）——与 enable_biometric 一致（设置页在解锁后
+    /// 可达）。内部经 `recover_dek` 重验证主密码并解出 DEK（错 → 1002，
+    /// header 未动）→ code 解码 → K_recovery 派生 → AES-256-GCM 封装 DEK
+    /// → 原子重写 header 的 `recovery_wrap` 段。已启用时再次调用用新 code
+    /// 覆盖旧槽位（旧恢复码立即失效，**不可回滚**，docs/31 §3.1）。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错或 code 无效 / 1007 密钥操作失败 /
+    /// 5001·1005 写失败（磁盘 header 保持原样）。
+    ///
+    /// # 暴力退避（FR-12.5）
+    ///
+    /// 经 `recover_dek` 验主密码（密码 oracle），与 [`Self::unlock`] **共享
+    /// 同一退避计数器**（同 [`Self::enable_biometric`]）：门禁期内直接拒绝
+    /// （1002，不跑 KDF）；主密码错（1002）计入失败，成功清零。code 无效
+    /// （1002）同样计入（对恢复码枚举的纵深防御，docs/31 §3.6）。门禁判定
+    /// 与 KDF 同临界区预占（`try_acquire`，语义同 [`Self::unlock`]）。
+    pub fn enable_recovery_code(&self, password: &str, code: &str) -> SessionResult<()> {
+        if self.backoff_guard().try_acquire().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
+        let guard = match self.write_guard(LicensedOp::VaultWrite) {
+            Ok(guard) => guard,
+            Err(e) => {
+                // 锁定态（1001）不是密码尝试，只释放预占
+                self.backoff_guard().release();
+                return Err(e);
+            }
+        };
+        let header = self.header_snapshot();
+        // 覆盖语义（docs/31 §3.1）：旧槽位已启用 → 本次为重新生成
+        let regenerated = header.has_recovery_wrap();
+        let new_header = match crate::recovery::enable_recovery_code_impl(
+            &self.vault_dir,
+            &header,
+            password,
+            code,
+        ) {
+            Ok(new_header) => new_header,
+            Err(e) => {
+                // 仅主密码 / code 校验失败（1002）计入退避；其余非密码错误
+                // 只释放预占
+                if matches!(e, CfError::UnlockFailed) {
+                    self.backoff_guard().on_failure();
+                } else {
+                    self.backoff_guard().release();
+                }
+                return Err(e);
+            }
+        };
+        // 主密码校验通过（成功路径）：退避清零
+        self.backoff_guard().on_success();
+        // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
+        *self.header_guard() = new_header;
+        // FR-12.6 本地审计：启用/重新生成恢复码成功（detail 区分
+        // initial/regenerated）。打点失败静默（不否定已成功的启用，
+        // 与 change_password 同纪律）。
+        if let Some(state) = guard.as_ref() {
+            if let Ok(now) = crate::unix_now() {
+                let _ = state.store.repos().audit.append(
+                    now,
+                    cf_store::AuditEvent::RecoveryCodeEnabled,
+                    Some(if regenerated {
+                        "regenerated"
+                    } else {
+                        "initial"
+                    }),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// 用恢复码重置主密码（FR-17.2，docs/31 §3.3 reset-with-recovery）。
+    ///
+    /// 从**锁定态**执行（忘记密码场景）：恢复码 → 解出 DEK → 换 KEK 重封装
+    /// → 原子重写 header。**不 finish_unlock**（D-9）：重置后保持锁定，由
+    /// Swift 决定是否用新密码解锁。内部经
+    /// [`crate::recovery::reset_password_with_recovery_code_impl`]。
+    ///
+    /// # 门禁（D-6）
+    ///
+    /// 仅 [`Self::license_guard`]（6002/6003，重置是 VaultWrite）——解除
+    /// unlocked 门，锁定态即可重写 header；不 ensure_unlocked。
+    ///
+    /// # 错误（docs/31 §3.5）
+    ///
+    /// 4003 recovery_wrap 缺失 / 1010 新密码弱 / 1002 恢复码错或 wrap 损坏
+    /// / 6002·6003 license 阻断 / 1007 密钥操作失败 / 5001·1005 写失败。
+    ///
+    /// # 暴力退避（FR-12.5 / docs/31 §3.6）
+    ///
+    /// 恢复码非密码 oracle，但为对在线爆破的纵深防御（128-bit 熵下攻击
+    /// 不可行，防御成本≈0），与主密码路径**共享同一退避计数器**：门禁期
+    /// 内直接拒绝（1002）；恢复码错 / wrap 损坏（1002）计入失败，成功
+    /// 清零。4003 / 1010 / 5002 等非「密码尝试」不计入，只释放预占。
+    pub fn reset_password_with_recovery_code(
+        &self,
+        new_password: &str,
+        code: &str,
+    ) -> SessionResult<()> {
+        // license 先于退避预占：许可拒绝（6002/6003）直接返回，不触碰计数器
+        self.license_guard(LicensedOp::VaultWrite)?;
+        if self.backoff_guard().try_acquire().is_err() {
+            return Err(CfError::UnlockFailed);
+        }
+        let header = self.header_snapshot();
+        let new_header = match crate::recovery::reset_password_with_recovery_code_impl(
+            &self.vault_dir,
+            &header,
+            new_password,
+            code,
+        ) {
+            Ok(new_header) => new_header,
+            Err(e) => {
+                // 仅恢复码错误 / wrap 损坏（1002）计入退避；4003 / 1010 /
+                // 5002 等不是「密码尝试」，只释放预占
+                if matches!(e, CfError::UnlockFailed) {
+                    self.backoff_guard().on_failure();
+                } else {
+                    self.backoff_guard().release();
+                }
+                return Err(e);
+            }
+        };
+        // 恢复码校验通过（成功路径）：退避清零
+        self.backoff_guard().on_success();
+        // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
+        *self.header_guard() = new_header;
+        // FR-12.6 本地审计：锁定态写审计走瞬态明文连接（无 store 连接，
+        // 见 [`Self::append_audit_locked`]）。打点失败静默。
+        self.append_audit_locked(cf_store::AuditEvent::PasswordResetByRecovery, None);
+        Ok(())
+    }
+
+    /// 用生物识别（Touch ID）重置主密码（FR-17.1，docs/31 §3.3
+    /// reset-with-bio）。
+    ///
+    /// 从**锁定态**执行（忘记密码场景）：k_bio（Swift 经 LAContext 生物验证
+    /// 后提供）→ 解出 DEK → 换 KEK 重封装 → 原子重写 header。
+    /// **不 finish_unlock**（D-9）：重置后保持锁定。内部经
+    /// [`crate::unlock_bio::reset_password_with_bio_impl`]。
+    ///
+    /// # 门禁（D-6）
+    ///
+    /// 仅 [`Self::license_guard`]（6002/6003，重置是 VaultWrite）——不
+    /// ensure_unlocked，锁定态即可重写 header。
+    ///
+    /// # 错误（D-8 / docs/31 §3.5）
+    ///
+    /// 4001 bio 未启用 / 5002 k_bio 非 32B / 1010 新密码弱 / 1002 k_bio 错
+    /// 或 wrap 损坏 / 6002·6003 license 阻断 / 1007 密钥操作失败 /
+    /// 5001·1005 写失败。
+    ///
+    /// # 暴力退避（FR-12.5 / docs/31 §3.6）
+    ///
+    /// **免 backoff**：k_bio 非密码 oracle，镜像 [`Self::unlock_with_biometric`]
+    /// 完全豁免——不 acquire、不计入、不清零退避计数。
+    pub fn reset_password_with_bio(&self, new_password: &str, k_bio: &[u8]) -> SessionResult<()> {
+        self.license_guard(LicensedOp::VaultWrite)?;
+        let header = self.header_snapshot();
+        let new_header = crate::unlock_bio::reset_password_with_bio_impl(
+            &self.vault_dir,
+            &header,
+            new_password,
+            k_bio,
+        )?;
+        // 写成功才更新内存副本（失败时 in-memory header 与磁盘一致）
+        *self.header_guard() = new_header;
+        // FR-12.6 本地审计：锁定态写审计走瞬态明文连接（见
+        // [`Self::append_audit_locked`]）。打点失败静默。
+        self.append_audit_locked(cf_store::AuditEvent::PasswordResetByBio, None);
+        Ok(())
+    }
+
     // ------------------------------------------------------ 历史版本
 
     /// 列出条目的历史版本（version DESC，FR-2.9）。条目不存在 → 1011。
@@ -1134,6 +1340,23 @@ impl VaultSession {
             .clone()
     }
 
+    /// **许可门禁**（`docs/03` §14.6 方案 C 的许可判定段）：**仅检查许可**
+    /// （6002/6003），不要求解锁态。
+    ///
+    /// 从锁定态执行的写用例（v2.5.0 FR-17 的 reset 两兄弟：重置是 VaultWrite，
+    /// 须过许可门禁，但解除 unlocked 门——锁定态即可重写 header，D-6）使用
+    /// 本方法；其余写用例一律走 [`Self::write_guard`]（解锁门禁 + 本门禁
+    /// 叠加）。拒绝即返回且**不落任何半截数据**（TC-GATE-08）。
+    pub(crate) fn license_guard(&self, op: LicensedOp) -> SessionResult<()> {
+        match self.license_gate_snapshot().check(op) {
+            LicenseDecision::Allow => Ok(()),
+            LicenseDecision::Deny(deny) => Err(match deny {
+                LicenseDenial::TrialExpired => CfError::LicenseTrialExpiredWriteDenied,
+                LicenseDenial::StateUnavailable => CfError::LicenseStateWriteDenied,
+            }),
+        }
+    }
+
     /// **写用例统一守卫**（`docs/03` §14.6 / `docs/02` §10.3 方案 C；
     /// TC-GATE-12 审读点）：解锁门禁（1001）→ 许可门禁（6002/6003），
     /// 判定落在任何写事务之前。
@@ -1147,13 +1370,8 @@ impl VaultSession {
         op: LicensedOp,
     ) -> SessionResult<MutexGuard<'_, Option<UnlockedState>>> {
         let guard = self.unlocked()?;
-        match self.license_gate_snapshot().check(op) {
-            LicenseDecision::Allow => Ok(guard),
-            LicenseDecision::Deny(deny) => Err(match deny {
-                LicenseDenial::TrialExpired => CfError::LicenseTrialExpiredWriteDenied,
-                LicenseDenial::StateUnavailable => CfError::LicenseStateWriteDenied,
-            }),
-        }
+        self.license_guard(op)?;
+        Ok(guard)
     }
 
     /// 状态互斥锁守卫（poison 时不扩散失败：状态本身可安全接管）。
@@ -1181,6 +1399,20 @@ impl VaultSession {
         self.backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// 锁定态写审计（FR-12.6，docs/31 §3.6）：reset 从锁定态执行，无解锁态
+    /// store 连接可用，开**瞬态明文连接**（audit_local 表无需 subkeys，
+    /// cf-store audit.rs:99,107）追加后关闭——镜像 unlock.rs
+    /// `cleanup_orphans_best_effort` 的 `Connection::open(vault_dir.join(DB_FILE))`
+    /// 先例（`db.sqlite` 为容器布局固定文件名）。打点失败静默（不否定已
+    /// 成功的操作，与 change_password / exporter stamp_* 同纪律）。
+    fn append_audit_locked(&self, event: cf_store::AuditEvent, detail: Option<&str>) {
+        if let Ok(now) = crate::unix_now() {
+            if let Ok(conn) = Connection::open(self.vault_dir.join("db.sqlite")) {
+                let _ = cf_store::AuditRepo::new(&conn).append(now, event, detail);
+            }
+        }
     }
 
     /// 注入测试时钟（仅测试可见）：替换退避计数器的时钟为 FakeClock，
@@ -1713,5 +1945,424 @@ mod tests {
             .unwrap();
         let item = session.get_item(&id).unwrap().unwrap();
         assert_eq!(item.origin_bindings, vec![b_domain.clone()]);
+    }
+
+    // ------------------------------------ 恢复码与主密码重置（FR-17，P1c facade）
+
+    /// 换成的新强密码（reset 用，区别于 STRONG_PASSWORD / CHANGE_TO_PASSWORD）。
+    const RESET_TO_PASSWORD: &str = "portable-copper-drift-lantern-77#";
+
+    /// 读审计日志（明文表，无需解锁态）：按落盘序返回 (event, detail)。
+    fn audit_events(vault_dir: &std::path::Path) -> Vec<(cf_store::AuditEvent, Option<String>)> {
+        let conn = rusqlite::Connection::open(vault_dir.join("db.sqlite")).unwrap();
+        cf_store::AuditRepo::new(&conn)
+            .list_desc(None, None)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.event, e.detail))
+            .collect()
+    }
+
+    /// 建库 → 解锁 → 生成+启用恢复码 → 锁定，返回 (session, vault_dir, code)。
+    /// reset 测试从锁定态执行 facade（D-6：锁定态可重写 header）。
+    fn session_with_recovery(tag: &str) -> (VaultSession, std::path::PathBuf, String) {
+        let base = crate::tests_support::temp_dir(tag);
+        let brief = create_vault_with_kdf(&base, "恢复码库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let code = session.generate_recovery_code().unwrap();
+        session
+            .enable_recovery_code(STRONG_PASSWORD, &code)
+            .unwrap();
+        assert!(session.has_recovery_wrap());
+        session.lock();
+        (session, vault_dir, code)
+    }
+
+    /// 建库 → 解锁 → 启用 bio → 锁定，返回 (session, vault_dir, k_bio)。
+    fn session_with_bio(tag: &str) -> (VaultSession, std::path::PathBuf, [u8; 32]) {
+        let base = crate::tests_support::temp_dir(tag);
+        let brief = create_vault_with_kdf(&base, "生物库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        let k_bio_bytes: [u8; 32] = *k_bio.as_bytes();
+        session
+            .enable_biometric(STRONG_PASSWORD, &k_bio_bytes)
+            .unwrap();
+        session.lock();
+        (session, vault_dir, k_bio_bytes)
+    }
+
+    /// FR-17.2 enable 全流程：锁定态被 write_guard 拒绝（1001）；解锁态启用
+    /// 成功、has_recovery_wrap 置位、审计 RecoveryCodeEnabled(initial) 落库。
+    #[test]
+    fn 启用恢复码锁定态拒绝解锁态成功且打initial审计() {
+        let base = crate::tests_support::temp_dir("rc_facade_enable");
+        let brief = create_vault_with_kdf(&base, "启用库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        let code = session.generate_recovery_code().unwrap();
+
+        // 锁定态 enable → 1001（write_guard 的 unlocked 门）
+        let err = session
+            .enable_recovery_code(STRONG_PASSWORD, &code)
+            .unwrap_err();
+        assert_eq!(err.code(), 1001, "锁定态 enable 必须被 write_guard 拒绝");
+
+        // 解锁态启用成功
+        assert!(!session.has_recovery_wrap());
+        session.unlock(STRONG_PASSWORD).unwrap();
+        session
+            .enable_recovery_code(STRONG_PASSWORD, &code)
+            .unwrap();
+        assert!(session.has_recovery_wrap());
+
+        // 审计：RecoveryCodeEnabled(initial)
+        let events = audit_events(&vault_dir);
+        assert!(
+            events.contains(&(
+                cf_store::AuditEvent::RecoveryCodeEnabled,
+                Some("initial".to_owned())
+            )),
+            "启用恢复码必须打 initial 审计：{events:?}"
+        );
+    }
+
+    /// FR-17.2 覆盖语义：已启用再 enable（重新生成）→ 旧恢复码失效、新恢复码
+    /// 生效，审计 detail=regenerated。
+    #[test]
+    fn 重新生成恢复码旧码失效审计regenerated() {
+        let (session, vault_dir, old_code) = session_with_recovery("rc_facade_regenerated");
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let new_code = session.generate_recovery_code().unwrap();
+        assert_ne!(old_code, new_code);
+        session
+            .enable_recovery_code(STRONG_PASSWORD, &new_code)
+            .unwrap();
+        session.lock();
+
+        // 旧码失效（1002）
+        let err = session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, &old_code)
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        // 新码生效
+        session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, &new_code)
+            .unwrap();
+
+        let events = audit_events(&vault_dir);
+        assert!(
+            events.contains(&(
+                cf_store::AuditEvent::RecoveryCodeEnabled,
+                Some("regenerated".to_owned())
+            )),
+            "重新生成必须打 regenerated 审计：{events:?}"
+        );
+    }
+
+    /// FR-17.2 reset-with-recovery 全流程：锁定态执行成功、内存 header 更新
+    /// （旧密码失效 1002、新密码可解锁）、不 finish_unlock（保持锁定）、
+    /// 审计 PasswordResetByRecovery 落库。
+    #[test]
+    fn 恢复码重置全流程新密码生效旧密码失效不自动解锁() {
+        let (session, vault_dir, code) = session_with_recovery("rc_facade_reset");
+        assert!(!session.is_unlocked(), "初始锁定态");
+
+        session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, &code)
+            .unwrap();
+        assert!(
+            !session.is_unlocked(),
+            "reset 不 finish_unlock：重置后必须保持锁定（D-9）"
+        );
+
+        // 内存 header 已更新：旧密码失效、新密码可解锁（同会话直接解锁）
+        let err = session.unlock(STRONG_PASSWORD).unwrap_err();
+        assert_eq!(err.code(), 1002, "重置后旧密码必须失效");
+        assert!(
+            session.unlock(RESET_TO_PASSWORD).is_ok(),
+            "新密码必须能解锁"
+        );
+
+        // 审计：PasswordResetByRecovery 落库
+        let events = audit_events(&vault_dir);
+        assert!(
+            events
+                .iter()
+                .any(|(e, _)| *e == cf_store::AuditEvent::PasswordResetByRecovery),
+            "恢复码重置必须打审计：{events:?}"
+        );
+    }
+
+    /// FR-17.1 reset-with-bio 全流程：成功、旧密码失效、新密码可解锁、
+    /// 不 finish_unlock、审计 PasswordResetByBio 落库。
+    #[test]
+    fn 生物重置全流程新密码生效旧密码失效不自动解锁() {
+        let (session, vault_dir, k_bio) = session_with_bio("bio_facade_reset");
+
+        session
+            .reset_password_with_bio(RESET_TO_PASSWORD, &k_bio)
+            .unwrap();
+        assert!(!session.is_unlocked(), "bio 重置后必须保持锁定（D-9）");
+
+        let err = session.unlock(STRONG_PASSWORD).unwrap_err();
+        assert_eq!(err.code(), 1002, "重置后旧密码必须失效");
+        assert!(
+            session.unlock(RESET_TO_PASSWORD).is_ok(),
+            "新密码必须能解锁"
+        );
+
+        let events = audit_events(&vault_dir);
+        assert!(
+            events
+                .iter()
+                .any(|(e, _)| *e == cf_store::AuditEvent::PasswordResetByBio),
+            "bio 重置必须打审计：{events:?}"
+        );
+    }
+
+    /// FR-17.2 错误路径：enable 错 code → 1002 且磁盘 header 未变。
+    #[test]
+    fn 启用恢复码错code返回1002且header不变() {
+        let base = crate::tests_support::temp_dir("rc_facade_enable_bad_code");
+        let brief = create_vault_with_kdf(&base, "错码库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        let before = std::fs::read(vault_dir.join("header.json")).unwrap();
+        let err = session
+            .enable_recovery_code(STRONG_PASSWORD, "invalid-code!!")
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert_eq!(
+            std::fs::read(vault_dir.join("header.json")).unwrap(),
+            before,
+            "失败不得触碰磁盘 header"
+        );
+        assert!(!session.has_recovery_wrap());
+    }
+
+    /// FR-17.2 错误路径：reset 错 code → 1002 且磁盘 header 未变、旧密码仍可解锁。
+    #[test]
+    fn 恢复码重置错code返回1002且header不变() {
+        let (session, vault_dir, _code) = session_with_recovery("rc_facade_reset_bad_code");
+        let before = std::fs::read(vault_dir.join("header.json")).unwrap();
+        let err = session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, "invalid-code!!")
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert_eq!(
+            std::fs::read(vault_dir.join("header.json")).unwrap(),
+            before,
+            "失败不得触碰磁盘 header"
+        );
+        assert!(session.unlock(STRONG_PASSWORD).is_ok(), "旧密码仍可解锁");
+    }
+
+    /// FR-17.2 错误路径：无恢复码封装时 reset → 4003（RecoveryUnavailable）。
+    #[test]
+    fn 无恢复码封装时重置4003() {
+        let base = crate::tests_support::temp_dir("rc_facade_no_wrap");
+        let brief = create_vault_with_kdf(&base, "无封装库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        let err = session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, "not-a-code")
+            .unwrap_err();
+        assert_eq!(err.code(), 4003);
+    }
+
+    /// FR-17.1 错误路径：未启用 bio 时 reset-with-bio → 4001（BiometricUnavailable）。
+    #[test]
+    fn bio未启用时重置4001() {
+        let base = crate::tests_support::temp_dir("bio_facade_no_wrap");
+        let brief = create_vault_with_kdf(&base, "无生物库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        let err = session
+            .reset_password_with_bio(RESET_TO_PASSWORD, k_bio.as_bytes())
+            .unwrap_err();
+        assert_eq!(err.code(), 4001);
+    }
+
+    /// FR-17 错误路径：reset 弱新密码 → 1010（先于任何文件操作），磁盘 header
+    /// 未变、旧密码仍可解锁、不计入退避。
+    #[test]
+    fn 恢复码重置弱密码1010且header不变() {
+        let (session, vault_dir, code) = session_with_recovery("rc_facade_weak");
+        let before = std::fs::read(vault_dir.join("header.json")).unwrap();
+        let err = session
+            .reset_password_with_recovery_code("123456", &code)
+            .unwrap_err();
+        assert_eq!(err.code(), 1010);
+        assert_eq!(
+            std::fs::read(vault_dir.join("header.json")).unwrap(),
+            before,
+            "弱密码必须先于任何文件操作失败"
+        );
+        assert!(session.unlock(STRONG_PASSWORD).is_ok(), "旧密码仍可解锁");
+    }
+
+    /// FR-15 / D-6：license 阻断——enable 经 write_guard→license_guard、reset
+    /// 经独立 license_guard，均被拒 6002 / 6003（FixedGate 双态注入）。
+    struct FixedGate(cf_domain::license::LicenseDecision);
+
+    impl cf_domain::license::LicenseGate for FixedGate {
+        fn check(
+            &self,
+            _op: cf_domain::license::LicensedOp,
+        ) -> cf_domain::license::LicenseDecision {
+            self.0
+        }
+    }
+
+    #[test]
+    fn 许可阻断时启用与恢复码重置均6002() {
+        let (session, _vault_dir, code) = session_with_recovery("rc_facade_license");
+        session.set_license_gate(std::sync::Arc::new(FixedGate(
+            cf_domain::license::LicenseDecision::Deny(
+                cf_domain::license::LicenseDenial::TrialExpired,
+            ),
+        )));
+
+        // 解锁态 enable → 6002（write_guard 内的 license_guard）
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let err = session
+            .enable_recovery_code(STRONG_PASSWORD, &code)
+            .unwrap_err();
+        assert_eq!(err.code(), 6002);
+        session.lock();
+
+        // 锁定态 reset-with-recovery → 6002（独立 license_guard）
+        let err = session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, &code)
+            .unwrap_err();
+        assert_eq!(err.code(), 6002);
+    }
+
+    #[test]
+    fn 许可阻断时生物重置6003() {
+        let (session, _vault_dir, k_bio) = session_with_bio("bio_facade_license");
+        session.set_license_gate(std::sync::Arc::new(FixedGate(
+            cf_domain::license::LicenseDecision::Deny(
+                cf_domain::license::LicenseDenial::StateUnavailable,
+            ),
+        )));
+        let err = session
+            .reset_password_with_bio(RESET_TO_PASSWORD, &k_bio)
+            .unwrap_err();
+        assert_eq!(err.code(), 6003);
+    }
+
+    /// FR-12.5 / docs/31 §3.6：reset-with-recovery 共享退避计数器——连续 3 次
+    /// 错恢复码触发门禁（1s）；门禁期内正确 code 也被拒（1002，不执行解封）；
+    /// 期满后成功、计数清零。
+    #[test]
+    fn 恢复码重置错code触发退避门禁() {
+        let base = crate::tests_support::temp_dir("rc_facade_backoff");
+        let brief = create_vault_with_kdf(&base, "退避库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        let clock = Arc::new(FakeClock::new());
+        session.inject_backoff_clock(clock.clone());
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let code = session.generate_recovery_code().unwrap();
+        session
+            .enable_recovery_code(STRONG_PASSWORD, &code)
+            .unwrap();
+        session.lock();
+
+        // 连续 3 次错恢复码 → 触发 1s 门禁
+        for _ in 0..3 {
+            let err = session
+                .reset_password_with_recovery_code(RESET_TO_PASSWORD, "invalid-code!!")
+                .unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+        assert_eq!(session.backoff_remaining_secs(), 1, "第 3 次失败应延迟 1s");
+
+        // 门禁期内：正确恢复码同样被拒（1002，KDF/解封未执行）
+        let err = session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, &code)
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+
+        // 期满后成功，计数清零
+        clock.advance(Duration::from_secs(1));
+        session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD, &code)
+            .unwrap();
+        assert_eq!(session.backoff_remaining_secs(), 0, "成功后计数应清零");
+        assert!(session.unlock(RESET_TO_PASSWORD).is_ok());
+    }
+
+    /// FR-12.5 / docs/31 §3.6：enable_recovery_code 经 recover_dek 验主密码
+    /// （密码 oracle），错主密码计入共享计数器；门禁期内主密码 unlock 同被拒。
+    #[test]
+    fn 启用恢复码错主密码共享退避计数器() {
+        let (session, _clock) = session_with_fake_clock("rc_facade_enable_backoff");
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let code = session.generate_recovery_code().unwrap();
+        for _ in 0..3 {
+            let err = session
+                .enable_recovery_code("wrong-password-indeed!", &code)
+                .unwrap_err();
+            assert_eq!(err.code(), 1002);
+        }
+        assert_eq!(
+            session.backoff_remaining_secs(),
+            1,
+            "enable 的密码失败应计入共享计数器"
+        );
+        // 门禁期内主密码 unlock 同样被拒（共享门禁）
+        session.lock();
+        let err = session.unlock(STRONG_PASSWORD).unwrap_err();
+        assert_eq!(err.code(), 1002);
+    }
+
+    /// FR-12.5 / docs/31 §3.6：reset-with-bio 免 backoff——门禁期内 bio 重置
+    /// 照常成功，且不计数、不清零退避计数（k_bio 非密码 oracle）。
+    #[test]
+    fn 生物重置豁免退避门禁() {
+        let base = crate::tests_support::temp_dir("bio_facade_backoff");
+        let brief =
+            create_vault_with_kdf(&base, "生物退避库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        let clock = Arc::new(FakeClock::new());
+        session.inject_backoff_clock(clock.clone());
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        let k_bio_bytes: [u8; 32] = *k_bio.as_bytes();
+        session
+            .enable_biometric(STRONG_PASSWORD, &k_bio_bytes)
+            .unwrap();
+        session.lock();
+
+        // 3 次主密码错误 → 门禁激活
+        for _ in 0..3 {
+            session.unlock("wrong-password-indeed!").unwrap_err();
+        }
+        let remaining = session.backoff_remaining_secs();
+        assert!(remaining > 0);
+
+        // 门禁期内 bio 重置照常成功（豁免）
+        session
+            .reset_password_with_bio(RESET_TO_PASSWORD, &k_bio_bytes)
+            .unwrap();
+        assert_eq!(
+            session.backoff_remaining_secs(),
+            remaining,
+            "bio 重置不应影响退避计数"
+        );
+
+        // 重置生效：新密码可解锁——但 unlock 走主密码 oracle，仍受既有门禁
+        // 拦截（bio 重置不清退避），先拨过门禁再断言新密码有效。
+        clock.advance(Duration::from_secs(remaining + 1));
+        assert!(session.unlock(RESET_TO_PASSWORD).is_ok());
     }
 }

@@ -13,6 +13,10 @@
 // 仍是强制层。**Touch ID 按钮不禁用**：unlock_with_biometric 完全豁免退避
 //（不门禁也不计数，vault.rs 单测裁定），豁免的意义即密码连续打错的正常
 // 用户仍可用生物识别解锁，禁用它反而违背豁免设计。1002 原始弹窗行为不变。
+//
+// 忘记主密码重置入口（FR-17.1/17.2，docs/31 §4.2）：Touch ID 按钮下方次级
+// 按钮「忘记主密码？」→ RecoveryResetSheet（两分支按可用性在 sheet 内
+// 显隐，空态由 sheet 自处理——入口不做可用性预判，避免死胡同由 sheet 呈现）。
 
 import SwiftUI
 
@@ -22,6 +26,8 @@ struct LockView: View {
 
     @State private var password = ""
     @State private var isUnlocking = false
+    /// 忘记主密码重置 sheet 呈现开关（FR-17.1/17.2，docs/31 §4.2）。
+    @State private var showRecoveryReset = false
 
     /// Touch ID 按钮显隐（docs/08 §8 降级矩阵）：设备支持 ∧ 功能已启用。
     /// stale 态不显示——Touch ID 必然失败（4002），直接引导主密码。
@@ -79,12 +85,22 @@ struct LockView: View {
                         // 见本文件头注释）——bio 解锁成功即清退避
                         .disabled(isUnlocking)
                     }
+                    // 忘记主密码入口（FR-17.1/17.2，docs/31 §4.2）：Touch ID
+                    // 按钮下方次级形态；点击呈现 RecoveryResetSheet（两分支
+                    // 按可用性在 sheet 内显隐，空态由 sheet 自处理——入口
+                    // 不做可用性预判，避免死胡同由 sheet 呈现文案引导）。
+                    Button("忘记主密码？") { showRecoveryReset = true }
+                        .buttonStyle(.bordered)
+                        .disabled(isUnlocking)
                 }
             }
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ffiErrorAlert($model.lastErrorMessage)
+        .sheet(isPresented: $showRecoveryReset) {
+            RecoveryResetSheet()
+        }
     }
 
     /// 倒计时条内容（TimelineView 每秒求值）：剩余 > 0 显示提示；归零时

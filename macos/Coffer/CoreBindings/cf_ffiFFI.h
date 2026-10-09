@@ -394,6 +394,11 @@ void uniffi_cf_ffi_fn_method_vaultsession_enable_biometric(uint64_t ptr, RustBuf
 void uniffi_cf_ffi_fn_method_vaultsession_enable_mcp_escrow(uint64_t ptr, RustBuffer password, RustBuffer mcp_key, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_RECOVERY_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_ENABLE_RECOVERY_CODE
+void uniffi_cf_ffi_fn_method_vaultsession_enable_recovery_code(uint64_t ptr, RustBuffer password, RustBuffer code, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_EXPORT_CSV
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_export_csv(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
@@ -414,6 +419,11 @@ RustBuffer uniffi_cf_ffi_fn_method_vaultsession_generate_passphrase(uint64_t ptr
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_generate_password(uint64_t ptr, RustBuffer opts, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_RECOVERY_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GENERATE_RECOVERY_CODE
+RustBuffer uniffi_cf_ffi_fn_method_vaultsession_generate_recovery_code(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GET_FIELD_VALUE
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_GET_FIELD_VALUE
 RustBuffer uniffi_cf_ffi_fn_method_vaultsession_get_field_value(uint64_t ptr, RustBuffer item_id, RustBuffer field_id, RustCallStatus *_Nonnull out_status
@@ -432,6 +442,11 @@ int8_t uniffi_cf_ffi_fn_method_vaultsession_has_biometric_wrap(uint64_t ptr, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_MCP_WRAP
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_MCP_WRAP
 int8_t uniffi_cf_ffi_fn_method_vaultsession_has_mcp_wrap(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_RECOVERY_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HAS_RECOVERY_WRAP
+int8_t uniffi_cf_ffi_fn_method_vaultsession_has_recovery_wrap(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_HEALTH_REPORT
@@ -537,6 +552,16 @@ void uniffi_cf_ffi_fn_method_vaultsession_remove_attachment(uint64_t ptr, RustBu
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_PASSKEY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_REMOVE_PASSKEY
 void uniffi_cf_ffi_fn_method_vaultsession_remove_passkey(uint64_t ptr, RustBuffer passkey_uuid, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_BIO
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_BIO
+void uniffi_cf_ffi_fn_method_vaultsession_reset_password_with_bio(uint64_t ptr, RustBuffer new_password, RustBuffer k_bio, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_RECOVERY_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_RECOVERY_CODE
+void uniffi_cf_ffi_fn_method_vaultsession_reset_password_with_recovery_code(uint64_t ptr, RustBuffer new_password, RustBuffer code, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_VAULTSESSION_RESTORE_HISTORY
@@ -1069,6 +1094,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_mcp_escrow(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_RECOVERY_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_ENABLE_RECOVERY_CODE
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_enable_recovery_code(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_EXPORT_CSV
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_export_csv(void
@@ -1093,6 +1124,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_generate_password(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GENERATE_RECOVERY_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GENERATE_RECOVERY_CODE
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_generate_recovery_code(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GET_FIELD_VALUE
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_GET_FIELD_VALUE
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_get_field_value(void
@@ -1114,6 +1151,12 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_biometric_wrap(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_MCP_WRAP
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_MCP_WRAP
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_mcp_wrap(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_RECOVERY_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_HAS_RECOVERY_WRAP
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_has_recovery_wrap(void
     
 );
 #endif
@@ -1240,6 +1283,18 @@ uint16_t uniffi_cf_ffi_checksum_method_vaultsession_remove_attachment(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_PASSKEY
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_REMOVE_PASSKEY
 uint16_t uniffi_cf_ffi_checksum_method_vaultsession_remove_passkey(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_BIO
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_BIO
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_reset_password_with_bio(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_RECOVERY_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_VAULTSESSION_RESET_PASSWORD_WITH_RECOVERY_CODE
+uint16_t uniffi_cf_ffi_checksum_method_vaultsession_reset_password_with_recovery_code(void
     
 );
 #endif

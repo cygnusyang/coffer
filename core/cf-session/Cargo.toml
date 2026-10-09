@@ -30,6 +30,19 @@ unicode-normalization = { workspace = true }
 # FR-11.2 词级近似匹配（docs/09 §3.6 裁定：strsim 而非自写 Unicode 编辑距离；
 # MIT/Apache，直接声明版本避免动共享的 workspace 依赖表）
 strsim = "0.11"
+# FR-17.2 恢复码 128-bit CSPRNG（docs/31 §2.1）：与 cf-crypto aead 的
+# nonce 生成同源（getrandom::fill），仓库既有 CSPRNG 用法。workspace 依赖，
+# 直列本 crate 直接使用。
+getrandom = { workspace = true }
+# FR-17.2 恢复码 BIP39-12 编码（docs/31 §2.2 D-3 用户裁定：需新增依赖）：
+# 仅 cf-session 的 recovery 模块消费 → 直列本 crate（最小依赖面，strsim /
+# base64 先例），不进 cf-crypto——cf-crypto 是被多 crate 依赖的地基，引入
+# bip39 会把编码器拖进 cf-format/cf-store/cf-ffi 的依赖图而它们并不使用。
+# bip39 3.x 默认只带英文词表（ASCII），恢复码生成方与消费方均在 Rust 侧，
+# 无跨语言词表一致性问题。`zeroize` feature：Mnemonic 持词索引（编码熵），
+# Drop 自动清零（NFR-SEC-04，与 SessionKey 同纪律）；zeroize 为 workspace
+# 既有依赖，无新增下载。
+bip39 = { version = "3", features = ["zeroize"] }
 # FR-8.3 CSV 导出薄委托（export_gate，与 cf-importer 导入委托同模式；
 # cf-exporter 不依赖 cf-session，无循环）
 cf-exporter = { workspace = true }

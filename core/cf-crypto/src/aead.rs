@@ -40,8 +40,26 @@
 //! 解密失败**统一**返回 [`CfCryptoError::AeadOpenFailed`]，
 //! 不区分「tag 校验失败」与「AAD 不匹配」——这与解锁错误不区分
 //! 「密码错误」/「数据损坏」是同一条信息泄露纪律（设计 §4.2）。
+//!
+//! ## 第二个 AEAD 原语：AES-256-GCM（FR-17.2 恢复码封装，docs/31 §1.2 D-4）
+//!
+//! 恢复码 DEK 封装的存储格式裁定为 AES-256-GCM（nonce 96-bit，
+//! 见 cf-format header.rs `RECOVERY_WRAP_CT_MIN = 28`），由
+//! [`aes_gcm_seal`] / [`aes_gcm_open`] 承担。两条纪律保持延伸：
+//!
+//! - 本模块仍是**唯一** AEAD 入口——上层不得直接使用 `aes-gcm` crate；
+//! - 解密失败统一 [`CfCryptoError::AeadOpenFailed`]，不透出原因。
 
 use crate::error::CfCryptoError;
+// ⚠️ 两个 AEAD 原语依赖不同代际的 aead/crypto-common trait：
+//   - chacha20poly1305 0.11 → aead 0.6 → crypto-common 0.2（既有 XChaCha）；
+//   - aes-gcm 0.10        → aead 0.5 → crypto-common 0.1（FR-17.2 恢复码）。
+// 二者同名 trait（Aead/KeyInit/Payload）不互通，须分别以别名引入，避免
+// 方法解析歧义。chacha 保持无别名（既有代码零改动），aes-gcm 加 AesGcm 前缀。
+use aes_gcm::{
+    aead::{Aead as AesGcmAead, KeyInit as AesGcmKeyInit, Payload as AesGcmPayload},
+    Aes256Gcm, Nonce,
+};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
     XChaCha20Poly1305, XNonce,
@@ -159,6 +177,80 @@ pub fn open(key: &SessionKey, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, CfCr
         .decrypt(
             &nonce,
             Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
+        .map_err(|_| CfCryptoError::AeadOpenFailed)
+}
+
+/// AES-256-GCM nonce 长度（96-bit，docs/31 §1.2 D-4 恢复码封装路径）。
+pub const AES_GCM_NONCE_LEN: usize = 12;
+
+/// AES-256-GCM 加密并封装为 `nonce(12) ‖ ct ‖ tag(16)` 格式。
+///
+/// FR-17.2 恢复码 DEK 封装的存储格式裁定为 AES-256-GCM（12B nonce，
+/// 与 cf-format header.rs `RECOVERY_WRAP_CT_MIN = 28` 对齐），经本
+/// 函数封/解封 `wrapped_dek_recovery`（cf-session recovery 模块）。
+/// 与 [`seal`]（XChaCha20-Poly1305，nonce 24B）并列为本模块第二个
+/// AEAD 原语，纪律一致：本模块是唯一 AEAD 入口。
+///
+/// # 错误
+///
+/// 随机源不可用时返回 [`CfCryptoError::RandomUnavailable`]——
+/// 绝不降级到弱随机（NFR-SEC-06）。
+pub fn aes_gcm_seal(
+    key: &SessionKey,
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, CfCryptoError> {
+    let cipher: Aes256Gcm =
+        AesGcmKeyInit::new_from_slice(key.as_bytes()).map_err(|_| CfCryptoError::AeadSealFailed)?;
+
+    let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
+    getrandom::fill(&mut nonce_bytes)
+        .map_err(|e| CfCryptoError::RandomUnavailable(e.to_string()))?;
+
+    let ciphertext = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce_bytes),
+            AesGcmPayload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .map_err(|_| CfCryptoError::AeadSealFailed)?;
+
+    let mut out = Vec::with_capacity(AES_GCM_NONCE_LEN + ciphertext.len());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// 解密 `nonce(12) ‖ ct ‖ tag(16)` 格式的 AES-256-GCM 密文。
+///
+/// # 错误
+///
+/// - 长度不足（< 28 字节）：[`CfCryptoError::InvalidLength`]（格式错误）；
+/// - 认证失败（tag / AAD / 密文任一不匹配）：统一返回
+///   [`CfCryptoError::AeadOpenFailed`]，不透出具体原因（与 [`open`] 同纪律）。
+pub fn aes_gcm_open(key: &SessionKey, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, CfCryptoError> {
+    if sealed.len() < AES_GCM_NONCE_LEN + TAG_LEN {
+        return Err(CfCryptoError::InvalidLength(format!(
+            "sealed data length {}, minimum {}",
+            sealed.len(),
+            AES_GCM_NONCE_LEN + TAG_LEN
+        )));
+    }
+
+    let (nonce_bytes, ciphertext) = sealed.split_at(AES_GCM_NONCE_LEN);
+    let cipher: Aes256Gcm =
+        AesGcmKeyInit::new_from_slice(key.as_bytes()).map_err(|_| CfCryptoError::AeadOpenFailed)?;
+
+    cipher
+        .decrypt(
+            Nonce::from_slice(nonce_bytes),
+            AesGcmPayload {
                 msg: ciphertext,
                 aad,
             },
@@ -388,5 +480,97 @@ mod tests {
             k2.as_bytes(),
             "两次随机得到相同密钥——随机源可疑"
         );
+    }
+
+    // ------------------------------------------------ AES-256-GCM（FR-17.2 恢复码封装）
+
+    /// AES-GCM 加解密往返：明文完整还原（sealed = nonce(12) ‖ ct ‖ tag(16)）。
+    #[test]
+    fn aes_gcm_seal_open_roundtrip() {
+        let key = test_key();
+        let aad = b"cf/recovery/v1";
+        let plaintext = b"32-bytes-of-dek-key-material-0123456789";
+
+        let sealed = aes_gcm_seal(&key, aad, plaintext).unwrap();
+        assert_eq!(sealed.len(), AES_GCM_NONCE_LEN + plaintext.len() + TAG_LEN);
+
+        let opened = aes_gcm_open(&key, aad, &sealed).unwrap();
+        assert_eq!(opened, plaintext);
+    }
+
+    /// 空明文也能往返（tag 仍存在）→ sealed 最小长度 = nonce(12) + tag(16)
+    /// = 28，与 cf-format header.rs 的 RECOVERY_WRAP_CT_MIN 对齐。
+    #[test]
+    fn aes_gcm_empty_plaintext_roundtrip() {
+        let key = test_key();
+        let sealed = aes_gcm_seal(&key, b"aad", b"").unwrap();
+        assert_eq!(sealed.len(), AES_GCM_NONCE_LEN + TAG_LEN);
+        assert_eq!(sealed.len(), 28);
+        let opened = aes_gcm_open(&key, b"aad", &sealed).unwrap();
+        assert!(opened.is_empty());
+    }
+
+    /// 每次加密 nonce 不同 → 同一明文产生不同密文（IND-CPA 语义）。
+    #[test]
+    fn aes_gcm_nonce_is_random_per_seal() {
+        let key = test_key();
+        let aad = b"aad";
+        let pt = b"same plaintext";
+
+        let s1 = aes_gcm_seal(&key, aad, pt).unwrap();
+        let s2 = aes_gcm_seal(&key, aad, pt).unwrap();
+
+        assert_ne!(s1, s2, "nonce 复用会导致密文相同——这是致命错误");
+        assert_ne!(&s1[..AES_GCM_NONCE_LEN], &s2[..AES_GCM_NONCE_LEN]);
+    }
+
+    /// AAD 不匹配 → 解密失败（防跨库重放，docs/31 §1.2）。
+    #[test]
+    fn aes_gcm_wrong_aad_fails_to_open() {
+        let key = test_key();
+        let sealed = aes_gcm_seal(&key, b"aad-a", b"secret").unwrap();
+        assert_eq!(
+            aes_gcm_open(&key, b"aad-b", &sealed),
+            Err(CfCryptoError::AeadOpenFailed)
+        );
+    }
+
+    /// 错误密钥 → 解密失败（统一 AeadOpenFailed，不区分失败原因）。
+    #[test]
+    fn aes_gcm_wrong_key_fails_to_open() {
+        let key = test_key();
+        let wrong_key = SessionKey::new([0x43u8; KEY_LEN]);
+        let sealed = aes_gcm_seal(&key, b"aad", b"secret").unwrap();
+        assert_eq!(
+            aes_gcm_open(&wrong_key, b"aad", &sealed),
+            Err(CfCryptoError::AeadOpenFailed)
+        );
+    }
+
+    /// 密文被篡改 → 解密失败（认证标签校验）。
+    #[test]
+    fn aes_gcm_tampered_ciphertext_fails_to_open() {
+        let key = test_key();
+        let aad = b"aad";
+
+        let mut sealed = aes_gcm_seal(&key, aad, b"secret").unwrap();
+        let last = sealed.len() - 1;
+        sealed[last] ^= 0x01;
+
+        assert_eq!(
+            aes_gcm_open(&key, aad, &sealed),
+            Err(CfCryptoError::AeadOpenFailed)
+        );
+    }
+
+    /// 长度不足的 sealed 数据 → InvalidLength（格式错误，先于认证失败判定）。
+    #[test]
+    fn aes_gcm_too_short_sealed_reports_invalid_length() {
+        let key = test_key();
+        let short = vec![0u8; AES_GCM_NONCE_LEN + TAG_LEN - 1];
+        assert!(matches!(
+            aes_gcm_open(&key, b"aad", &short),
+            Err(CfCryptoError::InvalidLength(_))
+        ));
     }
 }

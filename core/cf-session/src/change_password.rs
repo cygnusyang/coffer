@@ -23,6 +23,11 @@
 //! bio 封装（`wrapped_dek_bio`）**不动**：K_bio 封装的是 DEK 本身，
 //! 与 KEK 无关——换密后 Touch ID 解锁照常可用。`new_kdf` 可选参数
 //! 支持顺带升级 KDF 档位（M0-② 标定后的补偿路径）。
+//!
+//! 重封装内核（① 门禁 → ② 档位校验 → ③ 新盐 + KEK → ④ 重包 → ⑤ 保留
+//! wraps → ⑥ 原子写）抽为公共 helper [`repack_dek_with_new_password`]：
+//! change_password 与 v2.5.0 FR-17 的 reset 三兄弟（生物识别/恢复码重置）
+//! 共享之，差异只在 DEK 获取途径（主密码 / k_bio / 恢复码）。
 
 use std::path::Path;
 
@@ -37,12 +42,111 @@ use crate::unlock::{
 };
 use crate::SessionResult;
 
+/// 用新主密码就地重封装 header 中的 DEK 与 verifier（v2.5.0 FR-17 公共 helper）。
+///
+/// change_password（FR-1.8）与 v2.5.0 FR-17 的 reset 三兄弟（生物识别/恢复码
+/// 重置）共享本函数：三者都是「拿到 DEK + 新密码 → 换 KEK 重封装」，差异只在
+/// DEK 获取途径（主密码 / k_bio / 恢复码），故重封装内核抽为公共段
+/// （docs/31 v2.5.0 §3.2 M-REPACK）。
+///
+/// 就地修改 `header` 的 `kdf` / `wrapped_dek` / `verifier` / `modified_at`；
+/// **bio / mcp / recovery 封装字段原样保留**——K_bio / K_mcp / K_recovery
+/// 封装的都是 DEK 本身，与主密码 KEK 无关，换密后各通道解锁照常可用。
+///
+/// 本函数**不写盘**（签名无 `vault_dir`）：落盘由调用方经 [`cf_format::write_header`]
+/// 完成，保持既有「临时文件 + rename 原子写」语义——任何失败时磁盘 header 原样、
+/// 旧密码仍可解锁。调用方若需保留旧 header，应先 clone 再传本函数。
+///
+/// # 错误
+///
+/// - `new_password` zxcvbn score < 3 → [`CfError::WeakPassword`]（1010）；
+/// - `new_kdf` 参数越界 → [`CfError::InvalidArgument`]（5002）；
+/// - 随机源 / KDF / AEAD 失败 → [`CfError::KdfError`]（1007）；
+/// - `vault_uuid` 非 UUID 文本 → [`CfError::Corrupted`]；
+/// - 系统时钟在 Unix epoch 之前 → [`CfError::StorageError`]。
+pub(crate) fn repack_dek_with_new_password(
+    header: &mut cf_format::Header,
+    dek: [u8; 32],
+    new_password: &str,
+    new_kdf: Option<KdfParams>,
+) -> SessionResult<()> {
+    // 1. 新密码强度门禁（1010）——先于任何文件/密钥操作。change_password_impl
+    //    已先做过同款门禁（保持 1010 先于 1002 的既有错误优先级）；此处重复
+    //    校验是为 reset 调用方自包含（它们没有 recover_dek 前置校验），幂等。
+    if !cf_audit::meets_strength_threshold(new_password) {
+        return Err(CfError::WeakPassword);
+    }
+
+    // 2. 可选 KDF 档位校验（5002）——同样先于密钥操作
+    if let Some(k) = &new_kdf {
+        k.validate()
+            .map_err(|_| CfError::InvalidArgument("kdf params out of range".into()))?;
+    }
+
+    // 3. 新盐 + 新 KEK（档位 = new_kdf 或沿用 header.kdf）
+    let salt = random_salt().map_err(|_| CfError::KdfError)?;
+    let kdf = match new_kdf {
+        Some(k) => k,
+        None => KdfParams::new(header.kdf.m_cost_kib, header.kdf.t_cost, header.kdf.p_cost)
+            .map_err(|_| CfError::KdfError)?,
+    };
+    // NFC 归一化：derive_key 内部会再做一次（幂等），此处提前归一并
+    // 立即用 Zeroizing 接管（与建库/解锁路径同纪律）
+    let normalized = Zeroizing::new(cf_crypto::normalize_password(new_password));
+    let kek = derive_key(&normalized, &salt, kdf).map_err(|_| CfError::KdfError)?;
+    let kek_key = SessionKey::new(*kek);
+
+    // 4. 用新 KEK 重封装 DEK 与 verifier（AAD 沿用既有用途标签，钉库）
+    let uuid = uuid::Uuid::parse_str(&header.vault_uuid)
+        .map_err(|_| CfError::Corrupted("vault_uuid is not a valid uuid".into()))?;
+    let uuid_b = *uuid.as_bytes();
+    // 入参 DEK 拷贝立即用 Zeroizing 接管（离开本函数时自动清零）
+    let dek = Zeroizing::new(dek);
+    let wrapped = seal(
+        &kek_key,
+        &header_aad(&uuid_b, AAD_PURPOSE_WRAPPED_DEK),
+        &*dek,
+    )
+    .map_err(|_| CfError::KdfError)?;
+    let verifier_ct = seal(
+        &kek_key,
+        &header_aad(&uuid_b, AAD_PURPOSE_VERIFIER),
+        VERIFIER_PLAINTEXT,
+    )
+    .map_err(|_| CfError::KdfError)?;
+    // kek_key / normalized / dek 在此离开作用域，ZeroizeOnDrop 自动清零
+
+    // 5. 就地更新 kdf / wrapped_dek / verifier / modified_at（bio/mcp/recovery
+    //    封装字段不触碰、原样保留——见函数文档 ⑤ 契约）
+    header.kdf = cf_format::KdfSection {
+        algo: cf_format::header::KDF_ALGO.to_owned(),
+        argon2_version: cf_format::header::ARGON2_VERSION,
+        m_cost_kib: kdf.m_cost_kib,
+        t_cost: kdf.t_cost,
+        p_cost: kdf.p_cost,
+        salt_b64: crate::unlock::b64_encode(&salt),
+    };
+    header.wrapped_dek = cf_format::WrappedKey {
+        nonce_b64: crate::unlock::b64_encode(&wrapped[..cf_crypto::aead::NONCE_LEN]),
+        ct_b64: crate::unlock::b64_encode(&wrapped[cf_crypto::aead::NONCE_LEN..]),
+    };
+    header.verifier = cf_format::VerifierSection {
+        nonce_b64: crate::unlock::b64_encode(&verifier_ct[..cf_crypto::aead::NONCE_LEN]),
+        ct_b64: crate::unlock::b64_encode(&verifier_ct[cf_crypto::aead::NONCE_LEN..]),
+    };
+    header.modified_at = crate::unix_now()?;
+    Ok(())
+}
+
 /// 修改主密码（header 侧内核，docs/09 §3.2）。
 ///
 /// 详见 [`crate::vault::VaultSession::change_password`]（门禁：解锁态
 /// 1001，由会话层执行）。本函数保证：任何失败发生时磁盘 header 保持
 /// 原样（`write_header` 为临时文件 + rename 原子替换；且一切密钥操作
 /// 都先于文件写入），成功时返回新 header 供调用方更新内存副本。
+///
+/// 流程 = 旧密码重验证（recover_dek）→ 重封装内核委托
+/// [`repack_dek_with_new_password`]（就地修改克隆）→ 原子重写。
 ///
 /// # 错误
 ///
@@ -58,7 +162,9 @@ pub(crate) fn change_password_impl(
     new_password: &str,
     new_kdf: Option<KdfParams>,
 ) -> SessionResult<cf_format::Header> {
-    // 1. 新密码强度门禁（1010）——先于任何文件操作（docs/09 §3.2）
+    // 1. 新密码强度门禁（1010）——先于任何文件操作（docs/09 §3.2）。此处先做
+    //    门禁是为保持 1010 先于 1002 的既有错误优先级；repack helper 内的门禁
+    //    是幂等重复（供 reset 调用方自包含），两者不冲突。
     if !cf_audit::meets_strength_threshold(new_password) {
         return Err(CfError::WeakPassword);
     }
@@ -69,61 +175,15 @@ pub(crate) fn change_password_impl(
             .map_err(|_| CfError::InvalidArgument("kdf params out of range".into()))?;
     }
 
-    // 3. 旧密码重验证（1002，此时 header 未被触碰）
+    // 3. 旧密码重验证（1002，此时 header 未被触碰）→ 解出 DEK
     let dek = recover_dek(vault_dir, header, old_password)?;
 
-    // 4. 新盐 + 新 KEK（档位 = new_kdf 或沿用 header.kdf）
-    let salt = random_salt().map_err(|_| CfError::KdfError)?;
-    let kdf = match new_kdf {
-        Some(k) => k,
-        None => KdfParams::new(header.kdf.m_cost_kib, header.kdf.t_cost, header.kdf.p_cost)
-            .map_err(|_| CfError::KdfError)?,
-    };
-    // NFC 归一化：derive_key 内部会再做一次（幂等），此处提前归一并
-    // 立即用 Zeroizing 接管（与建库/解锁路径同纪律）
-    let normalized = Zeroizing::new(cf_crypto::normalize_password(new_password));
-    let kek = derive_key(&normalized, &salt, kdf).map_err(|_| CfError::KdfError)?;
-    let kek_key = SessionKey::new(*kek);
-
-    // 5. 用新 KEK 重封装 DEK 与 verifier（AAD 沿用既有用途标签，钉库）
-    let uuid = uuid::Uuid::parse_str(&header.vault_uuid)
-        .map_err(|_| CfError::Corrupted("vault_uuid is not a valid uuid".into()))?;
-    let uuid_b = *uuid.as_bytes();
-    let wrapped = seal(
-        &kek_key,
-        &header_aad(&uuid_b, AAD_PURPOSE_WRAPPED_DEK),
-        dek.as_bytes(),
-    )
-    .map_err(|_| CfError::KdfError)?;
-    let verifier_ct = seal(
-        &kek_key,
-        &header_aad(&uuid_b, AAD_PURPOSE_VERIFIER),
-        VERIFIER_PLAINTEXT,
-    )
-    .map_err(|_| CfError::KdfError)?;
-    // kek_key / dek 在此离开作用域，ZeroizeOnDrop 自动清零
-
-    // 6. 组装新 header（bio 封装段原样保留——K_bio 封装 DEK，与 KEK 无关）
+    // 4. 用新密码重封装 header 副本（就地修改克隆；失败时原 header 与磁盘均
+    //    未动——write_header 是临时文件 + rename 原子替换，docs/09 §3.2 要点 4）
     let mut new_header = header.clone();
-    new_header.kdf = cf_format::KdfSection {
-        algo: cf_format::header::KDF_ALGO.to_owned(),
-        argon2_version: cf_format::header::ARGON2_VERSION,
-        m_cost_kib: kdf.m_cost_kib,
-        t_cost: kdf.t_cost,
-        p_cost: kdf.p_cost,
-        salt_b64: crate::unlock::b64_encode(&salt),
-    };
-    new_header.wrapped_dek = cf_format::WrappedKey {
-        nonce_b64: crate::unlock::b64_encode(&wrapped[..cf_crypto::aead::NONCE_LEN]),
-        ct_b64: crate::unlock::b64_encode(&wrapped[cf_crypto::aead::NONCE_LEN..]),
-    };
-    new_header.verifier = cf_format::VerifierSection {
-        nonce_b64: crate::unlock::b64_encode(&verifier_ct[..cf_crypto::aead::NONCE_LEN]),
-        ct_b64: crate::unlock::b64_encode(&verifier_ct[cf_crypto::aead::NONCE_LEN..]),
-    };
-    new_header.modified_at = crate::unix_now()?;
+    repack_dek_with_new_password(&mut new_header, *dek.as_bytes(), new_password, new_kdf)?;
 
-    // 7. 原子重写（cf-format::write_header：临时文件 + rename）；失败则
+    // 5. 原子重写（cf-format::write_header：临时文件 + rename）；失败则
     //    磁盘 header 保持原样，旧密码仍可解锁（原子性，docs/09 §3.2 要点 4）
     cf_format::write_header(vault_dir, &new_header).map_err(format_err)?;
     Ok(new_header)
@@ -343,5 +403,54 @@ mod tests {
             session.unlock(NEW_PASSWORD).is_err(),
             "旧新密码已换回，NEW 应失效"
         );
+    }
+
+    /// repack helper 契约（FR-17 §3.2）：只改 kdf / wrapped_dek / verifier /
+    /// modified_at，bio 与 mcp 封装原样保留（K_bio / K_mcp 封装 DEK 本身，与
+    /// 主密码 KEK 无关），盐与封装全部换新。直接调用 helper（不写盘），只验证
+    /// 就地修改契约。
+    #[test]
+    fn repack保留bio与mcp封装不动且重封装换新() {
+        let base = crate::tests_support::temp_dir("cp_repack_contract");
+        let brief = create_vault_with_kdf(&base, "repack库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        // 启用 bio 封装（biometric_wrap 置位），再给内存 header 手工塞 mcp_wrap
+        let k_bio = crate::unlock_bio::new_biometric_unwrap_key().unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD, k_bio.as_bytes())
+            .unwrap();
+        let text = std::fs::read_to_string(vault_dir.join("header.json")).unwrap();
+        let mut header: cf_format::Header = serde_json::from_str(&text).unwrap();
+        let mcp = cf_format::McpWrap {
+            available: true,
+            provider: Some("macos-keychain".to_string()),
+            key_alias: Some("cn.coffer.mcp-escrow".to_string()),
+            wrapped_dek_b64: Some(crate::unlock::b64_encode(&[0x55u8; 48])),
+        };
+        header.mcp_wrap = mcp.clone();
+
+        // 快照待断言字段
+        let bio_before = header.biometric_wrap.clone();
+        let salt_before = header.kdf.salt_b64.clone();
+        let dek_nonce_before = header.wrapped_dek.nonce_b64.clone();
+        let verifier_ct_before = header.verifier.ct_b64.clone();
+        let modified_before = header.modified_at;
+
+        // 直接调用 helper（不写盘：本测试只验证就地修改契约）
+        repack_dek_with_new_password(&mut header, [0x42; 32], NEW_PASSWORD, None).unwrap();
+
+        // ⑤ 契约：bio / mcp 封装原样保留
+        assert_eq!(header.biometric_wrap, bio_before);
+        assert_eq!(header.mcp_wrap, mcp);
+        // ④ 契约：盐 / wrapped_dek nonce / verifier 密文全部换新（随机盐与 nonce，
+        //    再封装必得不同密文）
+        assert_ne!(header.kdf.salt_b64, salt_before);
+        assert_ne!(header.wrapped_dek.nonce_b64, dek_nonce_before);
+        assert_ne!(header.verifier.ct_b64, verifier_ct_before);
+        // modified_at 前进（同一秒内可能相等，故用 >=）
+        assert!(header.modified_at >= modified_before);
     }
 }

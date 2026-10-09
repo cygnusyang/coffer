@@ -23,6 +23,11 @@
 //! （SecureNote + `coffer:environment` 标签）拒绝写密码（与 MCP provider 的 secret
 //! 解析同界）。
 //!
+//! v2.5.2（用户 2026-10-10 裁定）：可选 `--user <用户名>`——给定时用户名与密码
+//! **一对写**（更新/新建 `Designation::Username` 字段，同一次 `update_item`，FR-2.9
+//! 历史 append 一并覆盖用户名旧值）；未给则用户名一律不动（H-1 底线保留）。
+//! **用户名可进 argv**（R2 只禁密码不触模型）；密码仍只走 stdin。
+//!
 //! stdout 只写成功消息（本子命令非协议会话）；诊断/错误经 [`Logger`] 走 stderr。
 //! 退出码（docs/34 §5.2 + r0.4，lead 裁定 2026-10-09；一次性写命令专用映射，**不复用**
 //! docs/20 §5.3 的 MCP 服务器进程码——长驻服务器语义不适用）：
@@ -37,8 +42,8 @@
 
 use std::io::{BufRead, IsTerminal, Write};
 
-use cf_domain::field::Designation;
-use cf_domain::item::{ItemDraft, ItemState, ItemSummary};
+use cf_domain::field::{Designation, FieldType};
+use cf_domain::item::{FieldDraft, ItemDraft, ItemState, ItemSummary};
 use cf_domain::secret::SecretString;
 use cf_session::types::ItemDetails;
 use cf_session::VaultSession;
@@ -73,6 +78,10 @@ pub struct SetPasswordOptions {
     pub id: Option<String>,
     /// 绕过强度门禁（`--force`，用户批准保留）。
     pub force: bool,
+    /// 用户名（`--user <用户名>`，v2.5.2 可选参数，用户 2026-10-10 裁定）——
+    /// 给定则与密码**一对写**（更新/新建 Username 字段）；未给则用户名不动。
+    /// 用户名可进 argv（R2 只禁密码不触模型；与 MCP `<ENV>_USERNAME` 注入同语义）。
+    pub username: Option<String>,
 }
 
 /// `set-password` 参数 / 条目定位 / 强度 / 读密错误（docs/34 §5.2 映射非零退出）。
@@ -117,6 +126,10 @@ pub enum SetPasswordError {
     /// lead 裁定 2026-10-10）。
     #[error("empty password: provide a non-empty value on stdin")]
     EmptyPassword,
+    /// `--user` 值为空 / 全空白（M-1，dev-reviewer 2026-10-10：镜像空密码语义，
+    /// 防静默把既有用户名覆写为空；退出码 4，不写库）。
+    #[error("empty username: provide a non-empty value for `--user`")]
+    EmptyUsername,
     /// 强度不达标。
     #[error("password strength below threshold (zxcvbn < 强)；换更强密码或显式 `--force` 绕过（docs/34 §3）")]
     WeakPassword,
@@ -142,7 +155,8 @@ impl SetPasswordError {
             | Self::ConflictingLocators
             | Self::MissingTarget
             | Self::InvalidId(_)
-            | Self::EmptyPassword => exit_codes::USAGE_ERROR,
+            | Self::EmptyPassword
+            | Self::EmptyUsername => exit_codes::USAGE_ERROR,
             Self::ItemNotFound(_)
             | Self::Ambiguous { .. }
             | Self::EnvContainer(_)
@@ -156,13 +170,16 @@ impl SetPasswordError {
 /// 从 argv（不含子命令 `set-password`）解析选项（docs/34 §5.1）。
 ///
 /// 位置参数 = display name；`--id <UUID>` 兜底定位（格式错 →
-/// [`SetPasswordError::InvalidId`]，退出码 4）；`--force` 布尔。名称与 `--id`
-/// 互斥（同时给定 → [`SetPasswordError::ConflictingLocators`]）；二者皆无 →
+/// [`SetPasswordError::InvalidId`]，退出码 4）；`--force` 布尔；
+/// `--user <用户名>`（v2.5.2，可选，缺值 → [`SetPasswordError::MissingValue`]
+/// 退出码 4）。名称与 `--id` 互斥（同时给定 →
+/// [`SetPasswordError::ConflictingLocators`]）；二者皆无 →
 /// [`SetPasswordError::MissingTarget`]；未知 flag / 缺值 / 多余位置参数 → 对应错误。
 pub fn parse_args(args: &[String]) -> Result<SetPasswordOptions, SetPasswordError> {
     let mut name: Option<String> = None;
     let mut id: Option<String> = None;
     let mut force = false;
+    let mut username: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -177,6 +194,20 @@ pub fn parse_args(args: &[String]) -> Result<SetPasswordOptions, SetPasswordErro
                     return Err(SetPasswordError::InvalidId(value));
                 }
                 id = Some(value);
+                i = next;
+            }
+            "--user" => {
+                let next = i + 1;
+                if next >= args.len() {
+                    return Err(SetPasswordError::MissingValue("--user".to_string()));
+                }
+                let value = args[next].clone();
+                if value.trim().is_empty() {
+                    // M-1（dev-reviewer 2026-10-10）：空/全空白用户名拒绝（退出 4），
+                    // 镜像 EmptyPassword 语义，防静默覆写既有用户名为空。
+                    return Err(SetPasswordError::EmptyUsername);
+                }
+                username = Some(value);
                 i = next;
             }
             "--force" => force = true,
@@ -198,7 +229,12 @@ pub fn parse_args(args: &[String]) -> Result<SetPasswordOptions, SetPasswordErro
     if name.is_none() && id.is_none() {
         return Err(SetPasswordError::MissingTarget);
     }
-    Ok(SetPasswordOptions { name, id, force })
+    Ok(SetPasswordOptions {
+        name,
+        id,
+        force,
+        username,
+    })
 }
 
 /// 从 stdin 读一行密码（docs/34 §5.1：TTY 下隐藏输入，不回显）。
@@ -266,6 +302,37 @@ fn set_password_field(draft: &mut ItemDraft, pw: &str) -> bool {
         }
     }
     false
+}
+
+/// 写入 Username 字段（v2.5.2，`--user` 语义，docs/34 §5.2）：
+/// 更新既有 `Designation::Username` 字段现值；条目无该字段则**新建**
+/// （`name="username"` + [`FieldType::Text`] + `Designation::Username`，与 App
+/// 模板 `cf-domain::template` / importers 同构），position = 现有最大 + 1。
+///
+/// **不做 Email 兜底写**（AC-18.2-18）：条目仅 Email 字段时用户名写进新建的
+/// Username 字段，**不回写 Email**——写 Email 会改变邮箱语义；只读侧
+/// `coffer::username_value` 的 Email fallback 不变。
+fn apply_username_field(draft: &mut ItemDraft, username: &str) {
+    for f in &mut draft.fields {
+        if f.designation == Some(Designation::Username) {
+            f.value = Some(username.to_string());
+            return;
+        }
+    }
+    let next_position = draft
+        .fields
+        .iter()
+        .map(|f| f.position)
+        .max()
+        .map_or(0, |p| p + 1);
+    draft.fields.push(FieldDraft {
+        name: "username".to_string(),
+        value: Some(username.to_string()),
+        field_type: FieldType::Text,
+        designation: Some(Designation::Username),
+        section_index: None,
+        position: next_position,
+    });
 }
 
 /// 按 UUID 精确读条目（`--id` 兜底定位）。
@@ -405,14 +472,19 @@ fn run_with(
         }
     };
 
-    // 4. 改密码字段 → update（`update_item` 自动 append 历史，FR-2.9）。
-    if let Err((msg, code)) = apply_update(&session, &item, pw) {
+    // 4. 改密码字段（+ `--user` 时用户名一对写）→ update（FR-2.9 自动 append 历史）。
+    if let Err((msg, code)) = apply_update(&session, &item, pw, opts.username.as_deref()) {
         logger.error(&msg);
         return code;
     }
 
-    // 5. 报告。
-    println!("已更新 {} · 旧版本可在 App 历史中回滚", item.title.expose());
+    // 5. 报告（v2.5.2：给 `--user` 时回显含用户名，AC-18.2-3）。
+    match opts.username.as_deref() {
+        Some(u) => {
+            println!("已更新 {}（{u}） · 旧版本可在 App 历史中回滚", item.title.expose())
+        }
+        None => println!("已更新 {} · 旧版本可在 App 历史中回滚", item.title.expose()),
+    }
     exit_codes::SUCCESS
 }
 
@@ -431,17 +503,27 @@ fn read_password_guarded(
     Ok(password)
 }
 
-/// 第 4 步：改密码字段 → update（`update_item` 自动 append 历史，FR-2.9）。
+/// 第 4 步：改密码字段（+ 给 `--user` 时用户名一对写）→ update
+/// （`update_item` 自动 append 历史，FR-2.9）。
 ///
-/// 明文临时缓冲（draft 中密码副本）在返回前**统一清零**——成功与失败分支一致
-/// （M-3，lead 审查 2026-10-10：失败路径直接 return 漏清零的既有缺口）。
+/// - 密码字段：仅 `Designation::Password` 可写；无该字段 → 拒绝不写库（退出 2）。
+/// - 用户名（v2.5.2）：`username: Some(u)` → [`apply_username_field`]（更新/新建）；
+///   `None` → Username 字段一律不触碰（H-1 底线保留）。
+///
+/// 明文临时缓冲（draft 中密码/用户名副本）在返回前**统一清零**——成功与失败分支
+/// 一致（M-3，lead 审查 2026-10-10：失败路径直接 return 漏清零的既有缺口；
+/// 新 Username 值归入同一 zeroize 循环）。
 fn apply_update(
     session: &VaultSession,
     item: &ItemDetails,
     pw: &str,
+    username: Option<&str>,
 ) -> Result<(), (String, i32)> {
     let mut draft = crate::provider::coffer::draft_from_details(item);
     let result = if set_password_field(&mut draft, pw) {
+        if let Some(u) = username {
+            apply_username_field(&mut draft, u);
+        }
         session
             .update_item(&item.uuid, &draft)
             .map_err(map_update_error)

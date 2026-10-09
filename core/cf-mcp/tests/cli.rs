@@ -744,6 +744,94 @@ fn set_password_success_updates_item_and_appends_history() {
     assert_eq!(hist.len(), 1, "更新须 append 一条历史（FR-2.9）");
 }
 
+/// v2.5.2：`set-password <条目名> --user <用户名>` 用户名+密码一对写（AC-18.2-17）。
+#[cfg(feature = "coffer-store")]
+#[test]
+fn set_password_with_user_writes_username_and_password_pair() {
+    use cf_domain::field::Designation;
+    let (vault_dir, pw, s) = fast_vault_setup("setpw-user");
+    let id = create_login_item_in(&s, "GitHub"); // octocat / old-secret
+    drop(s);
+
+    let out = run_coffer_with_stdin(
+        &["set-password", "GitHub", "--user", "newuser"],
+        &[
+            ("COFFER_VAULT_DIR", vault_dir.to_str().expect("utf8 path")),
+            ("COFFER_VAULT_PASSWORD", &pw),
+        ],
+        NEW_PW,
+    );
+    assert_eq!(out.status.code(), Some(0), "一对写成功 → 退出码 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("已更新"), "成功消息，stdout: {stdout}");
+    assert!(
+        stdout.contains("newuser"),
+        "成功回显含用户名，stdout: {stdout}"
+    );
+    assert!(!stdout.contains(NEW_PW), "成功消息不得含新密码");
+
+    // 落库读回：密码 + 用户名均为新值。
+    let s = cf_session::open_vault(&vault_dir).expect("reopen vault");
+    s.unlock(&pw).expect("unlock vault");
+    let d = s.get_item(&id).expect("get item").expect("item exists");
+    let pw_field = d
+        .fields
+        .iter()
+        .find(|f| f.designation == Some(Designation::Password))
+        .expect("password field exists");
+    assert_eq!(pw_field.value.as_ref().map(|v| v.expose()), Some(NEW_PW));
+    let user_field = d
+        .fields
+        .iter()
+        .find(|f| f.designation == Some(Designation::Username))
+        .expect("username field exists");
+    assert_eq!(
+        user_field.value.as_ref().map(|v| v.expose()),
+        Some("newuser"),
+        "用户名已更新"
+    );
+    let hist = s.list_history(&id).expect("list history");
+    assert_eq!(hist.len(), 1, "一对写仍只 append 一条历史（FR-2.9）");
+}
+
+/// v2.5.2：`--user` 缺值 → 用法错误退出 4（AC-18.2-16）。
+#[cfg(feature = "coffer-store")]
+#[test]
+fn set_password_missing_user_value_exits_4() {
+    use cf_domain::field::Designation;
+    let (vault_dir, pw, s) = fast_vault_setup("setpw-user-missing");
+    let id = create_login_item_in(&s, "GitHub");
+    drop(s);
+
+    let out = run_coffer_with_stdin(
+        &["set-password", "GitHub", "--user"],
+        &[
+            ("COFFER_VAULT_DIR", vault_dir.to_str().expect("utf8 path")),
+            ("COFFER_VAULT_PASSWORD", &pw),
+        ],
+        NEW_PW,
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "`--user` 缺值 → 用法错误退出 4，实际 {out:?}"
+    );
+    // 不写库：密码字段仍为旧值。
+    let s = cf_session::open_vault(&vault_dir).expect("reopen vault");
+    s.unlock(&pw).expect("unlock vault");
+    let d = s.get_item(&id).expect("get item").expect("item exists");
+    let pw_field = d
+        .fields
+        .iter()
+        .find(|f| f.designation == Some(Designation::Password))
+        .expect("password field exists");
+    assert_eq!(
+        pw_field.value.as_ref().map(|v| v.expose()),
+        Some("old-secret"),
+        "用法错误不写库"
+    );
+}
+
 #[cfg(feature = "coffer-store")]
 #[test]
 fn set_password_not_found_exits_2_and_does_not_write() {

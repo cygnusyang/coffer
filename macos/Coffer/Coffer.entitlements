@@ -2,14 +2,27 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App Sandbox：零网络承诺（FR-14.5）的技术基础。
-	     必须且只能出现以下权限；任何 com.apple.security.network.* 都是违规。 -->
+	<!-- App Sandbox：零网络承诺（FR-14.5）的技术基础 + OTA 更新期最小豁免
+	     （v2.7.0，docs/35 §2.2）：com.apple.security.network.client 仅用于用户
+	     主动触发更新检查/下载时对 4 白名单 host（api.github.com、github.com、
+	     objects.githubusercontent.com、release-assets.githubusercontent.com）
+	     的 HTTPS 请求，常态不持有 socket。域级白名单无法在 entitlement 层表达
+	     （布尔开关），落在应用层 Updater 模块的 host 校验
+	     （tools/check_ota_whitelist.sh 防漂移，docs/35 §6.2）。
+	     除下方 network.client 一项外，任何其他 com.apple.security.network.*
+	     项均为违规。 -->
 	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- OTA 更新期最小豁免（v2.7.0，docs/35 §2.2/§6.2）：网络客户端仅用于用户
+	     主动触发更新检查/下载时对白名单 4 host 的 HTTPS 请求；常态不持有
+	     socket。域级限制见上方 App Sandbox 注记。 -->
+	<key>com.apple.security.network.client</key>
 	<true/>
 	<!-- 相机权限（FR-5.3 TOTP QR 扫描，裁定 A，T09）：AVFoundation 在 App
 	     Sandbox 下须显式声明 com.apple.security.device.camera 才能访问摄像头；
 	     实际授予仍由 TCC 弹窗决定（NSCameraUsageDescription）。属裁定 A 的
-	     必要配套；不涉网络，零网络承诺不受影响。若签名/真机启动遇 profile
+	     必要配套；不涉网络，零网络承诺不受影响（OTA 更新期豁免见上方
+	     network.client 注记，docs/35 §2.2）。若签名/真机启动遇 profile
 	     未授权本 entitlement，需重跑 make_provisioning_profile.sh。 -->
 	<key>com.apple.security.device.camera</key>
 	<true/>
@@ -20,8 +33,9 @@
 	     完全由本 entitlement 构建，缺失即 -34018；BUG-2 方案 A.2）。
 	     TeamID 硬编码——codesign 不展开 $(AppIdentifierPrefix) 变量。
 	     本 entitlement 属受限权限，须配合 provisioning profile
-	     （tools/make_provisioning_profile.sh 生成）。无 network.*，
-	     零网络承诺不受影响。 -->
+	     （tools/make_provisioning_profile.sh 生成）。不涉网络，
+	     零网络承诺不受影响（OTA 更新期豁免见上方 network.client 注记，
+	     docs/35 §2.2）。 -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>A6DS985SJJ.app.coffer.Coffer</string>

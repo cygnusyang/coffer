@@ -7,9 +7,13 @@ struct MainView: View {
     private var model: AppModel
 
     @State private var newSheetCategory: FfiItemCategory?
-    // showImport / showExport / showSettings 提升到 AppModel（@Published）：
+    // showImport / showExport 提升到 AppModel（@Published）：
     // 菜单栏「数据」菜单（⌘I / ⌘E / ⌘,）需要跨视图触发同一 sheet，
     // @State 无法从 commands 访问（验收反馈：菜单里没有导入导出）。
+    // 设置（⌘,）v2.4.1 改独立窗口：不再走 showSettings，经 openWindow(id:
+    // "settings") 触发（见 CofferApp 的 Window scene），本视图与菜单共用。
+    @Environment(\.openWindow)
+    private var openWindow
     // OPVault 导入（v0.7.0-T06）：AppModel 由 T08 并行占用（文件互斥纪律，
     // docs/22 §2.5.1），不加 @Published——本入口仅工具栏「导入」菜单可达
     // （菜单栏 ⌘ 快捷键入口留 T11 收尾合并，lead 已知晓）。
@@ -144,8 +148,9 @@ struct MainView: View {
                     Label("新建", systemImage: "plus")
                 }
                 // 统一设置入口（docs/09-v0.2实现方案.md §3.7）
+                // v2.4.1：改独立窗口（openWindow id "settings"，左上角红绿灯关闭）
                 Button {
-                    model.showSettings = true
+                    openWindow(id: "settings")
                 } label: {
                     Label("设置", systemImage: "gearshape")
                 }
@@ -191,10 +196,6 @@ struct MainView: View {
         }
         .sheet(isPresented: $model.showExport) {
             ExportView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.showSettings) {
-            SettingsView()
                 .environmentObject(model)
         }
     }

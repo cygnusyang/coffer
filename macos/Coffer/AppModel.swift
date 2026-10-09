@@ -56,6 +56,8 @@ final class AppModel: ObservableObject {
 
     // MARK: 主窗口 sheet 触发状态（@Published 提升到此：菜单栏「数据」
     // 菜单与工具栏/横幅按钮需要跨视图触发同一 sheet，验收反馈补齐）。
+    // 设置不在本列：v2.4.1 改独立窗口（CofferApp Window scene，openWindow
+    // id "settings" 触发，左上角红绿灯关闭），不占 sheet 状态。
     /// 导入 CSV sheet（工具栏 + 菜单 ⌘I）。
     @Published var showImport = false
     /// 导入 1PUX sheet（工具栏「导入」菜单 + 菜单 ⌘⇧I，v0.3.0-T05 FR-7.1）。
@@ -64,8 +66,6 @@ final class AppModel: ObservableObject {
     @Published var showImportBitwarden = false
     /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
     @Published var showExport = false
-    /// 统一设置 sheet（工具栏 + 菜单 ⌘,）。
-    @Published var showSettings = false
     /// 库切换器 sheet（v0.4 FR-1.2，MB-1：MainView 工具栏切换器触发，
     /// sheet 挂 RootView——与导入/设置同一跨视图触发模式）。
     @Published var showVaultSwitcher = false

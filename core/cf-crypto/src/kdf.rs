@@ -297,7 +297,7 @@ pub fn random_salt() -> Result<[u8; SALT_LEN], CfCryptoError> {
     Ok(salt)
 }
 
-/// 用 HKDF-SHA256 从 DEK 派生一个 32 字节子密钥。
+/// 用 HKDF-SHA256 从 IKM 派生一个 32 字节子密钥。
 ///
 /// 对应 `docs/03-详细设计.md` §2.4：一钥一用，每个用途（元数据、条目、
 /// 字段、附件……）使用独立 label 派生独立子密钥。若某子密钥因侧信道
@@ -305,9 +305,11 @@ pub fn random_salt() -> Result<[u8; SALT_LEN], CfCryptoError> {
 ///
 /// # 参数
 ///
-/// - `dek`：数据加密密钥（32 字节）。
+/// - `ikm`：输入密钥材料（input key material）。主用是 DEK（32 字节），
+///   也可传入其他熵源（如 16 字节恢复码熵，FR-17.2，docs/31 §1.2）——
+///   HKDF 对 ikm 长度无约束，长度不同天然分隔用途。
 /// - `vault_uuid`：保险库 UUID 的 16 字节原始形式。作为 HKDF 的 salt，
-///   保证**不同保险库**派生的子密钥不同（即使 DEK 相同）。
+///   保证**不同保险库**派生的子密钥不同（即使 ikm 相同）。
 /// - `label`：用途字面量（如 `"cf/meta/v1"`），见 [`crate::subkeys`]
 ///   的用途常量。
 ///
@@ -317,11 +319,11 @@ pub fn random_salt() -> Result<[u8; SALT_LEN], CfCryptoError> {
 /// 为 255×32 字节，32 字节必在界内），但按本 crate 纪律**不 `.expect()`**，
 /// 仍以 [`Result`] 返回并映射为 [`CfCryptoError::KdfFailed`]。
 pub fn derive_subkey(
-    dek: &[u8; KEY_LEN],
+    ikm: &[u8],
     vault_uuid: &[u8; 16],
     label: &str,
 ) -> Result<[u8; KEY_LEN], CfCryptoError> {
-    let hk = Hkdf::<Sha256>::new(Some(vault_uuid.as_slice()), dek);
+    let hk = Hkdf::<Sha256>::new(Some(vault_uuid.as_slice()), ikm);
     let mut out = [0u8; KEY_LEN];
     hk.expand(label.as_bytes(), &mut out)
         .map_err(|_| CfCryptoError::KdfFailed)?;

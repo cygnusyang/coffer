@@ -66,6 +66,15 @@ pub const LABEL_PASSKEY_IDX: &str = "cf/passkey-idx/v1";
 /// §2 末段，已托管条目与既有子密钥零耦合）。
 pub const LABEL_MCP: &str = "cf/mcp/v1";
 
+/// 恢复码子密钥用途字面量（docs/31 §1.2 D-4，FR-17.2，v2.5.0）。
+///
+/// 用途：`K_recovery = HKDF-SHA256(ikm=恢复码熵, salt=vault_uuid,
+/// "cf/recovery/v1")`，用于封/解封 header 里的 `recovery_wrap`
+/// （`wrapped_dek_recovery`）。ikm 是 128-bit 恢复码熵（16 字节），
+/// 与既有子密钥的 32 字节 DEK 长度不同——天然分隔且一钥一用延伸。
+/// 纯运行时派生：不进 [`SubKeys`] 容器（与 MCP 同构，见 LABEL_MCP）。
+pub const LABEL_RECOVERY: &str = "cf/recovery/v1";
+
 // ---------------------------------------------------------------- 容器
 
 /// `docs/03-详细设计.md` §2.4 定义的全部子密钥。
@@ -141,6 +150,37 @@ impl SubKeys {
 /// [`Result`]，失败为 [`CfCryptoError::KdfFailed`]）。
 pub fn derive_mcp_key(dek: &[u8; 32], vault_uuid: &[u8; 16]) -> Result<[u8; 32], CfCryptoError> {
     derive_subkey(dek, vault_uuid, LABEL_MCP)
+}
+
+/// 派生恢复码子密钥（docs/31 §1.2 D-4，v2.5.0 恢复通道）。
+///
+/// 复用 [`crate::kdf::derive_subkey`] 同一通道：HKDF-SHA256，salt =
+/// `vault_uuid`，ikm = `code_entropy`（16 字节，128-bit），info =
+/// `"cf/recovery/v1"`，输出 32 字节。与既有子密钥同方案、label 独立
+/// → 互异密钥（一钥一用延伸）。128-bit 熵足够，无需慢 KDF
+/// （docs/31 §2.1：锁定态恢复 UX 更佳）。
+///
+/// **不进 [`SubKeys`] 容器**——恢复码密封只依赖「header 里的
+/// `recovery_wrap` + 恢复码派生出的 K_recovery」，与既有子密钥零耦合
+/// （编排（recover_dek → 派生 → 封/解封 DEK）由 `cf-session` 承接）。
+///
+/// # 参数
+///
+/// - `code_entropy`：恢复码熵（16 字节，128-bit CSPRNG）。**不是** BIP39
+///   词串本身——词串解码为熵的步骤由 `cf-session` 承接（FR-17.2）。
+/// - `vault_uuid`：保险库 UUID 的 16 字节原始形式，作为 HKDF 的 salt，
+///   保证不同保险库派生的 recovery_key 互不相同。
+///
+/// # 返回值
+///
+/// 32 字节 recovery_key。错误映射同 [`crate::kdf::derive_subkey`]
+/// （理论不失败，但按本 crate 纪律不 `.expect()`，仍返回
+/// [`Result`]，失败为 [`CfCryptoError::KdfFailed`]）。
+pub fn derive_recovery_key(
+    code_entropy: &[u8],
+    vault_uuid: &[u8; 16],
+) -> Result<[u8; 32], CfCryptoError> {
+    derive_subkey(code_entropy, vault_uuid, LABEL_RECOVERY)
 }
 
 // ---------------------------------------------------------------- 测试
@@ -411,5 +451,86 @@ mod tests {
         let a = derive_mcp_key(&test_dek(), &[0x11u8; 16]).expect("派生成功");
         let b = derive_mcp_key(&test_dek(), &[0x22u8; 16]).expect("派生成功");
         assert_ne!(a.as_slice(), b.as_slice());
+    }
+
+    // ------------------------------------------------------------ recovery_key（v2.5.0 恢复通道）
+
+    /// 恢复码熵：16 字节（128-bit CSPRNG，FR-17.2，docs/31 §2.1）。
+    fn test_recovery_entropy() -> [u8; 16] {
+        [0x42u8; 16]
+    }
+
+    /// recovery_key 已知答案测试（docs/31 §1.2 D-4 冻结契约，FR-17.2）。
+    ///
+    /// 期望值由独立 Python 实现按相同输入计算（2026-10-09，随 v2.5.0
+    /// M-CRYPTO 引入 `cf/recovery/v1` label 时首算）：HKDF-SHA256，
+    /// salt = vault_uuid，ikm = 恢复码熵（16 字节），info = label，L = 32。
+    /// 计算脚本与既有 KAT 同构，先用 audit_key 输入复算出 93ec…a6ae、
+    /// mcp 输入复算出 da64…f651 交叉验证了脚本本身；再由 cryptography
+    /// 库独立实现复算同一输入 → f4d1…aaaa 一致。
+    #[test]
+    fn recovery_key与已知答案一致() {
+        let code_entropy = test_recovery_entropy();
+        let vault_uuid = [0x11u8; 16];
+
+        let recovery_key = derive_recovery_key(&code_entropy, &vault_uuid).expect("派生成功");
+        let expected: Vec<u8> = "f4d1ef3c6ea6e38f3700cd390937a6c76e4b410e42007224be914184f2e46aaa"
+            .as_bytes()
+            .chunks(2)
+            .map(|h| {
+                u8::from_str_radix(std::str::from_utf8(h).expect("hex is utf-8"), 16)
+                    .expect("hex digit")
+            })
+            .collect();
+        assert_eq!(recovery_key.as_slice(), expected.as_slice());
+
+        // 直接走 label 派生必须与导出函数一致（防两处漂移）
+        let direct =
+            crate::kdf::derive_subkey(&code_entropy, &vault_uuid, LABEL_RECOVERY).expect("派生成功");
+        assert_eq!(recovery_key.as_slice(), direct.as_slice());
+    }
+
+    /// recovery_key 输出 32 字节且非全零（K_recovery 直接作 AES-256-GCM 密钥，
+    /// docs/31 §1.2）。
+    #[test]
+    fn recovery_key长度32字节且非全零() {
+        let recovery_key =
+            derive_recovery_key(&test_recovery_entropy(), &[0x11u8; 16]).expect("派生成功");
+        assert_eq!(recovery_key.len(), 32);
+        assert_ne!(recovery_key.as_slice(), &[0u8; 32], "recovery_key 全零，实现可疑");
+    }
+
+    /// recovery_key 派生是确定性的（同输入两次派生逐字节相等）。
+    #[test]
+    fn recovery_key派生是确定性的() {
+        let a = derive_recovery_key(&test_recovery_entropy(), &[0x11u8; 16]).expect("派生成功");
+        let b = derive_recovery_key(&test_recovery_entropy(), &[0x11u8; 16]).expect("派生成功");
+        assert_eq!(a.as_slice(), b.as_slice());
+    }
+
+    /// 不同保险库 → recovery_key 不同（uuid 作为 HKDF salt，跨库天然隔离）。
+    #[test]
+    fn 不同vault_uuid派生出不同recovery_key() {
+        let a = derive_recovery_key(&test_recovery_entropy(), &[0x11u8; 16]).expect("派生成功");
+        let b = derive_recovery_key(&test_recovery_entropy(), &[0x22u8; 16]).expect("派生成功");
+        assert_ne!(a.as_slice(), b.as_slice());
+    }
+
+    /// 相同熵 + 相同 salt 下，不同 label 必派生不同密钥（一钥一用：
+    /// label 是恢复码与其余用途唯一的分离维度）。
+    #[test]
+    fn recovery_key与不同label派生结果互异() {
+        let code_entropy = test_recovery_entropy();
+        let vault_uuid = [0x11u8; 16];
+
+        let recovery = derive_recovery_key(&code_entropy, &vault_uuid).expect("派生成功");
+        // 仅 label 不同（mcp），熵与 salt 完全一致 → 结果必须不同
+        let mcp = crate::kdf::derive_subkey(&code_entropy, &vault_uuid, LABEL_MCP).expect("派生成功");
+        assert_ne!(recovery.as_slice(), mcp.as_slice());
+
+        // 与其余子密钥也互不相同（跨 ikm 长度差异，作整体系隔离复核）
+        let keys = SubKeys::derive(&test_dek(), &test_vault_uuid()).expect("派生成功");
+        assert_ne!(recovery.as_slice(), keys.meta_key.as_bytes());
+        assert_ne!(recovery.as_slice(), keys.passkey_idx_key.as_bytes());
     }
 }

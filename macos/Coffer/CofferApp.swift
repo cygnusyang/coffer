@@ -122,6 +122,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // App 激活（点击可见窗口 / Cmd-Tab 切换，BUG-17 2026-10-09 裁定）：
+        // 超时锁定后窗口可见状态下激活也自动弹 Touch ID。与
+        // summonMainWindow 的 maybeAutoPromptBiometric 双保险——防重入由
+        // autoPromptBiometricFired 旗标保证（同一次锁定态只弹一次），不会双弹。
+        // model 启动早期可能尚未接线（attach 在 RootView.onAppear），nil 安全。
+        model?.maybeAutoPromptBiometric()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // 先反注册热键（清理 Carbon 资源）、移除状态栏项，再锁定全部会话
         // 触发 Rust 侧密钥清零（docs/07 R-4）
@@ -153,16 +162,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.orderOut(nil)
             return
         }
-        // 呼出场景自动 Touch ID 引导（用户 2026-10-03 裁定，docs/08 §7.6）：
-        // 窗口确从隐藏恢复（关窗驻留后重新呼出）才考虑——窗口本就可见
-        // （自动锁定后直接手点解锁）不自动弹。判定与防重入（同一次锁定态
-        // 只弹一次）在 AppModel.maybeAutoPromptBiometric。
-        let wasHidden = !window.isVisible
+        // 呼出/激活场景自动 Touch ID 引导（用户 2026-10-03 裁定，docs/08 §7.6；
+        // BUG-17 扩展 2026-10-09 裁定，KNOWN-ISSUES BUG-17）：无论窗口此前是否
+        // 可见都触发——可见锁定态激活也自动弹（与启动自动引导同体验）。判定与
+        // 防重入（同一次锁定态只弹一次，取消后不反复）在
+        // AppModel.maybeAutoPromptBiometric，多触发源不会双弹。
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        if wasHidden {
-            model?.maybeAutoPromptBiometric()
-        }
+        model?.maybeAutoPromptBiometric()
         guard focusText else { return }
         scheduleTextInputFocus(window: window)
     }

@@ -16,8 +16,9 @@
 //      机器指纹；自包含不触 AppModel，docs/03 §14）
 //   ⑨ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
 //      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
-//   完成按钮（v2.4.1）：置顶 NavigationStack toolbar（.confirmationAction），
-//   滚动时随时可退出（原底部 doneSection 迁入，BUG-3 显式退出口沿用）
+//   完成按钮（v2.4.1）：固定底部栏右下角——Apple HIG macOS 模态 sheet
+//   主按钮惯例；.safeAreaInset(edge: .bottom) 不随 Form 滚动，滚动时常驻
+//   可退出（原底部 doneSection 迁入，BUG-3 显式退出口沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
 //   - autoLockMinutes：0 = 从不（运行态；落盘为 -1，见 AppModel）
@@ -64,18 +65,19 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
-            // v2.4.1：完成按钮置顶右侧——sheet 内 .toolbar/.confirmationAction
-            // 会降级到底部右下角（macOS sheet 无窗口工具栏），故用
-            // .safeAreaInset(edge: .top) 固定顶栏、按钮置行尾：滚动时常驻
-            // 右上角，随时可结束设置动作；BUG-3 显式退出口语义不变
-            .safeAreaInset(edge: .top) {
+            // v2.4.1：完成按钮按 Apple HIG（macOS 模态 sheet 主按钮右下角）。
+            // .safeAreaInset(edge: .bottom) 固定底部栏、不随 Form 滚动——
+            // 滚动设置内容时按钮常驻右下角，随时可结束设置动作
+            // （BUG-3 显式退出口语义不变）。注：.toolbar/.confirmationAction
+            // 在 sheet 内会降级渲染到底部，且非 macOS 规范位置，弃用
+            .safeAreaInset(edge: .bottom) {
                 HStack {
                     Spacer()
                     Button("完成") { dismiss() }
                         .buttonStyle(.borderedProminent)
                 }
                 .padding(.horizontal)
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)
             }
         }
         // 宽度固定、高度自适应（节内容随 Touch ID 内联确认行等动态展开）

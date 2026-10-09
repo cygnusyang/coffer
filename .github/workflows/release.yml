@@ -9,6 +9,10 @@
 #   secrets.APPLE_CERT_P12_BASE64          —— 证书+私钥 p12 的 base64
 #   secrets.APPLE_CERT_PASSWORD            —— p12 导出密码
 #   secrets.APPLE_PROVISIONING_PROFILE_BASE64 —— macos/build/app.coffer.Coffer.provisionprofile 的 base64
+#   secrets.UPDATE_SIGNING_KEY_BASE64      —— OTA 更新清单 Ed25519 私钥（32 字节种子 base64）；
+#                                            生成指导见 tools/sign_update_manifest.sh 头部注释
+#                                            （v2.7.0，docs/35 §2.3 用户裁定更新密钥放 CI secrets）。
+#                                            缺失时本流水线直接 fail，防未签名清单上架。
 #
 # 注意：免费账号 provisioning profile 7 天有效（build_macos_app.sh 注释），
 # 过期后打 tag 会红，需重跑 make_provisioning_profile.sh 并更新
@@ -58,6 +62,13 @@ jobs:
       APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
       APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
       APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+      UPDATE_SIGNING_KEY_BASE64: ${{ secrets.UPDATE_SIGNING_KEY_BASE64 }}
+      # OTA 更新清单（v2.7.0，docs/35 §6.1）发版级参数：
+      #   OTA_MINIMUM_VERSION = 「可安装本版本的最低当前版本」，防降级/防旧版漏洞回滚；
+      #   契约要求「只增不减」——每次发版须人工复核本值，默认取上一发版线 v2.5.0。
+      #   OTA_SECURITY_CRITICAL = true 表示安全补丁 → App 侧警告 + 显著提示（docs/35 §2.6）。
+      OTA_MINIMUM_VERSION: "2.5.0"
+      OTA_SECURITY_CRITICAL: "false"
     steps:
       - uses: actions/checkout@v4
 
@@ -72,9 +83,32 @@ jobs:
 
       - name: 校验必需 secrets 存在
         run: |
-          for v in APPLE_CERT_P12_BASE64 APPLE_CERT_PASSWORD APPLE_PROVISIONING_PROFILE_BASE64; do
-            [ -n "${!v}" ] || { echo "::error::缺少 secret: $v（见 tools/export_ci_secrets.sh）"; exit 1; }
+          for v in APPLE_CERT_P12_BASE64 APPLE_CERT_PASSWORD APPLE_PROVISIONING_PROFILE_BASE64 UPDATE_SIGNING_KEY_BASE64; do
+            [ -n "${!v}" ] || { echo "::error::缺少 secret: $v（见 tools/export_ci_secrets.sh；UPDATE_SIGNING_KEY_BASE64 生成指导见 tools/sign_update_manifest.sh）"; exit 1; }
           done
+
+      - name: 更新验签公钥一致性核查（H-2，防占位符泄漏/漂移，docs/35 §2.3）
+        run: |
+          set -euo pipefail
+          # 由 CI secret（Ed25519 私钥 seed）派生公钥；私钥只经 env 传入，绝不打日志。
+          DERIVED_PUB="$(./tools/derive_update_public_key.sh)"
+          # 从源码常量提取 App 侧验签公钥（组 A ManifestVerifier.swift）。
+          # 提取失败/常量为空 → 走下方 fail-closed 分支。
+          SRC_PUB="$(grep -hoE 'cofferUpdatePublicKeyBase64 *= *"[A-Za-z0-9+/=]+"' \
+            macos/Coffer/Updater/ManifestVerifier.swift | head -1 \
+            | grep -oE '"[^"]+"' | tr -d '"' || true)"
+          if [ -z "$SRC_PUB" ]; then
+            echo "::error::无法从 macos/Coffer/Updater/ManifestVerifier.swift 提取 cofferUpdatePublicKeyBase64（组 A 常量缺失或格式变化）"
+            exit 1
+          fi
+          # 公钥 base64 非机密，允许进日志；私钥中间量绝不出现。
+          echo "派生公钥（CI secret 对应）: ${DERIVED_PUB}"
+          echo "源码常量（App 侧验签）   : ${SRC_PUB}"
+          if [ "$DERIVED_PUB" != "$SRC_PUB" ]; then
+            echo "::error::更新验签公钥不一致（H-2）：ManifestVerifier.swift 的 cofferUpdatePublicKeyBase64 仍是占位符/过期值，须替换为上方『派生公钥』（docs/35 §2.3，组 A 接入项，由 lead 在 secret 就位后执行）。未替换前本门禁保持失败，禁止发布 OTA"
+            exit 1
+          fi
+          echo "::notice::更新验签公钥一致性 PASS（占位符已替换，防漂移生效）"
 
       - name: 导入 Apple Development 证书到临时 keychain
         run: |
@@ -107,11 +141,25 @@ jobs:
       - name: 构建签名产物（--rebuild-bindings 强制重生成绑定）
         run: ./tools/build_macos_app.sh --rebuild-bindings
 
-      - name: 签名与零网络核查
+      - name: 签名与零网络核查（OTA 更新期最小豁免，docs/35 §2.5）
         run: |
+          set -euo pipefail
           codesign --verify --strict macos/build/Coffer.app
-          codesign -dv --entitlements - macos/build/Coffer.app 2>&1 \
-            | grep -E 'keychain-access-groups|com.apple.security.network' || true
+          ENT="$(codesign -d --entitlements - macos/build/Coffer.app 2>&1)"
+          # OTA 更新期最小豁免（docs/35 §2.5）：允许且仅允许 network.client 一项。
+          echo "$ENT" | grep -q 'com.apple.security.network.client' \
+            || { echo "::error::缺少 com.apple.security.network.client（OTA 更新豁免 entitlement）"; exit 1; }
+          # 除 network.client 外，任何其他 network.* 项均为违规（零网络承诺主体仍成立）。
+          OTHER="$(echo "$ENT" | grep -oE 'com\.apple\.security\.network\.[a-zA-Z.]+' \
+            | grep -vx 'com.apple.security.network.client' || true)"
+          if [ -n "$OTHER" ]; then
+            echo "::error::发现白名单外 network.* entitlement：$OTHER"; exit 1
+          fi
+          echo "$ENT" | grep -q 'keychain-access-groups' \
+            || { echo "::error::缺少 keychain-access-groups（D-6 escrow 必要项）"; exit 1; }
+          # OTA 白名单防漂移（docs/35 §6.2 第 2 锁）：Updater 源码出现 host 均须 ∈ 4 白名单。
+          # 源缺失（退出码 2）同样判失败——不放行未经白名单核查的 OTA。
+          ./tools/check_ota_whitelist.sh
 
       - name: 打包 zip
         run: |
@@ -120,9 +168,49 @@ jobs:
             "macos/build/Coffer-${TAG}.zip"
           ls -lh macos/build/Coffer-*.zip
 
+      - name: 提取产物 CDHash（OTA 清单验签次锚，docs/35 §6.1）
+        run: |
+          set -euo pipefail
+          CDHASH="$(./tools/extract_cdhash.sh macos/build/Coffer.app)"
+          echo "产物 CDHash=$CDHASH"
+          echo "CDHASH=$CDHASH" >> "$GITHUB_ENV"
+
+      - name: 生成并签名 update-manifest.json（OTA，docs/35 §6.1 canonical JSON）
+        run: |
+          set -euo pipefail
+          # version 取产物 Info.plist CFBundleShortVersionString（剥无 v 前缀）；
+          # 读不到则回退 GITHUB_REF_NAME 剥 v。
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            macos/build/Coffer.app/Contents/Info.plist 2>/dev/null || true)"
+          [ -n "$VERSION" ] || VERSION="${GITHUB_REF_NAME#v}"
+          echo "OTA version=$VERSION"
+          TAG="${GITHUB_REF_NAME}"
+          DOWNLOAD_URL="https://github.com/cygnusyang/coffer/releases/download/${TAG}/Coffer-${TAG}.zip"
+          BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "downloadUrl=$DOWNLOAD_URL"
+          echo "buildTime=$BUILD_TIME"
+          # 私钥经环境变量传入 sign_update_manifest.sh（绝不出现在日志/命令里）。
+          UPDATE_SIGNING_KEY_BASE64="$UPDATE_SIGNING_KEY_BASE64" \
+          MF_VERSION="$VERSION" \
+          MF_MINIMUM_VERSION="$OTA_MINIMUM_VERSION" \
+          MF_BUILD_TIME="$BUILD_TIME" \
+          MF_DOWNLOAD_URL="$DOWNLOAD_URL" \
+          MF_CDHASH="$CDHASH" \
+          MF_SECURITY_CRITICAL="$OTA_SECURITY_CRITICAL" \
+          ./tools/sign_update_manifest.sh > macos/build/update-manifest.json
+          echo "--- update-manifest.json ---"
+          cat macos/build/update-manifest.json
+
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: macos/build/Coffer-*.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+      - name: 上传 update-manifest.json 到 Release（OTA 固定清单 URL 支撑，docs/35 §2.4）
+        run: |
+          set -euo pipefail
+          # gh 已在 GitHub runner 预装并通过 GITHUB_TOKEN 认证；permissions.contents: write
+          # 已授予（见文件头）。--clobber 容忍流水线重跑覆盖同 tag 资产。
+          gh release upload "${GITHUB_REF_NAME}" macos/build/update-manifest.json --clobber

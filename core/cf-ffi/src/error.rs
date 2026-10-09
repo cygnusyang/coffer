@@ -47,7 +47,7 @@ pub enum FfiError {
     /// 1003 库不存在 / 1004 库已存在 / 1005 损坏 / 1006 版本过新 / 1007 KDF /
     /// 1008 解密 / 1009 存储 / 1010 弱密码 / 1011 条目不存在 / 1012 校验 /
     /// 2001 导入格式 / 2002 导入失败 / 2003 导出失败 / 3001 TOTP /
-    /// 4001–4002 生物识别 / 5001 IO / 5002 参数）。
+    /// 4001–4003 生物识别与恢复通道 / 5001 IO / 5002 参数）。
     #[error("{message}")]
     Coffer {
         /// docs/03 §12 稳定错误码
@@ -116,7 +116,7 @@ mod tests {
     /// 错误码跨 FFI 不漂移：CfError → FfiError 后 code 与 docs/03 §12 一致
     #[test]
     fn 错误码跨ffi映射_与docs03第12节一致() {
-        let cases: [(CfError, u16); 20] = [
+        let cases: [(CfError, u16); 21] = [
             (CfError::VaultLocked, 1001),
             (CfError::UnlockFailed, 1002),
             (CfError::VaultNotFound, 1003),
@@ -135,6 +135,7 @@ mod tests {
             (CfError::TotpError("x".into()), 3001),
             (CfError::BiometricUnavailable, 4001),
             (CfError::BiometricInvalidated, 4002),
+            (CfError::RecoveryUnavailable, 4003),
             (CfError::Io("x".into()), 5001),
             (CfError::InvalidArgument("x".into()), 5002),
         ];

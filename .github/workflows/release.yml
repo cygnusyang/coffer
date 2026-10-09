@@ -1,0 +1,122 @@
+# release.yml —— tag v* 自动编译签名产物并触发 GitHub Release。
+#
+# 用户需求（2026-10-09）：每个新的 tag 自动编译 + 触发新的 release。
+# 用户裁定产物形态：真证书签名产物（Apple Development 证书 + provisioning
+# profile 从 GitHub Secrets 注入，对齐本机 build_macos_app.sh 方案 A 签名线，
+# 不回退 ad-hoc —— BUG-2 纪律）。
+#
+# 前置（一次性，见 tools/export_ci_secrets.sh 导出命令）：
+#   secrets.APPLE_CERT_P12_BASE64          —— 证书+私钥 p12 的 base64
+#   secrets.APPLE_CERT_PASSWORD            —— p12 导出密码
+#   secrets.APPLE_PROVISIONING_PROFILE_BASE64 —— macos/build/app.coffer.Coffer.provisionprofile 的 base64
+#
+# 注意：免费账号 provisioning profile 7 天有效（build_macos_app.sh 注释），
+# 过期后打 tag 会红，需重跑 make_provisioning_profile.sh 并更新
+# APPLE_PROVISIONING_PROFILE_BASE64 后再打 tag。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # 门禁：Rust 可靠门禁 + clippy（ubuntu 快跑；构建 job 依赖它）。
+  # 用 coffer-test-gate 纪律命令：--no-fail-fast + 跳 2 条问题用例
+  # （1 GiB KDF 极端档会挂 20+ 分钟；千条搜索基线为 flaky 墙钟断言）。
+  test:
+    name: Gate（Rust 测试 + clippy）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 载入 rustup PATH（非交互 shell 无 ~/.cargo/bin）
+        run: |
+          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> "$GITHUB_ENV"
+      - name: 可靠门禁
+        working-directory: core
+        run: cargo test --workspace --no-fail-fast -- \
+          --skip 极端kdf参数建库记录与解锁往返 \
+          --skip 千条搜索基线
+      - name: clippy（-D warnings）
+        working-directory: core
+        run: cargo clippy --all-targets -- -D warnings
+
+  # 构建 + 签名 + 打包 + 触发 release。
+  # 需 macos runner：codesign / security keychain / hdiutil 均为 macOS 侧。
+  build:
+    name: 构建签名 Coffer.app 并发布
+    needs: test
+    runs-on: macos-latest
+    env:
+      APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 载入 rustup PATH
+        run: |
+          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: 校验必需 secrets 存在
+        run: |
+          for v in APPLE_CERT_P12_BASE64 APPLE_CERT_PASSWORD APPLE_PROVISIONING_PROFILE_BASE64; do
+            [ -n "${!v}" ] || { echo "::error::缺少 secret: $v（见 tools/export_ci_secrets.sh）"; exit 1; }
+          done
+
+      - name: 导入 Apple Development 证书到临时 keychain
+        run: |
+          set -euxo pipefail
+          KC="$RUNNER_TEMP/build.keychain-db"
+          KC_PW="coffer-ci-keychain"
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KC"
+          # 让 codesign 免 UI 拿私钥（GitHub macOS runner 标准三件套）
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KC_PW" "$KC"
+          # 只留临时 keychain 在搜索列表（避免误选 runner 自带 login 身份）
+          security list-keychains -d user -s "$KC"
+          security default-keychain -s "$KC"
+          echo "---- 可签名身份 ----"
+          security find-identity -v -p codesigning
+
+      - name: 落地 provisioning profile（build_macos_app.sh 期望路径）
+        run: |
+          mkdir -p macos/build
+          echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode \
+            > macos/build/app.coffer.Coffer.provisionprofile
+          [ -s macos/build/app.coffer.Coffer.provisionprofile ] || \
+            { echo "::error::profile base64 解码后为空"; exit 1; }
+
+      - name: 构建签名产物（--rebuild-bindings 强制重生成绑定）
+        run: ./tools/build_macos_app.sh --rebuild-bindings
+
+      - name: 签名与零网络核查
+        run: |
+          codesign --verify --strict macos/build/Coffer.app
+          codesign -dv --entitlements - macos/build/Coffer.app 2>&1 \
+            | grep -E 'keychain-access-groups|com.apple.security.network' || true
+
+      - name: 打包 zip
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ditto -c -k --keepParent macos/build/Coffer.app \
+            "macos/build/Coffer-${TAG}.zip"
+          ls -lh macos/build/Coffer-*.zip
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: macos/build/Coffer-*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

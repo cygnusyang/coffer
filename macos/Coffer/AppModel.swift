@@ -969,6 +969,150 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 恢复码 / 主密码重置（FR-17，docs/31 §3.3 reset；v2.5.0-design §4.2）
+
+    /// 恢复码 / 主密码重置的失败统一文案（FR-1.4 不可区分纪律，docs/31 §3.5
+    /// 与 v2.5.0-design §4.2）：1002（恢复码错 / K_bio 错 / wrap 损坏 / header
+    /// 损坏）在重置路径统一呈现，不区分「凭证错」与「数据损坏」；1010 弱
+    /// 密码等其余错误经 ErrorPresenter 直出（可操作的修正引导不能丢）。
+    /// 三文案同时供 View 层（RecoveryResetSheet / LockView）引用。
+    /// 恢复码重置失败统一文案。
+    nonisolated static let recoveryResetFailedCopy = "重置失败：恢复码无效或密码库数据损坏。"
+    /// 生物识别重置失败统一文案。
+    nonisolated static let bioResetFailedCopy = "重置失败：无法完成身份验证或密码库数据损坏。"
+    /// 主密码重置成功文案（View 层成功视图展示，D-9）。
+    nonisolated static let resetSucceededCopy = "主密码已重置，条目数据不受影响。请用新密码解锁。"
+
+    /// 重置失败文案映射（纯函数）：1002 → 统一文案（FR-1.4 不可区分纪律）；
+    /// 其余（1010 / 4003 / license / Keychain / IO）→ ErrorPresenter 直出。
+    private static func resetFailedText(for error: Error, unifiedCopy: String) -> String {
+        if case let .Coffer(code, _) = error as? FfiError, code == 1002 {
+            return unifiedCopy
+        }
+        return ErrorPresenter.text(error)
+    }
+
+    /// 是否已启用恢复码封装（header `recovery_wrap.available`，docs/31
+    /// §1.1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥
+    /// 操作；供 LockView 决定是否显示「忘记密码 → 恢复码重置」入口
+    /// （docs/31 §4.2）。
+    var hasRecoveryWrap: Bool {
+        session?.hasRecoveryWrap() ?? false
+    }
+
+    /// 生成新的 BIP39-12 恢复码（FR-17.2，docs/31 §2.4：**只生成、不落盘**）。
+    /// 返回的 code 仅存内存（Swift 会话局部一次性展示），用户确认抄写后才
+    /// 经 `enableRecoveryCode(password:code:)` 写入 header 密文槽位
+    /// （D-10：恢复码明文永不落盘）。纯随机无密钥操作、无文件 IO（Rust
+    /// 无门禁）。
+    /// - Returns: 恢复码文本；nil = 无会话或生成失败（随机源 / 编码失败 1007）。
+    func generateRecoveryCode() -> String? {
+        try? session?.generateRecoveryCode()
+    }
+
+    /// 启用 / 重新生成恢复码封装（FR-17.2，docs/31 §3.1 enable）。
+    /// 解锁态执行（Rust write_guard 兜底 1001）；Swift 侧已在
+    /// RecoveryCodeSetupSheet 完成「展示恢复码 + 用户确认抄写」前置
+    /// （D-10），本方法只做 FFI 提交。已启用时再次调用用新 code 覆盖旧
+    /// 槽位（旧恢复码立即失效，**不可回滚**）。主密码错 / code 无效 →
+    /// 1002 经 ErrorPresenter 呈现。
+    /// 主密码 / code 只作参数传入，用后即弃（docs/07 §2.4 同纪律）。
+    func enableRecoveryCode(password: String, code: String) async {
+        guard let session, !isBusy, phase == .unlocked else { return }
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.enableRecoveryCode(password: password, code: code)
+            }.value
+        } catch {
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+        }
+    }
+
+    /// 用恢复码重置主密码（FR-17.2，docs/31 §3.3 reset-with-recovery）。
+    /// 锁定态执行（忘记密码场景）：恢复码 → 解出 DEK → 换 KEK 重封装 →
+    /// 原子重写 header。**成功不切 phase**（D-9：保持锁定，由用户决定
+    /// 是否用新密码解锁）。失败 1002 统一文案（FR-1.4 不区分「码错」与
+    /// 「数据损坏」）；1010 弱密码等其余错误经 ErrorPresenter 直出。
+    /// 新密码 / code 只作参数传入，用后即弃。
+    func resetPasswordWithRecoveryCode(newPassword: String, code: String) async {
+        guard let session, !isBusy, phase == .locked else { return }
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.resetPasswordWithRecoveryCode(newPassword: newPassword, code: code)
+            }.value
+            // 成功不切 phase：保持锁定（D-9）
+        } catch {
+            let errText = Self.resetFailedText(for: error, unifiedCopy: Self.recoveryResetFailedCopy)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+        }
+    }
+
+    /// 用生物识别（Touch ID）重置主密码（FR-17.1，docs/31 §3.3
+    /// reset-with-bio）。镜像 unlockWithTouchID 的 Keychain 路径：
+    /// 钥匙串读 K_bio（自带单次认证弹窗）→ FFI reset → 保持锁定。
+    ///
+    /// K_bio 纪律（docs/08 §7.4 同款）：取回即用——只作局部变量捕获进
+    /// Task 闭包，用完即弃，不落任何 @Published / 不进全局状态。
+    ///
+    /// 前置门禁（Swift 侧先行判定，镜像 unlockWithTouchID :665-670）：
+    /// ① header 未启用 bio 封装；② 设备无 Touch ID / 未录入指纹——
+    /// 不过 → 4001 文案（Rust 侧同语义兜底）。
+    ///
+    /// 错误分派：.userCanceled（用户取消认证）→ 完全静默；其余（Keychain
+    /// itemNotFound / authFailed / unexpected、FFI 1002 等）→ lastErrorMessage
+    /// （1002 统一重置失败文案，FR-1.4）。
+    func resetPasswordWithBio(newPassword: String) async {
+        guard let session, !isBusy, phase == .locked, !vaultUUID.isEmpty else { return }
+
+        // 前置门禁（镜像 unlockWithTouchID）：Swift 侧先行判定，避免无谓
+        // 跨桥；Rust 侧同语义兜底 4001（D-8）。
+        guard session.hasBiometricWrap(), BiometricKeychain.isBiometricsAvailable() else {
+            lastErrorMessage = ErrorPresenter.text(TouchIDError.unavailable)
+            return
+        }
+
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            // ① 钥匙串读 K_bio：read 自带单次指纹认证弹窗（全新
+            //    LAContext，Keychain 自行发起唯一一次认证；文案沿用
+            //    BiometricKeychain.unlockPrompt，PL-4 双弹窗规避同解锁路径）。
+            // ② 读取失败分道（catch 分派）：.userCanceled 静默；其余
+            //    → 重置失败文案。
+            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID)
+
+            // ③ 后半段走 FFI：K_bio 拷贝进 Task 闭包，本函数返回后局部
+            //    变量即弃（K_bio 纪律）。AEAD open 失败（K_bio 不匹配 /
+            //    篡改）→ Rust 统一 1002（D-8）。
+            let target = session
+            try await Task.detached(priority: .userInitiated) {
+                try target.resetPasswordWithBio(newPassword: newPassword, kBio: kBio)
+            }.value
+            // 成功不切 phase：保持锁定（D-9）
+        } catch {
+            switch error {
+            case BiometricKeychainError.userCanceled:
+                DiagLog.append("Touch ID 重置主密码已取消（用户取消认证，静默，docs/08 §7.6）")
+            default:
+                let errText = Self.resetFailedText(for: error, unifiedCopy: Self.bioResetFailedCopy)
+                DiagLog.append(errText)
+                lastErrorMessage = errText
+            }
+        }
+    }
+
     /// 进程退出兜底（AppDelegate.applicationWillTerminate 调用）。
     nonisolated func lockAllForTermination() {
         MainActor.assumeIsolated {

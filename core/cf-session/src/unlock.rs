@@ -201,6 +201,8 @@ pub fn create_vault_with_kdf(
         },
         // 新库默认不启用 MCP 托管（escrow 由 App 侧显式 enable，docs/29 §2）
         mcp_wrap: cf_format::McpWrap::default(),
+        // 新库默认不启用恢复码封装（FR-17.2，docs/31 §1.1）
+        recovery_wrap: None,
         flags: cf_format::HeaderFlags {
             sort_key_enabled: false,
             attachments_inline: false,

@@ -40,31 +40,58 @@ struct CofferMainApp: App {
             // 「数据」菜单（验收反馈：菜单里没有导入/导出）：与工具栏
             // 触发同一 sheet 状态（AppModel @Published）。锁定态禁用——
             // 导入需解锁态（1001 门禁）、导出/设置入口在主界面（解锁区）。
-            CommandMenu("数据") {
-                Button("导入 CSV…") { model.showImport = true }
-                    .keyboardShortcut("i", modifiers: .command)
-                    .disabled(model.phase != .unlocked)
-                // 1PUX 导入（v0.3.0-T05 FR-7.1）：import1pux 有 1001 门禁
-                // （需解锁态），与 CSV 同纪律禁用于锁定态
-                Button("导入 1Password (.1pux)…") { model.showImportPux = true }
-                    .keyboardShortcut("i", modifiers: [.command, .shift])
-                    .disabled(model.phase != .unlocked)
-                // Bitwarden 导入（v0.5.0 PK3）：import_bitwarden_json 有 1001
-                // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
-                Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
-                    .disabled(model.phase != .unlocked)
-                Button("导出…") { model.showExport = true }
-                    .keyboardShortcut("e", modifiers: .command)
-                    .disabled(model.phase != .unlocked)
-                Divider()
-                Button("设置…") { model.showSettings = true }
-                    .keyboardShortcut(",", modifiers: .command)
-                    .disabled(model.phase != .unlocked)
-            }
+            // v2.4.1：设置改独立窗口（对齐 macOS 系统设置红绿灯），经
+            // DataCommands（@Environment openWindow）触发，不再走 showSettings。
+            DataCommands(model: model)
+        }
+
+        // v2.4.1：设置独立窗口（对齐 macOS 系统设置样式——左上角红绿灯
+        // 关闭钮，右上角无「完成」按钮）。Window scene 自带 titlebar 红绿灯；
+        // SettingsView 内不再需要自定义关闭控件（已移除 X 按钮）。
+        Window("设置", id: "settings") {
+            SettingsView()
+                .environmentObject(model)
         }
 
         // 菜单栏常驻（FR-13.3）已迁往 Platform/StatusItemController.swift
         // （v0.5.0 PL-6：NSStatusItem 取代 MenuBarExtra，菜单结构与语义一致）。
+    }
+}
+
+/// 「数据」菜单命令组（v2.4.1 从 CofferMainApp.commands 内联 CommandMenu 抽出）：
+/// 与工具栏触发同一 sheet 状态（AppModel @Published）。锁定态禁用——导入需
+/// 解锁态（1001 门禁）、导出/设置入口在主界面（解锁区）。
+/// v2.4.1：设置改独立窗口（对齐 macOS 系统设置红绿灯），经
+/// @Environment(\.openWindow) 触发，不再走 showSettings。model 直接以值传入
+/// （commands 闭包无法用 @EnvironmentObject，随 CofferMainApp 捕获同源实例）。
+private struct DataCommands: Commands {
+    @Environment(\.openWindow)
+    private var openWindow
+
+    let model: AppModel
+
+    var body: some Commands {
+        CommandMenu("数据") {
+            Button("导入 CSV…") { model.showImport = true }
+                .keyboardShortcut("i", modifiers: .command)
+                .disabled(model.phase != .unlocked)
+            // 1PUX 导入（v0.3.0-T05 FR-7.1）：import1pux 有 1001 门禁
+            // （需解锁态），与 CSV 同纪律禁用于锁定态
+            Button("导入 1Password (.1pux)…") { model.showImportPux = true }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .disabled(model.phase != .unlocked)
+            // Bitwarden 导入（v0.5.0 PK3）：import_bitwarden_json 有 1001
+            // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
+            Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
+                .disabled(model.phase != .unlocked)
+            Button("导出…") { model.showExport = true }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(model.phase != .unlocked)
+            Divider()
+            Button("设置…") { openWindow(id: "settings") }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(model.phase != .unlocked)
+        }
     }
 }
 
@@ -236,9 +263,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 主窗口定位（SwiftUI WindowGroup 唯一窗口）：排除 NSPanel（状态栏类
-    /// 窗口）与 sheet（sheetParent 非空）。关窗驻留后窗口实例仍在
+    /// 窗口）、sheet（sheetParent 非空）与设置独立窗口（v2.4.1 Window scene，
+    /// id "settings"——不排除时若设置窗口先入 NSApp.windows 数组，⌥⌘P / 菜单栏
+    /// 「打开主窗口」会错焦到设置窗口）。关窗驻留后主窗口实例仍在
     /// NSApp.windows 中（仅不可见），可直接 makeKeyAndOrderFront 复原。
     private static var mainWindow: NSWindow? {
-        NSApp.windows.first { !($0 is NSPanel) && $0.sheetParent == nil }
+        NSApp.windows.first {
+            !($0 is NSPanel)
+                && $0.sheetParent == nil
+                && $0.identifier?.rawValue != "settings"
+                && $0.title != "设置"
+        }
     }
 }

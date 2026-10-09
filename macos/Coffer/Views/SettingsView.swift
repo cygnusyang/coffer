@@ -16,9 +16,10 @@
 //      机器指纹；自包含不触 AppModel，docs/03 §14）
 //   ⑨ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
 //      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
-//   关闭钮（v2.4.1）：右上角灰色圆形「✕」——对齐 macOS 系统设置弹窗样式；
-//   .safeAreaInset(edge: .top) 固定顶栏不随 Form 滚动，滚动时随时可关闭
-//   （原「完成」按钮已移除，BUG-3 显式退出口语义沿用）
+//   关闭钮（v2.4.1 终版）：设置改独立窗口（CofferApp Window scene，id
+//   "settings"），左上角红绿灯（系统设置样式）关闭——窗口标题栏自带红绿灯，
+//   滚动内容时红绿灯常驻可随时关闭，无需自定义关闭控件。演进：Form 底部
+//   「完成」→ 顶栏「完成」→ 右上角「✕」→ 独立窗口红绿灯
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
 //   - autoLockMinutes：0 = 从不（运行态；落盘为 -1，见 AppModel）
@@ -30,10 +31,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject
     private var model: AppModel
-
-    /// 关闭本 sheet（BUG-3：显式退出口，任何状态下都能离开本页）。
-    @Environment(\.dismiss)
-    private var dismiss
 
     /// 「修改主密码」sheet（T-D：ChangePasswordView 完整改密流程）。
     @State private var showChangePassword = false
@@ -65,28 +62,8 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
-            // v2.4.1：右上角灰色圆形「✕」关闭钮，对齐 macOS 系统设置弹窗
-            // 样式（非主按钮语义，纯关闭控件）。.safeAreaInset(edge: .top)
-            // 固定顶栏、不随 Form 滚动——滚动设置内容时始终可关闭。
-            // BUG-3 显式退出口语义不变，dismiss() 行为零变化
-            .safeAreaInset(edge: .top) {
-                HStack {
-                    Spacer()
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(Circle().fill(Color.gray.opacity(0.2)))
-                    }
-                    .buttonStyle(.plain)
-                    .help("关闭设置")
-                }
-                .padding(.trailing, 8)
-                .padding(.top, 4)
-            }
+            // v2.4.1 终版：关闭由独立窗口标题栏红绿灯承担（Window scene），
+            // 本页不再渲染自定义关闭控件；滚动内容时红绿灯仍常驻可随时关闭。
         }
         // 宽度固定、高度自适应（节内容随 Touch ID 内联确认行等动态展开）
         .frame(width: 480)

@@ -131,6 +131,14 @@ pub enum CfError {
     #[error("biometric invalidated")]
     BiometricInvalidated,
 
+    /// 未配置恢复码（FR-17.2）。
+    ///
+    /// 产生于恢复码重置路径的 defensive 门禁（UI 已有
+    /// `has_recovery_wrap` 门）；镜像 [`CfError::BiometricUnavailable`]
+    /// （4001）先例，供 Swift 侧按码本地化，不解析消息文本。
+    #[error("recovery unavailable")]
+    RecoveryUnavailable,
+
     /// 文件读写错误。{0} 为系统 IO 信息。
     #[error("io error: {0}")]
     Io(String),
@@ -175,8 +183,8 @@ impl CfError {
     /// 本地化映射 —— 消息文本可随措辞调整，错误码是跨版本契约。
     ///
     /// 段的划分：1001–1012 保险库与加密与存储校验，2001–2003 导入导出，
-    /// 3001 验证码，4001–4002 生物识别，5001–5002 系统级，
-    /// 6001–6004 许可与授权（FR-15）。
+    /// 3001 验证码，4001–4003 生物识别与恢复通道（FR-17.2），
+    /// 5001–5002 系统级，6001–6004 许可与授权（FR-15）。
     ///
     /// **无 `_` 兜底分支**：新增变体时编译器会强制在此补码。
     ///
@@ -217,6 +225,7 @@ impl CfError {
             Self::TotpError(_) => 3001,
             Self::BiometricUnavailable => 4001,
             Self::BiometricInvalidated => 4002,
+            Self::RecoveryUnavailable => 4003,
             Self::Io(_) => 5001,
             Self::InvalidArgument(_) => 5002,
             Self::LicenseSerialInvalid => 6001,
@@ -259,6 +268,7 @@ mod tests {
             CfError::TotpError(_) => "TotpError",
             CfError::BiometricUnavailable => "BiometricUnavailable",
             CfError::BiometricInvalidated => "BiometricInvalidated",
+            CfError::RecoveryUnavailable => "RecoveryUnavailable",
             CfError::Io(_) => "Io",
             CfError::InvalidArgument(_) => "InvalidArgument",
             CfError::LicenseSerialInvalid => "LicenseSerialInvalid",
@@ -291,6 +301,7 @@ mod tests {
             CfError::TotpError("secret too short".into()),
             CfError::BiometricUnavailable,
             CfError::BiometricInvalidated,
+            CfError::RecoveryUnavailable,
             CfError::Io("permission denied".into()),
             CfError::InvalidArgument("empty password".into()),
             CfError::LicenseSerialInvalid,
@@ -300,8 +311,8 @@ mod tests {
         ]
     }
 
-    /// 按 `docs/03-详细设计.md` §12 顺序排列的 24 个变体名。
-    const EXPECTED_VARIANTS: [&str; 24] = [
+    /// 按 `docs/03-详细设计.md` §12 顺序排列的 25 个变体名。
+    const EXPECTED_VARIANTS: [&str; 25] = [
         "VaultLocked",
         "UnlockFailed",
         "VaultNotFound",
@@ -320,6 +331,7 @@ mod tests {
         "TotpError",
         "BiometricUnavailable",
         "BiometricInvalidated",
+        "RecoveryUnavailable",
         "Io",
         "InvalidArgument",
         "LicenseSerialInvalid",
@@ -346,8 +358,10 @@ mod tests {
         // 1010–1012 为 docs/07 纵切增补（已同步 docs/03 §12）。
         // 6001–6004 为 FR-15 许可域（已同步 docs/03 §12 / §14.5）；
         // 6001 / 6004 在开源产物不存在产生路径（仅登记码位）。
+        // 4003 为 FR-17.2 恢复通道增补（v2.5.0 契约，镜像 4001 先例，
+        // 待同步 docs/03 §12）。
         // 本表是**冻结快照**：改动必须同步文档，且走评审。
-        let expected: [(CfError, u16); 24] = [
+        let expected: [(CfError, u16); 25] = [
             (CfError::VaultLocked, 1001),
             (CfError::UnlockFailed, 1002),
             (CfError::VaultNotFound, 1003),
@@ -366,6 +380,7 @@ mod tests {
             (CfError::TotpError(String::new()), 3001),
             (CfError::BiometricUnavailable, 4001),
             (CfError::BiometricInvalidated, 4002),
+            (CfError::RecoveryUnavailable, 4003),
             (CfError::Io(String::new()), 5001),
             (CfError::InvalidArgument(String::new()), 5002),
             (CfError::LicenseSerialInvalid, 6001),
@@ -418,6 +433,10 @@ mod tests {
         assert_eq!(
             CfError::BiometricInvalidated.to_string(),
             "biometric invalidated"
+        );
+        assert_eq!(
+            CfError::RecoveryUnavailable.to_string(),
+            "recovery unavailable"
         );
     }
 

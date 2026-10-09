@@ -35,7 +35,10 @@ fi
 echo "    身份: ${IDENTITY}"
 
 KC=$(security default-keychain)
-KC=${KC//\"/}
+# 坑（2026-10-09 实测）：security default-keychain 输出带 4 个前导空格 +
+# 尾部双引号，只剥引号不剥空白 → -k 指向带空格路径，export 报
+# "SecKeychainItemExport: The specified item could not be found"。须剥净。
+KC=$(printf '%s' "$KC" | tr -d '"' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 echo "    默认 keychain: ${KC}"
 
 echo "==> 导出证书+私钥为 p12（将提示两次密码：keychain 解锁 + 新导出密码）"
@@ -49,8 +52,16 @@ read -r -s -p "    再输一次确认: " P12_PASS2
 echo
 [ "$P12_PASS" = "$P12_PASS2" ] || { echo "!! 两次输入不一致。" >&2; exit 1; }
 
-security export -k "$KC" -t identities -f pkcs12 -P "$P12_PASS" \
-  -o "$OUT/coffer_ci_cert.p12"
+rm -f "$OUT/coffer_ci_cert.p12"
+if ! security export -k "$KC" -t identities -f pkcs12 -P "$P12_PASS" \
+  -o "$OUT/coffer_ci_cert.p12" 2>"$OUT/export.err"; then
+  echo "!! security export 失败：$(cat "$OUT/export.err")" >&2
+  echo "   提示：确认 keychain 已解锁（security unlock-keychain -p 密码 \"$KC\"），再重跑本脚本。" >&2
+  rm -f "$OUT/export.err"
+  exit 1
+fi
+rm -f "$OUT/export.err"
+[ -s "$OUT/coffer_ci_cert.p12" ] || { echo "!! 导出的 p12 为空。" >&2; exit 1; }
 echo "    已导出: $OUT/coffer_ci_cert.p12"
 
 PROFILE="macos/build/app.coffer.Coffer.provisionprofile"

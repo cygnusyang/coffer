@@ -34,6 +34,18 @@ struct CofferMainApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 820, minHeight: 540)
                 .onAppear { appDelegate.attach(model: model) }
+                // OTA 更新 / 关于对话框 sheet 挂载（v2.7.0，docs/35 §2.6）：
+                // showAbout / showUpdateSheet 由应用菜单与 AboutUpdateView 触发；
+                // 更新 sheet 从关于对话框按钮触达时叠加在关于 sheet 之上。
+                // 设置页不放任何更新入口（用户裁定）。
+                .sheet(isPresented: $model.showAbout) {
+                    AboutUpdateView()
+                        .environmentObject(model)
+                }
+                .sheet(isPresented: $model.showUpdateSheet) {
+                    UpdateSheet(updater: model.updater)
+                        .environmentObject(model)
+                }
         }
         .windowToolbarStyle(.unified)
         .commands {
@@ -43,6 +55,15 @@ struct CofferMainApp: App {
             // v2.4.1：设置改独立窗口（对齐 macOS 系统设置红绿灯），经
             // DataCommands（@Environment openWindow）触发，不再走 showSettings。
             DataCommands(model: model)
+
+            // OTA 更新入口（v2.7.0，docs/35 §2.6 用户裁定）：应用菜单同项
+            // （对齐 Sparkle 惯例，「关于」下即「检查更新…」快捷入口）+ 关于
+            // 对话框主入口；设置页明确不放任何更新入口。
+            CommandGroup(replacing: .appInfo) {
+                Button("关于 Coffer…") { model.showAbout = true }
+                Divider()
+                Button("检查更新…") { model.checkForUpdates() }
+            }
         }
 
         // v2.4.1：设置独立窗口（对齐 macOS 系统设置样式——左上角红绿灯

@@ -69,6 +69,12 @@ final class AppModel: ObservableObject {
     /// 库切换器 sheet（v0.4 FR-1.2，MB-1：MainView 工具栏切换器触发，
     /// sheet 挂 RootView——与导入/设置同一跨视图触发模式）。
     @Published var showVaultSwitcher = false
+    /// OTA 更新 sheet 触发（v2.7.0，docs/35 §2.6）：应用菜单「检查更新…」+
+    /// 关于对话框「检查更新…」按钮共用；设置页不放任何更新入口（用户裁定）。
+    @Published var showUpdateSheet = false
+    /// 「关于 Coffer」对话框 sheet 触发（应用菜单「关于 Coffer…」；自建关于
+    /// 视图以容纳「检查更新…」按钮，见 AboutUpdateView）。
+    @Published var showAbout = false
 
     /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
     ///
@@ -361,6 +367,10 @@ final class AppModel: ObservableObject {
         } catch {
             phase = .fatal(ErrorPresenter.text(error))
         }
+        // 首启消费上次 OTA 安装结果（r0.4 §6.4 第 6 步）：无论库相位（含 .fatal）
+        // 都执行——更新成败呈现与密码库无关；成功静默，失败经 showUpdateSheet
+        // 呈现 .failed（含退出码文案）。
+        consumePendingUpdateResultIfNeeded()
     }
 
     /// bootstrap 默认库选择（纯函数，docs/15 §3.2.1）：lastVaultUUID 仍在
@@ -1150,6 +1160,57 @@ final class AppModel: ObservableObject {
             factory.lockAll()
         }
     }
+    // MARK: - OTA 更新（v2.7.0，docs/35 §2.6 / §6.3；主动触发，无启动静默检查）
+
+    /// Updater 状态机（契约 6.3 冻结接口：state / check / install / dismiss）。
+    /// lazy：AppModel 为非隔离 init（@StateObject 主线程初始化），UpdaterManager
+    /// 为 @MainActor 类，首次访问（@MainActor 的 checkForUpdates / installUpdate
+    /// 或 RootView 注入 UpdateSheet 时）才实例化。
+    private(set) lazy var updater = UpdaterManager()
+
+    /// 「检查更新…」统一入口（应用菜单 + 关于对话框共用）：显示 sheet + 主动检查。
+    /// 不做启动静默检查（§2.6 用户裁定：主动触发，零网络姿态）；正在检查/下载/
+    /// 安装中不重复触发（UpdateCopy.canStartCheck 纯函数判定）。
+    func checkForUpdates() {
+        showUpdateSheet = true
+        guard UpdateCopy.canStartCheck(updater.state) else { return }
+        Task { await updater.check() }
+    }
+
+    /// 安装更新（UpdateSheet「下载并安装」/「安装更新…」确认后调用）。
+    ///
+    /// r0.4（docs/35 §6.4 第 5-6 步，沙盒继承实证修订）：install() 经 LaunchServices
+    /// 启动非沙盒 helper（嵌套 bundle）后即返回——App 不备份 / 不 spawn / 不 waitpid
+    /// （沙盒无权写 /Applications，替换全归 helper）；helper 等本 App pid 退出才做
+    /// 备份 → 替换 → relaunch，故 install() 返回后 App 应尽快退出。但
+    /// NSWorkspace.openApplication 是异步请求，须留 ~0.5s 窗口让 launch 落地，
+    /// 不得在提交前退出。仅安装进行中（.installing）才退出——install() 失败
+    /// （.failed）要留在前台呈现错误。
+    func installUpdate() {
+        Task {
+            await updater.install()
+            guard updater.state == .installing else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.updaterTerminateDelay) {
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    /// install() 返回后到 App 退出的延迟：给 LaunchServices launch 请求落地留窗口
+    /// （helper 等本 App pid 退出，退出越早越好，但不得早于 launch 提交）。
+    nonisolated static let updaterTerminateDelay: TimeInterval = 0.5
+
+    /// 首启消费上次安装结果（r0.4 §6.4 第 6 步）：被 relaunch 的 .app 首次启动
+    /// 读 result 文件——成功静默（用户看到新版本）；失败置 `.failed` 并打开更新
+    /// sheet 呈现（含退出码文案）。result 文件与 UserDefaults key 一次性消费后
+    /// 由 Updater 清除，无 pending 则 no-op（幂等，不打扰正常启动）。
+    private func consumePendingUpdateResultIfNeeded() {
+        updater.consumePendingInstallResult()
+        if case .failed = updater.state {
+            showUpdateSheet = true
+        }
+    }
+
     // MARK: - 密码强度（非门禁展示用）
 
     /// 强度估算：走 Rust 工厂版 zxcvbn（纯计算、无会话依赖，建库前

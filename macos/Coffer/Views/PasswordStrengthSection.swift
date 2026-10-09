@@ -53,11 +53,9 @@ struct PasswordStrengthSection: View {
     }
 
     /// Rust zxcvbn 估算（工厂版、无会话依赖）；估算失败本地粗估兜底。
+    /// 判分与 UpdatePasswordSheet 共用 PasswordStrength.score，避免两处漂移。
     private var currentScore: Int {
-        if let estimate = model.estimateStrength(password) {
-            return Int(estimate.score)
-        }
-        return PasswordStrength.localScore(password)
+        PasswordStrength.score(password, estimate: model.estimateStrength)
     }
 
     private func strengthColor(_ score: Int) -> Color {

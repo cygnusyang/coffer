@@ -1,5 +1,6 @@
 // ItemDetailView.swift —— 条目详情：字段掩码/显示切换、URL/标签/TOTP 元数据、
-// 收藏 / 编辑 / 删除动作、历史版本入口（FR-2.9，回滚见 HistorySheet）。
+// 收藏 / 编辑 / 删除动作、历史版本入口（FR-2.9，回滚见 HistorySheet）、
+// 「更新密码」快捷动作（FR-18.1，见 UpdatePasswordSheet）。
 // 复制按钮在阶段三接入（剪贴板 30s 清除一并实现）。
 // FR-12.4（v0.7）：密码字段「放大」→ 全屏 LargePasswordSheet（明文只在
 // sheet 存活期内持有，关闭即释放；锁定随会话拆除，见 LargePasswordSheet）。
@@ -13,6 +14,8 @@ struct ItemDetailView: View {
     let details: FfiItemDetails
 
     @State private var showEditSheet = false
+    /// FR-18.1「更新密码」快捷动作 sheet（不进全量编辑）。
+    @State private var showUpdatePassword = false
     @State private var confirmHardDelete = false
     @State private var showHistory = false
     /// 跨库复制 sheet（v0.4 FR-2.10，MB-2）。
@@ -30,6 +33,13 @@ struct ItemDetailView: View {
     private var isTrashed: Bool {
         if case .trashed = details.state { return true }
         return false
+    }
+
+    /// FR-18.1：条目有密码字段（designation == .password）才提供「更新密码」
+    /// 入口；信用卡等无密码条目不显示（避免把 CVV 之类误当密码，见
+    /// UpdatePassword.passwordField）。
+    private var hasPasswordField: Bool {
+        UpdatePassword.passwordField(in: details) != nil
     }
 
     var body: some View {
@@ -82,12 +92,20 @@ struct ItemDetailView: View {
             // sheet 关闭后刷新计数（回滚会写入新版本，列表 +1）。
             if !showHistory { refreshHistoryCount() }
         }
+        .onChange(of: showUpdatePassword) {
+            // 更新密码会 append 历史版本（FR-2.9）：关闭后刷新计数。
+            if !showUpdatePassword { refreshHistoryCount() }
+        }
         .sheet(isPresented: $showHistory) {
             HistorySheet(itemId: details.uuid)
                 .environmentObject(model)
         }
         .sheet(isPresented: $showEditSheet) {
             ItemEditView(mode: .edit(details))
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showUpdatePassword) {
+            UpdatePasswordSheet(details: details)
                 .environmentObject(model)
         }
         .sheet(isPresented: $showCrossCopy) {
@@ -297,6 +315,15 @@ struct ItemDetailView: View {
                         showEditSheet = true
                     } label: {
                         Label("编辑", systemImage: "pencil")
+                    }
+                }
+                // FR-18.1「更新密码」快捷动作（不进全量编辑，意图聚焦；
+                // 无密码字段的条目不提供入口）
+                if hasPasswordField {
+                    Button {
+                        showUpdatePassword = true
+                    } label: {
+                        Label("更新密码", systemImage: "key")
                     }
                 }
                 Button(role: .destructive) {

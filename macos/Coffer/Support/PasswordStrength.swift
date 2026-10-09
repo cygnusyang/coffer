@@ -8,6 +8,16 @@
 import Foundation
 
 enum PasswordStrength {
+    /// 统一分：优先 Rust zxcvbn 估算，失败本地粗估兜底（PasswordStrengthSection
+    /// 与 UpdatePasswordSheet 共用的强度条 / 门禁来源，避免两处判分漂移）。
+    static func score(
+        _ password: String,
+        estimate: (String) -> FfiStrengthEstimate?
+    ) -> Int {
+        if let estimate = estimate(password) { return Int(estimate.score) }
+        return localScore(password)
+    }
+
     /// 本地粗略预估分（0–4）。非 zxcvbn，仅首次建库无会话时兜底。
     static func localScore(_ password: String) -> Int {
         var score = 0

@@ -1143,6 +1143,12 @@ pub enum FfiAuditEvent {
     PasswordChange,
     /// 跨库复制成功（FR-2.10，源库与目标库各一条）。
     ItemCopy,
+    /// 生物识别重置主密码成功（FR-17.1，v2.5.0）。
+    PasswordResetByBio,
+    /// 恢复码重置主密码成功（FR-17.2，v2.5.0）。
+    PasswordResetByRecovery,
+    /// 启用 / 重新生成恢复码成功（FR-17.2，v2.5.0）。
+    RecoveryCodeEnabled,
 }
 
 impl From<cf_store::AuditEvent> for FfiAuditEvent {
@@ -1154,6 +1160,9 @@ impl From<cf_store::AuditEvent> for FfiAuditEvent {
             cf_store::AuditEvent::PuxExport => Self::PuxExport,
             cf_store::AuditEvent::PasswordChange => Self::PasswordChange,
             cf_store::AuditEvent::ItemCopy => Self::ItemCopy,
+            cf_store::AuditEvent::PasswordResetByBio => Self::PasswordResetByBio,
+            cf_store::AuditEvent::PasswordResetByRecovery => Self::PasswordResetByRecovery,
+            cf_store::AuditEvent::RecoveryCodeEnabled => Self::RecoveryCodeEnabled,
         }
     }
 }

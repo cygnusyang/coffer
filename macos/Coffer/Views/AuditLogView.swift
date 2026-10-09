@@ -7,8 +7,9 @@
 //
 // 事件打点位置（写入语义，注释供 UI 理解，实际打点在 Rust 内核）：
 //   事件只由内核动作的成功路径打点——备份导出（FR-8.1）/ 备份恢复 /
-//   CSV 导出 / 修改主密码（FR-1.8）/ 条目跨库复制（v0.4）；打点失败
-//   静默（不影响主流程）；备份包内不含「本次导出」这一条事件。
+//   CSV 导出 / 修改主密码（FR-1.8）/ 条目跨库复制（v0.4）/ 主密码恢复
+//   通道（FR-17，v2.5.0：生物识别重置 / 恢复码重置 / 启用恢复码）；
+//   打点失败静默（不影响主流程）；备份包内不含「本次导出」这一条事件。
 //
 // 分页约定（Could 级保持简单）：一次性取最近 200 条（limit = 200，
 // Rust 侧已按 (ts DESC, id DESC) 倒序返回，此处不再重排）；不提供
@@ -33,6 +34,9 @@ extension FfiAuditEvent {
         case .puxExport: return "导出 1PUX"
         case .passwordChange: return "修改主密码"
         case .itemCopy: return "跨库复制"
+        case .passwordResetByBio: return "生物识别重置主密码"
+        case .passwordResetByRecovery: return "恢复码重置主密码"
+        case .recoveryCodeEnabled: return "启用恢复码"
         }
     }
 
@@ -45,6 +49,9 @@ extension FfiAuditEvent {
         case .puxExport: return "shippingbox"
         case .passwordChange: return "key"
         case .itemCopy: return "doc.on.doc"
+        case .passwordResetByBio: return "faceid"
+        case .passwordResetByRecovery: return "key.fill"
+        case .recoveryCodeEnabled: return "qrcode"
         }
     }
 }

@@ -20,6 +20,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
 tracing = { workspace = true }
+# UUID 格式校验（set-password `--id` 兜底定位，docs/34 §5.1 格式错 → 退出码 4）。
+# 已随 cf-domain（normal 依赖）进入依赖树，此处直列仅为显式使用——不新增 crate
+# （docs/20 §2.2 只下不上）。
+uuid = { workspace = true }
 # UDS 传输（docs/20 §3.6，v2.1.0 D-4）：
 #   hmac / sha2 —— 会话 challenge 指纹（HMAC-SHA256，§3.6 ③，docs/20 §2.2 行）；
 #   cf-uds-sys —— macOS peer 凭据 syscall 安全封装（§3.6 ② LOCAL_PEERPID /
@@ -48,6 +52,11 @@ cf-audit = { workspace = true, optional = true }
 # 在该 crate 内表达（workspace 惯例：Cargo.toml 无 target 门控，同 cf-uds-sys；
 # 非 macOS 分支编译期不触 FFI）。feature 关闭时依赖树不含（docs/20 §2.2 只下不上）。
 cf-escrow-keychain = { path = "../cf-escrow-keychain", optional = true }
+# 仅在 coffer-store feature 下需要：`set-password` TTY 隐藏输入（docs/34 §5，
+# FR-18.2）。rpassword 在自身 crate 内封装 termios（unsafe 面隔离，cf-mcp 保持
+# forbid(unsafe_code)，cf-uds-sys / cf-escrow-keychain 先例同构）；仅隐藏输入
+# 路径使用，feature 关闭时依赖树不含（docs/20 §2.2 只下不上）。
+rpassword = { workspace = true, optional = true }
 
 [features]
 default = ["coffer-store"]
@@ -59,11 +68,12 @@ coffer-store = [
     "dep:cf-crypto",
     "dep:cf-audit",
     "dep:cf-escrow-keychain",
+    "dep:rpassword",
 ]
 
 # `coffer` 二进制（docs/20 §5.1）：本包产 `[[bin]] name = "coffer"`（bin-in-crate，
 # 沿用 cf-ffi `uniffi-bindgen` 先例），未来 `coffer list/run/…` 扩进同一 bin 或
-# 独立 cf-cli crate（届时再裁，本版只管 `mcp` 子命令）。
+# 独立 cf-cli crate（届时再裁，本版管 `mcp` 与 `set-password` 两个子命令）。
 [[bin]]
 name = "coffer"
 path = "src/main.rs"

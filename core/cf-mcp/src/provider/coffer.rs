@@ -128,7 +128,9 @@ impl CofferStoreProvider {
     }
 
     /// 详情条目是否带环境容器保留标签。
-    fn is_env_details(d: &ItemDetails) -> bool {
+    ///
+    /// `pub(crate)`：`set_password` 复用同界（环境容器不写密码，docs/34 §5）。
+    pub(crate) fn is_env_details(d: &ItemDetails) -> bool {
         d.tags.iter().any(|t| t.expose() == ENV_TAG)
     }
 
@@ -556,12 +558,13 @@ fn unix_now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// `ItemDetails` → `ItemDraft`（grant/revoke/rotate 的读-改-写重建）。
+/// `ItemDetails` → `ItemDraft`（grant/revoke/rotate 的读-改-写重建；
+/// `pub(crate)`：`set_password` 复用同一整换重建，docs/34 §5）。
 ///
 /// `update_item` 是整换语义（fields/urls/tags/sections 删旧插新），重建须
 /// 还原全量字段，否则丢数据。TOTP 恒传 `None`——`update_item` 默认
 /// `TotpUpdate::Keep`，不会丢既有 TOTP（docs/08 §6 拆分裁定）。
-fn draft_from_details(d: &ItemDetails) -> ItemDraft {
+pub(crate) fn draft_from_details(d: &ItemDetails) -> ItemDraft {
     ItemDraft {
         title: d.title.expose().to_string(),
         category: d.category,

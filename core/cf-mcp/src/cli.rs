@@ -4,9 +4,12 @@
 //! [`crate::McpServer::serve_stdio`]。stdout 永为协议帧（§3.1）；日志只走
 //! stderr 或 `--log` 文件。退出码映射见 §5.3 与 [`exit_code`]。
 //!
-//! ## 子命令（docs/20 §5.1）
+//! ## 子命令（docs/20 §5.1 / docs/34 §5）
 //!
 //! - `mcp`：MCP 服务（本文主体）；
+//! - `set-password`：写子命令（v2.5.0，docs/34 §5 / FR-18.2；`coffer-store`
+//!   feature 门控）——实现见 [`crate::set_password`]，复用本模块
+//!   [`unlock_vault`]（escrow → env 兜底 → fail-closed）；
 //!
 //! ## provider 选择（docs/20 §4.5 / §5.2；docs/27 D-2 缺省翻转）
 //!
@@ -243,6 +246,9 @@ fn take_value(args: &[String], i: &mut usize, flag: &str) -> Result<String, CliE
 /// 日志**（§3.5-4）；`[u8; 32]` 用后显式 zeroize。
 ///
 /// 成功会话 → [`CofferStoreProvider::new`]（复用既有构造，coffer.rs:99）。
+///
+/// 解锁逻辑（含 escrow 语义与测试面）全部在 [`unlock_vault`]——本函数只是把
+/// 解锁会话包装成 provider；`set-password` 复用 [`unlock_vault`] 直接拿会话写库。
 #[cfg(feature = "coffer-store")]
 fn build_coffer_provider(
     vault_dir: &std::path::Path,
@@ -250,6 +256,47 @@ fn build_coffer_provider(
     env_password: Option<SecretString>,
     logger: &mut Logger,
 ) -> Result<CofferStoreProvider, i32> {
+    Ok(CofferStoreProvider::new(unlock_vault(
+        vault_dir, escrow, env_password, logger,
+    )?))
+}
+
+/// 取密 + 解锁（docs/29 §6.2，D-4 冻结契约）：**托管优先 → env 兜底 → 都无退出 1**。
+///
+/// `coffer mcp` 与 `coffer set-password` 共用（docs/34 §5.1「复用既有 escrow 解锁
+/// 逻辑」）——set-password 需要已解锁的 [`cf_session::VaultSession`] 走 `update_item`，
+/// 故本函数返回会话而非 provider（provider 侧再包一层 [`CofferStoreProvider::new`]）。
+///
+/// 流程：`COFFER_VAULT_DIR` 必填（缺 → 配置错误退出 1，现状维持）→
+/// `open_vault`（**锁定态**读 header，取 vault_uuid）→
+/// [`VaultEscrowStore::read_mcp_key`]：
+///
+/// - `Ok(Some(mcp_key))` → `unlock_with_mcp_key`；失败 → **fail-closed 退出 1**
+///   （提示从 App 重新启用 MCP 以重建托管，**绝不回落 env**）；
+/// - `Ok(None)`（托管不存在）→ env 兜底：有 `COFFER_VAULT_PASSWORD` → 密码解锁
+///   + warning `source="env-fallback"`；无 → 配置错误退出 1（提示启用托管或提供
+///     `COFFER_VAULT_PASSWORD`）；
+/// - `Err(..)`（读取失败：ACL / 签名 / 内容非法）→ **fail-closed 退出 1**
+///   （可操作消息，不回退 env）。
+///
+/// **read 门（lead 裁定 2026-10-07，§5.2 意图源语义）**：仅当 header
+/// `mcp_wrap.available == true`（用户经 App 显式启用托管）才读 Keychain；
+/// `available == false` = 用户显式停用托管 → 语义即「托管不存在」→ **直接走
+/// env 兜底，不触 Keychain read**。孤儿条目边界：header 禁用 + keychain 残留
+/// → 仍走 env（`unlock_with_mcp_key` 对该态本就 1002，header 为意图源）。
+///
+/// **env 不覆盖托管**（D-4）：托管条目存在即不再看 env；env 仅在托管不存在
+/// （`Ok(None)` / `available=false`）时兜底。mcp_key **不经 argv / 协议帧 /
+/// 日志**（§3.5-4）；`[u8; 32]` 用后显式 zeroize。
+///
+/// 成功返回解锁态会话；失败返回退出码（1 配置错误 / 3 身份缺失 7002）。
+#[cfg(feature = "coffer-store")]
+pub(crate) fn unlock_vault(
+    vault_dir: &std::path::Path,
+    escrow: &dyn VaultEscrowStore,
+    env_password: Option<SecretString>,
+    logger: &mut Logger,
+) -> Result<cf_session::VaultSession, i32> {
     let session = match open_vault(vault_dir) {
         Ok(s) => s,
         Err(e) => {
@@ -271,7 +318,7 @@ fn build_coffer_provider(
     // read 门（lead 裁定 2026-10-07，§5.2 意图源语义）：available=false =
     // 用户显式停用托管 → 语义即「托管不存在」→ 直接 env 兜底，不触 Keychain。
     if !session.has_mcp_wrap() {
-        return env_fallback_unlock(session, env_password, logger);
+        return unlock_with_env_fallback(session, env_password, logger);
     }
 
     let vault_uuid = session.vault_uuid().to_string();
@@ -297,7 +344,7 @@ fn build_coffer_provider(
                 }
             }
         }
-        Ok(None) => return env_fallback_unlock(session, env_password, logger),
+        Ok(None) => return unlock_with_env_fallback(session, env_password, logger),
         Err(e) => {
             // fail-closed：读取失败不回退 env（防掩盖签名 / ACL 问题，D-4）。
             let hint = match e.kind() {
@@ -312,19 +359,20 @@ fn build_coffer_provider(
         }
     }
 
-    Ok(CofferStoreProvider::new(session))
+    Ok(session)
 }
 
 /// env 兜底解锁（docs/29 §6.2，仅托管不存在时进入）：
 /// 有 `COFFER_VAULT_PASSWORD` → `unlock` + warning `source="env-fallback"`；
 /// 无 → 配置错误退出 1（提示启用托管或提供 env）。解锁失败按 §5.3 映射
-/// （7002 → 3 身份缺失；7001 / 其余 → 1）。
+/// （7002 → 3 身份缺失；7001 / 其余 → 1）。返回解锁态会话（供 provider /
+/// set-password 共用）。
 #[cfg(feature = "coffer-store")]
-fn env_fallback_unlock(
+fn unlock_with_env_fallback(
     session: cf_session::VaultSession,
     env_password: Option<SecretString>,
     logger: &mut Logger,
-) -> Result<CofferStoreProvider, i32> {
+) -> Result<cf_session::VaultSession, i32> {
     let Some(password) = env_password else {
         logger.error(
             "error: 未启用 MCP 解锁托管，也未提供 $COFFER_VAULT_PASSWORD；\
@@ -335,7 +383,7 @@ fn env_fallback_unlock(
     match session.unlock(password.expose()) {
         Ok(_) => {
             logger.warn("vault unlocked via env password fallback (source=\"env-fallback\")");
-            Ok(CofferStoreProvider::new(session))
+            Ok(session)
         }
         Err(e) => {
             let (msg, code) = match e {
@@ -414,6 +462,15 @@ impl Logger {
             }
         };
         Ok(Self { sink })
+    }
+
+    /// 构造仅 stderr 的日志器（`set-password` 等无 `--log` 选项的子命令用，
+    /// docs/34 §5：诊断恒走 stderr，stdout 只写命令结果）。
+    #[must_use]
+    pub fn stderr() -> Self {
+        Self {
+            sink: LogSink::Stderr,
+        }
     }
 
     /// 信息级日志。
@@ -607,7 +664,8 @@ fn build_op_provider(
 /// `coffer` bin 入口：解析 argv → 构建 provider → 启动 stdio 服务，返回退出码。
 ///
 /// `args` = `argv[1..]`（不含程序名），首个非 flag 参数须为子命令 `mcp`
-/// （docs/20 §5.1）。退出码按 §5.3 映射：
+/// （docs/20 §5.1）或 `set-password`（docs/34 §5，feature 门控）。退出码按
+/// §5.3 映射：
 ///
 /// - 致命启动错误（解析 / provider / 身份）恒写 stderr 并退出 1 或 3；
 /// - 运行时生命周期日志经 [`Logger`]（stderr / `--log` 文件），服务正常结束退出 0；
@@ -616,11 +674,18 @@ fn build_op_provider(
 /// 本函数不 panic（生产禁 unwrap / expect）；`main.rs` 仅透传返回码。
 pub fn run(args: &[String]) -> i32 {
     let Some(subcommand) = args.first() else {
-        eprintln!("error: missing subcommand; expected `coffer mcp` (docs/20 §5.2)");
+        eprintln!("error: missing subcommand; expected `coffer mcp` or `coffer set-password` (docs/20 §5.2 / docs/34 §5)");
         return exit_code::CONFIG_ERROR;
     };
+    // v2.5.0 写面（docs/34 §5，FR-18.2）：`coffer set-password` 写子命令。
+    // 依赖 cf-session/cf-audit，仅在 `coffer-store` feature 下可用；关闭时按
+    // 未知子命令处理（slim 构建不含写面，docs/20 §2.2 只下不上）。
+    #[cfg(feature = "coffer-store")]
+    if subcommand == "set-password" {
+        return crate::set_password::run(&args[1..]);
+    }
     if subcommand != "mcp" {
-        eprintln!("error: unknown subcommand `{subcommand}`; expected `coffer mcp` (docs/20 §5.2)");
+        eprintln!("error: unknown subcommand `{subcommand}`; expected `coffer mcp` or `coffer set-password` (docs/20 §5.2 / docs/34 §5)");
         return exit_code::CONFIG_ERROR;
     }
 

@@ -42,6 +42,11 @@ pub mod error;
 pub mod protocol;
 pub mod provider;
 pub mod redact;
+/// `coffer set-password` 写子命令（docs/34 §5，FR-18.2，v2.5.0 写面）——依赖
+/// cf-session / cf-audit / rpassword，仅在 `coffer-store` feature 下编译
+/// （slim 构建不引入该依赖树，docs/20 §2.2 只下不上）。
+#[cfg(feature = "coffer-store")]
+pub mod set_password;
 pub mod tools;
 pub mod uds;
 

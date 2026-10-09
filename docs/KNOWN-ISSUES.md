@@ -1233,6 +1233,31 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
+## BUG-17（🟡 已裁定「是」：超时锁定后窗口可见状态下再次打开不弹 Touch ID）
+
+**登记日期**：2026-10-09
+**发现环境**：cygnus 真机（v2.4.0 移除轮后，用户手动触发自动锁定后再次打开观察）
+**分级**：严重级 S3（次要交互——解锁可达（LockView 手点），缺的是自动引导便捷性）/ 优先级 P2 / 来源版本 既有（用户 2026-10-03 裁定自动引导起即有，非回归）/ 发现版本 v2.4.0
+**状态**：🟡 **已裁定「是」（2026-10-09 用户裁「是」），随 v2.5.0 实现**——用户 2026-10-09 提出「coffer 超时锁定后再次打开没触发 Touch ID」；**既有已知未裁定行为**（代码注释明示，非回归）：窗口开着时自动锁定后再解锁不自动弹（用户未裁定，不实现）。用户补充动机（2026-10-09 截图+说明）：主密码有时会忘记，期望 Touch ID 始终可解锁——LockView 手点入口已在（L75，「使用 Touch ID 解锁」，`touchIDStatus == .enabled` 时显示），缺的是**可见窗口锁定态激活时自动弹**（需求=启动自动引导同体验）。**深挖**：用户动机暴露的是主密码遗忘恢复缺口 → 已立项 FR-17.1 / FR-17.2（`01-需求分析.md` §5-Q，v2.5.0，用户裁定 A+B 都做）
+**核销记录**：—
+**证据**：`macos/Coffer/CofferApp.swift:150-168` summonMainWindow——`let wasHidden = !window.isVisible`，仅 `wasHidden` 才调 `maybeAutoPromptBiometric`；注释「窗口本就可见（自动锁定后直接手点解锁）不自动弹（用户未裁定，不实现）」。`macos/Coffer/AppModel.swift:391-404` maybeAutoPromptBiometric——`phase == .locked` 前置 + `AutoPromptBiometric.shouldAutoPromptBiometric`（vaultCount==1 ∧ 支持 ∧ .enabled ∧ 未弹过 ∧ !isBusy）+ `session.hasBiometricWrap()`；`autoPromptBiometricFired` 一次性旗标（L38，phase 离开 .locked 复位 L44-46）。`macos/Coffer/Support/AutoPromptBiometric.swift` 纯函数判定
+
+### 现象（预期/实际 分行写）
+- **预期**：App 超时自动锁定后，用户再次打开/激活窗口即弹 Touch ID 认证框（与启动自动引导同体验）。用户补充：主密码可能忘记，Touch ID 应始终可解锁。
+- **实际**：窗口在超时时**保持可见**（未被隐藏）→ 用户点窗口/激活 → `wasHidden == false` → `maybeAutoPromptBiometric()` 不被调用 → 不弹 Touch ID → 落到 LockView 手点「Touch ID 解锁」/输主密码。手点入口存在（`macos/Coffer/Views/LockView.swift:75`），但需**主动点一次**，非自动。
+- **边界**：窗口**从隐藏恢复**（关窗驻留/⌥⌘P 呼出）时 `wasHidden == true` → 会弹（既有行为正常）。
+
+### 根因（已实证 / 待查）
+**已实证**：触发面只覆盖「窗口从隐藏恢复」，未覆盖「窗口可见态下的锁定 → 激活」。注释明示为**未裁定行为**（用户 2026-10-03 只裁了启动/呼出自动引导）。非回归——自 2026-10-03 起一直如此。
+
+### 修复路径
+**已裁定（2026-10-09 用户裁「是」）**：`summonMainWindow` 去掉/放宽 `wasHidden` 门（或改在激活回调里统一调 `maybeAutoPromptBiometric`），使**可见窗口锁定态激活也自动弹 Touch ID**（与启动自动引导同体验）；复核 `autoPromptBiometricFired` 防重入（避免手点取消后反复骚扰）。随 v2.5.0（FR-17.1 生物识别重置主密码）一并交付，回归测试入 AutoPromptBiometricTests。
+
+### 复现与诊断
+设置自动锁定 → 打开库（窗口保持可见）→ 空闲至自动锁定 → 点窗口激活 → 观察：无 Touch ID 弹框，仅 LockView。对照：⌥⌘P 呼出（窗口从隐藏恢复）→ 弹 Touch ID。
+
+---
+
 ```
 ## BUG-N（🔴/🟡/✅ 状态）：一句话标题
 

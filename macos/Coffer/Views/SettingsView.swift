@@ -64,12 +64,18 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
-            // v2.4.1：完成按钮置顶 toolbar（.confirmationAction）——滚动时
-            // 常驻窗口顶部，随时可结束设置动作；BUG-3 显式退出口语义不变
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+            // v2.4.1：完成按钮置顶右侧——sheet 内 .toolbar/.confirmationAction
+            // 会降级到底部右下角（macOS sheet 无窗口工具栏），故用
+            // .safeAreaInset(edge: .top) 固定顶栏、按钮置行尾：滚动时常驻
+            // 右上角，随时可结束设置动作；BUG-3 显式退出口语义不变
+            .safeAreaInset(edge: .top) {
+                HStack {
+                    Spacer()
                     Button("完成") { dismiss() }
+                        .buttonStyle(.borderedProminent)
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 6)
             }
         }
         // 宽度固定、高度自适应（节内容随 Touch ID 内联确认行等动态展开）

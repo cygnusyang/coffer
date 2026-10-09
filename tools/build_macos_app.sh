@@ -87,7 +87,10 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
 SOURCES=()
 while IFS= read -r f; do
   SOURCES+=("${f}")
-done < <(find "${SRC_DIR}" -name '*.swift' ! -path '*SmokeTest*' ! -path '*CoreBindings*' | sort)
+# 排除 Installer/ 目录（helper 独立 swiftc 编译，见 3.6）——注意必须用 */Installer/*
+# 而非 *Installer*：后者会误伤 Updater/OTAInstaller.swift（文件名含 "Installer"），
+# 导致 Installing 协议缺失、App 编译红（集成轮实证）。
+done < <(find "${SRC_DIR}" -name '*.swift' ! -path '*SmokeTest*' ! -path '*CoreBindings*' ! -path '*/Installer/*' | sort)
 SOURCES+=("${SRC_DIR}/CoreBindings/cf_ffi.swift")
 
 CLANG_INCLUDES=()
@@ -188,6 +191,80 @@ codesign --force --sign "${IDENTITY}" \
   --entitlements "${SRC_DIR}/Coffer-cli.entitlements" \
   "${CLI_APP_DIR}" || die "coffer CLI（嵌套 bundle）codesign 失败。"
 
+# ---- 3.6/4 OTA install helper 构建 + 装配 + 签名（v2.7.0，r0.4 嵌套 bundle）----
+# OTA install helper（docs/35 §6.4 替换协议，r0.4）：嵌入式非沙盒 install helper，
+# 装配为嵌套 .app bundle Contents/Helpers/CofferUpdater.app。r0.4 定稿：open/
+# LaunchServices 只认 bundle、不认裸 Mach-O（集成轮实证），故不可再用裸二进制形态。
+# Spike-0 裁定（docs/35 §4 开放点 1）：无受限 entitlement、无 embedded.provisionprofile，
+# Apple Development 签名即 AMFI 放行——helper 无 keychain-access-groups，不适用
+# D-6 SIGKILL 纪律。签名顺序：嵌套 bundle 先于外层 App（对齐 coffer CLI 先例，
+# 外层签名不覆盖已签嵌套 bundle 的独立 entitlements）。
+step "3.6/4 构建并装配 OTA install helper（CofferUpdater.app，r0.4 嵌套 bundle）"
+
+HELPER_SRC_DIR="${SRC_DIR}/Installer"
+HELPER_APP_DIR="${APP_DIR}/Contents/Helpers/CofferUpdater.app"
+[[ -d "${HELPER_SRC_DIR}" ]] || die "缺少 OTA install helper 源码目录: ${HELPER_SRC_DIR}"
+INSTALLER_SOURCES=()
+while IFS= read -r f; do
+  INSTALLER_SOURCES+=("${f}")
+done < <(find "${HELPER_SRC_DIR}" -name '*.swift' | sort)
+[[ ${#INSTALLER_SOURCES[@]} -gt 0 ]] || die "OTA install helper 源码目录无 Swift 文件: ${HELPER_SRC_DIR}"
+
+mkdir -p "${HELPER_APP_DIR}/Contents/MacOS"
+# 与 App 主可执行同一 target 约定（arm64-apple-macos14.0）。helper 为独立顶层
+# 入口（main.swift 顶层代码），无需 -parse-as-library。
+# 生产编译：-D COFFER_UPDATER_PRODUCTION 使 currentAppPath 锚为编译期常量
+# /Applications/Coffer.app（严禁读 env，见 main.swift 条件编译）；-framework Security
+# 供 SecStaticCodeCheckValidity 静态验签载荷（C-1）。
+swiftc -O \
+  -swift-version 5 \
+  -target arm64-apple-macos14.0 \
+  -D COFFER_UPDATER_PRODUCTION \
+  -framework Security \
+  "${INSTALLER_SOURCES[@]}" \
+  -o "${HELPER_APP_DIR}/Contents/MacOS/coffer-update" \
+  || die "OTA install helper（swiftc）编译失败。"
+
+# 生产锚 -D 旗标漏传断言（LOW#1，负载承重）：安全边界在 #if COFFER_UPDATER_PRODUCTION
+# （main.swift），若漏传 -D，生产 helper 会落入 env 锚分支（COFFER_UPDATER_TEST_ANCHOR），
+# 同用户进程可 posix_spawn 带 env 绕过锚定。生产 -D 分支会把 env-read 代码编译掉，
+# 产物不应含该字符串；出现即漏传 → 构建失败。
+if strings "${HELPER_APP_DIR}/Contents/MacOS/coffer-update" | grep -q 'COFFER_UPDATER_TEST_ANCHOR'; then
+  die "OTA install helper 编译漏传 -D COFFER_UPDATER_PRODUCTION：产物含测试锚 env 分支。"
+fi
+# 同类断言（C-2 追加）：relaunch 测试 seam（COFFER_UPDATER_TEST_FAKE_RELAUNCH）也在
+# #if !COFFER_UPDATER_PRODUCTION 内；漏传 -D 会放行「假 relaunch」分支——攻击者设 env
+# 即让 helper 假装启动成功而实际不启动 App（可用性破坏）。生产产物不得含该字符串。
+if strings "${HELPER_APP_DIR}/Contents/MacOS/coffer-update" | grep -q 'COFFER_UPDATER_TEST_FAKE_RELAUNCH'; then
+  die "OTA install helper 编译漏传 -D COFFER_UPDATER_PRODUCTION：产物含测试 relaunch seam env 分支。"
+fi
+
+# 最小 Info.plist：CFBundleIdentifier=app.coffer.Coffer.updater（同 TeamID 同 DR），
+# LSMinimumSystemVersion 对齐主 App 14.0。无 XML 注释（规避 plutil/codesign 解析坑）。
+cat > "${HELPER_APP_DIR}/Contents/Info.plist" <<'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>app.coffer.Coffer.updater</string>
+	<key>CFBundleExecutable</key>
+	<string>coffer-update</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleName</key>
+	<string>CofferUpdater</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+</dict>
+</plist>
+PLIST_EOF
+printf 'APPL????' > "${HELPER_APP_DIR}/Contents/PkgInfo"
+
+# 不带 --entitlements、不嵌 profile（Spike-0 裁定无受限 entitlement 即 AMFI 放行）；
+# 不加 --options runtime（对齐 App 与 coffer CLI 现有签名约定）。
+codesign --force --sign "${IDENTITY}" "${HELPER_APP_DIR}" || die "OTA install helper（嵌套 bundle）codesign 失败。"
+
 # ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
 step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
 # 签名身份与 profile 已在 3.5 发现/校验（coffer CLI 与 App 同一身份、同一 profile）。
@@ -202,11 +279,13 @@ codesign --force --sign "${IDENTITY}" \
 
 codesign --verify --strict "${APP_DIR}" || die "签名校验失败。"
 codesign --verify --strict "${CLI_APP_DIR}" || die "coffer CLI 嵌套 bundle 签名校验失败。"
+codesign --verify --strict "${HELPER_APP_DIR}" || die "OTA install helper（嵌套 bundle）签名校验失败。"
 
 step "完成 ✅"
 echo "  App : ${APP_DIR}"
 echo "  启动: open ${APP_DIR}"
 echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
+echo "  install helper: ${HELPER_APP_DIR}（OTA 替换，docs/35 §6.4）"
 echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
 echo "  分发渠道: appstore（沙盒单渠道）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

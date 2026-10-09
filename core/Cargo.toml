@@ -101,6 +101,13 @@ getrandom = "0.4.3"
 # [待校准] 内存清零。必须在 drop 时真的清零，不能依赖编译器不优化掉。
 zeroize = { version = "1", features = ["zeroize_derive"] }
 
+# [已确认] rpassword 7.3.1 —— CLI TTY 隐藏输入（v2.5.0 `coffer set-password`，
+#           docs/34 §5.1，FR-18.2）。主流方案（无更主流替代），MIT/Apache-2.0
+#           与项目 MIT 兼容，活跃维护（2024-09 发布）；unsafe（termios）隔离在
+#           rpassword 自身 crate，cf-mcp 保持 forbid(unsafe_code)，cf-uds-sys /
+#           cf-escrow-keychain 先例同构。依赖 libc（已在 lockfile），无网络能力。
+rpassword = "7.3"
+
 # [待校准] Unicode NFC 归一化 —— 主密码处理必需，见 docs/03-详细设计.md §2.2
 unicode-normalization = "0.1"
 

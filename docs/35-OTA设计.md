@@ -3,8 +3,8 @@
 | 项 | 内容 |
 | --- | --- |
 | 文档编号 | LV-HLD-035 |
-| 版本 | r0.2 |
-| 状态 | 设计稿待评审（v2.7.0 立项；2026-10-10 用户已裁定 4 决策点 + UI 入口，见 §0/§2.6） |
+| 版本 | r0.4 |
+| 状态 | 设计稿待评审（v2.7.0 立项；2026-10-10 用户已裁定 4 决策点 + UI 入口，见 §0/§2.6）；**契约已冻结（§6，2026-10-10，实现公共前提；§6.4 经 r0.4 修订——沙盒继承实证后替换协议修正）** |
 | 创建日期 | 2026-10-10 |
 | 作者 | dev-architect-ota（lead 收编用户裁定） |
 | 上游文档 | `docs/01`（X-11/NFR-SEC-07）、`docs/09`（v2.7.0 卡）、`docs/16`（判据②）、`docs/27`（D-4）、`docs/29`（D-6 嵌套 bundle）、`docs/34`（v2.5.0 写面） |
@@ -165,7 +165,7 @@
 
 ## 4. 开放点（设计期未决，落实现/验收期）
 
-1. 替换 helper 的 AMFI 放行实证（Spike-0，无受限 entitlement 非沙盒裸二进制）。
+1. ~~替换 helper 的 AMFI 放行实证（Spike-0，无受限 entitlement 非沙盒裸二进制）~~ —— **✅ 2026-10-10 Spike-0 实证定稿（PASS）**：裸二进制（Apple Development 签名、无任何 entitlements）spawn 退出码 42 放行；阳性对照（带 keychain-access-groups 无 profile）SIGKILL 137 精确复现 D-6（环境自证）；嵌套 .app bundle（无受限 entitlement、无 profile）亦放行。**AMFI 放行条件 = 无受限 entitlement + 无需 embedded.provisionprofile**。**helper 装配形态 = 嵌套 `.app` bundle**（r0.4 集成轮定稿：`open`/LaunchServices 打不开裸 Mach-O，§6.4）。实证细节见 `/tmp/spike-ota-amfi/log.md`（2026-10-10）。
 2. 替换后 TCC 授权（摄像头/辅助功能）同 bundle id 继承需真机核销。
 3. profile 过期拒装的边界行为需 spike 确认 AMFI 判定。
 4. ADP 采购后公证 ticket 校验的接入点。
@@ -178,3 +178,138 @@
 |---|---|---|
 | r0.1 | 2026-10-10 | 初稿——dev-architect-ota 设计决策报告 + lead 收编用户 4 裁定（签名模型免费先行 / 最小零网络豁免接受 / 更新密钥 CI secrets / 强制更新警告不阻断；机制自研、归属 v2.7.0 确认） |
 | r0.2 | 2026-10-10 | **UI 入口裁定（用户）**：§2.6 入口 = 关于对话框「检查更新…」按钮（主）+ 应用菜单同项（快捷），**设置页明确排除**；「启动静默检查」开关裁掉（主动触发 + 零网络姿态，不做后台静默）。修订记录历史行不改写 |
+| r0.3 | 2026-10-10 | **契约冻结（§6，实现公共前提）**：清单 schema v1 + canonical JSON 约定（CryptoKit Ed25519 双侧同实现，swiftc 实证可行）+ 白名单 4 host + Updater 公开接口（check/install/state + UpdateInfo/UpdaterState）+ 替换协议（目标 /Applications、备份→替换→回滚、helper 退出码 0-4、profile TTL 拒装）。lead 收编 Spike-0 需求（§4 开放点 1 实证，进行中）。修订记录历史行不改写 |
+| r0.4 | 2026-10-10 | **§6.4 替换协议修订（沙盒继承实证，集成轮发现）**：原「App `Process()` spawn helper + waitpid」三处不可行——① 沙盒父 spawn 子进程继承沙盒、写不了 /Applications（探针退出码 7）；② `open` 无法 waitpid（"Unable to block on application"）；③ `open` 打不开裸 Mach-O。**修订**：helper 装配为嵌套 `.app` bundle（`Contents/Helpers/CofferUpdater.app`）；App 经 LaunchServices（`NSWorkspace`/`open -n --args`）启动、不备份不 spawn 不 waitpid；替换/回滚/备份全归非沙盒 helper；退出码改经 **result-file** 握手，被 relaunch 的 .app 首启读 result 呈现成败。§4 开放点 1 helper 装配形态随之定稿为嵌套 bundle。修订记录历史行不改写 |
+
+---
+
+## 6. 契约冻结（2026-10-10，实现公共前提）
+
+> 本契约是 §3 各组（A/B/C/D）并行的公共前提。**冻结后不得单方面改动**；任何改动须升级 lead 裁决并全组同步。契约锚点：清单 schema v1 / canonical JSON / 白名单 / Updater 公开接口 / 替换协议。
+
+### 6.1 清单 schema v1（`update-manifest.json`）
+
+固定清单 URL：`https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json`（恒一 URL，不依赖版本枚举）。
+
+```json
+{
+  "schemaVersion": 1,
+  "appId": "app.coffer.Coffer",
+  "version": "2.7.0",
+  "minimumVersion": "2.6.0",
+  "buildTime": "2026-10-10T00:00:00Z",
+  "downloadUrl": "https://github.com/cygnusyang/coffer/releases/download/v2.7.0/Coffer-v2.7.0.zip",
+  "cdHash": "<hex kSecCodeInfoUnique of Coffer.app>",
+  "securityCritical": false,
+  "notes": "可选发布说明",
+  "signature": "<base64 Ed25519 signature>"
+}
+```
+
+| 字段 | 类型 | 语义 |
+|---|---|---|
+| `schemaVersion` | int | 恒 `1`；不识别即拒装 |
+| `appId` | string | 恒 `app.coffer.Coffer`；不匹配即拒装 |
+| `version` | string | 新版本号（`CFBundleShortVersionString` 语义，如 `2.7.0`） |
+| `minimumVersion` | string | 可安装本版本的最低当前版本；低于即拒装（防降级/防旧版漏洞回滚） |
+| `buildTime` | RFC3339 | 构建时间戳；驱动 profile TTL 校验（§2.3）与「清单只增不减」审计 |
+| `downloadUrl` | https URL | Release asset 下载直链（github.com → CDN 重定向） |
+| `cdHash` | hex string | 产物 `kSecCodeInfoUnique`（验签次锚） |
+| `securityCritical` | bool | true = 安全补丁 → 警告 + 显著提示（不阻断，§2.6 裁定） |
+| `notes` | string? | 可选发布说明（UI 展示） |
+| `signature` | base64 string | Ed25519( canonical(前 9 字段 JSON) )，见 6.2 |
+
+**canonical JSON 约定（双侧同实现，契约关键）**：用 CryptoKit `Curve25519.Signing` 签名/验签；被签名内容 = 去除 `signature` 字段后的 JSON，序列化方式双侧一致：`JSONSerialization` + `.sortedKeys` + `.withoutEscapingSlashes`（无缩进）。签名侧（CI 工具）与验签侧（App）都用同一个 Swift 函数保证字节一致。**实证**：swiftc 直编 CryptoKit Ed25519 sign+verify 通过（2026-10-10，无 SPM）。
+
+### 6.2 白名单端点（应用层硬编码 4 host）
+
+`api.github.com`、`github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`（§2.2）。Updater 模块 URLSession delegate 强制校验 host ∈ 白名单 + 强制 HTTPS；非白名单一律拒绝。所有网络代码只在 Swift 侧（`tools/check_ota_whitelist.sh` 防漂移）。
+
+### 6.3 Updater 公开接口（组 D 依赖，冻结）
+
+`macos/Coffer/Updater/UpdaterManager.swift`（@MainActor ObservableObject）：
+
+```swift
+/// 校验通过的更新信息（组 D 展示用）。
+struct UpdateInfo {
+    let version: String          // 新版本
+    let minimumVersion: String
+    let downloadUrl: URL
+    let cdHash: String
+    let buildTime: Date
+    let securityCritical: Bool
+    let notes: String?
+}
+
+/// Updater 状态机（组 D 渲染 + 按钮可用性）。
+enum UpdaterState: Equatable {
+    case idle                 // 未检查
+    case checking             // 检查中
+    case updateAvailable(UpdateInfo)  // 发现可更新
+    case upToDate             // 已是最新
+    case downloading(Double)  // 下载中（0...1 进度）
+    case downloaded           // 下载+验签完成，等待安装
+    case installing           // 安装中（退出+替换+relaunch）
+    case failed(String)       // 失败（用户可见文案）
+}
+
+@MainActor
+final class UpdaterManager: ObservableObject {
+    @Published private(set) var state: UpdaterState = .idle
+    func check() async        // 拉清单+验签+版本比较
+    func install() async      // 下载+三级验签+备份+helper 替换+relaunch
+    func dismiss()            // 关面板/清理失败态
+}
+```
+
+**组 D 只依赖 6.1–6.3**：渲染 state + 调 check/install/dismiss；不碰网络/验签/替换细节。
+
+### 6.4 替换协议（组 B 依赖，冻结；r0.4 修订——沙盒继承实证后修正）
+
+> **r0.4 修订动因（2026-10-10 沙盒继承实证，/tmp/ota-probe 已清理）**：
+> 原 r0.3 契约写「App 侧 `Process()` spawn helper + waitpid 读退出码 + App 侧备份回滚」。
+> 集成轮探针实证该路径**三处不可行**，§6.4 随之修订（机制选型、UX、退出码语义不变，
+> 只改启动/握手/装配形态）：
+>
+> 1. **沙盒继承（致命）**：沙盒父进程 `posix_spawn`/`Process()` 产生的直系子进程**继承父沙盒**
+>    （`sandbox-exec` 探针：沙盒父 spawn 的 child 写 `/Applications` DENIED，退出码 7）。
+>    App 是沙盒单渠道 → **App 直接 spawn helper 必失败**。唯一放行路径 = **LaunchServices
+>    `open`/`NSWorkspace` 按目标自身 entitlements 启动**（launchd 加载，非沙盒继承）——探针实证：
+>    嵌套 bundle 经 `open -n <绝对路径>.app --args ...` 启动后写 `/Applications` 成功、参数可达。
+> 2. **`open` 无法 waitpid**：`open -W` 实测报 "Unable to block on application"
+>    （GetProcessPID 返回 0xFFFF...）→ **退出码不能经 waitpid，改经 result-file 握手**。
+> 3. **`open` 打不开裸 Mach-O**：`open` 只能打开 bundle 形态 → **helper 必须装配成嵌套
+>    `.app` bundle**（非裸二进制），放 `Contents/Helpers/CofferUpdater.app`。
+
+- **目标位置**：`/Applications/Coffer.app`（替换须落到固定位置再启动，防 App translocation；§2.6）。
+- **helper 形态**：嵌入式非沙盒 install helper，**嵌套 `.app` bundle** `Contents/Helpers/CofferUpdater.app`
+  （Spike-0 裁定无受限 entitlement、无 embedded.provisionprofile 即 AMFI 放行，§4 开放点 1；
+  嵌套 bundle 形态由 r0.4 定稿——`open` 不认裸二进制）。组 B 装配：swiftc 直编 binary +
+  最小 Info.plist + 自身 Apple Development 签名（无 entitlement、无 profile）。
+- **调用协议**（App 侧，组 A 实现）：
+  1. App 点「安装更新」→ 下载验签通过（三级）→ 弹「Coffer 将退出并更新」。
+  2. **App 不备份、不 spawn、不 waitpid**（沙盒无权写 `/Applications`，备份与替换全归 helper）。
+  3. App 写 **install 配置文件**（JSON，临时区）：`newAppPath / currentAppPath / backupPath /
+     resultFilePath / pid`，字段与 6.4 退出码语义对应。
+  4. App 经 **LaunchServices 启动 helper**：`open -n <Contents/Helpers/CofferUpdater.app> --args
+     --config <配置文件路径>`（生产实现用 `NSWorkspace.shared.openApplication` 等价；`open`
+     命令路径作为装配/真机验证基线）。
+  5. helper（非沙盒，launchd 加载）读配置 → 等 App pid 退出 → **备份 → 替换 → relaunch** →
+     **写 result 文件**（JSON：成功/失败 + 退出码 + 文案）→ 自身退出。
+  6. **App 侧在发起 launch 后随即退出**（不阻塞等 helper——`open` 无法 waitpid）。被 relaunch
+     的 .app（新或旧）首次启动时**读 result 文件**：成功 → 删备份 + 静默（UI 呈现新版本）；
+     失败 → 呈现 `failed`（含退出码文案）。result 文件一次性消费后删除。
+- **退出码（helper 内部，经 result 文件传递，语义不变）**：`0` 成功；`1` 备份失败；`2` 替换
+  失败；`3` relaunch 失败；`4` 用法错误（含等待超时，契约无专门码，此时未做任何修改）。
+  等待 App pid 退出超时归入 `3`（relaunch 失败语义：安装未完成）。
+- **回滚**：替换前 helper 完整备份当前 .app 到 `backupPath`；helper 替换失败（退出码 2）时
+  由 **helper 自身**恢复备份并 relaunch 旧 .app（App 已退出，无法代劳回滚）；替换成功后新
+  .app 首次启动校验（能启动 + 版本正确）才删备份，失败自动回滚。helper 不删备份。
+- **profile TTL**：安装前校验新 .app `embedded.provisionprofile` 的 `expirationDate`
+  （buildTime 近似）未过期；过期即拒装并提示重新下载（§2.3）。
+- **Keychain 不破**：整体替换 .app 即覆盖嵌套 coffer.app；Keychain escrow 条目同 TeamID 同
+  DR 可读（§1 先例）——真机核销项，自动化只做结构断言。
+
+### 6.5 Spike-0 收编（§4 开放点 1 实证，进行中）
+
+实证「无受限 entitlement 非沙盒裸二进制 AMFI 是否放行 spawn」：本机 Apple Development 身份签名 + 阳性对照（带 keychain-access-groups 应 SIGKILL 137）+ 嵌套 bundle 变体。结论落 §4 开放点 1（helper 形态定稿）。

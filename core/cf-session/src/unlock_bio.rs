@@ -39,6 +39,7 @@ use cf_crypto::aead::{open, seal, SessionKey, KEY_LEN};
 use cf_domain::CfError;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::change_password::repack_dek_with_new_password;
 use crate::unlock::{b64_decode, b64_encode, finish_unlock, format_err, header_aad, recover_dek};
 use crate::SessionResult;
 
@@ -236,6 +237,90 @@ pub(crate) fn recover_dek_bio(
     let dek = <[u8; 32]>::try_from(plain.as_slice()).map_err(|_| UNLOCK_FAILED)?;
     plain.zeroize();
     Ok(SessionKey::new(dek))
+}
+
+/// 生物识别重置主密码（FR-17.1，docs/31 §3.3 reset-with-bio 的 impl 层）。
+///
+/// 从**锁定态**执行：k_bio（调用方经 LAContext 生物识别验证后提供）经
+/// [`recover_dek_bio`] 解出 DEK → 复用
+/// [`crate::change_password::repack_dek_with_new_password`] 换 KEK 重封装
+/// → [`cf_format::write_header`] 原子重写。与 change_password /
+/// reset-with-recovery 共享 repack helper，差异只在 DEK 获取途径
+/// （主密码 / k_bio / 恢复码）；本函数不需要旧主密码——这正是「忘记密码
+/// 时用生物识别重置」的价值（docs/31 D-7）。
+///
+/// ## 本路径裁定（docs/31 §3.4 / §3.6）
+///
+/// - **不 finish_unlock**（D-9）：重置后保持锁定，由 Swift 决定是否用新
+///   密码解锁；本函数只重写 header，不打开 db.sqlite。
+/// - **免 backoff**（§3.6）：k_bio 非密码 oracle，镜像
+///   [`unlock_store_with_bio`] 完全豁免——本函数不 acquire、不计入、不
+///   清零退避计数（facade 层同样不应 acquire）。
+/// - 写失败 → Err，header 原样（`write_header` 原子替换保证，与
+///   enable/disable 同纪律）。
+///
+/// # 错误（D-8 / docs/31 §3.5）
+///
+/// - `available == false`（或缺 wrapped_dek_b64）→
+///   [`CfError::BiometricUnavailable`]（4001，先于一切密钥操作）；
+/// - `k_bio` 长度 ≠ 32 → [`CfError::InvalidArgument`]（5002）；
+/// - 新密码 zxcvbn score < 3 → [`CfError::WeakPassword`]（1010，先于
+///   密钥操作，保持 1010 先于 1002 的既有错误优先级）；
+/// - 其余一切失败（k_bio 错 / 密文篡改 / 跨库搬运 / 库数据异常）→
+///   **统一 1002**（[`CfError::UnlockFailed`]），不泄露失败原因。
+///
+/// 返回新 header 供调用方（facade）更新内存副本；调用方负责 license
+/// 门禁（§3.4 license_guard）与审计（PasswordResetByBio 由 facade 层
+/// 接，本模块不做，docs/31 §3.6）。
+///
+/// 待 P1c facade（vault.rs `reset_password_with_bio`，M-SESSION 集成轮）
+/// 接线后移除 `#[allow(dead_code)]`——当前仅测试引用，非测试 lib 构建
+/// 报 unused 属预期（P1b 与 P1c 并行，facade 独立交付）。
+#[allow(dead_code)]
+pub(crate) fn reset_password_with_bio_impl(
+    vault_dir: &Path,
+    header: &cf_format::Header,
+    new_password: &str,
+    k_bio: &[u8],
+) -> SessionResult<cf_format::Header> {
+    // D-8：header 侧「用户意图未开启」→ 4001，先于一切密钥操作
+    // （镜像 unlock_store_with_bio 同款顺序：4001 → 5002 → 密钥操作）
+    if !header.biometric_wrap.available {
+        return Err(CfError::BiometricUnavailable);
+    }
+    let Some(wrapped_b64) = header.biometric_wrap.wrapped_dek_b64.as_deref() else {
+        // available=true 却无封装数据：header 畸形，按不可用处理（4001）
+        return Err(CfError::BiometricUnavailable);
+    };
+
+    if k_bio.len() != K_BIO_LEN {
+        return Err(CfError::InvalidArgument(format!(
+            "k_bio must be {K_BIO_LEN} bytes, got {}",
+            k_bio.len()
+        )));
+    }
+
+    // 新密码强度门禁（1010）——先于任何文件/密钥操作，保持 1010 先于
+    // 1002 的既有错误优先级（change_password 同款；repack helper 内的
+    // 门禁是幂等重复，供 reset 调用方自包含，两者不冲突）。
+    if !cf_audit::meets_strength_threshold(new_password) {
+        return Err(CfError::WeakPassword);
+    }
+
+    // D-7：k_bio → 打开 wrapped_dek_bio → DEK（k_bio 错 / 密文篡改 /
+    // 跨库搬运 → 1002，recover_dek_bio 内统一）。发生在任何文件写入
+    // 之前，失败时磁盘 header 保证未变。
+    let dek = recover_dek_bio(header, wrapped_b64, k_bio)?;
+
+    // 换 KEK 重封装（就地修改克隆；bio/mcp/recovery wraps 原样保留，
+    // 见 repack helper 契约 ⑤）；失败时原 header 与磁盘均未动。
+    let mut new_header = header.clone();
+    repack_dek_with_new_password(&mut new_header, *dek.as_bytes(), new_password, None)?;
+
+    // 原子替换（cf-format::write_header：临时文件 + rename）；失败则
+    // 磁盘 header 保持原样，旧密码仍可解锁（原子性，同 change_password）。
+    cf_format::write_header(vault_dir, &new_header).map_err(format_err)?;
+    Ok(new_header)
 }
 
 // ---------------------------------------------------------------- 测试
@@ -610,5 +695,187 @@ mod tests {
         assert_eq!(err.code(), 1002);
         assert!(!session.is_unlocked());
         assert!(session.unlock(STRONG_PASSWORD).is_ok());
+    }
+
+    // --------------------------------------------------- 生物识别重置（FR-17.1）
+    //
+    // 覆盖 docs/31 §3.3 reset-with-bio 契约：正确 k_bio 重置成功、旧密码失效
+    // 新密码可用、k_bio 错→1002、bio 不可用→4001、弱密码→1010、k_bio 长度
+    // →5002、不 finish_unlock、bio/mcp/recovery wraps 保留。
+
+    /// 换成的新强密码（区别于 STRONG_PASSWORD）。
+    const NEW_PASSWORD: &str = "portable-copper-drift-lantern-77#";
+
+    /// 建库 → 解锁 → 启用 bio → 锁定，返回 `(vault_dir, k_bio 字节)`。
+    /// reset 测试从磁盘读 header 作 impl 层输入（不经 session facade，
+    /// facade 接线归 vault.rs / P1c）。
+    fn bio_enabled_vault(base: &std::path::Path, name: &str) -> (std::path::PathBuf, [u8; 32]) {
+        let brief = create_vault_with_kdf(base, name, STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+        let session = open_vault(&vault_dir).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+        let k_bio = super::new_biometric_unwrap_key().unwrap();
+        let k_bio_bytes: [u8; 32] = *k_bio.as_bytes();
+        session
+            .enable_biometric(STRONG_PASSWORD, &k_bio_bytes)
+            .unwrap();
+        session.lock();
+        drop(session);
+        (vault_dir, k_bio_bytes)
+    }
+
+    /// 读磁盘 header.json 为 cf_format::Header（reset 测试的输入）。
+    fn disk_header(vault_dir: &std::path::Path) -> cf_format::Header {
+        let text = std::fs::read_to_string(vault_dir.join("header.json")).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// reset-with-bio 全流程：正确 k_bio → 重置成功，返回的 header 与磁盘
+    /// 一致；重开库后旧密码失效（1002）、新密码可用，会话保持锁定态
+    /// （不 finish_unlock，D-9）。
+    #[test]
+    fn reset_正确k_bio重置成功旧密码失效新密码可用() {
+        let base = crate::tests_support::temp_dir("bio_reset_roundtrip");
+        let (vault_dir, k_bio) = bio_enabled_vault(&base, "重置库");
+
+        let header = disk_header(&vault_dir);
+        let new_header =
+            super::reset_password_with_bio_impl(&vault_dir, &header, NEW_PASSWORD, &k_bio).unwrap();
+        // 返回的 header 与磁盘一致（原子写 + 内存副本语义，facade 据此更新）
+        assert_eq!(disk_header(&vault_dir), new_header);
+        // bio 封装仍启用（重置只换主密码 KEK，不动 K_bio 封装的 DEK）
+        assert!(new_header.biometric_wrap.available);
+
+        // 重开库（读新 header）：会话从锁定态开始；旧密码失效、新密码可用
+        let session = open_vault(&vault_dir).unwrap();
+        assert!(
+            !session.is_unlocked(),
+            "reset 不 finish_unlock：重开后保持锁定"
+        );
+        let err = session.unlock(STRONG_PASSWORD).unwrap_err();
+        assert_eq!(err.code(), 1002, "旧密码必须失效");
+        assert!(session.unlock(NEW_PASSWORD).is_ok(), "新密码可解锁");
+    }
+
+    /// 错误 k_bio（另一随机 32B）→ 1002，磁盘 header 字节未变、旧密码仍可解锁。
+    #[test]
+    fn reset_错误k_bio返回1002() {
+        let base = crate::tests_support::temp_dir("bio_reset_wrong_key");
+        let (vault_dir, _k_bio) = bio_enabled_vault(&base, "错钥库");
+        let header = disk_header(&vault_dir);
+
+        let before = header_bytes(&vault_dir);
+        let wrong = super::new_biometric_unwrap_key().unwrap();
+        let err = super::reset_password_with_bio_impl(
+            &vault_dir,
+            &header,
+            NEW_PASSWORD,
+            wrong.as_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert_eq!(header_bytes(&vault_dir), before, "失败不得触碰磁盘 header");
+        // 旧密码仍可解锁（库未被破坏）
+        let session = open_vault(&vault_dir).unwrap();
+        assert!(session.unlock(STRONG_PASSWORD).is_ok());
+    }
+
+    /// bio 未启用（available=false）→ 4001（镜像 BiometricUnavailable，D-8）。
+    #[test]
+    fn reset_bio未启用返回4001() {
+        let base = crate::tests_support::temp_dir("bio_reset_unavailable");
+        let brief = create_vault_with_kdf(&base, "未启用库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let vault_dir = base.join(brief.uuid.to_string());
+
+        let header = disk_header(&vault_dir);
+        let k_bio = super::new_biometric_unwrap_key().unwrap();
+        let err = super::reset_password_with_bio_impl(
+            &vault_dir,
+            &header,
+            NEW_PASSWORD,
+            k_bio.as_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), 4001);
+    }
+
+    /// 新密码弱 → 1010（先于任何文件操作），磁盘 header 字节未变、旧密码仍可解锁。
+    #[test]
+    fn reset_新密码弱返回1010() {
+        let base = crate::tests_support::temp_dir("bio_reset_weak");
+        let (vault_dir, k_bio) = bio_enabled_vault(&base, "弱密库");
+        let header = disk_header(&vault_dir);
+
+        let before = header_bytes(&vault_dir);
+        let err =
+            super::reset_password_with_bio_impl(&vault_dir, &header, "123456", &k_bio).unwrap_err();
+        assert_eq!(err.code(), 1010);
+        assert_eq!(
+            header_bytes(&vault_dir),
+            before,
+            "弱密码必须先于任何文件操作失败"
+        );
+        let session = open_vault(&vault_dir).unwrap();
+        assert!(session.unlock(STRONG_PASSWORD).is_ok());
+    }
+
+    /// k_bio 非 32 字节 → 5002（D-8 参数错误纪律，与 enable/unlock 两侧一致）。
+    #[test]
+    fn reset_k_bio长度校验5002() {
+        let base = crate::tests_support::temp_dir("bio_reset_keylen");
+        let (vault_dir, _k_bio) = bio_enabled_vault(&base, "长度库");
+        let header = disk_header(&vault_dir);
+
+        let before = header_bytes(&vault_dir);
+        let err =
+            super::reset_password_with_bio_impl(&vault_dir, &header, NEW_PASSWORD, &[0u8; 31])
+                .unwrap_err();
+        assert_eq!(err.code(), 5002);
+        let err =
+            super::reset_password_with_bio_impl(&vault_dir, &header, NEW_PASSWORD, &[0u8; 33])
+                .unwrap_err();
+        assert_eq!(err.code(), 5002);
+        assert_eq!(header_bytes(&vault_dir), before);
+    }
+
+    /// 不 finish_unlock + ⑤ 契约：只重写 header，db.sqlite 字节原样（未打开
+    /// store）；bio / mcp / recovery 三通道 wraps 原样保留（K_bio / K_mcp /
+    /// K_recovery 封装 DEK 本身，与主密码 KEK 无关，换密后各通道解锁照常可用）。
+    #[test]
+    fn reset_不finish_unlock且三通道封装保留() {
+        let base = crate::tests_support::temp_dir("bio_reset_wraps");
+        let (vault_dir, k_bio) = bio_enabled_vault(&base, "封装库");
+        let mut header = disk_header(&vault_dir);
+        // 手工塞入 mcp / recovery 封装（同 change_password 的 cp_repack_contract 手法）
+        let mcp = cf_format::McpWrap {
+            available: true,
+            provider: Some("macos-keychain".to_string()),
+            key_alias: Some("cn.coffer.mcp-escrow".to_string()),
+            wrapped_dek_b64: Some(crate::unlock::b64_encode(&[0x55u8; 48])),
+        };
+        let recovery = cf_format::RecoveryWrap {
+            available: true,
+            wrapped_dek_b64: crate::unlock::b64_encode(&[0xAAu8; 28]),
+        };
+        header.mcp_wrap = mcp.clone();
+        header.recovery_wrap = Some(recovery.clone());
+
+        let db_before = std::fs::read(vault_dir.join("db.sqlite")).unwrap();
+        let new_header =
+            super::reset_password_with_bio_impl(&vault_dir, &header, NEW_PASSWORD, &k_bio).unwrap();
+        let db_after = std::fs::read(vault_dir.join("db.sqlite")).unwrap();
+        assert_eq!(
+            db_before, db_after,
+            "reset 不打开/改写 db.sqlite（不 finish_unlock）"
+        );
+
+        // ⑤ 契约：bio / mcp / recovery 封装原样保留
+        assert_eq!(new_header.biometric_wrap, header.biometric_wrap);
+        assert_eq!(new_header.mcp_wrap, mcp);
+        assert_eq!(new_header.recovery_wrap, Some(recovery));
+        // 重封装换新：盐 / wrapped_dek / verifier 全部重生成（随机盐与 nonce）
+        assert_ne!(new_header.kdf.salt_b64, header.kdf.salt_b64);
+        assert_ne!(new_header.wrapped_dek, header.wrapped_dek);
+        assert_ne!(new_header.verifier, header.verifier);
     }
 }

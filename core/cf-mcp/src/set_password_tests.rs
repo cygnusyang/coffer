@@ -84,6 +84,64 @@
         assert!(matches!(err, SetPasswordError::MissingTarget));
     }
 
+    // ------------------------------------------------ v2.5.2 `--user` 可选参数（用户 2026-10-10 裁定）
+
+    #[test]
+    fn parse_user_flag_with_name() {
+        let o = parse_args(&arg(&["GitHub", "--user", "octocat"])).expect("--user + name parse");
+        assert_eq!(o.username.as_deref(), Some("octocat"));
+        assert_eq!(o.name.as_deref(), Some("GitHub"));
+        assert_eq!(o.id, None);
+    }
+
+    #[test]
+    fn parse_user_flag_with_id() {
+        let o = parse_args(&arg(&[
+            "--id",
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+            "--user",
+            "octocat",
+        ]))
+        .expect("--user + --id parse");
+        assert_eq!(o.username.as_deref(), Some("octocat"));
+        assert_eq!(
+            o.id.as_deref(),
+            Some("1b4e28ba-2fa1-11d2-883f-0016d3cca427")
+        );
+    }
+
+    #[test]
+    fn parse_user_flag_order_free() {
+        // `--user` 可在位置参数前出现；与 `--force` 可共存。
+        let o = parse_args(&arg(&["--user", "octocat", "--force", "GitHub"]))
+            .expect("--user order-free parse");
+        assert_eq!(o.username.as_deref(), Some("octocat"));
+        assert_eq!(o.name.as_deref(), Some("GitHub"));
+        assert!(o.force);
+    }
+
+    #[test]
+    fn parse_rejects_missing_user_value() {
+        let err = parse_args(&arg(&["GitHub", "--user"])).expect_err("--user without value");
+        assert!(matches!(err, SetPasswordError::MissingValue(ref f) if f == "--user"));
+        assert_eq!(err.exit_code(), exit_codes::USAGE_ERROR, "缺值 → 退出 4");
+    }
+
+    /// M-1（dev-reviewer 2026-10-10）：空 / 全空白 `--user` 拒绝——镜像空密码
+    /// 语义（AC-18.2-14），防静默把既有用户名覆写为空。退出 4，不写库。
+    #[test]
+    fn parse_rejects_empty_user_value() {
+        for empty in ["", "   ", "\t"] {
+            let err = parse_args(&arg(&["GitHub", "--user", empty]))
+                .expect_err("empty --user rejected");
+            assert!(
+                matches!(err, SetPasswordError::EmptyUsername),
+                "空/全空白用户名 → EmptyUsername，实际 {err:?}"
+            );
+            assert_eq!(err.exit_code(), exit_codes::USAGE_ERROR, "空用户名 → 退出 4");
+        }
+    }
+
     // ------------------------------------------------------------ 强度门禁
 
     #[test]
@@ -231,6 +289,83 @@
             "仅用户名无密码字段 → 不得改任意有值字段（防误改）"
         );
         assert_eq!(d.fields[0].value.as_deref(), Some("octocat"), "不得误改");
+    }
+
+    // ------------------------------------------------ v2.5.2 用户名写路径（AC-18.2-17/-18）
+
+    #[test]
+    fn apply_username_updates_existing_username_field() {
+        let mut d = password_draft(); // username=octocat（Designation::Username）
+        apply_username_field(&mut d, "newuser");
+        assert_eq!(d.fields[0].value.as_deref(), Some("newuser"), "现值更新");
+        assert_eq!(d.fields.len(), 3, "不新增字段");
+        assert_eq!(d.fields[1].value.as_deref(), Some("old-secret"), "密码字段不动");
+    }
+
+    #[test]
+    fn apply_username_creates_missing_username_field() {
+        // 条目仅密码字段、无 Username designation → 新建（template.rs 同构）。
+        let mut d = ItemDraft {
+            title: "X".to_string(),
+            category: ItemCategory::Login,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![FieldDraft {
+                name: "password".to_string(),
+                value: Some("old".to_string()),
+                field_type: FieldType::Concealed,
+                designation: Some(Designation::Password),
+                section_index: None,
+                position: 0,
+            }],
+            totp: None,
+        };
+        apply_username_field(&mut d, "alice");
+        let u = d
+            .fields
+            .iter()
+            .find(|f| f.designation == Some(Designation::Username))
+            .expect("Username 字段已新建");
+        assert_eq!(u.name, "username", "字段名与模板一致");
+        assert_eq!(u.field_type, FieldType::Text, "Text 类型与模板一致");
+        assert_eq!(u.value.as_deref(), Some("alice"));
+        assert_eq!(u.position, 1, "新字段 position = 现有最大 + 1");
+    }
+
+    /// AC-18.2-18：写侧不做 Email 兜底——条目仅 Email 字段时，用户名写进新建的
+    /// Username 字段，**不回写 Email**（只读侧 username_value 的 Email fallback 不变）。
+    #[test]
+    fn apply_username_does_not_touch_email_field() {
+        let mut d = ItemDraft {
+            title: "X".to_string(),
+            category: ItemCategory::Login,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![FieldDraft {
+                name: "email".to_string(),
+                value: Some("a@b.com".to_string()),
+                field_type: FieldType::Email,
+                designation: Some(Designation::Email),
+                section_index: None,
+                position: 0,
+            }],
+            totp: None,
+        };
+        apply_username_field(&mut d, "alice");
+        let email = d
+            .fields
+            .iter()
+            .find(|f| f.designation == Some(Designation::Email))
+            .expect("Email 字段仍在");
+        assert_eq!(email.value.as_deref(), Some("a@b.com"), "Email 值不动");
+        let u = d
+            .fields
+            .iter()
+            .find(|f| f.designation == Some(Designation::Username))
+            .expect("新建 Username 字段");
+        assert_eq!(u.value.as_deref(), Some("alice"));
     }
 
     // ------------------------------------------------------------ 库级 resolve
@@ -383,6 +518,7 @@
             SetPasswordError::MissingTarget,
             SetPasswordError::InvalidId("not-a-uuid".to_string()),
             SetPasswordError::EmptyPassword,
+            SetPasswordError::EmptyUsername,
         ];
         for e in usage {
             assert_eq!(e.exit_code(), exit_codes::USAGE_ERROR, "{e:?} → 4");
@@ -508,6 +644,7 @@
                 name: Some("GitHub".to_string()),
                 id: None,
                 force: false,
+                username: None,
             },
             &dir,
             None,
@@ -538,6 +675,7 @@
                 name: Some("GitHub".to_string()),
                 id: None,
                 force: false,
+                username: None,
             },
             &dir,
             Some(SecretString::from_exposed(pw.clone())), // 正确 env，须被忽略
@@ -570,6 +708,7 @@
                 name: Some("GitHub".to_string()),
                 id: None,
                 force: false,
+                username: None,
             },
             &dir,
             Some(SecretString::from_exposed(pw.clone())), // 正确 env，须被忽略
@@ -580,5 +719,97 @@
             password_field_value(&dir, &pw, &item_id),
             "old-secret",
             "fail-closed 不写库"
+        );
+    }
+
+    // ------------------------------------------------ v2.5.2 一对写库级集成（AC-18.2-17/-18）
+
+    fn username_field_value(vault_dir: &std::path::Path, password: &str, item_id: &str) -> Option<String> {
+        let s = unlocked_vault(vault_dir, password);
+        let item = s
+            .get_item(item_id)
+            .expect("get item")
+            .expect("item present");
+        item.fields
+            .iter()
+            .find(|f| f.designation == Some(Designation::Username))
+            .and_then(|f| f.value.as_ref().map(|v| v.expose().to_string()))
+    }
+
+    /// AC-18.2-17：给 `--user` → 用户名+密码一对写（既有 Username 字段更新）。
+    #[test]
+    fn apply_update_writes_username_and_password_pair() {
+        let (dir, pw) = fast_vault("pair-write");
+        let session = unlocked_vault(&dir, &pw);
+        let item_id = create_login_item(&session, "GitHub"); // octocat / old-secret
+        let item = session.get_item(&item_id).expect("get").expect("present");
+        apply_update(&session, &item, "new-secret-2026!", Some("newuser")).expect("pair update");
+        drop(session);
+
+        assert_eq!(
+            password_field_value(&dir, &pw, &item_id),
+            "new-secret-2026!",
+            "密码字段已更新"
+        );
+        assert_eq!(
+            username_field_value(&dir, &pw, &item_id).as_deref(),
+            Some("newuser"),
+            "Username 字段已更新"
+        );
+    }
+
+    /// AC-18.2-17：条目无 Username 字段时给 `--user` → 新建并写入。
+    /// （用 `ItemCategory::Password`：模板中 username 非必填、password 必填——
+    /// Login 的 username 是硬约束无法构造无用户名的 Login 条目，见 validate.rs。）
+    #[test]
+    fn apply_update_creates_username_field_when_missing() {
+        let (dir, pw) = fast_vault("pair-create-user");
+        let session = unlocked_vault(&dir, &pw);
+        // 仅密码字段的 Password 条目（无 Username designation）。
+        let mut d = ItemDraft {
+            title: "GitHub".to_string(),
+            category: ItemCategory::Password,
+            urls: Vec::new(),
+            tags: Vec::new(),
+            sections: Vec::new(),
+            fields: vec![FieldDraft {
+                name: "password".to_string(),
+                value: Some("old-secret".to_string()),
+                field_type: FieldType::Concealed,
+                designation: Some(Designation::Password),
+                section_index: None,
+                position: 0,
+            }],
+            totp: None,
+        };
+        let item_id = session.create_item(&d).expect("create item");
+        let item = session.get_item(&item_id).expect("get").expect("present");
+        d.fields.clear(); // drop 明文副本
+        apply_update(&session, &item, "new-secret-2026!", Some("alice")).expect("create username");
+        drop(session);
+
+        assert_eq!(password_field_value(&dir, &pw, &item_id), "new-secret-2026!");
+        assert_eq!(
+            username_field_value(&dir, &pw, &item_id).as_deref(),
+            Some("alice"),
+            "无 Username 字段 → 新建并写入"
+        );
+    }
+
+    /// AC-18.2-18：未给 `--user` → 只写密码，Username 字段逐字不动。
+    #[test]
+    fn apply_update_without_user_keeps_username() {
+        let (dir, pw) = fast_vault("pair-no-user");
+        let session = unlocked_vault(&dir, &pw);
+        let item_id = create_login_item(&session, "GitHub"); // octocat
+        let item = session.get_item(&item_id).expect("get").expect("present");
+        apply_update(&session, &item, "new-secret-2026!", None).expect("password only");
+        drop(session);
+
+        assert_eq!(password_field_value(&dir, &pw, &item_id), "new-secret-2026!");
+        assert_eq!(
+            username_field_value(&dir, &pw, &item_id).as_deref(),
+            Some("octocat"),
+            "未给 --user → 用户名不动"
         );
     }

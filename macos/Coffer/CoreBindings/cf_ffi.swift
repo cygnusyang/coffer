@@ -1204,6 +1204,22 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func enableMcpEscrow(password: String, mcpKey: Data) throws 
     
     /**
+     * 启用 / 重新生成恢复码封装（docs/31 §3.1 enable，header 侧）。
+     *
+     * 门禁：需解锁态（1001）。内部经 `recover_dek` 重验证主密码并解出
+     * DEK（错 → 1002，此时 header 未变）→ K_recovery 派生 → AES-256-GCM
+     * 封装 DEK → 原子重写 header 的 `recovery_wrap` 段。已启用时再次
+     * 调用用新 code 覆盖旧槽位（旧恢复码立即失效，**不可回滚**，docs/31
+     * §3.1）。Swift 须先展示恢复码并经用户确认抄写后才调用（D-10）。
+     *
+     * # 错误
+     *
+     * 1001 锁定态 / 1002 主密码错或 code 无效 / 1007 密钥操作失败 /
+     * 5001·1005 写失败（磁盘 header 保持原样）。
+     */
+    func enableRecoveryCode(password: String, code: String) throws 
+    
+    /**
      * CSV 明文导出（FR-8.3；锁定态 → 1001）。
      *
      * **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
@@ -1244,6 +1260,16 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func generatePassword(opts: FfiPasswordGenOptions) throws  -> String
     
     /**
+     * 生成新的 BIP39-12 恢复码（docs/31 §2.4：**只生成、不落盘**）。
+     *
+     * 返回的 code 仅存内存（Swift 会话局部一次性展示），用户确认抄写
+     * 后才经 [`VaultSession::enable_recovery_code`] 写入 header 密文
+     * 槽位（D-10：恢复码明文永不落盘）。无门禁（纯随机生成，无密钥
+     * 操作、无文件 IO）；随机源 / 编码失败 → 码 1007。
+     */
+    func generateRecoveryCode() throws  -> String
+    
+    /**
      * 按需取字段明文值（密码等敏感值，随取随走，docs/07 §4.2）。
      * 条目不存在返回 Err(1011)（ItemNotFound）；条目存在但字段不存在
      * 返回 `None`（QA F-2：文档对齐实现，1011 语义保留）。
@@ -1271,6 +1297,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 可得的 header available 信号，Keychain 条目存在性由 Swift 组合）。
      */
     func hasMcpWrap()  -> Bool
+    
+    /**
+     * 是否已启用恢复码封装（header `recovery_wrap.available`，docs/31
+     * §1.1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥
+     * 操作；供 LockView 决定是否显示「忘记密码 → 恢复码重置」入口
+     * （docs/31 §4.2）。
+     */
+    func hasRecoveryWrap()  -> Bool
     
     /**
      * 五类体检报告（FR-6.2 / 6.3 / 6.4 / 6.5 / 6.6 编排）：需解锁态
@@ -1427,6 +1461,36 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * 行不存在 → 1011；锁定 → 1001（docs/17 §5）。
      */
     func removePasskey(passkeyUuid: String) throws 
+    
+    /**
+     * 用生物识别（Touch ID）重置主密码（FR-17.1，docs/31 §3.3
+     * reset-with-bio）。
+     *
+     * 从**锁定态**执行（忘记密码场景）：k_bio（Swift 经 LAContext 生物
+     * 验证后提供）→ 解出 DEK → 换 KEK 重封装 → 原子重写 header。
+     * **不 finish_unlock**（D-9）：重置后保持锁定。
+     *
+     * # 错误（D-8 / docs/31 §3.5）
+     *
+     * 4001 bio 未启用 / 5002 k_bio 非 32B / 1010 新密码弱 / 1002 k_bio 错
+     * 或 wrap 损坏 / 6002·6003 license 阻断 / 1007 密钥操作失败 /
+     * 5001·1005 写失败。
+     */
+    func resetPasswordWithBio(newPassword: String, kBio: Data) throws 
+    
+    /**
+     * 用恢复码重置主密码（FR-17.2，docs/31 §3.3 reset-with-recovery）。
+     *
+     * 从**锁定态**执行（忘记密码场景）：恢复码 → 解出 DEK → 换 KEK
+     * 重封装 → 原子重写 header。**不 finish_unlock**（D-9）：重置后保持
+     * 锁定，由 Swift 决定是否用新密码解锁。
+     *
+     * # 错误（docs/31 §3.5）
+     *
+     * 4003 recovery_wrap 缺失 / 1010 新密码弱 / 1002 恢复码错或 wrap 损坏
+     * / 6002·6003 license 阻断 / 1007 密钥操作失败 / 5001·1005 写失败。
+     */
+    func resetPasswordWithRecoveryCode(newPassword: String, code: String) throws 
     
     /**
      * 历史回滚（FR-2.9）：以历史快照走正常 update 路径，回滚本身也是
@@ -1869,6 +1933,30 @@ open func enableMcpEscrow(password: String, mcpKey: Data)throws   {try rustCallW
 }
     
     /**
+     * 启用 / 重新生成恢复码封装（docs/31 §3.1 enable，header 侧）。
+     *
+     * 门禁：需解锁态（1001）。内部经 `recover_dek` 重验证主密码并解出
+     * DEK（错 → 1002，此时 header 未变）→ K_recovery 派生 → AES-256-GCM
+     * 封装 DEK → 原子重写 header 的 `recovery_wrap` 段。已启用时再次
+     * 调用用新 code 覆盖旧槽位（旧恢复码立即失效，**不可回滚**，docs/31
+     * §3.1）。Swift 须先展示恢复码并经用户确认抄写后才调用（D-10）。
+     *
+     * # 错误
+     *
+     * 1001 锁定态 / 1002 主密码错或 code 无效 / 1007 密钥操作失败 /
+     * 5001·1005 写失败（磁盘 header 保持原样）。
+     */
+open func enableRecoveryCode(password: String, code: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_enable_recovery_code(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(password),
+        FfiConverterString.lower(code),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * CSV 明文导出（FR-8.3；锁定态 → 1001）。
      *
      * **明文导出的二次确认（FR-8.4）是调用方 UI 门禁**：Swift 侧必须先
@@ -1941,6 +2029,23 @@ open func generatePassword(opts: FfiPasswordGenOptions)throws  -> String  {
 }
     
     /**
+     * 生成新的 BIP39-12 恢复码（docs/31 §2.4：**只生成、不落盘**）。
+     *
+     * 返回的 code 仅存内存（Swift 会话局部一次性展示），用户确认抄写
+     * 后才经 [`VaultSession::enable_recovery_code`] 写入 header 密文
+     * 槽位（D-10：恢复码明文永不落盘）。无门禁（纯随机生成，无密钥
+     * 操作、无文件 IO）；随机源 / 编码失败 → 码 1007。
+     */
+open func generateRecoveryCode()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_generate_recovery_code(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * 按需取字段明文值（密码等敏感值，随取随走，docs/07 §4.2）。
      * 条目不存在返回 Err(1011)（ItemNotFound）；条目存在但字段不存在
      * 返回 `None`（QA F-2：文档对齐实现，1011 语义保留）。
@@ -1995,6 +2100,21 @@ open func hasMcpWrap() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_has_mcp_wrap(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 是否已启用恢复码封装（header `recovery_wrap.available`，docs/31
+     * §1.1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥
+     * 操作；供 LockView 决定是否显示「忘记密码 → 恢复码重置」入口
+     * （docs/31 §4.2）。
+     */
+open func hasRecoveryWrap() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_has_recovery_wrap(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -2317,6 +2437,52 @@ open func removePasskey(passkeyUuid: String)throws   {try rustCallWithError(FfiC
     uniffi_cf_ffi_fn_method_vaultsession_remove_passkey(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(passkeyUuid),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 用生物识别（Touch ID）重置主密码（FR-17.1，docs/31 §3.3
+     * reset-with-bio）。
+     *
+     * 从**锁定态**执行（忘记密码场景）：k_bio（Swift 经 LAContext 生物
+     * 验证后提供）→ 解出 DEK → 换 KEK 重封装 → 原子重写 header。
+     * **不 finish_unlock**（D-9）：重置后保持锁定。
+     *
+     * # 错误（D-8 / docs/31 §3.5）
+     *
+     * 4001 bio 未启用 / 5002 k_bio 非 32B / 1010 新密码弱 / 1002 k_bio 错
+     * 或 wrap 损坏 / 6002·6003 license 阻断 / 1007 密钥操作失败 /
+     * 5001·1005 写失败。
+     */
+open func resetPasswordWithBio(newPassword: String, kBio: Data)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_reset_password_with_bio(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(newPassword),
+        FfiConverterData.lower(kBio),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * 用恢复码重置主密码（FR-17.2，docs/31 §3.3 reset-with-recovery）。
+     *
+     * 从**锁定态**执行（忘记密码场景）：恢复码 → 解出 DEK → 换 KEK
+     * 重封装 → 原子重写 header。**不 finish_unlock**（D-9）：重置后保持
+     * 锁定，由 Swift 决定是否用新密码解锁。
+     *
+     * # 错误（docs/31 §3.5）
+     *
+     * 4003 recovery_wrap 缺失 / 1010 新密码弱 / 1002 恢复码错或 wrap 损坏
+     * / 6002·6003 license 阻断 / 1007 密钥操作失败 / 5001·1005 写失败。
+     */
+open func resetPasswordWithRecoveryCode(newPassword: String, code: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_reset_password_with_recovery_code(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(newPassword),
+        FfiConverterString.lower(code),uniffiCallStatus
     )
 }
 }
@@ -8051,7 +8217,7 @@ enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      * 1003 库不存在 / 1004 库已存在 / 1005 损坏 / 1006 版本过新 / 1007 KDF /
      * 1008 解密 / 1009 存储 / 1010 弱密码 / 1011 条目不存在 / 1012 校验 /
      * 2001 导入格式 / 2002 导入失败 / 2003 导出失败 / 3001 TOTP /
-     * 4001–4002 生物识别 / 5001 IO / 5002 参数）。
+     * 4001–4003 生物识别与恢复通道 / 5001 IO / 5002 参数）。
      */
     case Coffer(
         /**
@@ -10034,6 +10200,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_enable_mcp_escrow() != 42044) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_enable_recovery_code() != 13004) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_export_csv() != 36721) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10046,6 +10215,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_generate_password() != 13850) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_generate_recovery_code() != 22616) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_get_field_value() != 40249) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10056,6 +10228,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_has_mcp_wrap() != 8554) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_has_recovery_wrap() != 55682) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_health_report() != 32920) {
@@ -10119,6 +10294,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_remove_passkey() != 51231) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_reset_password_with_bio() != 2718) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_reset_password_with_recovery_code() != 46925) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_restore_history() != 48287) {

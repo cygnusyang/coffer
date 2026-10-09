@@ -477,6 +477,87 @@ impl VaultSession {
         self.inner.has_mcp_wrap()
     }
 
+    // ------------------------------------- 恢复码与主密码重置（FR-17）
+
+    /// 是否已启用恢复码封装（header `recovery_wrap.available`，docs/31
+    /// §1.1：语义 = 「用户意图开启」，锁定态可查）。纯读 header，无密钥
+    /// 操作；供 LockView 决定是否显示「忘记密码 → 恢复码重置」入口
+    /// （docs/31 §4.2）。
+    pub fn has_recovery_wrap(&self) -> bool {
+        self.inner.has_recovery_wrap()
+    }
+
+    /// 生成新的 BIP39-12 恢复码（docs/31 §2.4：**只生成、不落盘**）。
+    ///
+    /// 返回的 code 仅存内存（Swift 会话局部一次性展示），用户确认抄写
+    /// 后才经 [`VaultSession::enable_recovery_code`] 写入 header 密文
+    /// 槽位（D-10：恢复码明文永不落盘）。无门禁（纯随机生成，无密钥
+    /// 操作、无文件 IO）；随机源 / 编码失败 → 码 1007。
+    pub fn generate_recovery_code(&self) -> Result<String, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.generate_recovery_code()))
+    }
+
+    /// 启用 / 重新生成恢复码封装（docs/31 §3.1 enable，header 侧）。
+    ///
+    /// 门禁：需解锁态（1001）。内部经 `recover_dek` 重验证主密码并解出
+    /// DEK（错 → 1002，此时 header 未变）→ K_recovery 派生 → AES-256-GCM
+    /// 封装 DEK → 原子重写 header 的 `recovery_wrap` 段。已启用时再次
+    /// 调用用新 code 覆盖旧槽位（旧恢复码立即失效，**不可回滚**，docs/31
+    /// §3.1）。Swift 须先展示恢复码并经用户确认抄写后才调用（D-10）。
+    ///
+    /// # 错误
+    ///
+    /// 1001 锁定态 / 1002 主密码错或 code 无效 / 1007 密钥操作失败 /
+    /// 5001·1005 写失败（磁盘 header 保持原样）。
+    pub fn enable_recovery_code(&self, password: String, code: String) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.enable_recovery_code(&password, &code)
+        }))
+    }
+
+    /// 用恢复码重置主密码（FR-17.2，docs/31 §3.3 reset-with-recovery）。
+    ///
+    /// 从**锁定态**执行（忘记密码场景）：恢复码 → 解出 DEK → 换 KEK
+    /// 重封装 → 原子重写 header。**不 finish_unlock**（D-9）：重置后保持
+    /// 锁定，由 Swift 决定是否用新密码解锁。
+    ///
+    /// # 错误（docs/31 §3.5）
+    ///
+    /// 4003 recovery_wrap 缺失 / 1010 新密码弱 / 1002 恢复码错或 wrap 损坏
+    /// / 6002·6003 license 阻断 / 1007 密钥操作失败 / 5001·1005 写失败。
+    pub fn reset_password_with_recovery_code(
+        &self,
+        new_password: String,
+        code: String,
+    ) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner
+                .reset_password_with_recovery_code(&new_password, &code)
+        }))
+    }
+
+    /// 用生物识别（Touch ID）重置主密码（FR-17.1，docs/31 §3.3
+    /// reset-with-bio）。
+    ///
+    /// 从**锁定态**执行（忘记密码场景）：k_bio（Swift 经 LAContext 生物
+    /// 验证后提供）→ 解出 DEK → 换 KEK 重封装 → 原子重写 header。
+    /// **不 finish_unlock**（D-9）：重置后保持锁定。
+    ///
+    /// # 错误（D-8 / docs/31 §3.5）
+    ///
+    /// 4001 bio 未启用 / 5002 k_bio 非 32B / 1010 新密码弱 / 1002 k_bio 错
+    /// 或 wrap 损坏 / 6002·6003 license 阻断 / 1007 密钥操作失败 /
+    /// 5001·1005 写失败。
+    pub fn reset_password_with_bio(
+        &self,
+        new_password: String,
+        k_bio: Vec<u8>,
+    ) -> Result<(), FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner.reset_password_with_bio(&new_password, &k_bio)
+        }))
+    }
+
     // ------------------------------------------------------ 条目 CRUD
 
     /// 列出条目（updated_at 倒序）；`filter` 传 `None` 为默认全量。
@@ -1656,6 +1737,270 @@ mod tests {
         );
         assert_eq!(session.disable_mcp_escrow().unwrap_err().code(), 1001);
         assert!(!session.has_mcp_wrap(), "锁定态门禁失败后 header 不得变更");
+    }
+
+    // ------------------------------------- 恢复码与主密码重置（FR-17）
+
+    /// 测试用新主密码（重置目标；zxcvbn ≥ 3，可过强度门禁）。
+    const RESET_TO_PASSWORD: &str = "new-horse-battery-staple-99!";
+
+    /// 建库 → 解锁 → 生成+启用恢复码 → 锁定（FFI 面，镜像内核
+    /// session_with_recovery），返回 (session, base, code)。
+    fn session_with_recovery_ffi(tag: &str) -> (Arc<VaultSession>, PathBuf, String) {
+        let base = temp_base(tag);
+        let brief = setup_vault(&base, "恢复码库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        let code = session.generate_recovery_code().unwrap();
+        session
+            .enable_recovery_code(STRONG_PASSWORD.to_owned(), code.clone())
+            .unwrap();
+        assert!(session.has_recovery_wrap());
+        session.lock();
+        (session, base, code)
+    }
+
+    /// FR-17.2 FFI 四接口冒烟：hasRecoveryWrap=false → 解锁 → 生成恢复码
+    /// （BIP39-12）→ 错密码 enable 1002 且 header 不变 → 正确密码 →
+    /// hasRecoveryWrap=true → 锁定 → reset-with-recovery（锁定态可执行，
+    /// D-6）→ 旧密码失效 1002 / 新密码可解锁 / 保持锁定（D-9）。
+    #[test]
+    fn 恢复码四接口跨ffi冒烟() {
+        let base = temp_base("rc_smoke");
+        let brief = setup_vault(&base, "恢复码库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        // 未启用态：hasRecoveryWrap=false
+        assert!(!session.has_recovery_wrap());
+
+        // 生成恢复码：BIP39-12（12 英文词，纯内存无落盘），两次不同
+        let code = session.generate_recovery_code().unwrap();
+        let words: Vec<&str> = code.split_whitespace().collect();
+        assert_eq!(words.len(), 12, "恢复码必须是 12 词（BIP39-12）");
+        let code_again = session.generate_recovery_code().unwrap();
+        assert_ne!(
+            code, code_again,
+            "两次生成的恢复码必须不同（128-bit CSPRNG）"
+        );
+
+        // 解锁（enable 的门禁要求解锁态）→ 错密码 enable → 1002 且 header 未变
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        let err = session
+            .enable_recovery_code("wrong password indeed!".to_owned(), code.clone())
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+        assert!(
+            !session.has_recovery_wrap(),
+            "错密码 enable 后 header 不得变更"
+        );
+
+        // 正确密码 enable → 意图位翻转
+        session
+            .enable_recovery_code(STRONG_PASSWORD.to_owned(), code.clone())
+            .unwrap();
+        assert!(session.has_recovery_wrap());
+
+        // 锁定 → 恢复码重置（锁定态可执行）
+        session.lock();
+        assert!(!session.is_unlocked());
+        session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD.to_owned(), code)
+            .unwrap();
+        assert!(
+            !session.is_unlocked(),
+            "reset 不 finish_unlock：重置后必须保持锁定（D-9）"
+        );
+        // 内存 header 已更新：旧密码失效、新密码可解锁
+        assert_eq!(
+            session
+                .unlock(STRONG_PASSWORD.to_owned())
+                .unwrap_err()
+                .code(),
+            1002,
+            "重置后旧密码必须失效"
+        );
+        assert!(
+            session.unlock(RESET_TO_PASSWORD.to_owned()).is_ok(),
+            "新密码必须能解锁"
+        );
+    }
+
+    /// FR-17.2 FFI 锁定态门禁：enableRecoveryCode 需解锁态（1001）；
+    /// generateRecoveryCode / hasRecoveryWrap 无门禁（纯随机 / 纯读 header）。
+    #[test]
+    fn 恢复码接口锁定态门禁返回1001() {
+        let base = temp_base("rc_locked");
+        let brief = setup_vault(&base, "锁定门禁库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let code = session.generate_recovery_code().unwrap();
+        assert_eq!(
+            session
+                .enable_recovery_code(STRONG_PASSWORD.to_owned(), code)
+                .unwrap_err()
+                .code(),
+            1001
+        );
+        assert!(
+            !session.has_recovery_wrap(),
+            "锁定态门禁失败后 header 不得变更"
+        );
+    }
+
+    /// FR-17.2 FFI 错误路径：无恢复码封装时 reset → 4003（RecoveryUnavailable，
+    /// 镜像 4001 语义，docs/31 D-5）。
+    #[test]
+    fn 恢复码未启用时重置跨ffi返回4003() {
+        let base = temp_base("rc_unavailable");
+        let brief = setup_vault(&base, "未启用库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        assert!(!session.has_recovery_wrap());
+        let err = session
+            .reset_password_with_recovery_code(
+                RESET_TO_PASSWORD.to_owned(),
+                "not-a-code".to_owned(),
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), 4003);
+    }
+
+    /// FR-17.2 FFI 错误码路径：恢复码错 → 1002（FR-1.4 不可区分）；新密码弱
+    /// → 1010（先于密钥操作，保持 1010 先于 1002 的既有错误优先级）。
+    #[test]
+    fn 恢复码重置错误码路径() {
+        let (session, _base, code) = session_with_recovery_ffi("rc_err");
+        assert!(!session.is_unlocked(), "初始锁定态");
+
+        // 恢复码错 → 1002
+        let err = session
+            .reset_password_with_recovery_code(
+                RESET_TO_PASSWORD.to_owned(),
+                "invalid-code!!".to_owned(),
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), 1002);
+
+        // 新密码弱 → 1010（先于密钥操作）
+        let err = session
+            .reset_password_with_recovery_code("123456".to_owned(), code.clone())
+            .unwrap_err();
+        assert_eq!(err.code(), 1010);
+        assert!(!session.is_unlocked(), "失败后必须保持锁定");
+
+        // 错误码路径未破坏 header：正确路径仍可重置
+        session
+            .reset_password_with_recovery_code(RESET_TO_PASSWORD.to_owned(), code)
+            .unwrap();
+        assert!(session.unlock(RESET_TO_PASSWORD.to_owned()).is_ok());
+    }
+
+    /// FR-17.1 FFI 冒烟：启用 bio → 锁定 → reset-with-bio（新密码 + k_bio）
+    /// → 旧密码失效 / 新密码可解锁 / 保持锁定（D-9）。
+    #[test]
+    fn 生物识别重置主密码跨ffi冒烟() {
+        let base = temp_base("bio_reset");
+        let brief = setup_vault(&base, "生物重置库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        // 启用 bio（与既有 bio 冒烟同路径）
+        let k_bio = app.new_biometric_unwrap_key().unwrap();
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD.to_owned(), k_bio.clone())
+            .unwrap();
+        assert!(session.has_biometric_wrap());
+        session.lock();
+        assert!(!session.is_unlocked());
+
+        // reset-with-bio（锁定态可执行，D-6）
+        session
+            .reset_password_with_bio(RESET_TO_PASSWORD.to_owned(), k_bio)
+            .unwrap();
+        assert!(
+            !session.is_unlocked(),
+            "reset 不 finish_unlock：重置后必须保持锁定（D-9）"
+        );
+        assert_eq!(
+            session
+                .unlock(STRONG_PASSWORD.to_owned())
+                .unwrap_err()
+                .code(),
+            1002,
+            "重置后旧密码必须失效"
+        );
+        assert!(
+            session.unlock(RESET_TO_PASSWORD.to_owned()).is_ok(),
+            "新密码必须能解锁"
+        );
+    }
+
+    /// FR-17.1 FFI 错误路径：bio 未启用 → 4001；k_bio 非 32 字节 → 5002；
+    /// 新密码弱 → 1010（先于密钥操作）。
+    #[test]
+    fn 生物识别重置错误码路径() {
+        let base = temp_base("bio_reset_err");
+        let brief = setup_vault(&base, "生物重置错误库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        // bio 未启用 → 4001（镜像 bio 未启用时解锁的 4001 语义）
+        let k_bio = app.new_biometric_unwrap_key().unwrap();
+        assert!(!session.has_biometric_wrap());
+        assert_eq!(
+            session
+                .reset_password_with_bio(RESET_TO_PASSWORD.to_owned(), k_bio.clone())
+                .unwrap_err()
+                .code(),
+            4001
+        );
+
+        // 启用 bio → 锁定 → k_bio 长度不符 → 5002
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        session
+            .enable_biometric(STRONG_PASSWORD.to_owned(), k_bio.clone())
+            .unwrap();
+        session.lock();
+        let short = vec![7u8; 16];
+        assert_eq!(
+            session
+                .reset_password_with_bio(RESET_TO_PASSWORD.to_owned(), short)
+                .unwrap_err()
+                .code(),
+            5002
+        );
+
+        // 新密码弱 → 1010（先于密钥操作；k_bio 正确）
+        assert_eq!(
+            session
+                .reset_password_with_bio("123456".to_owned(), k_bio.clone())
+                .unwrap_err()
+                .code(),
+            1010
+        );
+
+        // 错误码路径未破坏 header：正确路径仍可重置
+        session
+            .reset_password_with_bio(RESET_TO_PASSWORD.to_owned(), k_bio)
+            .unwrap();
+        assert!(session.unlock(RESET_TO_PASSWORD.to_owned()).is_ok());
     }
 
     /// list_vaults 枚举：只读 header.json，损坏目录跳过不中断

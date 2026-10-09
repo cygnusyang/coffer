@@ -1019,7 +1019,15 @@ final class AppModel: ObservableObject {
     /// 无门禁）。
     /// - Returns: 恢复码文本；nil = 无会话或生成失败（随机源 / 编码失败 1007）。
     func generateRecoveryCode() -> String? {
-        try? session?.generateRecoveryCode()
+        do {
+            return try session?.generateRecoveryCode()
+        } catch {
+            // 不静默吞错：随机源/编码失败（1007 等）落诊断并呈现（reviewer L-2）。
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            return nil
+        }
     }
 
     /// 启用 / 重新生成恢复码封装（FR-17.2，docs/31 §3.1 enable）。
@@ -1052,8 +1060,10 @@ final class AppModel: ObservableObject {
     /// 是否用新密码解锁）。失败 1002 统一文案（FR-1.4 不区分「码错」与
     /// 「数据损坏」）；1010 弱密码等其余错误经 ErrorPresenter 直出。
     /// 新密码 / code 只作参数传入，用后即弃。
-    func resetPasswordWithRecoveryCode(newPassword: String, code: String) async {
-        guard let session, !isBusy, phase == .locked else { return }
+    /// - Returns: true=重置成功（保持锁定，D-9）；false=失败（lastErrorMessage
+    ///   承载已映射文案：1002 统一不可区分 / 1010 弱密码具体引导）。
+    func resetPasswordWithRecoveryCode(newPassword: String, code: String) async -> Bool {
+        guard let session, !isBusy, phase == .locked else { return false }
         isBusy = true
         defer { isBusy = false }
 
@@ -1063,10 +1073,12 @@ final class AppModel: ObservableObject {
                 try target.resetPasswordWithRecoveryCode(newPassword: newPassword, code: code)
             }.value
             // 成功不切 phase：保持锁定（D-9）
+            return true
         } catch {
             let errText = Self.resetFailedText(for: error, unifiedCopy: Self.recoveryResetFailedCopy)
             DiagLog.append(errText)
             lastErrorMessage = errText
+            return false
         }
     }
 
@@ -1081,17 +1093,19 @@ final class AppModel: ObservableObject {
     /// ① header 未启用 bio 封装；② 设备无 Touch ID / 未录入指纹——
     /// 不过 → 4001 文案（Rust 侧同语义兜底）。
     ///
-    /// 错误分派：.userCanceled（用户取消认证）→ 完全静默；其余（Keychain
-    /// itemNotFound / authFailed / unexpected、FFI 1002 等）→ lastErrorMessage
+    /// 错误分派：.userCanceled（用户取消认证）→ 完全静默（返回 false 但不置
+    /// lastErrorMessage，调用方不得误报成功）；其余（Keychain itemNotFound /
+    /// authFailed / unexpected、FFI 1002 等）→ lastErrorMessage
     /// （1002 统一重置失败文案，FR-1.4）。
-    func resetPasswordWithBio(newPassword: String) async {
-        guard let session, !isBusy, phase == .locked, !vaultUUID.isEmpty else { return }
+    /// - Returns: true=重置成功（保持锁定，D-9）；false=失败或用户取消认证。
+    func resetPasswordWithBio(newPassword: String) async -> Bool {
+        guard let session, !isBusy, phase == .locked, !vaultUUID.isEmpty else { return false }
 
         // 前置门禁（镜像 unlockWithTouchID）：Swift 侧先行判定，避免无谓
         // 跨桥；Rust 侧同语义兜底 4001（D-8）。
         guard session.hasBiometricWrap(), BiometricKeychain.isBiometricsAvailable() else {
             lastErrorMessage = ErrorPresenter.text(TouchIDError.unavailable)
-            return
+            return false
         }
 
         isBusy = true
@@ -1113,14 +1127,19 @@ final class AppModel: ObservableObject {
                 try target.resetPasswordWithBio(newPassword: newPassword, kBio: kBio)
             }.value
             // 成功不切 phase：保持锁定（D-9）
+            return true
         } catch {
             switch error {
             case BiometricKeychainError.userCanceled:
                 DiagLog.append("Touch ID 重置主密码已取消（用户取消认证，静默，docs/08 §7.6）")
+                // 取消非成功也非错误：静默返回 false（不置 lastErrorMessage），
+                // 调用方保持表单不呈现——避免「取消却被误报已重置」。
+                return false
             default:
                 let errText = Self.resetFailedText(for: error, unifiedCopy: Self.bioResetFailedCopy)
                 DiagLog.append(errText)
                 lastErrorMessage = errText
+                return false
             }
         }
     }

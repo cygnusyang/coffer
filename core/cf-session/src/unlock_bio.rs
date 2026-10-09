@@ -234,7 +234,11 @@ pub(crate) fn recover_dek_bio(
     );
     combined.zeroize();
     let mut plain = open_result.map_err(|_| UNLOCK_FAILED)?;
-    let dek = <[u8; 32]>::try_from(plain.as_slice()).map_err(|_| UNLOCK_FAILED)?;
+    let dek = <[u8; 32]>::try_from(plain.as_slice()).map_err(|_| {
+        // reviewer L-1：长度不符路径也不留明文副本（与 recover_dek_recovery 同修）。
+        plain.zeroize();
+        UNLOCK_FAILED
+    })?;
     plain.zeroize();
     Ok(SessionKey::new(dek))
 }

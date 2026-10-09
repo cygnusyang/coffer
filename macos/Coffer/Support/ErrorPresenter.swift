@@ -25,6 +25,10 @@ enum ErrorPresenter {
         case let activationError as LicenseActivationError:
             // 激活失败统一 6001「序列号无效」（docs/03 §14.9 / FR-15.6）
             return activationError.userText
+        case let updateError as UpdatePasswordError:
+            // 更新密码 fail-closed 前置（缺密码字段 / 空新密码）——防御性
+            // 兜底直出可操作文案（正常流程 UI 已隐藏/禁用入口，见 UpdatePasswordSheet）
+            return updateError.errorDescription ?? "无法更新密码。"
         default:
             return String(describing: error)
         }

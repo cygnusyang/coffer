@@ -865,9 +865,15 @@ mod tests {
             "帧间隔 < 超时值的慢速会话不得被 idle 超时误断"
         );
 
-        // 收尾：EOF → 干净退出 0。
+        // 收尾：EOF → 干净退出 0。先 shutdown(Write) 再排空响应缓冲（对齐
+        // uds_active_session_not_timed_out 惯用法）——客户端全程不读响应，
+        // 若 drop 前接收缓冲有积压，内核发 RST 而非 FIN → 服务器读
+        // ECONNRESET、退出码非 CLEAN（CI 并行负载下实测失败，macOS 本地未现）。
+        // 读到 EOF 即服务器已处理完 FIN 并关闭，随后 drop 干净。
         conn.shutdown(std::net::Shutdown::Write)
             .expect("shutdown write");
+        let mut responses = String::new();
+        conn.read_to_string(&mut responses).expect("read responses");
         drop(conn);
         let code = handle.join().expect("run thread must not panic");
         assert_eq!(code, exit_code::CLEAN);

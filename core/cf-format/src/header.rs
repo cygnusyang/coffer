@@ -43,6 +43,10 @@ pub const WRAPPED_DEK_CT_MIN: usize = 48;
 /// `verifier.ct_b64` 解码后的最小长度：16 字节明文常量 + 16 字节 tag。
 pub const VERIFIER_CT_MIN: usize = 32;
 
+/// `recovery_wrap.wrapped_dek_b64` 解码后的最小长度：12 字节 nonce + 16 字节 tag。
+/// 与既有 wrap 字段同思路，但恢复码路径采用 AES-256-GCM（docs/31 §1.2 D-4）。
+pub const RECOVERY_WRAP_CT_MIN: usize = 28;
+
 /// 盐长度（字节），直接引用 `cf-crypto` 的常量，避免两处定义漂移。
 pub const SALT_LEN: usize = cf_crypto::SALT_LEN;
 
@@ -77,6 +81,10 @@ pub struct Header {
     /// `#[serde(default)]`，docs/29 §4.3 G1b）。
     #[serde(default)]
     pub mcp_wrap: McpWrap,
+    /// 离线恢复码封装（可选字段，旧库无 → `None`；`#[serde(default)]`，
+    /// docs/31 §1.1 FR-17.2）。
+    #[serde(default)]
+    pub recovery_wrap: Option<RecoveryWrap>,
     /// 功能开关。
     pub flags: HeaderFlags,
 }
@@ -161,6 +169,25 @@ pub struct McpWrap {
     pub wrapped_dek_b64: Option<String>,
 }
 
+/// 恢复码封装段（`header.json` 的 `recovery_wrap` 字段）。
+///
+/// 承载离线恢复码封装的 DEK 密文（docs/31 §1.1，FR-17.2），格式为
+/// `b64( nonce(12B) ‖ ciphertext(DEK) )`；密钥 `K_recovery` 由恢复码经
+/// HKDF 派生（`cf-crypto` subkeys，docs/31 §1.2 D-4）。盐**隐含**——以
+/// `vault_uuid` 充当 HKDF salt，不设独立 salt 字段（docs/31 D-2）。
+///
+/// 旧库无此字段：Header 上 `#[serde(default)]` + `Option` 保证反序列化
+/// 回落为 `None`，双向兼容（docs/31 D-1，不 bump FORMAT_VERSION）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct RecoveryWrap {
+    /// 当前是否启用了恢复码封装。旧库 / 未配置默认 `false`。
+    pub available: bool,
+    /// 用 `K_recovery` 封装的 DEK（base64，`b64(nonce(12B) ‖ ct(DEK))`，
+    /// 解码后 ≥ [`RECOVERY_WRAP_CT_MIN`] 字节）。
+    pub wrapped_dek_b64: String,
+}
+
 /// 功能开关段（`header.json` 的 `flags` 字段）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeaderFlags {
@@ -168,6 +195,20 @@ pub struct HeaderFlags {
     pub sort_key_enabled: bool,
     /// 是否把附件内联进数据库。M1 恒为 `false`（附件走独立文件）。
     pub attachments_inline: bool,
+}
+
+// ---------------------------------------------------------------- 只读辅助
+
+impl Header {
+    /// 是否已配置恢复码封装：`recovery_wrap` 非空且 `available == true`。
+    ///
+    /// `available == false` 的残留封装等价于未配置（与 `None` 同义，
+    /// docs/31 §1.1/§1.3）。供 session 层 `has_recovery_wrap` facade
+    /// （docs/31 §3.3）与 UI 决定是否展示「忘记密码 → 恢复码重置」入口。
+    #[must_use]
+    pub fn has_recovery_wrap(&self) -> bool {
+        matches!(&self.recovery_wrap, Some(w) if w.available)
+    }
 }
 
 // ---------------------------------------------------------------- 校验
@@ -292,6 +333,27 @@ pub fn validate_header(h: &Header) -> Result<(), CfFormatError> {
                 "mcp_wrap.wrapped_dek_b64 解码后应 ≥ {WRAPPED_DEK_CT_MIN} 字节，实际为 {}",
                 b.len()
             )));
+        }
+    }
+
+    // 10. recovery_wrap：`available==true` 时 wrapped_dek_b64 非空且可解码为
+    //     ≥ 28 字节（12B nonce + 16B tag，docs/31 §1.3）。`available==false`
+    //     等价 None（残留封装不校验密文形状，与 biometric/mcp 的 available
+    //     语义一致）。解码失败 → 读路径 1005 Corrupted（InvalidHeader）。
+    if let Some(rw) = &h.recovery_wrap {
+        if rw.available {
+            if rw.wrapped_dek_b64.is_empty() {
+                return Err(CfFormatError::InvalidHeader(
+                    "recovery_wrap.available==true 但 wrapped_dek_b64 为空".to_string(),
+                ));
+            }
+            let b = decode_b64(&rw.wrapped_dek_b64, "recovery_wrap.wrapped_dek_b64")?;
+            if b.len() < RECOVERY_WRAP_CT_MIN {
+                return Err(CfFormatError::InvalidHeader(format!(
+                    "recovery_wrap.wrapped_dek_b64 解码后应 ≥ {RECOVERY_WRAP_CT_MIN} 字节，实际为 {}",
+                    b.len()
+                )));
+            }
         }
     }
 
@@ -468,6 +530,135 @@ mod tests {
             validate_header(&h),
             Err(CfFormatError::InvalidHeader(_))
         ));
+    }
+
+    // ---------- recovery_wrap（FR-17.2，docs/31 §1.1/§1.3） ----------
+
+    /// 恢复码封装往返：带 recovery_wrap 的 Header 序列化 → 反序列化
+    /// 逐字段相等，且 `has_recovery_wrap()` 为 true。
+    #[test]
+    fn recovery_wrap_roundtrip() {
+        let mut h = sample_header();
+        h.recovery_wrap = Some(RecoveryWrap {
+            available: true,
+            wrapped_dek_b64: b64(&[0x55u8; RECOVERY_WRAP_CT_MIN]),
+        });
+        let json = serde_json::to_vec(&h).expect("序列化成功");
+        let back: Header = serde_json::from_slice(&json).expect("反序列化成功");
+        assert_eq!(back, h);
+        assert!(back.has_recovery_wrap());
+    }
+
+    /// 旧库 JSON（无 `recovery_wrap` 字段）必须反序列化成功，且字段回落为
+    /// `None`、`has_recovery_wrap()` 为 false —— `#[serde(default)]` 兼容判据。
+    #[test]
+    fn old_json_without_recovery_wrap_is_none() {
+        let h = sample_header();
+        let mut json = serde_json::to_value(&h).expect("序列化成功");
+        json.as_object_mut()
+            .expect("object")
+            .remove("recovery_wrap");
+        let text = serde_json::to_string(&json).expect("序列化成功");
+
+        let back: Header = serde_json::from_str(&text).expect("旧库 JSON 应可反序列化");
+        assert_eq!(back.recovery_wrap, None);
+        assert!(!back.has_recovery_wrap());
+    }
+
+    /// `recovery_wrap: null` 显式空值也应回落为 None。
+    #[test]
+    fn null_recovery_wrap_is_none() {
+        let h = sample_header();
+        let mut json = serde_json::to_value(&h).expect("序列化成功");
+        json.as_object_mut()
+            .expect("object")
+            .insert("recovery_wrap".into(), serde_json::Value::Null);
+        let text = serde_json::to_string(&json).expect("序列化成功");
+
+        let back: Header = serde_json::from_str(&text).expect("null recovery_wrap 应可反序列化");
+        assert_eq!(back.recovery_wrap, None);
+    }
+
+    /// `recovery_wrap: {}` 部分 JSON（内部字段全缺）也应反序列化成功并回落默认。
+    #[test]
+    fn partial_recovery_wrap_object_uses_default() {
+        let h = sample_header();
+        let mut json = serde_json::to_value(&h).expect("序列化成功");
+        json.as_object_mut()
+            .expect("object")
+            .insert("recovery_wrap".into(), serde_json::json!({}));
+        let text = serde_json::to_string(&json).expect("序列化成功");
+
+        let back: Header = serde_json::from_str(&text).expect("空对象 recovery_wrap 应可反序列化");
+        assert_eq!(back.recovery_wrap, Some(RecoveryWrap::default()));
+        assert!(!back.has_recovery_wrap());
+    }
+
+    /// recovery_wrap `available==true` + 合法 b64（≥ 28B）→ 校验通过。
+    #[test]
+    fn recovery_wrap_available_valid_passes() {
+        let mut h = sample_header();
+        h.recovery_wrap = Some(RecoveryWrap {
+            available: true,
+            wrapped_dek_b64: b64(&[0x55u8; RECOVERY_WRAP_CT_MIN]),
+        });
+        validate_header(&h).expect("合法 recovery_wrap 应通过校验");
+        assert!(h.has_recovery_wrap());
+    }
+
+    /// recovery_wrap `available==true` 但 wrapped_dek_b64 为空 → 拒绝。
+    #[test]
+    fn recovery_wrap_available_empty_b64_rejected() {
+        let mut h = sample_header();
+        h.recovery_wrap = Some(RecoveryWrap {
+            available: true,
+            wrapped_dek_b64: String::new(),
+        });
+        assert!(matches!(
+            validate_header(&h),
+            Err(CfFormatError::InvalidHeader(_))
+        ));
+    }
+
+    /// recovery_wrap 密文长度不足（< 28 字节）→ 拒绝。
+    #[test]
+    fn recovery_wrap_too_short_rejected() {
+        let mut h = sample_header();
+        h.recovery_wrap = Some(RecoveryWrap {
+            available: true,
+            wrapped_dek_b64: b64(&[0x01u8; RECOVERY_WRAP_CT_MIN - 1]),
+        });
+        assert!(matches!(
+            validate_header(&h),
+            Err(CfFormatError::InvalidHeader(_))
+        ));
+    }
+
+    /// recovery_wrap 密文非 base64 → 拒绝。
+    #[test]
+    fn recovery_wrap_invalid_base64_rejected() {
+        let mut h = sample_header();
+        h.recovery_wrap = Some(RecoveryWrap {
+            available: true,
+            wrapped_dek_b64: "!!!not-base64!!!".to_string(),
+        });
+        assert!(matches!(
+            validate_header(&h),
+            Err(CfFormatError::InvalidHeader(_))
+        ));
+    }
+
+    /// recovery_wrap `available==false` 等价 None：即使 wrapped_dek_b64 填了
+    /// 内容也不校验密文形状（残留封装合法），`has_recovery_wrap()` 为 false。
+    #[test]
+    fn recovery_wrap_available_false_is_none() {
+        let mut h = sample_header();
+        h.recovery_wrap = Some(RecoveryWrap {
+            available: false,
+            wrapped_dek_b64: b64(&[0x01u8; RECOVERY_WRAP_CT_MIN - 1]), // 形状非法但被忽略
+        });
+        validate_header(&h).expect("available==false 的 recovery_wrap 应通过校验");
+        assert!(!h.has_recovery_wrap());
     }
 
     // ---------- 负路径 ----------

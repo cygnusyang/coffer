@@ -86,6 +86,7 @@ fn valid_header(
             key_alias: None,
             wrapped_dek_b64: None,
         },
+        recovery_wrap: None,
         flags: HeaderFlags {
             sort_key_enabled: false,
             attachments_inline: false,

@@ -139,6 +139,7 @@ pub fn make_header(vault_uuid: &str) -> (Header, [u8; 32]) {
             wrapped_dek_b64: None,
         },
         mcp_wrap: McpWrap::default(),
+        recovery_wrap: None,
         flags: HeaderFlags {
             sort_key_enabled: false,
             attachments_inline: false,

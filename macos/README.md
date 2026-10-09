@@ -20,6 +20,37 @@ open macos/build/Coffer.app         # 启动
   （FR-5.3 TOTP QR 扫描，T09 裁定 A）与 `keychain-access-groups`（escrow 取密），
   真实清单见 `Coffer/Coffer.entitlements`；核心断言仍是**无任何** `com.apple.security.network.*`。
 
+## 发版流程（tag → CI 自动构建签名 + 触发 Release，v2.4.1+）
+
+每个新 tag（`v*`）触发 `.github/workflows/release.yml`：ubuntu 可靠门禁
++ clippy → macos-latest 从 GitHub Secrets 注入签名证书与 provisioning profile，
+`./tools/build_macos_app.sh --rebuild-bindings` 构建签名产物 → 打包
+`Coffer-<tag>.zip` → 自动创建 GitHub Release + release notes。
+
+**首次前置（一次性）**——把本机签名材料导出为三个 Secrets：
+
+```bash
+./tools/export_ci_secrets.sh --push   # 导出证书+私钥 p12 / profile 为 base64 并 gh secret set
+```
+
+| Secret | 内容 |
+| --- | --- |
+| `APPLE_CERT_P12_BASE64` | Apple Development 证书 + 私钥 p12 的 base64 |
+| `APPLE_CERT_PASSWORD` | 上述 p12 的导出密码 |
+| `APPLE_PROVISIONING_PROFILE_BASE64` | `macos/build/app.coffer.Coffer.provisionprofile` 的 base64 |
+
+**每次发版步骤**：
+
+1. bump 版本：改 `Coffer/Info.plist` 的 `CFBundleShortVersionString`（v2.4.1 起直拷入 bundle，须与 tag 一致，见 `coffer-v241-settings-done-button` 纪律）；
+2. 本地过一遍 `./tools/run_gate.sh`（全绿才打 tag）；
+3. 若 profile 临近 7 天有效期，重跑 `make_provisioning_profile.sh` + `export_ci_secrets.sh --push` 刷新（免费账号 profile 7 天有效，过期流水线会红）；
+4. `git tag vX.Y.Z && git push origin vX.Y.Z`；
+5. 到 GitHub Actions 看流水线 → Releases 页收 `Coffer-<tag>.zip`。
+
+产物为 App Sandbox + `keychain-access-groups` entitlements、profile 内嵌的
+签名 `.app`（zip 包）——与本地 `build_macos_app.sh` 方案 A 签名线同源，
+**不回退 ad-hoc**（BUG-2 纪律）。零网络承诺核查同「一条命令构建」节。
+
 ## coffer CLI（MCP 解锁托管，v2.2.0）
 
 `coffer`（`coffer mcp` MCP 服务器，docs/20）**随 App bundle 分发，不独立安装**：

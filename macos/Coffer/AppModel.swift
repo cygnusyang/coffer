@@ -87,6 +87,11 @@ final class AppModel: ObservableObject {
     /// （docs/08 §9 T04 验收①）。
     @Published var pendingBioOffer = false
 
+    /// 首次解锁后的可选「生成恢复码」引导（v2.5.0 FR-17.2，docs/31 §4.3 D-8）。
+    /// 建库成功时置位；RootView 在解锁态呈现 RecoveryCodeOfferSheet，且用
+    /// `!pendingBioOffer` 保证不与 Touch ID 引导同屏（bio 先、恢复码后）。
+    @Published var pendingRecoveryOffer = false
+
     // MARK: 条目列表 / 详情状态（T05 阶段二）
 
     /// 当前过滤 + 搜索下的条目摘要列表。
@@ -515,6 +520,10 @@ final class AppModel: ObservableObject {
             // 注意：enable 需解锁态（Rust 1001 门禁），故引导 sheet 挂在
             // 首次解锁完成后（RootView），而非建库成功即刻。
             pendingBioOffer = isTouchIDSupported
+            // 恢复码引导（FR-17.2 D-8）：所有建库成功者都置位；RootView 侧
+            // `!pendingBioOffer` 保证 bio 引导优先、其关闭后再呈现恢复码引导
+            // （无 Touch ID 设备则直接呈现恢复码引导）。
+            pendingRecoveryOffer = true
         } catch {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
@@ -982,6 +991,9 @@ final class AppModel: ObservableObject {
     nonisolated static let bioResetFailedCopy = "重置失败：无法完成身份验证或密码库数据损坏。"
     /// 主密码重置成功文案（View 层成功视图展示，D-9）。
     nonisolated static let resetSucceededCopy = "主密码已重置，条目数据不受影响。请用新密码解锁。"
+    /// Touch ID 重置主密码时的生物认证弹窗文案（Keychain 自有单次认证
+    /// 的 localizedReason，与解锁「解锁密码库」区分，docs/31 §4.2 B 裁定）。
+    nonisolated static let bioResetAuthPrompt = "验证身份以重置主密码"
 
     /// 重置失败文案映射（纯函数）：1002 → 统一文案（FR-1.4 不可区分纪律）；
     /// 其余（1010 / 4003 / license / Keychain / IO）→ ErrorPresenter 直出。
@@ -1091,7 +1103,7 @@ final class AppModel: ObservableObject {
             //    BiometricKeychain.unlockPrompt，PL-4 双弹窗规避同解锁路径）。
             // ② 读取失败分道（catch 分派）：.userCanceled 静默；其余
             //    → 重置失败文案。
-            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID)
+            let kBio = try BiometricKeychain().read(vaultUUID: vaultUUID, reason: Self.bioResetAuthPrompt)
 
             // ③ 后半段走 FFI：K_bio 拷贝进 Task 闭包，本函数返回后局部
             //    变量即弃（K_bio 纪律）。AEAD open 失败（K_bio 不匹配 /

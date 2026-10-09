@@ -24,6 +24,18 @@ struct RootView: View {
                     .environmentObject(model)
                     .interactiveDismissDisabled()
             }
+            // 首次解锁后的可选「生成恢复码」步骤（v2.5.0 FR-17.2，D-8）：
+            // 仅在解锁态且 bio 引导未同时呈现（!pendingBioOffer）时弹出——
+            // bio 引导优先，其关闭（跳过/完成）后恢复码引导接着呈现；
+            // 无 Touch ID 设备则直接呈现恢复码引导。
+            .sheet(isPresented: Binding(
+                get: { model.phase == .unlocked && model.pendingRecoveryOffer && !model.pendingBioOffer },
+                set: { if !$0 { model.pendingRecoveryOffer = false } }
+            )) {
+                RecoveryCodeOfferSheet()
+                    .environmentObject(model)
+                    .interactiveDismissDisabled()
+            }
             // 库切换器 sheet（v0.4 FR-1.2，MB-1）：MainView 工具栏触发，
             // 挂 RootView——锁定/建库等相变发生时随视图整体切换。
             .sheet(isPresented: $model.showVaultSwitcher) {

@@ -170,8 +170,8 @@ struct BiometricKeychain {
     /// （删除 App 侧 evaluatePolicy——macOS 26 上 kSecUseAuthenticationContext
     /// 复用已认证结果不生效，预认证 + 读取再认证 = 双弹窗）。
     /// 取消 / 指纹集失效 → .authFailed → 4002 降级（docs/08 §4.1，语义不变）。
-    func read(vaultUUID: String, useDataProtection: Bool = true) throws -> Data {
-        let query = Self.queryForRead(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
+    func read(vaultUUID: String, useDataProtection: Bool = true, reason: String = BiometricKeychain.unlockPrompt) throws -> Data {
+        let query = Self.queryForRead(vaultUUID: vaultUUID, useDataProtection: useDataProtection, reason: reason)
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -208,14 +208,14 @@ struct BiometricKeychain {
     /// 读取查询构造（内部可见的最小可测 seam）：定位 + 返回数据 + 全新
     /// LAContext（localizedReason = unlockPrompt）。不含密钥材料，单测据此
     /// 断言查询携带由 Keychain 自有单次认证所需的 LAContext。
-    static func queryForRead(vaultUUID: String, useDataProtection: Bool) -> [String: Any] {
+    static func queryForRead(vaultUUID: String, useDataProtection: Bool, reason: String = BiometricKeychain.unlockPrompt) -> [String: Any] {
         var query = baseQuery(vaultUUID: vaultUUID, useDataProtection: useDataProtection)
         query[kSecReturnData as String] = true
         // 全新未认证 LAContext：不携带任何已认证结果，由 Keychain 自行发起
         // 唯一一次认证；localizedReason 即弹窗提示文案（kSecUseOperationPrompt
         // 自 macOS 11 起弃用，改用此字段）。
         let context = LAContext()
-        context.localizedReason = Self.unlockPrompt
+        context.localizedReason = reason
         query[kSecUseAuthenticationContext as String] = context
         return query
     }

@@ -16,7 +16,8 @@
 //      机器指纹；自包含不触 AppModel，docs/03 §14）
 //   ⑨ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
 //      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
-//   ⑩ 完成：显式退出（原 SecuritySettingsView BUG-3 修正沿用）
+//   完成按钮（v2.4.1）：置顶 NavigationStack toolbar（.confirmationAction），
+//   滚动时随时可退出（原底部 doneSection 迁入，BUG-3 显式退出口沿用）
 //
 // 档位哨兵语义（三者互不相同，勿混淆）：
 //   - autoLockMinutes：0 = 从不（运行态；落盘为 -1，见 AppModel）
@@ -60,10 +61,16 @@ struct SettingsView: View {
                 diagnosticsSection
                 licenseSection
                 mcpSection
-                doneSection
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
+            // v2.4.1：完成按钮置顶 toolbar（.confirmationAction）——滚动时
+            // 常驻窗口顶部，随时可结束设置动作；BUG-3 显式退出口语义不变
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
         }
         // 宽度固定、高度自适应（节内容随 Touch ID 内联确认行等动态展开）
         .frame(width: 480)
@@ -277,18 +284,5 @@ struct SettingsView: View {
     /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。
     private var mcpSection: some View {
         McpSettingsSection()
-    }
-
-    // MARK: - ⑩ 完成
-
-    private var doneSection: some View {
-        Section {
-            HStack {
-                Spacer()
-                Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                Spacer()
-            }
-        }
     }
 }

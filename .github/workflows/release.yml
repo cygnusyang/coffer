@@ -25,11 +25,15 @@ permissions:
   contents: write
 
 jobs:
-  # 门禁：Rust 可靠门禁 + clippy（ubuntu 快跑；构建 job 依赖它）。
+  # 门禁：Rust 可靠门禁（ubuntu 快跑；构建 job 依赖它）。
   # 用 coffer-test-gate 纪律命令：--no-fail-fast + 跳 2 条问题用例
   # （1 GiB KDF 极端档会挂 20+ 分钟；千条搜索基线为 flaky 墙钟断言）。
+  # clippy 不放这里：dead_code 分析平台相关，cf-escrow-keychain 的
+  # os_status/classify_status 仅被 macOS 门控代码调用，ubuntu 上误报
+  # dead code → -D warnings 假红；clippy 随构建 job 在 macOS 跑（见下，
+  # 与本地 run_gate.sh 门禁一致）。
   test:
-    name: Gate（Rust 测试 + clippy）
+    name: Gate（Rust 测试）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,14 +46,12 @@ jobs:
         run: cargo test --workspace --no-fail-fast -- \
           --skip 极端kdf参数建库记录与解锁往返 \
           --skip 千条搜索基线
-      - name: clippy（-D warnings）
-        working-directory: core
-        run: cargo clippy --all-targets -- -D warnings
 
-  # 构建 + 签名 + 打包 + 触发 release。
-  # 需 macos runner：codesign / security keychain / hdiutil 均为 macOS 侧。
+  # clippy（-D warnings）+ 构建 + 签名 + 打包 + 触发 release。
+  # 需 macos runner：clippy 的 dead_code 分析须在 macOS 目标上做（与本地
+  # run_gate.sh 一致）；codesign / security keychain 均为 macOS 侧。
   build:
-    name: 构建签名 Coffer.app 并发布
+    name: clippy + 构建签名 Coffer.app 并发布
     needs: test
     runs-on: macos-latest
     env:
@@ -63,6 +65,10 @@ jobs:
         run: |
           if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
           echo "PATH=$HOME/.cargo/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: clippy（-D warnings，macOS 上跑——dead-code 平台相关，见 test job 注释）
+        working-directory: core
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: 校验必需 secrets 存在
         run: |

@@ -1258,6 +1258,34 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
+## BUG-18（🟡 顺延登记）：cf-mcp `uds.rs` 并行执行偶发 `Connection refused`——socket 先连后 bind 竞态（测试基建，非生产代码）
+
+**登记日期**：2026-10-10
+**发现环境**：v2.8.1 dev-reviewer 轮（MCP username 出参审查批），`cargo test -p cf-mcp --no-fail-fast` 并行下 3 处红（uds.rs:613/:815/:847），隔离重跑 15/15 全绿——预存 flaky，与该轮改动无关
+**分级**：S4 / P3 / 来源版本 v2.8.1（审查轮实证，产生时间更早）/ 发现版本 v2.8.1
+**状态**：🟡 顺延登记——仅测试并行调度竞态，非安全、非生产回归；全量门禁按隔离重跑口径处置（与 W-HIGH-1 后「配对 flaky 隔离重跑」同款纪律）
+**核销记录**：—（修复时回填：uds.rs 测试 socket bind/ready 同步机制 + 回归证据）
+**证据**：dev-reviewer 轮实测（2026-10-10）：`cargo test -p cf-mcp --no-fail-fast` → 174 passed / 3 failed（均为 `Connection refused`）；`cargo test -p cf-mcp uds`（隔离）→ 15 passed / 0 failed
+
+### 现象（预期/实际 分行写）
+
+- 预期：uds.rs 全部用例在任何并行度下稳定通过。
+- 实际：多测试并行时偶发 `Connection refused`——client 在 server 端 `bind`（或 listen 就绪）前发起 connect，竞态失败。
+
+### 根因（已实证）
+
+uds.rs 测试夹具对 socket 文件就绪无同步原语（bind 完成与 client connect 之间无 barrier/retry），并行调度下暴露窗口。
+
+### 修复路径
+
+测试侧组内去并行化或就绪探测（retry connect / poll socket 存在），对齐 BUG-15「组内顺序断言去序化」先例；本版不修，顺延。
+
+### 复现与诊断
+
+`cargo test -p cf-mcp --no-fail-fast`（全量并行）多次执行观察偶发红；隔离 `cargo test -p cf-mcp uds` 稳定绿即为该竞态指纹。
+
+---
+
 ```
 ## BUG-N（🔴/🟡/✅ 状态）：一句话标题
 

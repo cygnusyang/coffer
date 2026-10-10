@@ -61,11 +61,13 @@ struct ItemEditView: View {
         return nil
     }
 
-    /// 环境容器（SecureNote + `coffer:environment` 保留标签）：编辑时标签锁
-    /// 恒回写、字段行 NAME 实时校验告警（docs/36 §5.2）。仅编辑模式判定——
-    /// 新建时该标签仍由用户自由输入（手编容器入口，AC-36.2-4）。
+    /// 环境容器（**SecureNote + `coffer:environment` 保留标签**双条件，与 MCP
+    /// 读面一致）：编辑时标签锁恒回写、字段行 NAME 实时校验告警（docs/36
+    /// §5.2）。仅编辑模式判定——新建时 details 不可及（无 category/tags，
+    /// 双条件无从判），且新建该标签仍由用户自由输入（手编容器入口，AC-36.2-4）。
     private var isEnvContainer: Bool {
-        EnvironmentContainer.isEnvContainer(existingDetails?.tags ?? [])
+        guard let details = existingDetails else { return false }
+        return EnvironmentContainer.isEnvContainer(category: details.category, tags: details.tags)
     }
 
     private var hasExistingTotp: Bool {

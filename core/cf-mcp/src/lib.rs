@@ -47,6 +47,11 @@ pub mod redact;
 /// （slim 构建不引入该依赖树，docs/20 §2.2 只下不上）。
 #[cfg(feature = "coffer-store")]
 pub mod set_password;
+/// `coffer set-env` 写子命令（docs/36 §4，v2.8.0 环境容器写面）——依赖
+/// cf-session / rpassword / zeroize，均在 `coffer-store` feature 依赖树内
+/// （零新增依赖边，docs/36 §4.6）。
+#[cfg(feature = "coffer-store")]
+pub mod set_env;
 pub mod tools;
 pub mod uds;
 

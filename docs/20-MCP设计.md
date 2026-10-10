@@ -317,6 +317,8 @@ coffer mcp [--provider op|coffer] [--uds PATH] [--log PATH] [--vault NAME] [--no
 `0` 干净退出（连接关闭 / shutdown）；`1` 配置错误（未知 flag / provider 不可用）；`2` 协议致命错误（帧解析死锁态）；`3` 身份缺失（7002）。
 
 > **一次性写子命令退出码（v2.5.0 扩展，docs/34 §5.2 r0.4，lead 裁定 2026-10-10）**：本段 0/1/2/3 是 **MCP server 常驻进程**语义（干净关闭 / 配置错误 / 协议致命 / 身份缺失）。**一次性写子命令**（如 `coffer set-password`）不复用该映射——其退出码为 `0` 成功 / `1` 解锁失败 fail-closed（D-4：托管存在但解锁失败绝不回落 env）/ `2` 未命中或歧义（1011）/ `3` 强度不足（1010，`--force` 绕过）/ `4` 用法错误。两套语义按子命令上下文区分，不得混用。
+>
+> **`set-env` 环境容器写子命令（v2.8.0，docs/36 §4.5 r0.2）**：同为一次性写命令，退出码 `0` 成功（含首写自动建容器）/ `1` 解锁失败 fail-closed 或会话层存储错误或 **stdin 读取失败** / `2` 目标未命中 / 歧义 / 目标非环境容器（含同名非容器）/ `3` 保留槽位不适用（set-password 3=强度不足，set-env 无强度门禁，码位保留对齐）/ `4` 参数/用法错误。与 `set-password` 共享一次 `update_item` 原子写 + FR-2.9 历史 append + 取密链复用 `unlock_vault`；**MCP 工具保持只读**，写面仅 CLI + App（docs/36 §0 裁定）。
 
 ### 5.4 注册命令（设置页「复制」输出，对齐 1Password「Connect to Claude」）
 
@@ -452,5 +454,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.12 | 2026-10-07 | **D-6 路径修订追平（lead 裁定 2026-10-07，G5 真机实证，commit 7456c47，docs/29 §8 D-6 路径修订记录）**：§5.2 调用路径注 / §5.4 注册命令与 blockquote / §6.2 分发行全部由 `Coffer.app/Contents/MacOS/coffer` 改为**嵌套 bundle 路径** `Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`（原路径 case-insensitive APFS 与主可执行文件 `Coffer` 同名冲突 + AMFI 不覆盖嵌套裸 Mach-O → 137；决策实质不变：bundle 分发 / 同身份 / 拷出即 SIGKILL）。修订记录历史行不改写 |
 | r0.13 | 2026-10-09 | **run_with_secret 伴随用户名注入（v2.5.0，MCP 取密语义补全）**：§4.5 契约补记——条目带 `Designation::Username` 字段（Email 兜底）时 `run_with_secret` 额外注入 `<ENV>_USERNAME`（无则不注入，与主值「无则不注入」同语义）；动机 = agent 全自动登录（浏览器导入条目含用户名字段而 MCP 单值契约只吐密码，真机实证 GitHub 密码接受/涂鸦缺用户名失败）；仅认显式 designation、纯 Text 字段不参与；op provider 不在本批（字段机制不同，顺延）。修订记录历史行不改写 |
 | r0.14 | 2026-10-10 | **一次性写子命令退出码补注（v2.5.0 写面集成轮，lead 裁定）**：§5.3 补注——MCP server 常驻进程退出码（0/1/2/3）与一次性写子命令退出码（0/1/2/3/4，docs/34 §5.2 r0.4，`coffer set-password`）按子命令上下文区分、不得混用。修订记录历史行不改写 |
+| r0.15 | 2026-10-10 | **set-env 环境容器写子命令登记（v2.8.0 集成轮，docs/36 r0.2，commit a6e2ab7+）**：§5.3 补 `set-env` 一次性写命令退出码（0/1/2/3 保留/4，docs/36 §4.5）——与 `set-password` 共享原子写/历史/取密链，**MCP 工具保持只读**（写面仅 CLI + App）。§5.1 二进制归属顺延「未来写子命令扩进同一 bin」表述追平（set-password/set-env 已扩入）。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

@@ -6,8 +6,10 @@
 //!    `--id <UUID>` 按 UUID 定位兜底（名称歧义 / 改名场景，镜像
 //!    `set-password --id` 纪律）。**互斥**，至少给一个。
 //!    0 命中且无任何条目同名 → **自动建容器**（SecureNote + `coffer:environment`
-//!    标签，D-36.2）；同名**非容器**条目 → 拒绝不建（退出 2）；>1 命中 → 歧义
-//!    报错提示 `--id`（退出 2）；
+//!    标签，D-36.2）；同名**非容器**条目（含 Login+标签，H-2）→ 拒绝不建
+//!    （退出 2）；>1 命中 → 歧义报错提示 `--id`（退出 2）。自动建容器并发安全
+//!    （H-1）：`environment_exists` 守卫挡顺序重复 + uuid tie-break 自愈——两
+//!    进程同时首写同名单容器时库内恒恰 1 容器，输家干净失败（退出 2）；
 //! 2. 写入语义：一次 `update_item` 整换重建（多条 NAME=VALUE + `--unset` 同一次
 //!    调用，FR-2.9 自动 append 一条历史可回滚）。字段形态固定
 //!    [`FieldType::Text`] + `designation: None`——与 MCP `username_value` /
@@ -26,8 +28,9 @@
 //! stdout 只写成功消息（本子命令非协议会话）；诊断/错误经 [`Logger`] 走 stderr。
 //! 退出码（docs/36 §4.5，一次性写命令映射，与 docs/34 §5.2 对齐）：
 //! `0` 成功（写入/更新/删除 + 历史 append；含首写自动建容器）；`1` 解锁失败
-//! fail-closed；`2` 目标未命中 / 歧义 / 目标非环境容器；`3` 保留槽位不适用
-//! （set-env 无强度门禁，码位维持跨写命令映射对齐）；`4` 参数/用法错误。
+//! fail-closed；`2` 目标未命中 / 歧义 / 目标非环境容器 / 并发建容器撞车；
+//! `3` 保留槽位不适用（set-env 无强度门禁，码位维持跨写命令映射对齐）；
+//! `4` 参数/用法错误。
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
@@ -137,6 +140,10 @@ pub enum SetEnvError {
         /// 同名 Active 条目数。
         count: usize,
     },
+    /// 首写自动建容器与并发写者撞车（同名单容器已存在 / 本进程被 tie-break
+    /// 裁掉；重跑即可写入，H-1）。
+    #[error("environment `{0}` was just created by another writer；请重跑 set-env 写入（并发建容器撞车）")]
+    EnvConcurrentCreate(String),
     /// 读 stdin 失败。
     #[error("failed to read value from stdin: {0}")]
     ReadValue(#[from] std::io::Error),
@@ -166,7 +173,8 @@ impl SetEnvError {
             | Self::MissingWrite => exit_codes::USAGE_ERROR,
             Self::ItemNotFound(_)
             | Self::NotEnvContainer(_)
-            | Self::Ambiguous { .. } => exit_codes::TARGET_NOT_FOUND,
+            | Self::Ambiguous { .. }
+            | Self::EnvConcurrentCreate(_) => exit_codes::TARGET_NOT_FOUND,
             Self::ReadValue(_) | Self::Storage => exit_codes::UNLOCK_FAILED,
         }
     }
@@ -371,17 +379,26 @@ enum ResolvedTarget {
     Fresh { title: String, uuid: String },
 }
 
+/// 详情条目是否为环境容器（**SecureNote + 保留标签** 双条件，H-2）——镜像
+/// [`CofferStoreProvider::is_env_item`]（coffer.rs:120）的 MCP 读面语义：
+/// `is_env_details` 仅查标签，Login 手加 `coffer:environment` 标签会被它放过，
+/// 但 MCP 永不注入 → set-env 认作容器即静默分歧，故须补类别校验。
+fn is_env_container(d: &ItemDetails) -> bool {
+    d.category == ItemCategory::SecureNote
+        && crate::provider::coffer::CofferStoreProvider::is_env_details(d)
+}
+
 /// 按 UUID 精确读容器（`--id` 兜底定位，docs/36 §4.2）。
 ///
-/// 未命中 → [`SetEnvError::ItemNotFound`]；命中的非容器条目 →
-/// [`SetEnvError::NotEnvContainer`]；会话层错误 → [`SetEnvError::Storage`]。
+/// 未命中 → [`SetEnvError::ItemNotFound`]；命中的非容器条目（含 Login+标签，
+/// H-2）→ [`SetEnvError::NotEnvContainer`]；会话层错误 → [`SetEnvError::Storage`]。
 /// `--id` **不自动建容器**。
 fn resolve_by_id(session: &VaultSession, id: &str) -> Result<ResolvedTarget, SetEnvError> {
     let d = session
         .get_item(id)
         .map_err(|_| SetEnvError::Storage)?
         .ok_or_else(|| SetEnvError::ItemNotFound(id.to_string()))?;
-    if crate::provider::coffer::CofferStoreProvider::is_env_details(&d) {
+    if is_env_container(&d) {
         Ok(ResolvedTarget::Existing(Box::new(d)))
     } else {
         Err(SetEnvError::NotEnvContainer(d.title.expose().to_string()))
@@ -416,7 +433,7 @@ fn resolve_by_scope(session: &VaultSession, scope: &str) -> Result<ResolvedTarge
                 .get_item(&matches[0].uuid.to_string())
                 .map_err(|_| SetEnvError::Storage)?
                 .ok_or_else(|| SetEnvError::ItemNotFound(scope.to_string()))?;
-            if crate::provider::coffer::CofferStoreProvider::is_env_details(&d) {
+            if is_env_container(&d) {
                 Ok(ResolvedTarget::Existing(Box::new(d)))
             } else {
                 Err(SetEnvError::NotEnvContainer(scope.to_string()))
@@ -429,13 +446,73 @@ fn resolve_by_scope(session: &VaultSession, scope: &str) -> Result<ResolvedTarge
     }
 }
 
-/// 自动建容器（SecureNote + [`ENV_TAG`]，无字段）。创建失败 → 存储错误
-/// （退出 1，fail-closed——不写库）。
+/// 列出与 `name` 同名的环境容器（Active + SecureNote + 保留标签）uuid。
+///
+/// 镜像 [`CofferStoreProvider::environment_exists`]（coffer.rs:204）的容器
+/// 判据（H-2 双条件）；H-1 守卫与并发自愈共用。
+fn env_containers(session: &VaultSession, name: &str) -> Result<Vec<String>, SetEnvError> {
+    let items = session.list_items(None).map_err(|_| SetEnvError::Storage)?;
+    let mut out = Vec::new();
+    for s in items {
+        if s.state != ItemState::Active || s.title != name || s.category != ItemCategory::SecureNote {
+            continue;
+        }
+        if let Some(d) = session
+            .get_item(&s.uuid.to_string())
+            .map_err(|_| SetEnvError::Storage)?
+        {
+            if is_env_container(&d) {
+                out.push(s.uuid.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 并发首写自愈（H-1）：创建后再查，若同名单容器 >1（两个 `set-env` 同时首写
+/// 撞车）→ 按 uuid 字典序唯一赢家收敛：赢家保留自己的并清理其余输家容器，
+/// 输家删自己的并干净失败——**库内恒恰 1 个同名容器**。
+///
+/// items 表无 title UNIQUE（标题加密存储，schema.rs），跨进程无原子查重，
+/// 故在命令层用确定性 tie-break（uuid 排序）收敛：无论并发交错如何，双方
+/// 算出的赢家一致，恰一者存活。赢家清理的输家容器若已并发写入字段，按
+/// 「恰一胜者」语义丢弃（另一写者按 exit 2 干净失败，不会留下永久歧义）。
+fn prune_race(session: &VaultSession, name: &str, own: &str) -> Result<(), SetEnvError> {
+    let same = env_containers(session, name)?;
+    if same.len() <= 1 {
+        return Ok(());
+    }
+    match same.iter().min() {
+        Some(survivor) if survivor.as_str() == own => {
+            for u in &same {
+                if u != own {
+                    let _ = session.delete_item(u, true);
+                }
+            }
+            Ok(())
+        }
+        _ => {
+            let _ = session.delete_item(own, true);
+            Err(SetEnvError::EnvConcurrentCreate(name.to_string()))
+        }
+    }
+}
+
+/// 自动建容器（SecureNote + [`ENV_TAG`]，无字段）。
+///
+/// H-1 并发安全：守卫 1 挡顺序重复（镜像 [`CofferStoreProvider::create_environment`]
+/// 的 `environment_exists` 查重，coffer.rs:354）；守卫 2 [`prune_race`] 在并发
+/// 双建时按 uuid tie-break 收敛到恰 1 容器。创建失败 → 存储错误（退出 1，
+/// fail-closed——不写库）。
 fn auto_create_environment(session: &VaultSession, name: &str) -> Result<String, SetEnvError> {
-    let draft = fresh_container_draft(name);
-    session
-        .create_item(&draft)
-        .map_err(|_| SetEnvError::Storage)
+    if !env_containers(session, name)?.is_empty() {
+        return Err(SetEnvError::EnvConcurrentCreate(name.to_string()));
+    }
+    let own = session
+        .create_item(&fresh_container_draft(name))
+        .map_err(|_| SetEnvError::Storage)?;
+    prune_race(session, name, &own)?;
+    Ok(own)
 }
 
 /// 目标定位总入口：`--id` 优先（互斥已由 [`parse_args`] 保证）；否则 `--scope`。
@@ -496,7 +573,7 @@ fn apply_write(
         Some(d) => crate::provider::coffer::draft_from_details(d),
         None => fresh_container_draft(&target_title(target)),
     };
-    let reference = draft.clone();
+    let mut reference = draft.clone();
 
     if opts.unset.is_empty() {
         for (name, value) in &opts.pairs {
@@ -524,8 +601,15 @@ fn apply_write(
             .map_err(|e| map_store_error(e, &id))
     };
 
-    // 明文临时缓冲用后 zeroize（M-3）：draft 内 VALUE 副本成功/失败分支一致清零。
+    // 明文临时缓冲用后 zeroize（M-3）：draft 与 reference（`draft.clone()`
+    // 的既有字段副本，M-1）内 VALUE 副本成功/失败分支一致清零——比较完成后
+    // 两者都不再需要。
     for f in &mut draft.fields {
+        if let Some(v) = &mut f.value {
+            v.zeroize();
+        }
+    }
+    for f in &mut reference.fields {
         if let Some(v) = &mut f.value {
             v.zeroize();
         }

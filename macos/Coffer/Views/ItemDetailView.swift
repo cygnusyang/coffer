@@ -150,6 +150,15 @@ struct ItemDetailView: View {
                         .font(.callout)
                         .foregroundStyle(.yellow)
                 }
+                // 环境容器识别徽章（docs/36 §5.2 / AC-36.2-2）：tags 含保留
+                // 标签即判定（FfiItemDetails.tags，检测零额外调用）。
+                if EnvironmentContainer.isEnvContainer(details.tags) {
+                    Label("环境容器", systemImage: "terminal")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(.teal.opacity(0.2)))
+                }
                 if isTrashed {
                     Text("回收站")
                         .font(.caption)

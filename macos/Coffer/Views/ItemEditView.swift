@@ -61,6 +61,13 @@ struct ItemEditView: View {
         return nil
     }
 
+    /// 环境容器（SecureNote + `coffer:environment` 保留标签）：编辑时标签锁
+    /// 恒回写、字段行 NAME 实时校验告警（docs/36 §5.2）。仅编辑模式判定——
+    /// 新建时该标签仍由用户自由输入（手编容器入口，AC-36.2-4）。
+    private var isEnvContainer: Bool {
+        EnvironmentContainer.isEnvContainer(existingDetails?.tags ?? [])
+    }
+
     private var hasExistingTotp: Bool {
         existingTotpMeta != nil && !totpRemoved
     }
@@ -72,13 +79,32 @@ struct ItemEditView: View {
                 TextField("标题", text: $title)
 
                 ForEach($rows) { $row in
-                    EditFieldRowView(row: $row, itemId: existingDetails?.uuid)
+                    EditFieldRowView(row: $row, itemId: existingDetails?.uuid, isEnvContainer: isEnvContainer)
                 }
 
                 if category == .login {
                     TextField("网址（可选）", text: $urlText, prompt: Text("https://example.com"))
                 }
 
+                // 环境容器标签锁（D-36.8）：`coffer:environment` 不进入自由
+                // 文本（populate 时已剔除），以锁定徽章呈现——不可编辑/不可删，
+                // 保存时 buildDraft 恒回写该标签。
+                if isEnvContainer {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(EnvironmentContainer.tag)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(.quaternary))
+                        Text("环境容器标识，保存时自动保留")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                }
                 TextField("标签（逗号分隔）", text: $tagsText, prompt: Text("工作, 邮箱"))
 
                 if category == .login {
@@ -217,7 +243,10 @@ struct ItemEditView: View {
         if let details = existingDetails {
             title = details.title
             urlText = details.urls.first(where: { $0.isPrimary })?.url ?? ""
-            tagsText = details.tags.joined(separator: ", ")
+            // 环境容器：`coffer:environment` 剔除出自由文本（以锁定徽章呈现）
+            tagsText = details.tags
+                .filter { $0 != EnvironmentContainer.tag }
+                .joined(separator: ", ")
             rows = Self.buildRows(for: details)
             // 既有 TOTP 元数据（绝不含 secret）：展示「已有 TOTP」并默认保留
             existingTotpMeta = try? model.totpConfig(itemId: details.uuid)
@@ -395,10 +424,15 @@ struct ItemEditView: View {
         }
 
         // 标签：中英文逗号分隔
-        let tags = tagsText
+        var tags = tagsText
             .split(whereSeparator: { $0 == "," || $0 == "，" || $0 == ";" || $0 == "；" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        // 标签恒回写锁死（D-36.8）：编辑容器保存后 `coffer:environment` 必在，
+        // 不因 tagsText 被清空/改动而丢失容器契约。
+        if isEnvContainer && !tags.contains(EnvironmentContainer.tag) {
+            tags.append(EnvironmentContainer.tag)
+        }
 
         // TOTP：编辑模式恒 nil（三态参数另行提交）；新建解析粘贴的 URI
         var totp: FfiTotpDraft?
@@ -450,64 +484,81 @@ struct EditFieldRowView: View {
 
     let itemId: String?
 
+    /// 环境容器编辑（docs/36 §5.2）：对字段行 name 做 `isValidEnvName` 实时
+    /// 告警——红字提示、不阻断保存（防御在注入侧防御性跳过，App 校验是
+    /// 提前告知）。仅校验非模板字段行（NAME/VALUE 对），模板结构字段
+    /// （如 SecureNote 的「备注」）是表单骨架而非环境变量名，不告警。
+    let isEnvContainer: Bool
+
     /// 密码生成器 popover（FR-3.2 / FR-3.3，MC-2：仅密码 designation 的
     /// 掩码行提供；生成结果写入 row.value，经 SecureField 的 onChange
     /// 自然进入「已改动」语义）。
     @State private var showGenerator = false
 
+    private var nameInvalid: Bool {
+        isEnvContainer && !row.isTemplateField && !EnvironmentContainer.isValidEnvName(row.name)
+    }
+
     var body: some View {
-        switch row.fieldType {
-        case .multiline:
-            VStack(alignment: .leading, spacing: 4) {
-                Text(row.name).font(.callout).foregroundStyle(.secondary)
-                TextEditor(text: $row.value)
-                    .frame(minHeight: 80)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(4)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.4)))
-            }
-        case .concealed:
-            HStack {
-                SecureField(row.name, text: $row.value, prompt: Text(row.unchanged ? "未修改" : ""))
-                    .onChange(of: row.value) { _, newValue in
-                        // 与 buildDraft 的 unchanged 契约：unchanged==true 的行在保存时
-                        // 经 getFieldValue 取回旧值，row.value 会被覆盖丢弃。因此：
-                        //   - 用户输入非空 → 视为改动（unchanged=false），新值随 draft 提交；
-                        //   - 清空回空串 → 恢复 unchanged=true，语义为「留空 = 不修改」，
-                        //     保存时仍取回旧值（仅对有 fieldId 的既有字段成立）。
-                        if !newValue.isEmpty {
-                            row.unchanged = false
-                        } else if row.fieldId != nil {
-                            row.unchanged = true
+        VStack(alignment: .leading, spacing: 4) {
+            switch row.fieldType {
+            case .multiline:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.name).font(.callout).foregroundStyle(.secondary)
+                    TextEditor(text: $row.value)
+                        .frame(minHeight: 80)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.4)))
+                }
+            case .concealed:
+                HStack {
+                    SecureField(row.name, text: $row.value, prompt: Text(row.unchanged ? "未修改" : ""))
+                        .onChange(of: row.value) { _, newValue in
+                            // 与 buildDraft 的 unchanged 契约：unchanged==true 的行在保存时
+                            // 经 getFieldValue 取回旧值，row.value 会被覆盖丢弃。因此：
+                            //   - 用户输入非空 → 视为改动（unchanged=false），新值随 draft 提交；
+                            //   - 清空回空串 → 恢复 unchanged=true，语义为「留空 = 不修改」，
+                            //     保存时仍取回旧值（仅对有 fieldId 的既有字段成立）。
+                            if !newValue.isEmpty {
+                                row.unchanged = false
+                            } else if row.fieldId != nil {
+                                row.unchanged = true
+                            }
+                        }
+                    if row.unchanged {
+                        Text("未修改")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if row.designation == .password {
+                        // 密码生成器（FR-3.2 随机字符 / FR-3.3 密码短语双模式，
+                        // docs/15 §3.3.4）：popover 点外部即收起，无 sheet 困锁面。
+                        Button {
+                            showGenerator = true
+                        } label: {
+                            Label("生成", systemImage: "wand.and.stars")
+                        }
+                        .controlSize(.small)
+                        .popover(isPresented: $showGenerator, arrowEdge: .bottom) {
+                            PasswordGeneratorPopover { generated in
+                                row.value = generated
+                                showGenerator = false
+                            }
+                            .environmentObject(model)
+                            .frame(width: 340)
                         }
                     }
-                if row.unchanged {
-                    Text("未修改")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                if row.designation == .password {
-                    // 密码生成器（FR-3.2 随机字符 / FR-3.3 密码短语双模式，
-                    // docs/15 §3.3.4）：popover 点外部即收起，无 sheet 困锁面。
-                    Button {
-                        showGenerator = true
-                    } label: {
-                        Label("生成", systemImage: "wand.and.stars")
-                    }
-                    .controlSize(.small)
-                    .popover(isPresented: $showGenerator, arrowEdge: .bottom) {
-                        PasswordGeneratorPopover { generated in
-                            row.value = generated
-                            showGenerator = false
-                        }
-                        .environmentObject(model)
-                        .frame(width: 340)
-                    }
-                }
+            default:
+                TextField(row.name, text: $row.value)
             }
-        default:
-            TextField(row.name, text: $row.value)
+            if nameInvalid {
+                Text("不是合法环境变量名")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
         }
     }
 }

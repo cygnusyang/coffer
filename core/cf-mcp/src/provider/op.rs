@@ -564,6 +564,8 @@ impl OpItem {
         SecretMeta {
             name: self.title,
             id: self.id,
+            // op 摘要面（`op item list --format json`）不解密条目，无用户名可填。
+            username: None,
             vault: self.vault.name,
             category: self.category,
             updated_at: self.updated_at.as_deref().and_then(parse_rfc3339_utc),

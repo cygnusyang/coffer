@@ -265,6 +265,7 @@ impl SecretProvider for CofferStoreProvider {
             metas.push(SecretMeta {
                 name: s.title.clone(),
                 id: s.uuid.to_string(),
+                username: None,
                 vault: self.vault_id(),
                 category: s.category.as_str().to_string(),
                 updated_at: Some(s.updated_at),
@@ -278,6 +279,7 @@ impl SecretProvider for CofferStoreProvider {
         Ok(SecretMeta {
             name: d.title.expose().to_string(),
             id: d.uuid.clone(),
+            username: Self::username_value(&d).map(|u| u.expose().to_string()),
             vault: self.vault_id(),
             category: d.category.as_str().to_string(),
             updated_at: Some(d.updated_at),

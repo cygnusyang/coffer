@@ -101,7 +101,7 @@ impl ToolRegistry {
                 },
                 ToolDefinition {
                     name: "get_secret_metadata",
-                    description: "Get read-only metadata for a secret (the value is never returned).",
+                    description: "Get read-only metadata for a secret (the secret value is never returned; the login username is included when the coffer item has one).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -178,6 +178,7 @@ pub fn secret_meta_json(meta: &SecretMeta) -> Value {
         "type": "secret",
         "vault": meta.vault.as_str(),
         "category": meta.category.as_str(),
+        "username": meta.username,
         "project": "",
         "environment": "",
         "created_at": "",

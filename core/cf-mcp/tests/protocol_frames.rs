@@ -56,6 +56,7 @@ impl SecretProvider for FakeProvider {
             .map(|n| SecretMeta {
                 name: n.clone(),
                 id: format!("fake:{n}"),
+                username: None,
                 vault: "v".into(),
                 category: "test".into(),
                 updated_at: None,
@@ -69,6 +70,7 @@ impl SecretProvider for FakeProvider {
         Ok(SecretMeta {
             name: secret_ref.into(),
             id: format!("fake:{secret_ref}"),
+            username: None,
             vault: "v".into(),
             category: "test".into(),
             updated_at: None,
@@ -323,6 +325,8 @@ fn tools_call_get_secret_metadata_returns_lifecycle_envelope() {
         "name",
         "type",
         "vault",
+        "category",
+        "username",
         "project",
         "environment",
         "created_at",

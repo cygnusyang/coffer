@@ -127,7 +127,7 @@ client ──► (可选) notifications/cancelled / 连接关闭 ──► serve
 | `list_secret_names` | `vault?` | `{"names":["OPENAI_API_KEY", …]}` | 仅名称，无元数据 |
 | `list_secrets` | `vault?` | `{"secrets":[{"name","id","category","updated_at"}]}` | **仅元数据，无值** |
 | `run_with_secret` | `{"secret","env_name?","cmd","args"[],"cwd"?}` | `{"exit_code":0}` | 模式 B；值只进子进程 env，见 §4.4 |
-| `get_secret_metadata` | `{"secret"}` | `{"name","id","category","updated_at","allowed_actions":[]}` | 只读元数据 |
+| `get_secret_metadata` | `{"secret"}` | `{"name","id","category","username","updated_at","allowed_actions":[]}` | 只读元数据（`username` v2.8.1 起：条目带 `Designation::Username`（Email 兜底）时直出，无则 `null`；密码值永不出现） |
 
 > `secret` 参数语义 = Secret 标识（MVP 对 op 即 `op://vault/item/field` 引用或 item id + field designation），**非明文值**。明文值在任何工具入参中都不接受（防 Agent 把值回传）。
 
@@ -182,6 +182,7 @@ use cf_domain::CfError; // 7xxx 映射见 §3.4
 pub struct SecretMeta {
     pub name: String,        // 展示名（Agent 引用的标识）
     pub id: String,          // provider 内稳定标识（op: item id）
+    pub username: Option<String>, // v2.8.1: 登录用户名（Username→Email 兜底）；摘要面恒 None，详情面填充
     pub vault: String,
     pub category: String,    // op: category / 未来 Coffer: 条目模板名
     pub updated_at: Option<i64>, // unix 秒
@@ -455,5 +456,6 @@ G-A ∥ G-B ∥ G-C ∥ G-E ∥ G-F ──→ G-D ──→ G-G → 门禁四连
 | r0.13 | 2026-10-09 | **run_with_secret 伴随用户名注入（v2.5.0，MCP 取密语义补全）**：§4.5 契约补记——条目带 `Designation::Username` 字段（Email 兜底）时 `run_with_secret` 额外注入 `<ENV>_USERNAME`（无则不注入，与主值「无则不注入」同语义）；动机 = agent 全自动登录（浏览器导入条目含用户名字段而 MCP 单值契约只吐密码，真机实证 GitHub 密码接受/涂鸦缺用户名失败）；仅认显式 designation、纯 Text 字段不参与；op provider 不在本批（字段机制不同，顺延）。修订记录历史行不改写 |
 | r0.14 | 2026-10-10 | **一次性写子命令退出码补注（v2.5.0 写面集成轮，lead 裁定）**：§5.3 补注——MCP server 常驻进程退出码（0/1/2/3）与一次性写子命令退出码（0/1/2/3/4，docs/34 §5.2 r0.4，`coffer set-password`）按子命令上下文区分、不得混用。修订记录历史行不改写 |
 | r0.15 | 2026-10-10 | **set-env 环境容器写子命令登记（v2.8.0 集成轮，docs/36 r0.2，commit a6e2ab7+）**：§5.3 补 `set-env` 一次性写命令退出码（0/1/2/3 保留/4，docs/36 §4.5）——与 `set-password` 共享原子写/历史/取密链，**MCP 工具保持只读**（写面仅 CLI + App）。§5.1 二进制归属顺延「未来写子命令扩进同一 bin」表述追平（set-password/set-env 已扩入）。修订记录历史行不改写 |
+| r0.16 | 2026-10-10 | **get_secret_metadata 出参补 username（v2.8.1，只读增强）**：§4.1 `SecretMeta` 增 `username: Option<String>`（`Designation::Username` → Email 兜底，与 r0.13 伴随注入同源语义）；§3.3 `get_secret_metadata` 出参表补 `username`——详情面直出、摘要面（`list_secrets`）不解密恒 `null`、无用户名 `null`；R2 纪律不变：密码值永不出元数据信封。动机 = agent 经 MCP 只见「名+值」形态误判「条目无用户名字段」（真机实证 2026-10-10），补出参后无需 `.username` 独立条目 workaround。修订记录历史行不改写 |
 
 *文档结束。签名以本文 §3/§4/§5 为冻结契约。D-1~D-4 与 U-4 用户确认已随 r0.4/r0.5 回填；r0.6（2026-10-07）为零网络措辞批。*

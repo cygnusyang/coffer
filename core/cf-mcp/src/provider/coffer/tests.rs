@@ -173,6 +173,32 @@ fn list_secrets_pairs_name_with_metadata() {
     assert!(!m.id.is_empty());
     assert!(!m.vault.is_empty());
     assert!(m.updated_at.is_some());
+    // 摘要面不解密条目：username 恒 None（v2.8.1，详情面 get_secret_metadata 才填）。
+    assert!(m.username.is_none());
+}
+
+#[test]
+fn get_secret_metadata_exposes_login_username() {
+    let (prov, _) = provider("get_meta_username");
+    seed_login(&prov, "ids-hit", "pw", Some("2021210000"), None);
+    let m = prov.get_secret_metadata("ids-hit").unwrap();
+    assert_eq!(m.username.as_deref(), Some("2021210000"));
+}
+
+#[test]
+fn get_secret_metadata_username_falls_back_to_email() {
+    let (prov, _) = provider("get_meta_username_fb");
+    seed_login(&prov, "mail-only", "pw", None, Some("a@b.c"));
+    let m = prov.get_secret_metadata("mail-only").unwrap();
+    assert_eq!(m.username.as_deref(), Some("a@b.c"));
+}
+
+#[test]
+fn get_secret_metadata_username_absent_is_none() {
+    let (prov, _) = provider("get_meta_username_absent");
+    seed_secret(&prov, "bare", "pw");
+    let m = prov.get_secret_metadata("bare").unwrap();
+    assert!(m.username.is_none());
 }
 
 #[test]

@@ -12,6 +12,11 @@ release 中有体现）。
 
 ---
 
+## [Unreleased]
+
+### 新增/变化
+- **MCP `get_secret_metadata` 出参补 `username`**（只读增强）：条目带 `Designation::Username` 字段（Email 兜底）时直出登录用户名，无则 `null`；摘要面 `list_secrets` 不解密条目、恒 `null`。R2 纪律不变：密码值永不出元数据信封。动机：agent 经 MCP 只见「条目名+密码值」形态，误判「条目结构无用户名字段」（2026-10-10 真机实证），补出参后无需 `.username` 独立条目 workaround。
+
 ## v2.8.0 — 2026-10-10
 
 ### 新增/变化

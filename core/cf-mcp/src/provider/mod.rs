@@ -30,6 +30,14 @@ pub struct SecretMeta {
     pub category: String,
     /// 最后更新时间（unix 秒）。
     pub updated_at: Option<i64>,
+    /// 条目登录用户名（`Designation::Username` → `Designation::Email` 兜底，
+    /// 与 `run_with_secret` 伴随注入同源语义）。
+    ///
+    /// 低敏字段，只读面直出（R2 纪律：密码值永不出元数据信封）。摘要面
+    /// （`list_secrets`）不解密条目，恒为 `None`；详情面（`get_secret_metadata`）
+    /// 填充（coffer provider；op provider 详情面复用摘要、恒 `None`，顺延）。
+    /// `None` = 条目无用户名。
+    pub username: Option<String>,
 }
 
 /// `run_with_secret` 运行规格（docs/20 §4.1 冻结签名）。
@@ -310,6 +318,7 @@ pub mod test_seed {
                 .map(|name| SecretMeta {
                     name: name.clone(),
                     id: format!("test:{name}"),
+                    username: None,
                     vault: String::new(),
                     category: "test".into(),
                     updated_at: None,
@@ -329,6 +338,7 @@ pub mod test_seed {
             Ok(SecretMeta {
                 name: secret_ref.into(),
                 id: format!("test:{secret_ref}"),
+                username: None,
                 vault: String::new(),
                 category: "test".into(),
                 updated_at: None,

@@ -15,10 +15,14 @@ enum EnvironmentContainer {
     /// 环境容器保留标签（与 core/cf-mcp/src/provider/coffer.rs:63 ENV_TAG 同源）。
     static let tag = "coffer:environment"
 
-    /// 是否为环境容器条目：tags 含保留标签即判定。ItemEditView 编辑模式与
-    /// ItemDetailView 均已持有 details.tags，检测零额外 FFI 调用（docs/36 §5.2）。
-    static func isEnvContainer(_ tags: [String]) -> Bool {
-        tags.contains(tag)
+    /// 是否为环境容器条目：**SecureNote 类别 + 保留标签**双条件（与 MCP 读面
+    /// is_env_item / resolve_env 一致，core/cf-mcp/src/provider/coffer.rs:119/180
+    /// 同源；H-2 归口，lead 裁定三方统一双条件）。单凭 tags 会误判——Login
+    /// 条目手加标签 App 当容器识别/保护，但 MCP 永不注入（静默分歧）。
+    /// ItemEditView 编辑模式与 ItemDetailView 均已持有 details（category + tags），
+    /// 检测零额外 FFI 调用（docs/36 §5.2）。
+    static func isEnvContainer(category: FfiItemCategory, tags: [String]) -> Bool {
+        category == .secureNote && tags.contains(tag)
     }
 
     /// 环境变量名合法性：`[A-Za-z_][A-Za-z0-9_]*`（Swift 本地复刻

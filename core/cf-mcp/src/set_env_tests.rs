@@ -2,7 +2,7 @@
     use crate::provider::escrow::EscrowError;
     use cf_crypto::kdf::KdfParams;
     use cf_domain::category::ItemCategory;
-    use cf_domain::field::FieldType;
+    use cf_domain::field::{Designation, FieldType};
     use cf_domain::item::{FieldDraft, ItemDraft};
     use cf_session::{create_vault_with_kdf, open_vault};
     use std::path::PathBuf;
@@ -809,4 +809,115 @@
             &escrow,
         );
         assert_eq!(code, exit_codes::TARGET_NOT_FOUND, "歧义 → 2");
+    }
+
+    // ============================================================ H-1/H-2 复查修复（dev-reviewer-2）
+
+    /// 建一个「Login + coffer:environment 标签」条目——tag-only `is_env_details`
+    /// 为真，但 MCP 读面 `is_env_item` 要求 SecureNote+tag 双条件（H-2 目标）。
+    /// Login 类别校验须带 username+password 字段（否则 create 被拒）。
+    fn create_login_env_tagged_item(session: &VaultSession, title: &str) -> String {
+        let mut d = ItemDraft {
+            title: title.to_string(),
+            category: ItemCategory::Login,
+            urls: Vec::new(),
+            tags: vec!["coffer:environment".to_string()],
+            sections: Vec::new(),
+            fields: vec![FieldDraft {
+                name: "username".to_string(),
+                value: Some("octocat".to_string()),
+                field_type: FieldType::Text,
+                designation: Some(Designation::Username),
+                section_index: None,
+                position: 0,
+            }],
+            totp: None,
+        };
+        d.fields.push(FieldDraft {
+            name: "password".to_string(),
+            value: Some("old-secret".to_string()),
+            field_type: FieldType::Concealed,
+            designation: Some(Designation::Password),
+            section_index: None,
+            position: 1,
+        });
+        session.create_item(&d).expect("create login+env_tag item")
+    }
+
+    /// H-2：`--id` 命中 Login+标签 → NotEnvContainer（exit 2），不得认作容器写入。
+    #[test]
+    fn resolve_by_id_login_env_tagged_rejected() {
+        let (dir, pw) = fast_vault("h2-id-login");
+        let s = unlocked_vault(&dir, &pw);
+        let uuid = create_login_env_tagged_item(&s, "prod");
+        let opts = SetEnvOptions {
+            scope: None,
+            id: Some(uuid),
+            pairs: vec![("NAME".to_string(), "v".to_string())],
+            stdin_name: None,
+            unset: Vec::new(),
+        };
+        let err = resolve_target(&s, &opts).expect_err("Login+tag 不得认作环境容器");
+        assert!(matches!(err, SetEnvError::NotEnvContainer(_)));
+        assert_eq!(err.exit_code(), exit_codes::TARGET_NOT_FOUND, "非容器 → 2");
+    }
+
+    /// H-2：`--scope` 同名 Login+标签 → NotEnvContainer（不建不写）。
+    #[test]
+    fn resolve_by_scope_login_env_tagged_rejected() {
+        let (dir, pw) = fast_vault("h2-scope-login");
+        let s = unlocked_vault(&dir, &pw);
+        create_login_env_tagged_item(&s, "prod");
+        let err = resolve_target(&s, &resolve_options("prod")).expect_err("Login+tag 拒绝");
+        assert!(matches!(err, SetEnvError::NotEnvContainer(_)));
+        assert_eq!(err.exit_code(), exit_codes::TARGET_NOT_FOUND, "非容器 → 2");
+    }
+
+    /// H-1 守卫（顺序重复）：同名单容器已存在 → 不建、干净失败（exit 2），库内恰 1。
+    #[test]
+    fn auto_create_sequential_duplicate_guard() {
+        let (dir, pw) = fast_vault("h1-guard");
+        let s = unlocked_vault(&dir, &pw);
+        let existing = create_env_item(&s, "prod");
+        let err = auto_create_environment(&s, "prod").expect_err("已存在不得再建");
+        assert!(matches!(
+            err,
+            SetEnvError::EnvConcurrentCreate(ref n) if n == "prod"
+        ));
+        assert_eq!(err.exit_code(), exit_codes::TARGET_NOT_FOUND, "撞车 → 2");
+        let same = env_containers(&s, "prod").expect("list same-name containers");
+        assert_eq!(same.len(), 1, "库内恰 1");
+        assert_eq!(same[0], existing, "不新增容器");
+    }
+
+    /// H-1 并发自愈（输家）：两容器同名 A<B，持 B 者判定输 → 删自己的 + 干净失败；
+    /// 库内剩最小者恰 1。
+    #[test]
+    fn auto_create_race_loser_self_removes() {
+        let (dir, pw) = fast_vault("h1-loser");
+        let s = unlocked_vault(&dir, &pw);
+        // 模拟并发双建后的库态（绕过 auto_create，直接建两个同名容器）。
+        let a = create_env_item(&s, "dup");
+        let b = create_env_item(&s, "dup");
+        let (min_uuid, max_uuid) = if a < b { (a, b) } else { (b, a) };
+        let err = prune_race(&s, "dup", &max_uuid).expect_err("非最小 uuid = 输家");
+        assert!(matches!(err, SetEnvError::EnvConcurrentCreate(_)));
+        let same = env_containers(&s, "dup").expect("list");
+        assert_eq!(same.len(), 1, "库内恰 1");
+        assert_eq!(same[0], min_uuid, "输家已自删，最小者存活");
+    }
+
+    /// H-1 并发自愈（赢家）：最小 uuid 判定赢 → 清掉其余输家容器 + 保留自己的。
+    #[test]
+    fn auto_create_race_winner_cleans_others() {
+        let (dir, pw) = fast_vault("h1-winner");
+        let s = unlocked_vault(&dir, &pw);
+        let a = create_env_item(&s, "dup");
+        let b = create_env_item(&s, "dup");
+        let (min_uuid, max_uuid) = if a < b { (a.clone(), b) } else { (b.clone(), a) };
+        prune_race(&s, "dup", &min_uuid).expect("赢家继续");
+        let same = env_containers(&s, "dup").expect("list");
+        assert_eq!(same.len(), 1, "赢家清掉输家后库内恰 1");
+        assert_eq!(same[0], min_uuid, "赢家保留自己的");
+        assert!(!same.contains(&max_uuid), "输家容器已删");
     }

@@ -16,7 +16,7 @@ android/
 └── core-bindings/            UniFFI 生成的 Kotlin 绑定 + .so
 ```
 
-详见 `docs/02-概要设计.md` §2.2。
+详见 `docs/01-需求与架构/02-概要设计.md` §2.2。
 
 ---
 
@@ -52,7 +52,7 @@ android/
 | 日志 | `files/logs/` | ❌ 排除 |
 | 导出文件 | `files/exports/` | ❌ 排除 |
 
-> ⚠️ **一个必须纠正的常见误解**：`android:allowBackup` 是**开发者在 manifest 中声明的属性，用户无法在系统设置里针对单个 App 关闭它**。用户在系统设置里能关的是**整机备份**（影响所有 App）。因此 App 内必须如实告知用户，见 `docs/03-详细设计.md` §9.1。
+> ⚠️ **一个必须纠正的常见误解**：`android:allowBackup` 是**开发者在 manifest 中声明的属性，用户无法在系统设置里针对单个 App 关闭它**。用户在系统设置里能关的是**整机备份**（影响所有 App）。因此 App 内必须如实告知用户，见 `docs/01-需求与架构/03-详细设计.md` §9.1。
 
 ### 3. 生物识别密钥（绝对不能可备份）
 
@@ -81,7 +81,7 @@ Rust 核心需编译为 Android 目标：
 rustup target add aarch64-linux-android armv7-linux-androideabi
 ```
 
-构建链路（含 `cargo-ndk`、UniFFI 绑定生成、Gradle 集成）见 `docs/04-系统设计.md` §5.2。
+构建链路（含 `cargo-ndk`、UniFFI 绑定生成、Gradle 集成）见 `docs/01-需求与架构/04-系统设计.md` §5.2。
 
 > NDK 版本需与 Rust target 兼容，**具体版本在 M0 阶段锁定并记录**——不要凭印象选版本。
 
@@ -91,7 +91,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi
 
 | 内容 | 位置 |
 | --- | --- |
-| Android 实现要点 | `docs/03-详细设计.md` §9 |
-| 自动填充机制 | `docs/02-概要设计.md` §4.5 |
-| Passkey 机制 | `docs/02-概要设计.md` §4.6 |
-| 阶段划分 | `docs/04-系统设计.md` §10.1 |
+| Android 实现要点 | `docs/01-需求与架构/03-详细设计.md` §9 |
+| 自动填充机制 | `docs/01-需求与架构/02-概要设计.md` §4.5 |
+| Passkey 机制 | `docs/01-需求与架构/02-概要设计.md` §4.6 |
+| 阶段划分 | `docs/01-需求与架构/04-系统设计.md` §10.1 |

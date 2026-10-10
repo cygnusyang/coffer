@@ -10,6 +10,8 @@
 //! - `set-password`：写子命令（v2.5.0，docs/34 §5 / FR-18.2；`coffer-store`
 //!   feature 门控）——实现见 [`crate::set_password`]，复用本模块
 //!   [`unlock_vault`]（escrow → env 兜底 → fail-closed）；
+//! - `set-env`：写子命令（v2.8.0，docs/36 §4 环境容器写面；`coffer-store`
+//!   feature 门控）——实现见 [`crate::set_env`]，复用本模块 [`unlock_vault`]；
 //!
 //! ## provider 选择（docs/20 §4.5 / §5.2；docs/27 D-2 缺省翻转）
 //!
@@ -674,7 +676,7 @@ fn build_op_provider(
 /// 本函数不 panic（生产禁 unwrap / expect）；`main.rs` 仅透传返回码。
 pub fn run(args: &[String]) -> i32 {
     let Some(subcommand) = args.first() else {
-        eprintln!("error: missing subcommand; expected `coffer mcp` or `coffer set-password` (docs/20 §5.2 / docs/34 §5)");
+        eprintln!("error: missing subcommand; expected `coffer mcp`, `coffer set-password` or `coffer set-env` (docs/20 §5.2 / docs/34 §5 / docs/36 §4)");
         return exit_code::CONFIG_ERROR;
     };
     // v2.5.0 写面（docs/34 §5，FR-18.2）：`coffer set-password` 写子命令。
@@ -684,8 +686,14 @@ pub fn run(args: &[String]) -> i32 {
     if subcommand == "set-password" {
         return crate::set_password::run(&args[1..]);
     }
+    // v2.8.0 环境容器写面（docs/36 §4）：`coffer set-env` 写子命令。依赖
+    // cf-session/rpassword/zeroize，均在 `coffer-store` feature 依赖树内。
+    #[cfg(feature = "coffer-store")]
+    if subcommand == "set-env" {
+        return crate::set_env::run(&args[1..]);
+    }
     if subcommand != "mcp" {
-        eprintln!("error: unknown subcommand `{subcommand}`; expected `coffer mcp` or `coffer set-password` (docs/20 §5.2 / docs/34 §5)");
+        eprintln!("error: unknown subcommand `{subcommand}`; expected `coffer mcp`, `coffer set-password` or `coffer set-env` (docs/20 §5.2 / docs/34 §5 / docs/36 §4)");
         return exit_code::CONFIG_ERROR;
     }
 

@@ -12,7 +12,7 @@ release 中有体现）。
 
 ---
 
-## [Unreleased] — v2.8.0 环境容器写面
+## v2.8.0 — 2026-10-10
 
 ### 新增/变化
 - **CLI `coffer set-env` 写子命令**（docs/36 契约冻结）：`--scope <owner> NAME=VALUE`

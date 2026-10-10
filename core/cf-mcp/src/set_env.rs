@@ -477,6 +477,12 @@ fn env_containers(session: &VaultSession, name: &str) -> Result<Vec<String>, Set
 /// 故在命令层用确定性 tie-break（uuid 排序）收敛：无论并发交错如何，双方
 /// 算出的赢家一致，恰一者存活。赢家清理的输家容器若已并发写入字段，按
 /// 「恰一胜者」语义丢弃（另一写者按 exit 2 干净失败，不会留下永久歧义）。
+///
+/// **残余明示**（dev-reviewer 原子性边界）：本自愈是命令层收敛，非
+/// `create-if-absent` 式数据库原子（cf_session 无该 API，加装跨 crate 成本高）。
+/// 覆盖所有非崩溃交错；唯一残余 = 两个进程均在「create 之后、prune_race 之前」
+/// 的毫秒窗口内被硬杀（SIGKILL）→ 可能残留 2 个同名容器（永久歧义，用 `--id`
+/// 或手动清理可解）。正常运行（无崩溃）下不会出现。
 fn prune_race(session: &VaultSession, name: &str, own: &str) -> Result<(), SetEnvError> {
     let same = env_containers(session, name)?;
     if same.len() <= 1 {
@@ -486,15 +492,44 @@ fn prune_race(session: &VaultSession, name: &str, own: &str) -> Result<(), SetEn
         Some(survivor) if survivor.as_str() == own => {
             for u in &same {
                 if u != own {
-                    let _ = session.delete_item(u, true);
+                    delete_container_idempotent(session, u);
                 }
             }
             Ok(())
         }
         _ => {
-            let _ = session.delete_item(own, true);
+            delete_container_idempotent(session, own);
             Err(SetEnvError::EnvConcurrentCreate(name.to_string()))
         }
+    }
+}
+
+/// 瞬时锁争用判定：vault 连接未设 busy_timeout，并发写（create/update/delete）
+/// 可能以 `database is locked`（SQLITE_BUSY）失败——此类可重试，确定性错误不可。
+const BUSY_MARKER: &str = "database is locked";
+
+fn is_busy(e: &cf_domain::CfError) -> bool {
+    matches!(
+        e,
+        cf_domain::CfError::StorageError(m) if m.contains(BUSY_MARKER)
+    )
+}
+
+/// 有界重试次数 / 间隔（并发写 BUSY 缓解：每次约 20ms，10 次 ≈ 200ms 上限）。
+const BUSY_RETRY: usize = 10;
+
+/// 幂等删除容器（H-1 并发清理）：vault 连接未设 busy_timeout，并发写可能
+/// SQLITE_BUSY——做有界重试；被删项不存在（他方已删）视为成功（幂等）。
+/// 最后仍失败则尽力而为（收敛残余，见 [`prune_race`] 文档）。
+fn delete_container_idempotent(session: &VaultSession, id: &str) {
+    for attempt in 0..BUSY_RETRY {
+        if session.delete_item(id, true).is_ok() {
+            return;
+        }
+        if attempt + 1 >= BUSY_RETRY {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
@@ -504,15 +539,27 @@ fn prune_race(session: &VaultSession, name: &str, own: &str) -> Result<(), SetEn
 /// 的 `environment_exists` 查重，coffer.rs:354）；守卫 2 [`prune_race`] 在并发
 /// 双建时按 uuid tie-break 收敛到恰 1 容器。创建失败 → 存储错误（退出 1，
 /// fail-closed——不写库）。
+///
+/// BUSY 有界重试：vault 连接未设 busy_timeout，并发首写可能瞬时 `database is
+/// locked`——每次重试前重查守卫（对方可能已建成 → 干净 exit 2 而非重复建）。
 fn auto_create_environment(session: &VaultSession, name: &str) -> Result<String, SetEnvError> {
-    if !env_containers(session, name)?.is_empty() {
-        return Err(SetEnvError::EnvConcurrentCreate(name.to_string()));
+    let mut attempt = 0;
+    loop {
+        if !env_containers(session, name)?.is_empty() {
+            return Err(SetEnvError::EnvConcurrentCreate(name.to_string()));
+        }
+        match session.create_item(&fresh_container_draft(name)) {
+            Ok(own) => {
+                prune_race(session, name, &own)?;
+                return Ok(own);
+            }
+            Err(e) if is_busy(&e) && attempt + 1 < BUSY_RETRY => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => return Err(SetEnvError::Storage),
+        }
     }
-    let own = session
-        .create_item(&fresh_container_draft(name))
-        .map_err(|_| SetEnvError::Storage)?;
-    prune_race(session, name, &own)?;
-    Ok(own)
 }
 
 /// 目标定位总入口：`--id` 优先（互斥已由 [`parse_args`] 保证）；否则 `--scope`。
@@ -593,12 +640,22 @@ fn apply_write(
     }
 
     // 无内容变化（幂等 unset 删除缺失名 / 现值相同）→ 不写库、不 append 历史。
+    // 否则单事务 update；瞬时 `database is locked`（并发写无 busy_timeout）做
+    // 有界重试（详见 [`auto_create_environment`]），确定性错误立即映射退出码。
     let result = if draft == reference {
         Ok(())
     } else {
-        session
-            .update_item(&id, &draft)
-            .map_err(|e| map_store_error(e, &id))
+        let mut attempt = 0;
+        loop {
+            match session.update_item(&id, &draft) {
+                Ok(()) => break Ok(()),
+                Err(e) if is_busy(&e) && attempt + 1 < BUSY_RETRY => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => break Err(map_store_error(e, &id)),
+            }
+        }
     };
 
     // 明文临时缓冲用后 zeroize（M-3）：draft 与 reference（`draft.clone()`

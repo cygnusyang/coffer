@@ -25,7 +25,10 @@ open macos/build/Coffer.app         # 启动
 每个新 tag（`v*`）触发 `.github/workflows/release.yml`：ubuntu 可靠门禁
 + clippy → macos-latest 从 GitHub Secrets 注入签名证书与 provisioning profile，
 `./tools/build_macos_app.sh --rebuild-bindings` 构建签名产物 → 打包
-`Coffer-<tag>.zip` → 自动创建 GitHub Release + release notes。
+`Coffer-<tag>.zip`（OTA 更新载体，docs/35 §6.1 契约，App 只认 zip 覆盖）
++ `./tools/make_dmg.sh` 打包 `Coffer-<tag>.dmg`（人类手动安装包，拖拽安装）
+→ 自动创建 GitHub Release，Release body 取 **`CHANGELOG.md` 当前版本段**
+（发版前须在 CHANGELOG.md 登记该版本段落，缺失则流水线 fail）。
 
 **首次前置（一次性）**——把本机签名材料导出为三个 Secrets：
 
@@ -42,10 +45,11 @@ open macos/build/Coffer.app         # 启动
 **每次发版步骤**：
 
 1. bump 版本：改 `Coffer/Info.plist` 的 `CFBundleShortVersionString`（v2.4.1 起直拷入 bundle，须与 tag 一致，见 `coffer-v241-settings-done-button` 纪律）；
-2. 本地过一遍 `./tools/run_gate.sh`（全绿才打 tag）；
-3. 若 profile 临近 7 天有效期，重跑 `make_provisioning_profile.sh` + `export_ci_secrets.sh --push` 刷新（免费账号 profile 7 天有效，过期流水线会红）；
-4. `git tag vX.Y.Z && git push origin vX.Y.Z`；
-5. 到 GitHub Actions 看流水线 → Releases 页收 `Coffer-<tag>.zip`。
+2. 在 **`CHANGELOG.md`** 登记当前版本段落（`## vX.Y.Z` 标题 + 新增/修复，缺失则流水线 fail）；
+3. 本地过一遍 `./tools/run_gate.sh`（全绿才打 tag）；
+4. 若 profile 临近 7 天有效期，重跑 `make_provisioning_profile.sh` + `export_ci_secrets.sh --push` 刷新（免费账号 profile 7 天有效，过期流水线会红）；
+5. `git tag vX.Y.Z && git push origin vX.Y.Z`；
+6. 到 GitHub Actions 看流水线 → Releases 页收 `Coffer-<tag>.dmg`（手动安装）与 `Coffer-<tag>.zip`（OTA）。
 
 产物为 App Sandbox + `keychain-access-groups` entitlements、profile 内嵌的
 签名 `.app`（zip 包）——与本地 `build_macos_app.sh` 方案 A 签名线同源，

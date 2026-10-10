@@ -168,6 +168,11 @@ jobs:
             "macos/build/Coffer-${TAG}.zip"
           ls -lh macos/build/Coffer-*.zip
 
+      - name: 打包 DMG（人类手动安装包，hdiutil 零依赖）
+        run: |
+          TAG="${GITHUB_REF_NAME}" ./tools/make_dmg.sh
+          ls -lh macos/build/Coffer-*.dmg
+
       - name: 提取产物 CDHash（OTA 清单验签次锚，docs/35 §6.1）
         run: |
           set -euo pipefail
@@ -201,11 +206,31 @@ jobs:
           echo "--- update-manifest.json ---"
           cat macos/build/update-manifest.json
 
+      - name: 切取 CHANGELOG 当前版本段（Release body，CHANGELOG.md 对齐 docs/09）
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"   # 形如 v2.8.0，CHANGELOG 版本标题同形
+          # 从 CHANGELOG.md 提取 "## ${TAG}" 到下一个 "## " 之前的段落；
+          # 标题行本身不输出（Release body 以内容起始，GitHub 自带版本标题）。
+          awk -v t="${TAG}" '
+            $0 ~ "^## " t "([[:space:]]|$)" { in_section=1; next }
+            in_section && /^## / { exit }
+            in_section { print }
+          ' CHANGELOG.md > macos/build/release-body.txt
+          if [ ! -s macos/build/release-body.txt ]; then
+            echo "::error::CHANGELOG.md 缺少版本段 \"## ${TAG}\"（发版前须在 CHANGELOG.md 登记该版本段落，见 CHANGELOG.md 头部约定）"
+            exit 1
+          fi
+          echo "---- Release body（${TAG} 段）----"
+          cat macos/build/release-body.txt
+
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: macos/build/Coffer-*.zip
-          generate_release_notes: true
+          files: |
+            macos/build/Coffer-*.zip
+            macos/build/Coffer-*.dmg
+          body_path: macos/build/release-body.txt
           fail_on_unmatched_files: true
 
       - name: 上传 update-manifest.json 到 Release（OTA 固定清单 URL 支撑，docs/35 §2.4）

@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 680" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <text x="490" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">双分发渠道对比：官方二进制 vs 公开仓库产物（自编译）</text>
+
+  <!-- 分栏虚线（对比关系，不连线；止于共享底座上缘） -->
+  <line x1="490" y1="70" x2="490" y2="420" stroke="#DDD" stroke-width="1" stroke-dasharray="4 4"/>
+
+  <!-- 栏标题 -->
+  <text x="260" y="88" text-anchor="middle" font-size="14" font-weight="bold" fill="#3B82C4">官方分发二进制</text>
+  <text x="720" y="88" text-anchor="middle" font-size="14" font-weight="bold" fill="#3B9E5F">公开仓库产物（自编译）</text>
+
+  <!-- ===== 左栏：官方分发二进制 ===== -->
+  <rect x="100" y="114" width="320" height="48" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="260" y="142" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">Swift UI（含许可信息页）</text>
+
+  <line x1="260" y1="162" x2="260" y2="188" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- cf-ffi-official 容器 + 两个子项 -->
+  <rect x="80" y="188" width="360" height="132" rx="10" fill="#F3F8FD" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="260" y="206" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">cf-ffi-official（闭源装配）</text>
+  <line x1="260" y1="216" x2="260" y2="238" stroke="#555" stroke-width="1.2"/>
+  <line x1="260" y1="238" x2="172" y2="238" stroke="#555" stroke-width="1.2"/>
+  <line x1="172" y1="238" x2="172" y2="244" stroke="#555" stroke-width="1.2"/>
+  <line x1="260" y1="238" x2="347" y2="238" stroke="#555" stroke-width="1.5"/>
+  <line x1="347" y1="238" x2="347" y2="244" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="303" y="230" text-anchor="middle" font-size="10" fill="#666">注入 gate</text>
+
+  <rect x="95" y="244" width="155" height="60" rx="6" fill="#FFFFFF" stroke="#8FB2DD" stroke-width="1"/>
+  <text x="172" y="266" text-anchor="middle" font-size="12" font-weight="bold" fill="#222">LicenseService</text>
+  <text x="172" y="286" text-anchor="middle" font-size="11" fill="#444">（闭源导出）</text>
+
+  <rect x="270" y="244" width="155" height="60" rx="6" fill="#FFFFFF" stroke="#3B82C4" stroke-width="1.2"/>
+  <text x="347" y="266" text-anchor="middle" font-size="12" font-weight="bold" fill="#222">cf-license</text>
+  <text x="347" y="286" text-anchor="middle" font-size="11" fill="#444">实现 LicenseGate trait</text>
+
+  <line x1="260" y1="320" x2="260" y2="346" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="100" y="346" width="320" height="48" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="260" y="374" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">cf-session</text>
+
+  <line x1="260" y1="394" x2="260" y2="420" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== 右栏：公开仓库产物（自编译） ===== -->
+  <rect x="560" y="114" width="320" height="48" rx="8" fill="#EAF7EE" stroke="#3B9E5F" stroke-width="1.5"/>
+  <text x="720" y="142" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">Swift UI（许可页显示免费版）</text>
+
+  <line x1="720" y1="162" x2="720" y2="188" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="560" y="188" width="320" height="48" rx="8" fill="#EAF7EE" stroke="#3B9E5F" stroke-width="1.5"/>
+  <text x="720" y="216" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">cf-ffi</text>
+
+  <line x1="720" y1="236" x2="720" y2="262" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="560" y="262" width="320" height="58" rx="8" fill="#EAF7EE" stroke="#3B9E5F" stroke-width="1.5"/>
+  <text x="720" y="288" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">PermitAllGate</text>
+  <text x="720" y="309" text-anchor="middle" font-size="11" fill="#444">开源默认实现 · 无判定逻辑</text>
+
+  <line x1="720" y1="320" x2="720" y2="346" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="560" y="346" width="320" height="48" rx="8" fill="#EAF7EE" stroke="#3B9E5F" stroke-width="1.5"/>
+  <text x="720" y="374" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">cf-session</text>
+
+  <line x1="720" y1="394" x2="720" y2="420" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== 共享底座 ===== -->
+  <rect x="180" y="420" width="620" height="56" rx="8" fill="#F4F4F4" stroke="#888" stroke-width="1.5"/>
+  <text x="490" y="444" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">cf-store / cf-crypto …</text>
+  <text x="490" y="464" text-anchor="middle" font-size="11" fill="#444">共享加密底座 · 两分发共用（开源核心）</text>
+
+  <!-- ===== 图例 ===== -->
+  <rect x="180" y="496" width="620" height="112" rx="8" fill="#FAFAFA" stroke="#CCC" stroke-width="1"/>
+  <text x="200" y="518" font-size="12" font-weight="bold" fill="#222">依赖方向（严格单向）</text>
+  <text x="200" y="546" font-size="11" fill="#222">cf-license → cf-domain（trait 定义）：闭源依赖开源 ✅ 允许</text>
+  <text x="200" y="570" font-size="11" fill="#222">cf-ffi-official → cf-license / cf-ffi / cf-session：闭源 → 开源，允许</text>
+  <text x="200" y="594" font-size="11" fill="#222">cf-session / cf-ffi / cf-domain ─✗→ cf-license：开源依赖闭源，一条都不存在</text>
+  <text x="688" y="594" font-size="11" fill="#C43B3B">（禁止）</text>
+
+  <text x="490" y="638" text-anchor="middle" font-size="11" fill="#999">docs/02-概要设计 §10.2 · 双分发渠道模块划分与依赖方向</text>
+</svg>

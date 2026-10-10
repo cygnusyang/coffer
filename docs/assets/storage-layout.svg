@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 720" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <defs>
+    <marker id="b1-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <text x="490" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">vault.lvvault 库文件布局（SQLite 数据库文件）</text>
+
+  <!-- ===== [文件头部区] ===== -->
+  <rect x="90" y="80" width="800" height="90" rx="10" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="104" y="100" font-size="14" font-weight="bold" fill="#3B82C4">文件头部区</text>
+  <rect x="139" y="106" width="112" height="36" rx="6" fill="#FFFFFF" stroke="#9FB6DD" stroke-width="1"/>
+  <text x="195" y="128" text-anchor="middle" font-size="12" fill="#222">magic</text>
+  <text x="254" y="128" text-anchor="middle" font-size="12" fill="#999">|</text>
+  <rect x="257" y="106" width="112" height="36" rx="6" fill="#FFFFFF" stroke="#9FB6DD" stroke-width="1"/>
+  <text x="313" y="128" text-anchor="middle" font-size="12" fill="#222">format_version</text>
+  <text x="372" y="128" text-anchor="middle" font-size="12" fill="#999">|</text>
+  <rect x="375" y="106" width="112" height="36" rx="6" fill="#FFFFFF" stroke="#9FB6DD" stroke-width="1"/>
+  <text x="431" y="128" text-anchor="middle" font-size="12" fill="#222">kdf_params</text>
+  <text x="490" y="128" text-anchor="middle" font-size="12" fill="#999">|</text>
+  <rect x="493" y="106" width="112" height="36" rx="6" fill="#FFFFFF" stroke="#9FB6DD" stroke-width="1"/>
+  <text x="549" y="128" text-anchor="middle" font-size="12" fill="#222">salt</text>
+  <text x="608" y="128" text-anchor="middle" font-size="12" fill="#999">|</text>
+  <rect x="611" y="106" width="112" height="36" rx="6" fill="#FFFFFF" stroke="#9FB6DD" stroke-width="1"/>
+  <text x="667" y="128" text-anchor="middle" font-size="12" fill="#222">wrapped_dek</text>
+  <text x="726" y="128" text-anchor="middle" font-size="12" fill="#999">|</text>
+  <rect x="729" y="106" width="112" height="36" rx="6" fill="#FFFFFF" stroke="#9FB6DD" stroke-width="1"/>
+  <text x="785" y="128" text-anchor="middle" font-size="12" fill="#222">verifier</text>
+
+  <!-- ===== [SQLite 表区] ===== -->
+  <rect x="90" y="200" width="800" height="436" rx="10" fill="#F7F4FC" stroke="#7A5CC4" stroke-width="1.5"/>
+  <text x="104" y="220" font-size="14" font-weight="bold" fill="#7A5CC4">SQLite 表区</text>
+
+  <!-- 树主干 + 行连接 -->
+  <line x1="112" y1="261" x2="112" y2="611" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="261" x2="136" y2="261" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="311" x2="136" y2="311" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="361" x2="136" y2="361" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="411" x2="136" y2="411" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="461" x2="136" y2="461" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="511" x2="136" y2="511" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="561" x2="136" y2="561" stroke="#B9A6E8" stroke-width="1.5"/>
+  <line x1="112" y1="611" x2="136" y2="611" stroke="#B9A6E8" stroke-width="1.5"/>
+
+  <!-- meta -->
+  <rect x="136" y="242" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="266" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">meta</text>
+  <text x="344" y="264" font-size="12" fill="#555">库级元数据（明文：库 ID、创建时间、格式版本）</text>
+
+  <!-- items -->
+  <rect x="136" y="292" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="316" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">items</text>
+  <text x="344" y="305" font-size="12" fill="#555">条目索引（uuid、category、created_at、updated_at、</text>
+  <text x="344" y="323" font-size="12" fill="#555">state(active/archived)、is_favorite、enc_title、sort_key）</text>
+
+  <!-- fields -->
+  <rect x="136" y="342" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="366" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">fields</text>
+  <text x="344" y="355" font-size="12" fill="#555">字段明细（item_uuid、field_id、enc_name、enc_value、</text>
+  <text x="344" y="373" font-size="12" fill="#555">field_type、designation、section_id）</text>
+
+  <!-- tags -->
+  <rect x="136" y="392" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="416" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">tags</text>
+  <text x="344" y="414" font-size="12" fill="#555">标签（uuid、item_uuid、enc_name）</text>
+
+  <!-- urls -->
+  <rect x="136" y="442" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="466" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">urls</text>
+  <text x="344" y="464" font-size="12" fill="#555">多 URL（item_uuid、enc_label、enc_url）</text>
+
+  <!-- attachments -->
+  <rect x="136" y="492" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="516" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">attachments</text>
+  <text x="344" y="505" font-size="12" fill="#555">附件元数据 + 加密内容（item_uuid、enc_filename、</text>
+  <text x="344" y="523" font-size="12" fill="#555">enc_content 或外置文件引用、size、sha256）</text>
+
+  <!-- history -->
+  <rect x="136" y="542" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="566" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">history</text>
+  <text x="344" y="564" font-size="12" fill="#555">历史版本（item_uuid、version、created_at、enc_snapshot）</text>
+
+  <!-- audit_local -->
+  <rect x="136" y="592" width="190" height="38" rx="6" fill="#FFFFFF" stroke="#B9A6E8" stroke-width="1"/>
+  <text x="231" y="616" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">audit_local</text>
+  <text x="344" y="614" font-size="12" fill="#555">本地安全日志（时间、事件类型；<tspan font-weight="bold" fill="#A03030">不含敏感值</tspan>）</text>
+
+  <text x="490" y="670" text-anchor="middle" font-size="11" fill="#999">docs/02-概要设计 §4.2 · vault.lvvault 库文件布局（SQLite 数据库文件）</text>
+</svg>

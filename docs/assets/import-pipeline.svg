@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="960" viewBox="0 0 760 960" role="img" aria-labelledby="title desc">
+<title id="title">导入流水线</title>
+<desc id="desc">导入是 8 阶段分层流水线：读取 → 解包 → 解析 → 映射 → 预检 → 用户确认 → 写入 → 结果核对；预检与执行分离，写入在事务中完成。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>
+<rect width="760" height="960" rx="20" fill="#f8fafc"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+<text x="40" y="50" font-size="28" fill="#0f172a" font-weight="700">导入流水线 · 8 阶段</text>
+<text x="40" y="80" font-size="16" fill="#64748b">每层职责单一，便于定位问题 · 预检（①–⑤）只读无副作用，执行（⑦）在事务中完成</text>
+
+<!-- ===== ① 读取 ===== -->
+<rect x="60" y="108" width="520" height="58" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+<text x="88" y="134" font-size="16" fill="#0f172a" font-weight="700">① 读取</text>
+<text x="88" y="156" font-size="13" fill="#334155">识别文件类型（魔数 + 扩展名 + 内容探测）</text>
+<rect x="634" y="125" width="96" height="24" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="682" y="141" font-size="12" fill="#1e40af" text-anchor="middle">cf-importer</text>
+<path d="M 320 166 V 186" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ② 解包 ===== -->
+<rect x="60" y="186" width="520" height="92" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+<text x="88" y="212" font-size="16" fill="#0f172a" font-weight="700">② 解包</text>
+<text x="88" y="232" font-size="13" fill="#334155">1PUX：解 ZIP → export.attributes + export.data + files/</text>
+<text x="88" y="252" font-size="13" fill="#334155">CSV：编码探测（BOM / UTF-8 / GBK）→ 表头解析</text>
+<text x="88" y="272" font-size="13" fill="#334155">opvault：定位 default 配置文件 → 解密</text>
+<rect x="634" y="220" width="96" height="24" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="682" y="236" font-size="12" fill="#1e40af" text-anchor="middle">cf-importer</text>
+<path d="M 320 278 V 298" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ③ 解析 ===== -->
+<rect x="60" y="298" width="520" height="58" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+<text x="88" y="324" font-size="16" fill="#0f172a" font-weight="700">③ 解析</text>
+<text x="88" y="346" font-size="13" fill="#334155">产出中间表示 ImportModel（与存储层解耦）</text>
+<rect x="634" y="315" width="96" height="24" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="682" y="331" font-size="12" fill="#1e40af" text-anchor="middle">cf-importer</text>
+<path d="M 320 356 V 376" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ④ 映射 ===== -->
+<rect x="60" y="376" width="520" height="78" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+<text x="88" y="402" font-size="16" fill="#0f172a" font-weight="700">④ 映射</text>
+<text x="88" y="424" font-size="13" fill="#334155">1PUX 字段 → Coffer 字段（按映射表）</text>
+<text x="88" y="444" font-size="13" fill="#334155">未映射字段 → 收集进「未映射清单」，不丢弃</text>
+<rect x="634" y="401" width="96" height="24" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="682" y="417" font-size="12" fill="#1e40af" text-anchor="middle">cf-importer</text>
+<path d="M 320 454 V 474" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ⑤ 预检 ===== -->
+<rect x="60" y="474" width="520" height="78" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+<text x="88" y="500" font-size="16" fill="#0f172a" font-weight="700">⑤ 预检</text>
+<text x="88" y="522" font-size="13" fill="#334155">产出 PrecheckReport：条目数 / 类型分布 / 附件数 / 未映射字段</text>
+<text x="88" y="542" font-size="13" fill="#334155">/ 冲突项 / 预计耗时</text>
+<rect x="634" y="499" width="96" height="24" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="682" y="515" font-size="12" fill="#1e40af" text-anchor="middle">cf-importer</text>
+<path d="M 320 552 V 572" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ⑥ 用户确认 ===== -->
+<rect x="60" y="572" width="520" height="78" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="88" y="598" font-size="16" fill="#0f172a" font-weight="700">⑥ 用户确认</text>
+<text x="88" y="620" font-size="13" fill="#475569">UI 展示预检报告</text>
+<text x="88" y="640" font-size="13" fill="#475569">用户选择冲突策略</text>
+<rect x="656" y="597" width="74" height="24" rx="6" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="693" y="613" font-size="12" fill="#475569" text-anchor="middle">App UI</text>
+<path d="M 320 650 V 670" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ⑦ 写入 ===== -->
+<rect x="60" y="670" width="520" height="78" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+<text x="88" y="696" font-size="16" fill="#0f172a" font-weight="700">⑦ 写入</text>
+<text x="88" y="718" font-size="13" fill="#92400e">在事务中写入临时区 → 全部成功才提交</text>
+<text x="88" y="738" font-size="13" fill="#92400e">失败则回滚，已有数据不受影响（NFR-REL-04）</text>
+<rect x="590" y="695" width="140" height="24" rx="6" fill="#fffbeb" stroke="#d97706" stroke-width="1.2"/>
+<text x="660" y="711" font-size="11.5" fill="#92400e" text-anchor="middle">cf-session + cf-store</text>
+<path d="M 320 748 V 768" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+<!-- ===== ⑧ 结果核对 ===== -->
+<rect x="60" y="768" width="520" height="78" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="88" y="794" font-size="16" fill="#0f172a" font-weight="700">⑧ 结果核对</text>
+<text x="88" y="816" font-size="13" fill="#475569">随机抽样展示导入结果，供用户核对</text>
+<text x="88" y="836" font-size="13" fill="#475569">强制提示删除源导出文件</text>
+<rect x="656" y="793" width="74" height="24" rx="6" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+<text x="693" y="809" font-size="12" fill="#475569" text-anchor="middle">App UI</text>
+
+<!-- 底注 -->
+<text x="40" y="888" font-size="14" fill="#64748b">关键设计：③ 的 ImportModel 是纯数据、可单独测试与序列化（便于问题复现）；④ 映射表配置驱动，新增类型只需加规则；⑦ 事务保证「导入失败不搞坏库」（NFR-REL-04）。</text>
+<text x="40" y="912" font-size="14" fill="#64748b">预检与执行分离：precheck_import 只读无副作用、可反复调用；execute_import 才写库（§6.3 时序）。</text>
+</g>
+</svg>

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 680" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <text x="490" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">Android Passkey 创建 / 使用流程（API 34+）</text>
+
+  <!-- S1 -->
+  <rect x="100" y="74" width="780" height="48" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="490" y="102" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">网站在浏览器 / App 中请求创建或使用 Passkey</text>
+
+  <line x1="490" y1="122" x2="490" y2="148" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- S2 -->
+  <rect x="100" y="148" width="780" height="48" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="490" y="176" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">系统 Credential Manager 向已注册的凭据提供者发起查询</text>
+
+  <line x1="490" y1="196" x2="490" y2="222" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- S3 -->
+  <rect x="100" y="222" width="780" height="58" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="490" y="248" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">Coffer 的 CredentialProviderService 被调用</text>
+  <text x="490" y="269" text-anchor="middle" font-size="11" fill="#444">查询阶段：onBeginGetCredentialRequest / onBeginCreateCredentialRequest</text>
+
+  <line x1="490" y1="280" x2="490" y2="306" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- S4 -->
+  <rect x="100" y="306" width="780" height="58" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="490" y="332" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">Rust 核心按 rpId 匹配库内 Passkey → 生成凭据条目列表</text>
+  <text x="490" y="353" text-anchor="middle" font-size="11" fill="#444">每个条目带 PendingIntent，不含私钥</text>
+
+  <line x1="490" y1="364" x2="490" y2="390" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- S5 -->
+  <rect x="100" y="390" width="780" height="58" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="490" y="416" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">用户在系统选择器中选择</text>
+  <text x="490" y="437" text-anchor="middle" font-size="11" fill="#444">PendingIntent 拉起 Coffer 的 Activity</text>
+
+  <line x1="490" y1="448" x2="490" y2="474" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- S6 身份校验 -->
+  <rect x="100" y="474" width="780" height="48" rx="8" fill="#FBF0E4" stroke="#C98A4B" stroke-width="1.5"/>
+  <text x="490" y="502" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">【身份校验】BiometricPrompt 或主密码</text>
+
+  <line x1="490" y1="522" x2="490" y2="548" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- S7 -->
+  <rect x="100" y="548" width="780" height="58" rx="8" fill="#EAF2FB" stroke="#3B82C4" stroke-width="1.5"/>
+  <text x="490" y="574" text-anchor="middle" font-size="13" font-weight="bold" fill="#222">Rust 核心用私钥完成签名</text>
+  <text x="490" y="595" text-anchor="middle" font-size="11" fill="#444">经 EXTRA_GET_CREDENTIAL_RESPONSE 回传系统</text>
+
+  <text x="490" y="634" text-anchor="middle" font-size="11" fill="#999">docs/02-概要设计 §4.6 · Android 侧 Passkey 流程 · API 34+</text>
+</svg>

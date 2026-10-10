@@ -82,6 +82,21 @@ struct ItemEditView: View {
                     EditFieldRowView(row: $row, itemId: existingDetails?.uuid, isEnvContainer: isEnvContainer)
                 }
 
+                // 通用「添加字段」（v2.8.0 补丁，docs/36 §5 三写入口之一「App
+                // 手动改」）：所有类别均可加自定义字段（不只容器），一次一行。
+                // 非容器专用编辑器，不违反 D-36.7。新行空 name + 空 value、
+                // Text + designation None，保存走 buildDraft 既有路径入库；
+                // 环境容器下新行 name 沿用 isValidEnvName 实时告警。
+                HStack {
+                    Button {
+                        appendFieldRow()
+                    } label: {
+                        Label("添加字段", systemImage: "plus")
+                    }
+                    .controlSize(.small)
+                    Spacer()
+                }
+
                 if category == .login {
                     TextField("网址（可选）", text: $urlText, prompt: Text("https://example.com"))
                 }
@@ -266,6 +281,22 @@ struct ItemEditView: View {
         }
     }
 
+    /// 追加一个空自定义字段行（空 name + 空 value、Text + designation None）。
+    /// 保存走 buildDraft 既有路径入库（未填写——名值皆空——的行保存时跳过，
+    /// 不入库）；环境容器上下文下新行 name 沿用 isValidEnvName 实时告警。
+    private func appendFieldRow() {
+        rows.append(EditFieldRow(
+            name: "",
+            value: "",
+            fieldType: .text,
+            designation: nil,
+            isTemplateField: false,
+            isRequired: false,
+            unchanged: false,
+            fieldId: nil
+        ))
+    }
+
     /// 编辑模式：模板字段按 designation 匹配详情字段；未匹配上的详情字段
     /// 作为保留行追加（不静默丢弃）；模板中详情缺失的字段补空行。
     private static func buildRows(for details: FfiItemDetails) -> [EditFieldRow] {
@@ -379,8 +410,17 @@ struct ItemEditView: View {
     /// 且 FFI 拿不到原 secret 也无需构造）；新建模式解析粘贴的 URI 写入。
     private func buildDraft() throws -> FfiItemDraft {
         var fields: [FfiFieldDraft] = []
+        var position = 0
 
-        for (index, row) in rows.enumerated() {
+        for row in rows {
+            // 新增但未填写的自定义字段行（fieldId==nil、名值皆空）不入库——
+            // 避免保存产生空名垃圾字段；用户填了 name 或 value 任一项则原样
+            // 保留（不静默丢弃用户输入）。
+            if row.fieldId == nil && !row.isTemplateField
+                && row.name.trimmingCharacters(in: .whitespaces).isEmpty
+                && row.value.isEmpty {
+                continue
+            }
             var value: String? = row.value
             // 掩码纪律：未修改的 Concealed 字段，保存时才取回真实值
             if row.fieldType == .concealed && row.unchanged {
@@ -400,8 +440,9 @@ struct ItemEditView: View {
                 fieldType: row.fieldType,
                 designation: row.designation,
                 sectionIndex: nil,
-                position: Int32(index)
+                position: Int32(position)
             ))
+            position += 1
         }
 
         // URL：编辑时保留非主 URL，主 URL 用表单值替换

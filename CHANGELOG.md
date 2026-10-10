@@ -1,7 +1,7 @@
 # Coffer 变更记录（Changelog）
 
 本文件为**发布版变更记录**：每个已发布版本一行「主题 + 交付要点」，对齐
-docs/09 §0 速览表（权威版本→交付记录）。发版时由 release.yml 取本文件
+docs/02-研发计划与决策/02-版本开发计划.md §0 速览表（权威版本→交付记录）。发版时由 release.yml 取本文件
 当前版本段落作为 GitHub Release body（2026-10-10 用户需求：changelog 在
 release 中有体现）。
 
@@ -20,7 +20,7 @@ release 中有体现）。
 ## v2.8.0 — 2026-10-10
 
 ### 新增/变化
-- **CLI `coffer set-env` 写子命令**（docs/36 契约冻结）：`--scope <owner> NAME=VALUE`
+- **CLI `coffer set-env` 写子命令**（docs/03-功能设计/12-环境容器写面设计.md 契约冻结）：`--scope <owner> NAME=VALUE`
   原子写，owner 缺失自动建容器；`--id <UUID>` 兜底定位；`--unset` 删除；
   裸 NAME 走 stdin 取值（值不落 argv/stdout/日志，R2 纪律）；退出码 0/1/2/4。
 - **App 环境容器编辑保护**：标签锁（保留标签 `coffer:environment`）+ 识别徽章 +
@@ -30,7 +30,7 @@ release 中有体现）。
 ## v2.7.0 — 2026-10-10
 
 ### 新增/变化
-- **OTA 自研最小更新器**（docs/35 契约冻结）：App 内「关于 → 主动升级」，设置页排除。
+- **OTA 自研最小更新器**（docs/03-功能设计/11-OTA设计.md 契约冻结）：App 内「关于 → 主动升级」，设置页排除。
   固定清单 URL（`releases/latest/download/update-manifest.json`）挂 EdDSA 签名，
   只认 4 个白名单 host；更新密钥放 CI secrets（绝不落仓）。
 - **安装辅助器**（`Contents/Helpers/CofferUpdater.app` 嵌套 bundle）：单缝 relaunch
@@ -104,7 +104,7 @@ release 中有体现）。
 ## v0.5.0 — （范围并入 v2.6.0）
 
 ### 说明
-- Passkey **降级版**（FR-10.1/10.2/10.5/10.6）设计基准 docs/17 r2.4，
+- Passkey **降级版**（FR-10.1/10.2/10.5/10.6）设计基准 docs/03-功能设计/05-v0.5实现方案.md r2.4，
   2026-10-09 用户裁定随 v2.6.0 重启（完整版随 ADP 购买）。
 
 ## v0.4.0 — （真机项移交 TC-M 清单）

@@ -57,7 +57,7 @@ cd core && cargo test --workspace --no-fail-fast
 
 ## 文档
 
-需求与设计 `docs/01`~`docs/04`；版本计划 `docs/09`；Agent 凭据域 `docs/10`；MCP 设计 `docs/20`；macOS 侧说明 `macos/README.md`。
+完整分类与文件索引见 [文档导航](docs/README.md)。常用入口：[需求与架构](docs/01-需求与架构/)、[研发计划与决策](docs/02-研发计划与决策/)、[功能设计](docs/03-功能设计/)、[测试与验收](docs/04-测试与验收/)；macOS 侧说明见 [macos/README.md](macos/README.md)。
 
 ## 许可证
 

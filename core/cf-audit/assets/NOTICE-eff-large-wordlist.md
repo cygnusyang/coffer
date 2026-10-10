@@ -2,7 +2,7 @@
 
 本 crate 逐字嵌入以下词表资产（`assets/eff_large_wordlist.txt`，7776 词，
 sha256 `addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e`，
-未做任何修改），用于密码短语生成（docs/01 FR-3.3）：
+未做任何修改），用于密码短语生成（docs/01-需求与架构/01-需求分析.md FR-3.3）：
 
 - 名称：EFF Large Wordlist for Passphrases（eff_large_wordlist.txt，2016-07-18 版）
 - 来源：https://www.eff.org/diceware

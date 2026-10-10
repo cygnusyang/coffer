@@ -891,14 +891,18 @@
     }
 
     /// H-1 并发自愈（输家）：两容器同名 A<B，持 B 者判定输 → 删自己的 + 干净失败；
-    /// 库内剩最小者恰 1。
+    /// 库内剩最小者恰 1。双方容器皆空（正常并发首写形态，见 [`prune_race`]）。
     #[test]
     fn auto_create_race_loser_self_removes() {
         let (dir, pw) = fast_vault("h1-loser");
         let s = unlocked_vault(&dir, &pw);
-        // 模拟并发双建后的库态（绕过 auto_create，直接建两个同名容器）。
-        let a = create_env_item(&s, "dup");
-        let b = create_env_item(&s, "dup");
+        // 模拟并发双建后的库态（绕过 auto_create，直接建两个同名空容器）。
+        let a = s
+            .create_item(&fresh_container_draft("dup"))
+            .expect("create a");
+        let b = s
+            .create_item(&fresh_container_draft("dup"))
+            .expect("create b");
         let (min_uuid, max_uuid) = if a < b { (a, b) } else { (b, a) };
         let err = prune_race(&s, "dup", &max_uuid).expect_err("非最小 uuid = 输家");
         assert!(matches!(err, SetEnvError::EnvConcurrentCreate(_)));
@@ -907,13 +911,18 @@
         assert_eq!(same[0], min_uuid, "输家已自删，最小者存活");
     }
 
-    /// H-1 并发自愈（赢家）：最小 uuid 判定赢 → 清掉其余输家容器 + 保留自己的。
+    /// H-1 并发自愈（赢家）：最小 uuid 判定赢 → 只硬删其余**空**输家容器 + 保留
+    /// 自己的（双方皆空，正常并发首写形态，见 [`prune_race`]）。
     #[test]
     fn auto_create_race_winner_cleans_others() {
         let (dir, pw) = fast_vault("h1-winner");
         let s = unlocked_vault(&dir, &pw);
-        let a = create_env_item(&s, "dup");
-        let b = create_env_item(&s, "dup");
+        let a = s
+            .create_item(&fresh_container_draft("dup"))
+            .expect("create a");
+        let b = s
+            .create_item(&fresh_container_draft("dup"))
+            .expect("create b");
         let (min_uuid, max_uuid) = if a < b { (a.clone(), b) } else { (b.clone(), a) };
         prune_race(&s, "dup", &min_uuid).expect("赢家继续");
         let same = env_containers(&s, "dup").expect("list");
@@ -923,9 +932,10 @@
     }
 
     /// H-1 并发首写（in-process 双线程，dev-reviewer 反 flaky 建议）：两个
-    /// `run_with` 同时首写同名 → 库内**恒恰 1 容器**；每个退出 0（成功写）或
-    /// 1/2（存储/BUSY 或 tie-break/守卫干净失败），**至少一个成功**。断言只依赖
-    /// tie-break 的收敛保证，不依赖具体交错，故非 flaky。
+    /// `run_with` 同时首写同名 → 库内**1 或 2 容器**（正常收敛到 1；「输家已提交
+    /// 写入」窄窗口留双，可恢复歧义）；每个退出 0（成功写）或 1/2（存储/BUSY
+    /// 或 tie-break/守卫干净失败），**至少一个成功**且**成功写者数据存在、无丢失**。
+    /// 断言只依赖 tie-break 收敛保证与「只删空容器」裁定，不依赖具体交错，非 flaky。
     #[test]
     fn run_concurrent_first_write_single_container() {
         let (dir, pw) = fast_vault("run-conc-first");
@@ -971,18 +981,76 @@
             c1 == exit_codes::SUCCESS || c2 == exit_codes::SUCCESS,
             "至少一个首写成功"
         );
-        // 库内恒恰 1 同名容器（tie-break 收敛，含 delete 有界重试）。
+        // 库内 1 或 2 同名容器（裁定残余口径：输家已提交写入 → 赢家留双）。
         let s = unlocked_vault(&dir, &pw);
         let same = env_containers(&s, "conc").expect("list same-name containers");
-        assert_eq!(same.len(), 1, "并发首写库内恰 1 容器");
-        let d = s.get_item(&same[0]).expect("get").expect("present");
+        assert!(
+            same.len() == 1 || same.len() == 2,
+            "并发首写库内 1 或 2 容器（正常收敛 1 / 输家已提交写留双），实际 {}",
+            same.len()
+        );
+        // 至少一个成功写者的数据存在且全部来自成功写者（无丢失、无损坏）。
+        let mut values: Vec<String> = Vec::new();
+        for id in &same {
+            let d = s.get_item(id).expect("get").expect("present");
+            for f in &d.fields {
+                if f.name.expose() == "SHARED" {
+                    if let Some(v) = f.value.as_ref() {
+                        values.push(v.expose().to_string());
+                    }
+                }
+            }
+        }
+        assert!(!values.is_empty(), "至少一个成功写者数据存在（无丢失）");
+        for v in &values {
+            assert!(
+                v == "alpha" || v == "bravo",
+                "库内值必须来自成功写者之一（无损坏），实际 {v:?}"
+            );
+        }
+    }
+
+    /// H-1 裁定残余（输家已提交写入，dev-reviewer 残留 HIGH 的回归）：双同名容器
+    /// A<B（皆空），B 已被输家写入字段（已 exit 0 提交）→ 赢家 A prune 只删
+    /// **空容器**，B 有字段 → 跳过删除 → 留双容器（可恢复歧义，`--id` 可救，
+    /// **无数据丢失**）。
+    #[test]
+    fn prune_race_winner_keeps_committed_loser_container() {
+        let (dir, pw) = fast_vault("h1-committed");
+        let s = unlocked_vault(&dir, &pw);
+        let a = s
+            .create_item(&fresh_container_draft("dup"))
+            .expect("create a");
+        let b = s
+            .create_item(&fresh_container_draft("dup"))
+            .expect("create b");
+        let (min_uuid, max_uuid) = if a < b { (a.clone(), b) } else { (b.clone(), a) };
+        // 模拟「输家在赢家 create 前已完整走完 auto-create+prune+apply_write」：
+        // 给最大 uuid（输家）容器写入字段——此写入已提交（exit 0 语义）。
+        let d = s.get_item(&max_uuid).expect("get").expect("present");
+        let mut draft = crate::provider::coffer::draft_from_details(&d);
+        draft.fields.push(FieldDraft {
+            name: "SHARED".to_string(),
+            value: Some("committed".to_string()),
+            field_type: FieldType::Text,
+            designation: None,
+            section_index: None,
+            position: 0,
+        });
+        s.update_item(&max_uuid, &draft)
+            .expect("输家已提交写入");
+        // 赢家 prune：有字段的输家容器跳过删除（只删空容器）。
+        prune_race(&s, "dup", &min_uuid).expect("赢家继续");
+        let same = env_containers(&s, "dup").expect("list");
+        assert_eq!(same.len(), 2, "有字段输家容器不硬删 → 留双容器");
+        assert!(same.contains(&min_uuid), "赢家保留自己的");
+        assert!(same.contains(&max_uuid), "输家容器（含已提交数据）保留");
+        // 无数据丢失：输家已提交字段仍在。
+        let d = s.get_item(&max_uuid).expect("get").expect("present");
         let v = d
             .fields
             .iter()
             .find(|f| f.name.expose() == "SHARED")
             .and_then(|f| f.value.as_ref().map(|v| v.expose().to_string()));
-        assert!(
-            v.as_deref() == Some("alpha") || v.as_deref() == Some("bravo"),
-            "最终值取成功写者之一（库未损坏），实际 {v:?}"
-        );
+        assert_eq!(v.as_deref(), Some("committed"), "已提交数据未被硬删");
     }

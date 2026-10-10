@@ -209,8 +209,12 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: 上传 update-manifest.json 到 Release（OTA 固定清单 URL 支撑，docs/35 §2.4）
+        env:
+          # 裸 gh CLI 不会自动读取 Actions 的 GITHUB_TOKEN，须显式注入（CI 实测 exit 4：
+          # "set the GH_TOKEN environment variable"——softprops 创建 Release 自带 token 才成功）。
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # gh 已在 GitHub runner 预装并通过 GITHUB_TOKEN 认证；permissions.contents: write
-          # 已授予（见文件头）。--clobber 容忍流水线重跑覆盖同 tag 资产。
+          # gh 已预装并凭 GH_TOKEN 认证；permissions.contents: write 已授予（见文件头）。
+          # --clobber 容忍流水线重跑覆盖同 tag 资产。
           gh release upload "${GITHUB_REF_NAME}" macos/build/update-manifest.json --clobber

@@ -9,7 +9,9 @@
 //!    标签，D-36.2）；同名**非容器**条目（含 Login+标签，H-2）→ 拒绝不建
 //!    （退出 2）；>1 命中 → 歧义报错提示 `--id`（退出 2）。自动建容器并发安全
 //!    （H-1）：`environment_exists` 守卫挡顺序重复 + uuid tie-break 自愈——两
-//!    进程同时首写同名单容器时库内恒恰 1 容器，输家干净失败（退出 2）；
+//!    进程同时首写同名单容器时正常收敛到恰 1 容器，输家干净失败（退出 2）；
+//!    仅「输家在赢家 create 前已提交写入」窄窗口 → 赢家保留其有字段容器
+//!    （不硬删已提交数据），留双容器 = 可恢复歧义（`--id` 可救，无数据丢失）；
 //! 2. 写入语义：一次 `update_item` 整换重建（多条 NAME=VALUE + `--unset` 同一次
 //!    调用，FR-2.9 自动 append 一条历史可回滚）。字段形态固定
 //!    [`FieldType::Text`] + `designation: None`——与 MCP `username_value` /
@@ -469,20 +471,34 @@ fn env_containers(session: &VaultSession, name: &str) -> Result<Vec<String>, Set
     Ok(out)
 }
 
+/// 容器是否无字段（可安全硬删）：有字段 = 已提交写入（如输家已 exit 0），
+/// 绝不硬删（dev-reviewer H-1 裁定「只删空容器」）；读失败 → 未知是否有数据，
+/// fail-safe 保留（宁留歧义不丢数据）；已不存在 → 幂等删除走过场即可。
+fn is_empty_container(session: &VaultSession, id: &str) -> bool {
+    match session.get_item(id) {
+        Ok(Some(d)) => d.fields.is_empty(),
+        Ok(None) => true,
+        Err(_) => false,
+    }
+}
+
 /// 并发首写自愈（H-1）：创建后再查，若同名单容器 >1（两个 `set-env` 同时首写
-/// 撞车）→ 按 uuid 字典序唯一赢家收敛：赢家保留自己的并清理其余输家容器，
-/// 输家删自己的并干净失败——**库内恒恰 1 个同名容器**。
+/// 撞车）→ 按 uuid 字典序唯一赢家收敛：赢家保留自己的并**只硬删「空容器」**
+/// （无字段）的输家容器；输家容器已有字段（已提交写入）→ 跳过删除，留双容器。
+/// 输家删自己的（本调用刚建、恒为空）并干净失败。
 ///
 /// items 表无 title UNIQUE（标题加密存储，schema.rs），跨进程无原子查重，
-/// 故在命令层用确定性 tie-break（uuid 排序）收敛：无论并发交错如何，双方
-/// 算出的赢家一致，恰一者存活。赢家清理的输家容器若已并发写入字段，按
-/// 「恰一胜者」语义丢弃（另一写者按 exit 2 干净失败，不会留下永久歧义）。
+/// 故在命令层用确定性 tie-break（uuid 排序）收敛：正常并发首写（双方容器皆空）
+/// 无论交错如何收敛到恰 1 容器；唯一例外 = 输家在赢家 create 前已完整走完
+/// auto-create+prune+apply_write（exit 0，容器已有字段）→ 赢家 prune 见其有
+/// 字段 → 跳过删除，留双容器（**可恢复歧义，`--id` 可救，无数据丢失**）。
 ///
 /// **残余明示**（dev-reviewer 原子性边界）：本自愈是命令层收敛，非
 /// `create-if-absent` 式数据库原子（cf_session 无该 API，加装跨 crate 成本高）。
-/// 覆盖所有非崩溃交错；唯一残余 = 两个进程均在「create 之后、prune_race 之前」
-/// 的毫秒窗口内被硬杀（SIGKILL）→ 可能残留 2 个同名容器（永久歧义，用 `--id`
-/// 或手动清理可解）。正常运行（无崩溃）下不会出现。
+/// 残余两种：①上述「输家已提交写入」窄窗口 → 双容器可恢复歧义；②两进程均在
+/// 「create 之后、prune_race 之前」毫秒窗口内被硬杀（SIGKILL）→ 双空容器。
+/// 两者均不丢数据，用 `--id` 或手动清理可解。彻底修（会话层原子
+/// create-if-absent）成本高，后置不阻断。
 fn prune_race(session: &VaultSession, name: &str, own: &str) -> Result<(), SetEnvError> {
     let same = env_containers(session, name)?;
     if same.len() <= 1 {
@@ -491,7 +507,7 @@ fn prune_race(session: &VaultSession, name: &str, own: &str) -> Result<(), SetEn
     match same.iter().min() {
         Some(survivor) if survivor.as_str() == own => {
             for u in &same {
-                if u != own {
+                if u != own && is_empty_container(session, u) {
                     delete_container_idempotent(session, u);
                 }
             }
@@ -537,8 +553,9 @@ fn delete_container_idempotent(session: &VaultSession, id: &str) {
 ///
 /// H-1 并发安全：守卫 1 挡顺序重复（镜像 [`CofferStoreProvider::create_environment`]
 /// 的 `environment_exists` 查重，coffer.rs:354）；守卫 2 [`prune_race`] 在并发
-/// 双建时按 uuid tie-break 收敛到恰 1 容器。创建失败 → 存储错误（退出 1，
-/// fail-closed——不写库）。
+/// 双建时按 uuid tie-break 收敛——正常（双方容器皆空）收敛到恰 1 容器，输家
+/// 已提交写入的窄窗口留双容器（可恢复歧义，见 [`prune_race`]）。创建失败 →
+/// 存储错误（退出 1，fail-closed——不写库）。
 ///
 /// BUSY 有界重试：vault 连接未设 busy_timeout，并发首写可能瞬时 `database is
 /// locked`——每次重试前重查守卫（对方可能已建成 → 干净 exit 2 而非重复建）。

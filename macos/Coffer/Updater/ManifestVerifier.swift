@@ -12,11 +12,9 @@ import CryptoKit
 enum ManifestVerifier {
     /// 更新签名验证公钥（base64 Ed25519 原始公钥 32 字节，契约 6.1）。
     ///
-    /// ⚠️ **占位公钥**：CI 首次生成更新密钥对后必须替换（docs/35 §2.3 更新密钥
-    /// 在 CI secrets；对应私钥只在 CI，永不落仓）。占位私钥已本地生成后丢弃，
-    /// 保证常量是合法 Ed25519 公钥（解析不失败）；测试全部注入自生成临时公钥，
-    /// 不依赖本常量值。
-    static let cofferUpdatePublicKeyBase64 = "68TycH3avKtzM3UMPdHfEq87pNQbfJiMwgFvK+OnM+I="
+    /// v2.7.0 发布时替换占位（docs/35 §2.3 更新密钥在 CI secrets，对应私钥只在
+    /// CI，永不落仓）；测试全部注入自生成临时公钥，不依赖本常量值。
+    static let cofferUpdatePublicKeyBase64 = "JdXFX0t3fJCAJRLS5Q8Ne1s94XiBT8G/J0Pi15vnfCo="
 
     /// 验签显式错误（fail-closed：任何失败即拒装）。
     enum VerificationError: Error, LocalizedError {

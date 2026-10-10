@@ -921,3 +921,68 @@
         assert_eq!(same[0], min_uuid, "赢家保留自己的");
         assert!(!same.contains(&max_uuid), "输家容器已删");
     }
+
+    /// H-1 并发首写（in-process 双线程，dev-reviewer 反 flaky 建议）：两个
+    /// `run_with` 同时首写同名 → 库内**恒恰 1 容器**；每个退出 0（成功写）或
+    /// 1/2（存储/BUSY 或 tie-break/守卫干净失败），**至少一个成功**。断言只依赖
+    /// tie-break 的收敛保证，不依赖具体交错，故非 flaky。
+    #[test]
+    fn run_concurrent_first_write_single_container() {
+        let (dir, pw) = fast_vault("run-conc-first");
+        let d1 = dir.clone();
+        let d2 = dir.clone();
+        let p1 = pw.clone();
+        let p2 = pw.clone();
+        let h1 = std::thread::spawn(move || {
+            let escrow = MockEscrow::new(Ok(None));
+            let mut stdin = std::io::Cursor::new(Vec::<u8>::new());
+            run_with(
+                &mut stdin,
+                false,
+                &write_opts("conc", &[("SHARED", "alpha")]),
+                &d1,
+                Some(SecretString::from_exposed(p1)),
+                &escrow,
+            )
+        });
+        let h2 = std::thread::spawn(move || {
+            let escrow = MockEscrow::new(Ok(None));
+            let mut stdin = std::io::Cursor::new(Vec::<u8>::new());
+            run_with(
+                &mut stdin,
+                false,
+                &write_opts("conc", &[("SHARED", "bravo")]),
+                &d2,
+                Some(SecretString::from_exposed(p2)),
+                &escrow,
+            )
+        });
+        let c1 = h1.join().expect("thread 1");
+        let c2 = h2.join().expect("thread 2");
+        for (i, c) in [c1, c2].into_iter().enumerate() {
+            assert!(
+                c == exit_codes::SUCCESS
+                    || c == exit_codes::UNLOCK_FAILED
+                    || c == exit_codes::TARGET_NOT_FOUND,
+                "并发首写 {i} 须 0/1/2（成功或干净失败），实际 {c}"
+            );
+        }
+        assert!(
+            c1 == exit_codes::SUCCESS || c2 == exit_codes::SUCCESS,
+            "至少一个首写成功"
+        );
+        // 库内恒恰 1 同名容器（tie-break 收敛，含 delete 有界重试）。
+        let s = unlocked_vault(&dir, &pw);
+        let same = env_containers(&s, "conc").expect("list same-name containers");
+        assert_eq!(same.len(), 1, "并发首写库内恰 1 容器");
+        let d = s.get_item(&same[0]).expect("get").expect("present");
+        let v = d
+            .fields
+            .iter()
+            .find(|f| f.name.expose() == "SHARED")
+            .and_then(|f| f.value.as_ref().map(|v| v.expose().to_string()));
+        assert!(
+            v.as_deref() == Some("alpha") || v.as_deref() == Some("bravo"),
+            "最终值取成功写者之一（库未损坏），实际 {v:?}"
+        );
+    }

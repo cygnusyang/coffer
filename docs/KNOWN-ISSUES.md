@@ -1286,6 +1286,34 @@ uds.rs 测试夹具对 socket 文件就绪无同步原语（bind 完成与 clien
 
 ---
 
+## BUG-19（🟡 顺延登记）：cf-mcp cli.rs `set_password_usage_errors_exit_4` CI 间歇 BrokenPipe——子进程早退与 stdin 写入竞态（测试基建，非生产代码）
+
+**登记日期**：2026-10-10
+**发现环境**：v2.8.1 发版轮 Rust CI（run 38050858490 / 38050813998，`cf-mcp/tests/cli.rs:633` `write stdin payload: BrokenPipe`）；同日代码树等价 run（11:42Z，含全部 v2.8.1 代码）绿、本地 macOS 门禁 1376/0/10 绿——**预存 flaky**，与 v2.8.1 改动无关
+**分级**：S4 / P3 / 来源版本 v2.8.1（发版轮实证，产生时间更早）/ 发现版本 v2.8.1
+**状态**：🟡 顺延登记——纯 CI Linux runner 环境竞态，非安全、非生产回归；处置 = 重跑/重标定，与 BUG-18 同款测试基建顺延
+**核销记录**：—（修复时回填：stdin 写入重试/进程退出同步 + CI 复跑证据）
+**证据**：Rust workflow 历史（2026-10-10）：纯 docs 提交 07:24Z 红、11:42Z（含 v2.8.1 全部代码）绿、12:07/12:08Z（Info.plist+CHANGELOG only）红——失败与提交内容无关，随调度波动
+
+### 现象（预期/实际 分行写）
+
+- 预期：cli.rs 全部用例在 CI 稳定通过。
+- 实际：`set_password_usage_errors_exit_4` 偶发 BrokenPipe——测试进程向已退出子进程的 stdin 写 payload，管道破裂。
+
+### 根因（已实证）
+
+`set-password` 用法错误路径在子进程未读 stdin 前即退出（exit 4 快速路径），测试写 stdin 无同步/重试，CI 调度抖动下暴露窗口（本机 macOS 未复现）。
+
+### 修复路径
+
+测试侧：写 stdin 前探测子进程存活或改用先收集再断言的进程组写法（对齐 BUG-15/BUG-18 去竞态先例）；本版不修，顺延。
+
+### 复现与诊断
+
+CI Linux runner 重复跑 Rust workflow 观察偶发红；同树重跑绿即为该竞态指纹。
+
+---
+
 ```
 ## BUG-N（🔴/🟡/✅ 状态）：一句话标题
 

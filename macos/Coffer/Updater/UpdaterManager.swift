@@ -85,9 +85,11 @@ final class UpdaterManager: ObservableObject {
     @Published private(set) var state: UpdaterState = .idle
 
     /// 固定清单 URL（契约 6.1，恒一 URL，不依赖版本枚举）。
+    /// GitLab 迁移轮（2026-10-11）Pro trunk 切自托管 GitLab Release 永久链接
+    /// （permalink/latest，project id 95）；免费版仓仍走 GitHub releases。
     /// `nonisolated`：类为 @MainActor，纯常量供非隔离上下文（init 默认参）引用。
     nonisolated static let defaultManifestURL = URL(
-        string: "https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json")!
+        string: "https://gitlab.internal.invalid/api/v4/projects/95/releases/permalink/latest/downloads/ota/update-manifest.json")!
 
     private let manifestURL: URL
     private let currentVersion: String

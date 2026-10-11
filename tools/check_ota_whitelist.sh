@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tools/check_ota_whitelist.sh —— OTA 白名单防漂移检查（docs/35 §6.2 + §2.2 三道锁第 2 锁）。
 #
-# 契约（docs/35 §6.2，冻结）：Updater 模块所有网络代码只允许连接 4 个白名单
-# host（api.github.com / github.com / objects.githubusercontent.com /
-# release-assets.githubusercontent.com），且强制 HTTPS。所有网络代码只在
+# 契约（docs/35 §6.2，冻结；GitLab 迁移轮扩展注记见 WHITELIST 处）：Updater 模块
+# 所有网络代码只允许连接白名单 host（GitHub 4 host + Pro trunk 增列
+# gitlab.internal.invalid），且强制 HTTPS。所有网络代码只在
 # Swift 侧（Updater 模块），Rust 依赖图由 check_no_network.sh 把关。
 #
 # 本脚本是**静态检查**：扫描 macos/Coffer/Updater/*.swift，断言其中出现的 host
@@ -27,8 +27,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SRC_DIR="${1:-${ROOT_DIR}/macos/Coffer/Updater}"
 
-# 契约白名单（docs/35 §6.2，冻结）：只允许这 4 个 host，逐个精确匹配。
-WHITELIST="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com"
+# 契约白名单（docs/35 §6.2 + GitLab 迁移轮扩展注记）：精确匹配。
+# GitLab 迁移轮（2026-10-11）Pro trunk 增列 gitlab.internal.invalid（自托管 GitLab，
+# https://...:0 提取时剥端口后匹配）；免费版分支在此改动前切出，沿用 4 GitHub host。
+WHITELIST="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com gitlab.internal.invalid"
 
 if [ ! -d "$SRC_DIR" ]; then
     echo "SKIP: Updater 源目录不存在（${SRC_DIR}）——组 A 尚未落地或路径变更，无法执行白名单检查（不假绿也不误红，退出码 2）" >&2

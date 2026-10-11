@@ -225,6 +225,8 @@
 
 `api.github.com`、`github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`（§2.2）。Updater 模块 URLSession delegate 强制校验 host ∈ 白名单 + 强制 HTTPS；非白名单一律拒绝。所有网络代码只在 Swift 侧（`tools/check_ota_whitelist.sh` 防漂移）。
 
+> **GitLab 迁移轮扩展注记（2026-10-11，Pro trunk）**：Pro trunk（coffer-pro，自托管 GitLab `gitlab.internal.invalid`）白名单增列 `gitlab.internal.invalid`（host 匹配剥端口），清单 URL 切 Release 永久链接 `/api/v4/projects/95/releases/permalink/latest/downloads/ota/update-manifest.json`。强制 HTTPS 不变，fail-closed 语义不变。免费版分支在本注记之前切出，白名单仍为 4 GitHub host（免费构建 OTA 走 GitHub releases，旧钥沿用）。
+
 ### 6.3 Updater 公开接口（组 D 依赖，冻结）
 
 `macos/Coffer/Updater/UpdaterManager.swift`（@MainActor ObservableObject）：

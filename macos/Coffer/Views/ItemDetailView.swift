@@ -151,7 +151,9 @@ struct ItemDetailView: View {
                         .foregroundStyle(.yellow)
                 }
                 // 环境容器识别徽章（docs/36 §5.2 / AC-36.2-2）：SecureNote 类别
-                // + 保留标签双条件（与 MCP 读面一致，H-2 归口）。
+                // + 保留标签双条件（与 MCP 读面一致，H-2 归口）。Pro 专属
+                // （免费/Pro 隔离轮，FEATURES.md）。
+                #if COFFER_PRO
                 if EnvironmentContainer.isEnvContainer(category: details.category, tags: details.tags) {
                     Label("环境容器", systemImage: "terminal")
                         .font(.caption)
@@ -159,6 +161,7 @@ struct ItemDetailView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(.teal.opacity(0.2)))
                 }
+                #endif
                 if isTrashed {
                     Text("回收站")
                         .font(.caption)

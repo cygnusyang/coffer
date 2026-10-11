@@ -50,7 +50,13 @@ pub mod set_password;
 /// `coffer set-env` 写子命令（docs/36 §4，v2.8.0 环境容器写面）——依赖
 /// cf-session / rpassword / zeroize，均在 `coffer-store` feature 依赖树内
 /// （零新增依赖边，docs/36 §4.6）。
-#[cfg(feature = "coffer-store")]
+///
+/// **免费/Pro 隔离轮（2026-10-11）**：环境容器写面为 Pro 专属功能，门控升级为
+/// `coffer-store + pro` 双条件（免费构建关 `pro` 后本文件不编译；免费仓
+/// 直接不存在 `set_env.rs` / `set_env_tests.rs` / `tests/cli_pro.rs`，见
+/// FEATURES.md 功能归属矩阵）。本 cfg 行两侧仓库同文（免费侧 `pro` 空特征
+/// 恒关，编译零差异）。
+#[cfg(all(feature = "coffer-store", feature = "pro"))]
 pub mod set_env;
 pub mod tools;
 pub mod uds;

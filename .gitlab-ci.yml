@@ -1,0 +1,180 @@
+# .gitlab-ci.yml —— GitLab CI 迁移版（对齐 .github/workflows/release.yml + rust.yml 语义）。
+#
+# 迁移背景（2026-10-11 拆仓）：Pro trunk（本仓）迁自托管 GitLab
+# gitlab.internal.invalid；免费版另仓（GitHub + GitLab 镜像）。
+#
+# Runner：macOS shell executor（tag: macos）——GitHub 时代 ubuntu test job 与
+# macos build job 合并到同一台 Mac：clippy 的 dead_code 分析须在 macOS 目标上做
+# （原 test job 注释），单机流水线无分离意义。
+#
+# Secrets → GitLab CI/CD variables（protected；见 tools/export_ci_secrets.sh）：
+#   APPLE_CERT_P12_BASE64 / APPLE_CERT_PASSWORD /
+#   APPLE_PROVISIONING_PROFILE_BASE64 / UPDATE_SIGNING_KEY_BASE64 /
+#   RELEASE_TOKEN（project access token，scope api，发 Release 用——CI_JOB_TOKEN
+#   对 releases API 权限不足，须独立 token）
+#
+# OTA 资产（v2.7.0，docs/35 §2.4）：zip + update-manifest.json 挂 Release
+# direct_asset_path，永久链接形态：
+#   https://gitlab.internal.invalid/api/v4/projects/<ID>/releases/permalink/latest/downloads/ota/update-manifest.json
+# 注意：Pro 构建的 OTA host 白名单须加入 gitlab.internal.invalid（docs/35 §6.2 +
+# tools/check_ota_whitelist.sh + ManifestVerifier 源码常量，迁移轮代码改动）。
+
+stages: [gate, release]
+
+variables:
+  CARGO_TERM_COLOR: always
+  # OTA 发版级参数（docs/35 §6.1）：OTA_MINIMUM_VERSION 只增不减，发版前人工复核
+  OTA_MINIMUM_VERSION: "2.5.0"
+  OTA_SECURITY_CRITICAL: "false"
+
+gate:
+  stage: gate
+  tags: [macos]
+  script:
+    - cd core
+    - PATH="$HOME/.cargo/bin:$PATH" cargo test --workspace --no-fail-fast -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线
+
+release:
+  stage: release
+  tags: [macos]
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  variables:
+    GIT_STRATEGY: fetch
+  script:
+    - cd core && PATH="$HOME/.cargo/bin:$PATH" cargo clippy --all-targets -- -D warnings && cd ..
+
+    # ---- secrets 就位核查 ----
+    - |
+      for v in APPLE_CERT_P12_BASE64 APPLE_CERT_PASSWORD APPLE_PROVISIONING_PROFILE_BASE64 UPDATE_SIGNING_KEY_BASE64 RELEASE_TOKEN; do
+        [ -n "${!v}" ] || { echo "缺少 variable: $v（见 tools/export_ci_secrets.sh）"; exit 1; }
+      done
+
+    # ---- 更新验签公钥一致性核查（H-2，对齐 release.yml 同名步骤）----
+    - |
+      set -euo pipefail
+      DERIVED_PUB="$(./tools/derive_update_public_key.sh)"
+      SRC_PUB="$(grep -hoE 'cofferUpdatePublicKeyBase64 *= *"[A-Za-z0-9+/=]+"' \
+        macos/Coffer/Updater/ManifestVerifier.swift | head -1 \
+        | grep -oE '"[^"]+"' | tr -d '"' || true)"
+      [ -n "$SRC_PUB" ] || { echo "无法从 ManifestVerifier.swift 提取 cofferUpdatePublicKeyBase64"; exit 1; }
+      echo "派生公钥（CI secret 对应）: ${DERIVED_PUB}"
+      echo "源码常量（App 侧验签）   : ${SRC_PUB}"
+      [ "$DERIVED_PUB" = "$SRC_PUB" ] || { echo "更新验签公钥不一致（H-2），禁止发布 OTA"; exit 1; }
+      echo "更新验签公钥一致性 PASS"
+
+    # ---- 导入证书到临时 keychain ----
+    - |
+      set -euxo pipefail
+      KC="$CI_PROJECT_DIR/build.keychain-db"
+      KC_PW="coffer-ci-keychain"
+      echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$CI_PROJECT_DIR/cert.p12"
+      security create-keychain -p "$KC_PW" "$KC" || security unlock-keychain -p "$KC_PW" "$KC"
+      security set-keychain-settings -lut 21600 "$KC"
+      security unlock-keychain -p "$KC_PW" "$KC"
+      security import "$CI_PROJECT_DIR/cert.p12" -P "$APPLE_CERT_PASSWORD" \
+        -A -t cert -f pkcs12 -k "$KC"
+      security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+        -k "$KC_PW" "$KC"
+      security list-keychains -d user -s "$KC"
+      security default-keychain -s "$KC"
+      security find-identity -v -p codesigning
+
+    # ---- 落地 provisioning profile ----
+    - mkdir -p macos/build
+    - echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > macos/build/app.coffer.Coffer.provisionprofile
+    - '[ -s macos/build/app.coffer.Coffer.provisionprofile ] || { echo "profile base64 解码后为空"; exit 1; }'
+
+    # ---- 构建 + 签名 + 零网络核查 ----
+    - ./tools/build_macos_app.sh --rebuild-bindings
+    - |
+      set -euo pipefail
+      codesign --verify --strict macos/build/Coffer.app
+      ENT="$(codesign -d --entitlements - macos/build/Coffer.app 2>&1)"
+      echo "$ENT" | grep -q 'com.apple.security.network.client' \
+        || { echo "缺少 network.client（OTA 更新豁免 entitlement）"; exit 1; }
+      OTHER="$(echo "$ENT" | grep -oE 'com\.apple\.security\.network\.[a-zA-Z.]+' \
+        | grep -vx 'com.apple.security.network.client' || true)"
+      [ -z "$OTHER" ] || { echo "发现白名单外 network.* entitlement：$OTHER"; exit 1; }
+      echo "$ENT" | grep -q 'keychain-access-groups' \
+        || { echo "缺少 keychain-access-groups"; exit 1; }
+      ./tools/check_ota_whitelist.sh
+
+    # ---- 打包 zip + DMG ----
+    - TAG="${CI_COMMIT_TAG}"
+    - ditto -c -k --keepParent macos/build/Coffer.app "macos/build/Coffer-${TAG}.zip"
+    - TAG="${CI_COMMIT_TAG}" ./tools/make_dmg.sh
+    - ls -lh macos/build/Coffer-*.zip macos/build/Coffer-*.dmg
+
+    # ---- CDHash + OTA 清单（downloadUrl 指向 GitLab generic package 永久链接）----
+    - |
+      set -euo pipefail
+      CDHASH="$(./tools/extract_cdhash.sh macos/build/Coffer.app)"
+      echo "产物 CDHash=$CDHASH"
+      VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+        macos/build/Coffer.app/Contents/Info.plist 2>/dev/null || true)"
+      [ -n "$VERSION" ] || VERSION="${CI_COMMIT_TAG#v}"
+      echo "OTA version=$VERSION"
+      # generic package 上传 URL（同一 URL 即资产下载 URL，对 job token/任意已授权 GET 开放）
+      PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coffer/${VERSION}"
+      DOWNLOAD_URL="${PKG_URL}/Coffer-${TAG}.zip"
+      BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+      UPDATE_SIGNING_KEY_BASE64="$UPDATE_SIGNING_KEY_BASE64" \
+      MF_VERSION="$VERSION" \
+      MF_MINIMUM_VERSION="$OTA_MINIMUM_VERSION" \
+      MF_BUILD_TIME="$BUILD_TIME" \
+      MF_DOWNLOAD_URL="$DOWNLOAD_URL" \
+      MF_CDHASH="$CDHASH" \
+      MF_SECURITY_CRITICAL="$OTA_SECURITY_CRITICAL" \
+      ./tools/sign_update_manifest.sh > macos/build/update-manifest.json
+      cat macos/build/update-manifest.json
+      echo "$PKG_URL" > /tmp/pkg_url.txt
+
+    # ---- CHANGELOG 版本段（Release body）----
+    - |
+      TAG="${CI_COMMIT_TAG}"
+      awk -v t="${TAG}" '
+        $0 ~ "^## " t "([[:space:]]|$)" { in_section=1; next }
+        in_section && /^## / { exit }
+        in_section { print }
+      ' CHANGELOG.md > macos/build/release-body.txt
+      [ -s macos/build/release-body.txt ] || { echo "CHANGELOG.md 缺少版本段 \"## ${TAG}\""; exit 1; }
+
+    # ---- 上传资产（generic package）+ 创建 GitLab Release（direct_asset_path 永久链接）----
+    - |
+      set -euo pipefail
+      TAG="${CI_COMMIT_TAG}"
+      PKG_URL="$(cat /tmp/pkg_url.txt)"
+      AUTH="PRIVATE-TOKEN: ${RELEASE_TOKEN}"
+      curl -sf --header "$AUTH" --upload-file "macos/build/Coffer-${TAG}.zip" \
+        "${PKG_URL}/Coffer-${TAG}.zip"
+      curl -sf --header "$AUTH" --upload-file "macos/build/Coffer-${TAG}.dmg" \
+        "${PKG_URL}/Coffer-${TAG}.dmg"
+      curl -sf --header "$AUTH" --upload-file "macos/build/update-manifest.json" \
+        "${PKG_URL}/update-manifest.json"
+      DESCRIPTION="$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read()))' macos/build/release-body.txt)"
+      cat > /tmp/release.json <<JSON
+      {
+        "tag_name": "${TAG}",
+        "name": "${TAG}",
+        "description": ${DESCRIPTION},
+        "assets": {
+          "links": [
+            {"name": "Coffer-${TAG}.dmg", "url": "${PKG_URL}/Coffer-${TAG}.dmg", "direct_asset_path": "/downloads/Coffer-${TAG}.dmg"},
+            {"name": "Coffer-${TAG}.zip (OTA)", "url": "${PKG_URL}/Coffer-${TAG}.zip", "direct_asset_path": "/downloads/Coffer-${TAG}.zip"},
+            {"name": "update-manifest.json (OTA 清单)", "url": "${PKG_URL}/update-manifest.json", "direct_asset_path": "/ota/update-manifest.json"}
+          ]
+        }
+      }
+      JSON
+      curl -sf --header "$AUTH" --header "Content-Type: application/json" \
+        -X POST --data @/tmp/release.json \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
+      echo "GitLab Release ${TAG} 已创建"
+      echo "OTA 永久链接: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/permalink/latest/downloads/ota/update-manifest.json"
+
+  after_script:
+    # 清理临时 keychain（构建机是常驻 Mac，不留搜索路径污染）
+    - security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" || true
+    - security default-keychain -s "$HOME/Library/Keychains/login.keychain-db" || true
+    - '[ -f "$CI_PROJECT_DIR/build.keychain-db" ] && security delete-keychain "$CI_PROJECT_DIR/build.keychain-db" || true'

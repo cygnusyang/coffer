@@ -14,7 +14,9 @@ enum ManifestVerifier {
     ///
     /// v2.7.0 发布时替换占位（docs/35 §2.3 更新密钥在 CI secrets，对应私钥只在
     /// CI，永不落仓）；测试全部注入自生成临时公钥，不依赖本常量值。
-    static let cofferUpdatePublicKeyBase64 = "JdXFX0t3fJCAJRLS5Q8Ne1s94XiBT8G/J0Pi15vnfCo="
+    // GitLab 迁移轮（2026-10-11）换新 OTA 签名钥（旧钥只存于 GitHub secrets 不可迁移，
+    // Pro trunk OTA 源切 GitLab；免费版仓沿用旧钥走 GitHub）。
+    static let cofferUpdatePublicKeyBase64 = "v020ym1aUhA/OAgYLZicgxAUavpvE1HRl02gtCqN58M="
 
     /// 验签显式错误（fail-closed：任何失败即拒装）。
     enum VerificationError: Error, LocalizedError {

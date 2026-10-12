@@ -39,6 +39,10 @@ final class ClipboardManager {
     private(set) var clearAfterSeconds: TimeInterval
 
     private var clearWorkItem: DispatchWorkItem?
+    /// pending 清除任务是否为「用户档位驱动」类型（REV-DEV-01 分槽）：
+    /// true = 档位任务（随用户档位重排）；false = 显式时长任务（恢复码固定
+    /// 30s，FR-17.2——改档**不得**取消/重排它）。与 clearWorkItem 成对维护。
+    private var isClearTierDriven = false
     /// FR-5.6：pending 的 TOTP 延迟取码任务（nil = 无序列进行中）。
     private var totpWorkItem: DispatchWorkItem?
     private var writtenChangeCount: Int = -1
@@ -87,9 +91,10 @@ final class ClipboardManager {
     }
 
     /// 复制文本到剪贴板并按当前档位安排自动清除（委托给显式时长版，传当前档位）。
+    /// 经 isClearTierDriven = true 标记为档位任务：改档时随新档位重排（FR-14.2）。
     /// - Parameter value: 明文（密码 / TOTP 验证码 / 其他敏感字段值）
     func copyWithAutoClear(_ value: String) {
-        copyWithAutoClear(value, clearSecs: clearAfterSeconds)
+        copyWithAutoClear(value, clearSecs: clearAfterSeconds, isTierDriven: true)
     }
 
     /// 复制文本到剪贴板并按**显式时长**安排自动清除（P5-A / FR-17.2）。本次
@@ -97,17 +102,29 @@ final class ClipboardManager {
     /// `schedulePendingClear` 同纪律（清除任务闭包内**局部捕获**写入时
     /// changeCount，不依赖单例槽位）；`clearOnLock` 覆盖（经单例槽位记录本次
     /// 写入，锁定时若仍为本内容即清）。
+    ///
+    /// **REV-DEV-01 分槽**：经 isTierDriven = false 标记为显式时长任务，改档
+    /// （updateClearInterval）**不**取消/重排它——恢复码固定 30s 不受用户档位
+    /// 影响（FR-17.2，AC-2.9.0-P5-9）。仅下一次复制（最新覆盖）或 clearOnLock
+    /// 会终结它。
     /// - Parameters:
     ///   - value: 明文（密码 / 恢复码 / 其他敏感字段值）
     ///   - clearSecs: 本次清除时长（秒）。> 0 走定时清除；== 0 视作「本次
     ///     不清除定时路径」但保留锁定兜底（与档位 0 同语义，勿 asyncAfter(0)）。
     func copyWithAutoClear(_ value: String, clearSecs: TimeInterval) {
+        copyWithAutoClear(value, clearSecs: clearSecs, isTierDriven: false)
+    }
+
+    /// 复制 + 按给定时长安排清除的内部实现（REV-DEV-01 统一入口）：
+    /// `isTierDriven` 决定改档时该 pending 任务是否随新档位重排（true）还是
+    /// 原样保留至自己到点（false，恢复码固定 30s 场景）。
+    private func copyWithAutoClear(_ value: String, clearSecs: TimeInterval, isTierDriven: Bool) {
         guard !value.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
         writtenChangeCount = pasteboard.changeCount
-        schedulePendingClear(clearAfter: clearSecs)
+        schedulePendingClear(clearAfter: clearSecs, isTierDriven: isTierDriven)
     }
 
     /// 普通复制（非敏感内容：用户名 / 网址 / TOTP 验证码等，
@@ -175,15 +192,21 @@ final class ClipboardManager {
     }
 
     /// 运行时改档（AppModel.clipboardClearSecs.didSet 调用，FR-14.2）：
-    /// 更新档位；若已有待执行清除任务则取消并按新间隔重排（新值 0 = 从不
-    /// → 只取消、不重排，由 schedulePendingClear 的 delay <= 0 分支处理）。
+    /// 更新档位；若已有待执行的**档位驱动**清除任务则取消并按新间隔重排
+    /// （新值 0 = 从不 → 只取消、不重排，由 schedulePendingClear 的
+    /// delay <= 0 分支处理）。
+    ///
+    /// **REV-DEV-01 分槽**：显式时长任务（恢复码固定 30s，isClearTierDriven
+    /// == false）**不**在此重排/取消——改档绝不破坏 FR-17.2 固定 30s 契约。
     /// 无待执行任务时改档对下一次复制即生效。非法值直接忽略（保持旧档位）
     /// ——入口只有 AppModel 设置页，此处兜底防非法值经其他路径进入。
     func updateClearInterval(secs: Int) {
         guard Self.isValidClearSecs(secs) else { return }
         clearAfterSeconds = TimeInterval(secs)
-        guard clearWorkItem != nil else { return }
-        schedulePendingClear(clearAfter: clearAfterSeconds)
+        // 只重排档位驱动的 pending 任务；isClearTierDriven 与 clearWorkItem
+        // 成对维护，true 时必非 nil（无需再判 clearWorkItem）。
+        guard isClearTierDriven else { return }
+        schedulePendingClear(clearAfter: clearAfterSeconds, isTierDriven: true)
     }
 
     /// 会话锁定时的剪贴板处置（AppModel.lock() 调用）：
@@ -200,6 +223,9 @@ final class ClipboardManager {
         totpWorkItem = nil
         clearWorkItem?.cancel()
         clearWorkItem = nil
+        // 不变式维护：clearWorkItem 已 nil，档位旗标同步复位（否则锁定后
+        // 改档会误重排出 written = -1 的空任务）。
+        isClearTierDriven = false
         clearWrittenIfUnchanged()
     }
 
@@ -220,10 +246,20 @@ final class ClipboardManager {
     /// 以当前 writtenChangeCount 挂一个到点清除任务（首次调度 / 改档重排 /
     /// 显式时长覆盖共用）。`delay <= 0`（档位 0「从不」）→ 只取消待执行任务、
     /// 不重排——writtenChangeCount 保留，锁定兜底仍有效（勿 asyncAfter(0)）。
-    private func schedulePendingClear(clearAfter delay: TimeInterval) {
+    ///
+    /// `isTierDriven` 随任务成对记入 isClearTierDriven，供 updateClearInterval
+    /// 判断改档是否重排（REV-DEV-01：显式时长任务不受改档影响）。
+    private func schedulePendingClear(clearAfter delay: TimeInterval, isTierDriven: Bool) {
         clearWorkItem?.cancel()
         clearWorkItem = nil
-        guard delay > 0 else { return }
+        // 不变式：isClearTierDriven == true ⇔ clearWorkItem 非 nil（档位驱动）。
+        // delay <= 0（「从不」）不挂任务 → 旗标必须复位 false，否则后续改档会
+        // 误把「从不」档下的旧写入重排清除（原行为：无 pending 任务即不动）。
+        guard delay > 0 else {
+            self.isClearTierDriven = false
+            return
+        }
+        self.isClearTierDriven = isTierDriven
         let written = writtenChangeCount
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -237,6 +273,7 @@ final class ClipboardManager {
             }
             self.writtenChangeCount = -1
             self.clearWorkItem = nil
+            self.isClearTierDriven = false
         }
         clearWorkItem = work
         DispatchQueue.main.asyncAfter(

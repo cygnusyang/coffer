@@ -1314,6 +1314,62 @@ CI Linux runner 重复跑 Rust workflow 观察偶发红；同树重跑绿即为�
 
 ---
 
+## BUG-20（🟡 顺延登记）：UpdateTests TC-HOST-01 白名单断言与 OTAEndpointPolicy 契约漂移——allowedHosts 已扩 5 host，断言仍恰 4 host（测试断言 vs 契约漂移，非生产缺陷）
+
+**登记日期**：2026-10-12
+**发现环境**：v2.9.0 发版节点回归（M8 判据核销轮），`tools/run_update_tests.sh` 实测
+**分级**：S4（测试断言与契约漂移，非生产缺陷）/ P2 / 来源版本 v2.8.x（GitLab 端点切换批 287c37d）/ 发现版本 v2.9.0
+**状态**：🟡 修复已在工作树落地（并行轮 REV-DEV-01，未提交），待 commit/集成后正式核销
+**核销记录**：—（并行轮已修：`macos/Tests/UpdateTests/main.swift` TC-HOST-01 断言改 5 host + 增 TC-HOST-02 gitlab.internal.invalid 正例与带端口 fail-closed/放行两负正例；2026-10-12 dev-tester 复跑 `tools/run_update_tests.sh` → **177 passed / 0 failed / 2 skipped ALL GREEN**（日志 /tmp/v290_update_tests_post.log）——修复已验证，待提交后转 ✅ 正式核销）
+**证据**：2026-10-12 实测 `tools/run_update_tests.sh` → 173 passed / 1 failed / 2 skipped，唯一 FAILED = TC-HOST-01（日志 /tmp/v290_update_tests.log）；`macos/Coffer/Updater/OTAEndpointPolicy.swift:16-22` allowedHosts 现为 5 host（含 `gitlab.internal.invalid`，287c37d 增列，Pro trunk），`macos/Tests/UpdateTests/main.swift:697-700` 仍断言恰 4 GitHub host
+
+### 现象（预期/实际 分行写）
+
+- 预期：白名单与 docs/35 §6.2 契约一致（当前 5 host），TC-HOST-01 放行。
+- 实际：`allowed == [4 GitHub host]` 断言与 5 host 集合比较不等 → 结构性红。
+
+### 根因（已实证）
+
+287c37d（2026-10-11 GitLab 端点切换批）将 OTAEndpointPolicy.allowedHosts 扩至 5 host（增 `gitlab.internal.invalid`），契约/检查脚本已同步；`run_update_tests.sh` 的 TC-HOST-01 白名单断言未随契约更新，仍锁死 4 host。生产侧契约已成立（docs/35 §6.2 扩展注记 + `check_ota_whitelist.sh` 以该文件为唯一事实源），故为**测试断言漂移**，非生产回归。
+
+### 修复路径
+
+测试侧：TC-HOST-01 断言更新为 5 host 集合（补 `gitlab.internal.invalid`），随下次更新器测试维护窗口一并处置（本版判据核销不越界改测试断言，如实登记）。
+
+### 复现与诊断
+
+`./tools/run_update_tests.sh` → 结果行 `FAILED: TC-HOST-01 白名单恰为契约 4 host`，exit 1。
+
+---
+
+## BUG-21（🟡 环境项顺延登记）：UpdateTests TC-SEC-02/03/INST-03 依赖 Developer ID 签名产物——adhoc/免费账号构建必红（环境依赖项，非生产代码）
+
+**登记日期**：2026-10-12
+**发现环境**：v2.9.0 发版节点回归（M8）；关联免费账号重签循环背景（无稳定 Developer ID 产物，adhoc 构建常态）
+**分级**：S4（环境依赖，非生产缺陷）/ P3 / 来源版本 v2.8.x（SecCodeVerifier 签名纵深，契约 2.3）/ 发现版本 v2.9.0
+**状态**：🟡 环境项顺延——TC-SEC-02/03/INST-03 需 Developer ID 签名产物才可通过（DR/TeamID 比对）；adhoc 构建必红。当前工作树 `macos/build/Coffer.app` 为 v2.8.x 遗留 Developer ID 签名产物（TeamIdentifier=A6DS985SJJ），实测 173/1/2 中此三项 PASS；一旦重建为 adhoc 即转红
+**核销记录**：—（有 Developer ID 产物的发版/CI 环境复跑 run_update_tests.sh 即核销；免费账号侧经重签循环交付的正式产物跑，或在 KNOWN-ISSUES 记为已知环境基线）
+**证据**：2026-10-12 实测 `tools/run_update_tests.sh`（Developer ID 产物在位）→ TC-SEC-01/02/03/04/05/06/07 PASS、TC-SEC-08 SKIP（codesign 不可用无法构造异 identifier 副本）、TC-INST-03 PASS；`codesign -dv macos/build/Coffer.app` → TeamIdentifier=A6DS985SJJ（Developer ID 团队签名）
+
+### 现象（预期/实际 分行写）
+
+- 预期：签名验签类用例在含 Developer ID 签名产物的环境稳定通过；adhoc 产物（免费账号/开发构建）下为已知环境红。
+- 实际：产物签名形态决定 TC-SEC-02/03/INST-03 结果——Developer ID 产物 PASS、adhoc 产物 FAIL（DR/TeamID 比对失败）。
+
+### 根因（已实证）
+
+TC-SEC-02/03/INST-03 对 `macos/build/Coffer.app` 做 kSecCodeInfo 属性（TeamID/identifier/CDHash）与 DR 白名单比对，属纵深验签；adhoc 签名无 Developer ID TeamID，比对必失败。为**构建环境依赖项**，非生产代码缺陷。
+
+### 修复路径
+
+环境/流程侧：验签类用例固定在含 Developer ID 产物的环境执行（发版轮 CI / 重签循环交付产物）；免费账号开发构建将其列为已知环境红，不视为回归。
+
+### 复现与诊断
+
+Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物/换 adhoc 重建后重跑 → TC-SEC-02/03/INST-03 转红即复现。
+
+---
+
 ```
 ## BUG-N（🔴/🟡/✅ 状态）：一句话标题
 

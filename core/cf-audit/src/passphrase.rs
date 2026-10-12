@@ -268,7 +268,13 @@ mod tests {
             let mut chars = word.chars();
             let first = chars.next().unwrap();
             assert!(first.is_ascii_uppercase(), "词首应大写：{word}");
-            assert!(chars.all(|c| c.is_ascii_lowercase()), "其余应小写：{word}");
+            // 词表含 4 个连字符词（drop-down/felt-tip/t-shirt/yo-yo），
+            // capitalize 后形如 T-shirt——其余字符须允许 '-'（此断言原
+            // 只认 [a-z]，随机抽中连字符词即红，为 0.06% 概率 flaky）。
+            assert!(
+                chars.all(|c| c.is_ascii_lowercase() || c == '-'),
+                "其余应小写或连字符：{word}"
+            );
         }
     }
 

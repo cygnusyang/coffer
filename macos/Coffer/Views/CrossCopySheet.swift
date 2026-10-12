@@ -297,9 +297,11 @@ struct CrossCopySheet: View {
         isBusy = true
         Task {
             do {
-                // 认证即弹窗（read 自带全新 LAContext + localizedReason）；
+                // 认证即弹窗（read 自带全新 LAContext + localizedReason；
+                // CO-04 指明目标库名/语境，用户不被「解锁密码库」泛文案混淆）；
                 // 读取失败 → 4002 降级文案（docs/08 §4.1），不改目标库 header
-                let kBio = try BiometricKeychain().read(vaultUUID: targetUUID)
+                let kBio = try BiometricKeychain().read(vaultUUID: targetUUID,
+                                                        reason: vaultBiometricReason(for: targetUUID))
                 try await Task.detached(priority: .userInitiated) {
                     _ = try target.unlockWithBiometric(kBio: kBio) // 返回 FfiVaultInfo，复制页无需
                 }.value
@@ -309,6 +311,14 @@ struct CrossCopySheet: View {
             }
             isBusy = false
         }
+    }
+
+    /// CO-04（v2.9.0 docs/13 §5）：目标库 Touch ID 解锁弹窗的 localizedReason
+    /// 指明目标库名 + 复制语境（「解锁哪个库」不混淆）。库名查自 vaultBriefs
+    /// （与 startCopy 同源）；查不到时回退默认提示（Keychain 项仍能定位）。
+    private func vaultBiometricReason(for targetUUID: String) -> String {
+        let name = model.vaultBriefs.first(where: { $0.vaultUuid == targetUUID })?.displayName
+        return name.map { "解锁密码库「\($0)」以复制条目" } ?? BiometricKeychain.unlockPrompt
     }
 
     /// 解锁成功后的公共续段：切复制页 → 慢调用 copyItem → 即锁目标会话。

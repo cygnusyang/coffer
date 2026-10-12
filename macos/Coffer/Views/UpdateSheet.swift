@@ -226,7 +226,10 @@ struct UpdateSheet: View {
                 Button("跳过此版本") { skipCurrentVersion() }
             }
             if buttons.canDownload {
-                Button("下载并安装") { model.installUpdate() }
+                // REV-01（docs/13 §5）：.updateAvailable 态只下载不安装——
+                // 下载完成落 .downloaded 态，安装一律经「安装更新…」确认弹窗
+                // （同一退出+替换二进制动作确认纪律单点化）。
+                Button("下载…") { downloadOnly() }
                     .keyboardShortcut(.defaultAction)
             }
             if buttons.canInstall {
@@ -247,6 +250,12 @@ struct UpdateSheet: View {
     }
 
     // MARK: - 动作
+
+    /// REV-01（docs/13 §5）：仅下载不安装——`updater.download()` 下载 → 验签 →
+    /// .downloaded 态；安装由该态「安装更新…」确认弹窗触发（model.installUpdate()）。
+    private func downloadOnly() {
+        Task { await updater.download() }
+    }
 
     /// 显式关闭：契约 6.3 `dismiss()` 语义 = 「关面板 / 清理失败态」——仅 failed
     /// 态调用以清除失败；其余 state 不动（保留已下载包 / 进行中任务，交由状态机

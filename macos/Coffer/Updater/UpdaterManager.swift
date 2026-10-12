@@ -101,6 +101,11 @@ final class UpdaterManager: ObservableObject {
     private let verifier: ProductVerifying
     private let userDefaults: UserDefaults
 
+    /// REV-01（v2.9.0 docs/13 §5）：下载完成后的安装产物暂存（清单 info +
+    /// 解压验签后的 App 路径）。`.downloaded` 态无关联值（状态机不扩展），
+    /// install() 从本暂存消费；download() 失败 / dismiss() / 新一轮 check 时清空。
+    private var pendingProduct: (info: UpdateInfo, appURL: URL)?
+
     /// - Parameters:
     ///   - manifestURL: 清单 URL（默认契约固定 URL）。
     ///   - currentVersion: 当前版本号（`CFBundleShortVersionString`；测试注入固定值）。
@@ -153,6 +158,8 @@ final class UpdaterManager: ObservableObject {
     /// 网络失败 / 验签失败 / 不匹配 → `.failed`（fail-closed，不静默）。
     func check() async {
         guard !isInFlight else { return }
+        // 新一轮检查作废旧下载产物（REV-01 暂存；正常路径 dismiss 已清，此处兜底）
+        pendingProduct = nil
         state = .checking
         do {
             try OTAEndpointPolicy.validate(manifestURL)
@@ -168,10 +175,11 @@ final class UpdaterManager: ObservableObject {
         }
     }
 
-    /// 安装更新：下载（进度）→ 解压 → 三级验签 → downloaded → 写配置 +
-    /// LaunchServices 启动 helper → installing。App 侧随即退出（helper 负责
-    /// 备份/替换/relaunch，结果经 result 文件在下次启动消费，契约 6.4 r0.4）。
-    func install() async {
+    /// 仅下载（REV-01，v2.9.0 docs/13 §5）：下载（进度）→ 解压 → 三级验签 →
+    /// downloaded，停在安装前。`.updateAvailable` 态按钮只下载不安装；安装一律
+    /// 经 .downloaded 态确认弹窗后调 install()——「退出+替换二进制」动作确认
+    /// 纪律单点化。产物暂存 pendingProduct 供 install() 消费。
+    func download() async {
         guard case .updateAvailable(let info) = state else { return }
         do {
             state = .downloading(0)
@@ -180,12 +188,31 @@ final class UpdaterManager: ObservableObject {
             }
             let extractedApp = try await installer.prepare(downloadedArchive: archive)
             try verifier.verifyApp(at: extractedApp, expectedCdHash: info.cdHash)
+            pendingProduct = (info, extractedApp)
             state = .downloaded
+        } catch {
+            pendingProduct = nil
+            state = .failed(Self.userMessage(from: error))
+        }
+    }
+
+    /// 安装更新：写配置 + LaunchServices 启动 helper → installing。App 侧随即
+    /// 退出（helper 负责备份/替换/relaunch，结果经 result 文件在下次启动消费，
+    /// 契约 6.4 r0.4）。
+    /// REV-01 后 UI 唯一入口为 .downloaded 态确认弹窗；为兼容既有调用/测试
+    /// 路径（.updateAvailable 起点），起点为 .updateAvailable 时先补 download()。
+    func install() async {
+        if case .updateAvailable = state {
+            await download()
+        }
+        guard case .downloaded = state, let product = pendingProduct else { return }
+        do {
             state = .installing
             try await installer.perform(
-                info: info, downloadedAppURL: extractedApp, currentAppURL: currentAppURL)
+                info: product.info, downloadedAppURL: product.appURL, currentAppURL: currentAppURL)
             // 成功路径：helper 完成替换并 relaunch，本进程即将退出；保持 .installing。
         } catch {
+            pendingProduct = nil
             state = .failed(Self.userMessage(from: error))
         }
     }
@@ -263,6 +290,7 @@ final class UpdaterManager: ObservableObject {
 
     /// 关面板 / 清理失败态。
     func dismiss() {
+        pendingProduct = nil
         state = .idle
     }
 

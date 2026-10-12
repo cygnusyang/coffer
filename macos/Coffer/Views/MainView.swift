@@ -129,7 +129,10 @@ struct MainView: View {
                     Button("切换密码库…") { model.showVaultSwitcher = true }
                 } label: {
                     Label(model.vaultName.isEmpty ? "密码库" : model.vaultName,
-                          systemImage: "vault")
+                          systemImage: "archivebox")
+                    // 注：SF Symbol 无 "vault"（本机实测 MISSING，无效名渲染为
+                    // 空白——多仓库切换入口图标曾空显）；archivebox=「库」箱柜
+                    // 隐喻，与锁定态 lock/lock.fill 不混淆。
                 }
                 // 安全体检入口（v2.9.0 P4，docs/14 §A P4 §2）：主入口，发现性
                 // 优先（工具栏）。toggle 语义：点击进入详情区整页体检；再次

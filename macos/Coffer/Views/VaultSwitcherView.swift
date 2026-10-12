@@ -96,7 +96,9 @@ struct VaultSwitcherView: View {
 
     private func vaultRow(_ brief: FfiVaultBrief) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "vault")
+            // SF Symbol 无 "vault"（无效名渲染为空白，图标曾空显）；archivebox
+            // 与 MainView 工具栏库切换入口同源。
+            Image(systemName: "archivebox")
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(width: 28)

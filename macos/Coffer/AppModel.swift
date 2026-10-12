@@ -98,6 +98,58 @@ final class AppModel: ObservableObject {
     /// `!pendingBioOffer` 保证不与 Touch ID 引导同屏（bio 先、恢复码后）。
     @Published var pendingRecoveryOffer = false
 
+    // MARK: 首启引导合并 + 首次高亮兜底（v2.9.0 P2-A，docs/14 §A P2 §2/§2.5；
+    // DESIGN.md P-2.1 契约）
+
+    /// 首启引导向导呈现条件（P2-A）：解锁态下两枚引导旗标任一置位即呈现
+    /// **单个 sheet 向导**（RootView 挂载 OnboardingWizard，替代原先两个独立
+    /// sheet，FW-01 关闭）。派生计算属性非 @Published——无独立状态，完全由
+    /// pendingBioOffer / pendingRecoveryOffer 驱动，两旗标均清即自动收口。
+    var showOnboarding: Bool {
+        phase == .unlocked && (pendingBioOffer || pendingRecoveryOffer)
+    }
+
+    /// 引导步骤「跳过」记录（DESIGN.md P-2.1 契约）：向导 Step1 跳过时置位，
+    /// Touch ID 启用成功时清位（enableTouchID 成功路径）；落盘 UserDefaults
+    /// （didSet，对齐 clipboardClearSecs 模式）。仅作设置页首次高亮兜底判定，
+    /// 不参与引导流程本身。**「已完成」不落盘**——由 touchIDStatus live 派生。
+    nonisolated static let bioOfferSkippedKey = "bio_offer_skipped"
+    @Published var bioOfferSkipped: Bool = AppModel.loadBioOfferSkipped() {
+        didSet {
+            UserDefaults.standard.set(bioOfferSkipped, forKey: Self.bioOfferSkippedKey)
+        }
+    }
+
+    /// 引导 Step2（恢复码）跳过记录（同上，docs/14 §A P2 §2.5）。启用恢复码
+    /// 成功时清位（enableRecoveryCode 成功路径）；「已完成」由 hasRecoveryWrap
+    /// live 派生，不落盘。
+    nonisolated static let recoveryOfferSkippedKey = "recovery_offer_skipped"
+    @Published var recoveryOfferSkipped: Bool = AppModel.loadRecoveryOfferSkipped() {
+        didSet {
+            UserDefaults.standard.set(recoveryOfferSkipped, forKey: Self.recoveryOfferSkippedKey)
+        }
+    }
+
+    nonisolated private static func loadBioOfferSkipped() -> Bool {
+        UserDefaults.standard.bool(forKey: bioOfferSkippedKey)
+    }
+    nonisolated private static func loadRecoveryOfferSkipped() -> Bool {
+        UserDefaults.standard.bool(forKey: recoveryOfferSkippedKey)
+    }
+
+    /// 设置页首次高亮条件（P2-A §2.5 / AC-2.9.0-P2A-10）：引导 Step1 被跳过
+    /// 且 Touch ID 未启用。启用对应功能后即清除（enableTouchID 成功清位 +
+    /// touchIDStatus 刷新，两路皆 @Published → 高亮 live 消失）。
+    var showBioSetupHighlight: Bool {
+        bioOfferSkipped && touchIDStatus == .disabled
+    }
+
+    /// 设置页恢复码区首次高亮条件（P2-A §2.5 / AC-2.9.0-P2A-11）：引导 Step2
+    /// 被跳过且恢复码未生成（hasRecoveryWrap live 判定）。
+    var showRecoverySetupHighlight: Bool {
+        recoveryOfferSkipped && !hasRecoveryWrap
+    }
+
     // MARK: 条目列表 / 详情状态（T05 阶段二）
 
     /// 当前过滤 + 搜索下的条目摘要列表。
@@ -814,6 +866,9 @@ final class AppModel: ObservableObject {
                 try target.enableBiometric(password: password, kBio: kBio)
             }.value
             refreshTouchIDStatus()
+            // P2-A 兜底：启用成功即清「跳过」记录——设置页首次高亮随之消失
+            // （AC-2.9.0-P2A-12，DESIGN.md P-2.1 清除路径）。
+            bioOfferSkipped = false
             return true
         } catch {
             // 失败补偿（docs/08 §4.1）：删除刚写入的 Keychain 项（幂等），
@@ -1057,6 +1112,9 @@ final class AppModel: ObservableObject {
             try await Task.detached(priority: .userInitiated) {
                 try target.enableRecoveryCode(password: password, code: code)
             }.value
+            // P2-A 兜底：启用成功即清「跳过」记录——设置页恢复码区首次高亮
+            // 随之消失（AC-2.9.0-P2A-12，DESIGN.md P-2.1 清除路径）。
+            recoveryOfferSkipped = false
         } catch {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)

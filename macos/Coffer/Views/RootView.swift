@@ -1,8 +1,10 @@
 // RootView.swift —— 根视图：按 AppPhase 切换界面。
 //
-// 建库可选启用 Touch ID（docs/08 §4.1 / §9 T04）：解锁态下若
-// pendingBioOffer 置位（建库成功 + Touch ID 设备 + 尚未处理），弹出可选
-// 启用引导 sheet。跳过或无 Touch ID 设备时不出现——v0.1 流程零变化。
+// 首启引导（v2.9.0 P2-A，docs/14 §A P2 §2）：建库后首次解锁把原先两个独立
+// sheet（Touch ID 引导 + 恢复码引导，FW-01 双打断）合并为**单个** OnboardingWizard
+// 向导容器。触发 = AppModel.showOnboarding（解锁态 ∧ 任一引导旗标置位），
+// 最多两步按置位裁剪、每步可跳过；两旗标均清 → 绑定 get 返回 false → 自动收口。
+// interactiveDismissDisabled 保留（结构型引导）。
 
 import SwiftUI
 
@@ -13,26 +15,14 @@ struct RootView: View {
     var body: some View {
         content
             .onAppear { model.bootstrap() }
-            // 建库成功后的可选「启用 Touch ID」步骤：仅在解锁态呈现
-            // （enable 需解锁态，Rust 1001 门禁）。sheet 关闭（跳过/完成）
-            // 即清除标记。
+            // 首启引导向导（P2-A）：单个 sheet 容器替代原先两个独立 sheet。
+            // 步骤完成（启用/跳过）清各自旗标，全部清空即收口（get 派生）。
+            // set 分支为强制关闭兜底（interactiveDismissDisabled 下仅程序路径）。
             .sheet(isPresented: Binding(
-                get: { model.phase == .unlocked && model.pendingBioOffer },
-                set: { if !$0 { model.pendingBioOffer = false } }
+                get: { model.showOnboarding },
+                set: { if !$0 { model.pendingBioOffer = false; model.pendingRecoveryOffer = false } }
             )) {
-                VaultBioEnableOfferView()
-                    .environmentObject(model)
-                    .interactiveDismissDisabled()
-            }
-            // 首次解锁后的可选「生成恢复码」步骤（v2.5.0 FR-17.2，D-8）：
-            // 仅在解锁态且 bio 引导未同时呈现（!pendingBioOffer）时弹出——
-            // bio 引导优先，其关闭（跳过/完成）后恢复码引导接着呈现；
-            // 无 Touch ID 设备则直接呈现恢复码引导。
-            .sheet(isPresented: Binding(
-                get: { model.phase == .unlocked && model.pendingRecoveryOffer && !model.pendingBioOffer },
-                set: { if !$0 { model.pendingRecoveryOffer = false } }
-            )) {
-                RecoveryCodeOfferSheet()
+                OnboardingWizard()
                     .environmentObject(model)
                     .interactiveDismissDisabled()
             }

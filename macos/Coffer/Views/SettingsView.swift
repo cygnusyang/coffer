@@ -196,7 +196,15 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var securitySection: some View {
-        TouchIDSettingsSection()
+        // P2-A 首次高亮兜底（lead 裁定⑤，AC-2.9.0-P2A-10/13）：引导 Step1 被
+        // 跳过且 Touch ID 未启用时，Touch ID 节下方出现 accent 圆点 + 「未完成
+        // 设置」footnote；启用后消失（showBioSetupHighlight live 派生）。
+        VStack(alignment: .leading, spacing: 4) {
+            TouchIDSettingsSection()
+            if model.showBioSetupHighlight {
+                FirstRunSetupHighlightRow()
+            }
+        }
 
         Section {
             Button {
@@ -211,7 +219,14 @@ struct SettingsView: View {
 
         // FR-17.2：恢复码设置区（RecoveryCodeSettingsSection 自包含，两态渲染 +
         // 生成/重生成 sheet 均位于 RecoveryCodeSetupSheet.swift，docs/31 §4.3）
-        RecoveryCodeSettingsSection()
+        // P2-A 首次高亮兜底（AC-2.9.0-P2A-11/13）：引导 Step2 被跳过且恢复码未
+        // 生成时，恢复码区下方出现同款 footnote；启用后消失。
+        VStack(alignment: .leading, spacing: 4) {
+            RecoveryCodeSettingsSection()
+            if model.showRecoverySetupHighlight {
+                FirstRunSetupHighlightRow()
+            }
+        }
     }
 
     // MARK: - ⑥ 数据（T-H 恢复备份 / T-I 审计日志）
@@ -283,5 +298,28 @@ struct SettingsView: View {
     /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。
     private var mcpSection: some View {
         McpSettingsSection()
+    }
+}
+
+// MARK: - 首次引导高亮兜底（P2-A，docs/14 §A P2 §2.5；DESIGN.md P-2.1）
+
+/// 「未完成设置」footnote 行：accent 圆点 + 文案，作为被跳过的首启引导步骤的
+/// 设置页兜底入口提示（lead 裁定⑤，AC-2.9.0-P2A-10/11）。随对应功能启用而
+/// 消失（SettingsView.securitySection 按 showBioSetupHighlight /
+/// showRecoverySetupHighlight 条件渲染，见上）。小组件封装，两侧复用。
+struct FirstRunSetupHighlightRow: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 6, height: 6)
+            Text("未完成设置")
+                .font(.footnote)
+                .foregroundStyle(Color.accentColor)
+        }
+        .padding(.leading, 4)
+        .padding(.top, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("未完成设置")
     }
 }

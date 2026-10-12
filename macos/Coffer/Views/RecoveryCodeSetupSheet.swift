@@ -6,17 +6,19 @@
 //     未配置：「未启用」+「生成恢复码…」；
 //     已配置：「已启用（恢复码仅在生成时显示一次）」+「重新生成…」（前置
 //     确认对话框「旧恢复码将立即失效，确定重新生成？」）。
-//   - RecoveryCodeSetupSheet：生成/重生成共用四步流程——
+//   - RecoveryCodeSetupSheet：生成/重生成共用五步流程——
 //     ① 说明屏 → ② 生成并一次性展示（大号字体 + 复制按钮，剪贴板固定 30s
-//     自动清空）→ ③ 主密码确认（D-6：先验证身份再写 header）→
+//     自动清空）→ ②' 抄写确认（verify：随机 3 词、恢复码隐藏、进步清剪贴板，
+//     SEC-04 取消单按钮直过）→ ③ 主密码确认（D-6：先验证身份再写 header）→
 //     ④ enableRecoveryCode 成功关闭。
 //
 // 恢复码明文纪律（FR-17.2）：
 //   - code 仅存本视图局部 @State，流程结束（成功/取消/关闭）即置空；不落
 //     @Published、不写日志、不落盘（磁盘仅 header 的 wrap 密文）。
-//   - 剪贴板固定 30s 自动清空（不受用户剪贴板档位影响——「从不」档位不得
-//     让恢复码永久留在剪贴板），changeCount 守卫沿用 ClipboardManager 纪律：
-//     用户期间复制别的内容则绝不误清。
+//   - 剪贴板固定 30s 自动清空（经 ClipboardManager.copyWithAutoClear(_:clearSecs:)，
+//     P5-A 单点：不受用户档位影响——「从不」档位不得让恢复码永久留在剪贴板），
+//     changeCount 守卫沿用 ClipboardManager 纪律：用户期间复制别的内容则绝不误清；
+//     进 verify 步经 clearWrittenIfUnchanged 清板（REV2-05，粘贴回填被封死）。
 //   - 主密码纪律（docs/07 §2.4，与 TouchIDSettingsSection / VaultSetupView
 //     一致）：临时 @State 提交即清空，直接作方法参数传
 //     AppModel.enableRecoveryCode，不落 @State 之外。
@@ -91,17 +93,18 @@ struct RecoveryCodeSettingsSection: View {
     }
 }
 
-/// 恢复码生成 / 重生成四步流程 sheet（FR-17.2，docs/31 §4.3 / §2.4）。
+/// 恢复码生成 / 重生成五步流程 sheet（FR-17.2，docs/31 §4.3 / §2.4）。
 struct RecoveryCodeSetupSheet: View {
     @EnvironmentObject
     private var model: AppModel
     @Environment(\.dismiss)
     private var dismiss
 
-    /// 流程步骤（docs/31 §2.4：生成 → 展示 → 确认 → 启用）。
+    /// 流程步骤（docs/31 §2.4：生成 → 展示 → 抄写确认 → 确认 → 启用）。
     private enum Step {
         case intro      // ① 说明屏
         case showCode   // ② 生成并一次性展示
+        case verify     // ②' 抄写确认（随机 3 词，恢复码隐藏，SEC-04）
         case confirm    // ③ 主密码确认
     }
 
@@ -123,6 +126,15 @@ struct RecoveryCodeSetupSheet: View {
     /// 复制反馈提示的复位任务（随视图消失即弃）。
     @State private var copiedResetTask: Task<Void, Never>?
 
+    /// 验证步随机抽的 3 个词位（1-based，升序；本实例内固定，仅「重新生成」后重抽）。
+    @State private var verifyPositions: [Int] = []
+    /// 验证步三个输入框的词（与 verifyPositions 对齐；提交比较时归一化）。
+    @State private var verifyInputs: [String] = []
+    /// 验证失败就地提示标记（「与恢复码不符」橙色行）。
+    @State private var showVerifyMismatch = false
+    /// 「重新生成」的就地确认行展开标记（REV2-06：先确认才生成新码）。
+    @State private var showRegenerateConfirmLine = false
+
     var body: some View {
         Group {
             switch step {
@@ -130,6 +142,8 @@ struct RecoveryCodeSetupSheet: View {
                 introStep
             case .showCode:
                 showCodeStep
+            case .verify:
+                verifyStep
             case .confirm:
                 confirmStep
             }
@@ -223,7 +237,8 @@ struct RecoveryCodeSetupSheet: View {
 
             HStack(spacing: 12) {
                 Button("取消") { cancelFlow() }
-                Button("我已抄写保存") { step = .confirm }
+                // SEC-04：不再直过——必须先通过三词抄写验证（P6 verify 步）
+                Button("我已抄写保存") { enterVerify() }
                     .buttonStyle(.borderedProminent)
             }
         }
@@ -247,6 +262,151 @@ struct RecoveryCodeSetupSheet: View {
             guard !Task.isCancelled else { return }
             showCopied = false
         }
+    }
+
+    // MARK: - ②' 抄写确认（SEC-04 / P6）
+
+    /// 验证步：恢复码隐藏、随机 3 词对照已保存副本输入。普通非掩码 TextField
+    /// （REV2-04：恢复码是用户已保存副本的对照抄写，非新输入秘密；掩码只增加
+    /// 摩擦且无肩窥收益——本步不显示参考码）。摩擦门非安全门：**无次数上限 /
+    /// 无失败锁定**；旁路 = 「重新生成」（就位确认行）或「取消」整体放弃。
+    private var verifyStep: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "key")
+                .font(.system(size: 44))
+                .foregroundStyle(.tint)
+            Text("确认抄写恢复码")
+                .font(.title3.bold())
+            Text("请在下方输入恢复码第 \(verifyPositions.map(String.init).joined(separator: "、")) 个词（恢复码已隐藏，请对照你保存的副本）")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: 10) {
+                ForEach(0..<verifyPositions.count, id: \.self) { index in
+                    HStack {
+                        Text("第 \(verifyPositions[index]) 个词")
+                            .font(.callout)
+                            .frame(width: 96, alignment: .trailing)
+                        TextField("", text: $verifyInputs[index], prompt: Text("请输入该词"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 200)
+                    }
+                }
+            }
+
+            if showVerifyMismatch {
+                Text("与恢复码不符，请对照抄写内容再试。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            if showRegenerateConfirmLine {
+                // 就地确认行（REV2-06）：新码一旦生成，当前显示的旧码不可再看
+                VStack(spacing: 10) {
+                    Text("将重新生成新恢复码，当前显示的恢复码将无法再次查看")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                    HStack(spacing: 12) {
+                        Button("取消") { showRegenerateConfirmLine = false }
+                        Button("重新生成") { confirmRegenerate() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Button("取消") { cancelFlow() }
+                    Button("重新生成") { showRegenerateConfirmLine = true }
+                    Button("确认抄写") { submitVerify() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canSubmitVerify)
+                }
+            }
+        }
+    }
+
+    /// 进入验证步（showCode「我已抄写保存」）：立即清除恢复码剪贴板项
+    /// （REV2-05：复用 P5-A 统一清除 + changeCount 守卫——粘贴回填被显式封死，
+    /// 剪贴板成为死数据）；随机抽 3 个词位（本实例内固定，仅「重新生成」后重抽）。
+    private func enterVerify() {
+        ClipboardManager.shared.clearWrittenIfUnchanged()
+        if verifyPositions.isEmpty {
+            verifyPositions = Self.randomVerifyPositions(wordCount: Self.recoveryWordCount(code))
+        }
+        verifyInputs = Array(repeating: "", count: verifyPositions.count)
+        showVerifyMismatch = false
+        showRegenerateConfirmLine = false
+        step = .verify
+    }
+
+    /// 「确认抄写」可用性：三个输入框均非空（空任一禁用）。
+    private var canSubmitVerify: Bool {
+        !verifyInputs.isEmpty && verifyInputs.allSatisfy { !$0.isEmpty }
+    }
+
+    /// 提交验证：三词逐位比对（归一化：小写 / 折叠连续空格 / trim，大小写不敏感）。
+    /// 不符 → 就地橙色提示 + 清空输入 + 保留本步（词位不变，无次数上限——摩擦门
+    /// 非安全门）；全对 → 进 ③ 主密码确认步（D-6，原样保留）。
+    private func submitVerify() {
+        guard canSubmitVerify else { return }
+        let words = code.split(whereSeparator: \.isWhitespace).map(String.init)
+        for (index, position) in verifyPositions.enumerated() {
+            guard position >= 1, position <= words.count,
+                  Self.normalizeRecoveryWord(words[position - 1])
+                      == Self.normalizeRecoveryWord(verifyInputs[index]) else {
+                showVerifyMismatch = true
+                verifyInputs = Array(repeating: "", count: verifyInputs.count)
+                return
+            }
+        }
+        showVerifyMismatch = false
+        verifyInputs = Array(repeating: "", count: verifyInputs.count)
+        step = .confirm
+    }
+
+    /// 「重新生成」就地确认（REV2-06）：生成新码 → 回 showCode 展示新码 → 下次
+    /// 进 verify 词位重抽。旧码立即作废（恢复码一次性纪律），不可再看。
+    private func confirmRegenerate() {
+        guard !isEnabling else { return }
+        showRegenerateConfirmLine = false
+        resetVerifyState()
+        startGenerate()
+    }
+
+    /// 复位验证步状态（「重新生成」确认后调用）：清词位 → 下次进 verify 重抽。
+    private func resetVerifyState() {
+        verifyPositions = []
+        verifyInputs = []
+        showVerifyMismatch = false
+        showRegenerateConfirmLine = false
+    }
+
+    /// 从恢复码 12 词中随机抽 `count` 个不同位置（1-based，升序便于展示）。
+    /// 本实例内固定由调用方持有结果保证（仅「重新生成」后重抽）；纯函数可
+    /// scratch 自证（AC-2.9.0-P6-3：3 个不同位置 / 实例内稳定 / regenerate 重抽）。
+    static func randomVerifyPositions(wordCount: Int, count: Int = 3) -> [Int] {
+        guard wordCount >= count else {
+            // 防御分支：词数 < 抽取个数（正常 BIP39-12 恒 12 词不可达）→ 返回
+            // 全部位置；wordCount <= 0 → 空（Array(1...0) 下界越上界在 Swift
+            // 会 trap，显式避让，scratch 自证实锤）。
+            guard wordCount > 0 else { return [] }
+            return Array(1...wordCount)
+        }
+        return (0..<wordCount).shuffled().prefix(count).sorted().map { $0 + 1 }
+    }
+
+    /// 恢复码词数（BIP39-12 恒为 12；从 code 派生以便自证与防御，不硬编码）。
+    static func recoveryWordCount(_ code: String) -> Int {
+        code.split(whereSeparator: \.isWhitespace).count
+    }
+
+    /// 词输入归一化（纯函数，可 scratch 自证，AC-2.9.0-P6-5）：小写 + 折叠
+    /// 连续空格 + trim；比较时大小写不敏感（接受用户误输大写）。
+    static func normalizeRecoveryWord(_ input: String) -> String {
+        input.lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 
     // MARK: - ③ 主密码确认（D-6：先验证身份再写 header）
@@ -320,11 +480,16 @@ struct RecoveryCodeSetupSheet: View {
         dismiss()
     }
 
-    /// 清空一次性明文 / 主密码 / 反馈任务。剪贴板 30s 清除任务**不**在此
-    /// 取消（须到点执行），故不归入本方法。
+    /// 清空一次性明文 / 主密码 / 验证步词输入（部分恢复码词也算敏感残留）/
+    /// 反馈任务。剪贴板 30s 清除任务**不**在此取消（须到点执行），故不归入
+    /// 本方法。
     private func cleanup() {
         code = ""
         password = ""
+        verifyPositions = []
+        verifyInputs = []
+        showVerifyMismatch = false
+        showRegenerateConfirmLine = false
         showCopied = false
         copiedResetTask?.cancel()
         copiedResetTask = nil

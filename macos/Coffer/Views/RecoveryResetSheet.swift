@@ -215,9 +215,16 @@ struct RecoveryResetSheet: View {
                     Text("正在解锁…（Argon2id 密钥派生约需 1 秒）")
                 }
             } else {
-                Button("用新密码解锁") { unlockWithNewPassword() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(unlockPassword.isEmpty)
+                VStack(spacing: 10) {
+                    Button("用新密码解锁") { unlockWithNewPassword() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(unlockPassword.isEmpty)
+                    // REV-02（DESIGN.md D-4.2）：成功态必须有出口——「稍后解锁」
+                    // 次级按钮直接 dismiss 回 LockView（保持锁定，D-9：Rust 侧
+                    // 不 finish_unlock，稍后可随时用新密码从锁定页解锁）。
+                    Button("稍后解锁") { dismiss() }
+                        .buttonStyle(.bordered)
+                }
             }
         }
     }

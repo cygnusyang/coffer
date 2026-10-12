@@ -46,6 +46,16 @@ struct CofferMainApp: App {
                     UpdateSheet(updater: model.updater)
                         .environmentObject(model)
                 }
+                // G-C（v2.9.1，GitLab issue #5/#6）：帮助面板 sheet 挂载，
+                // 由帮助菜单「键盘快捷键…」/「使用入门…」触发（同 showAbout
+                // 模式——commands 无法挂 sheet，走 AppModel @Published 旗标 +
+                // 主窗口 sheet）。帮助无密级，锁定/解锁态均可打开。
+                .sheet(isPresented: $model.showShortcuts) {
+                    ShortcutsSheet()
+                }
+                .sheet(isPresented: $model.showHelp) {
+                    HelpContentView()
+                }
         }
         .windowToolbarStyle(.unified)
         .commands {
@@ -98,6 +108,16 @@ struct CofferMainApp: App {
                 Button("关于 Coffer…") { model.showAbout = true }
                 Divider()
                 Button("检查更新…") { model.checkForUpdates() }
+            }
+
+            // G-C（v2.9.1，GitLab issue #5/#6）：帮助菜单——键盘快捷键速查
+            // + 使用入门。帮助无密级：两项均不 disabled，锁定/解锁态都可用
+            // （与「关于」同纪律，不涉及任何密级内容）。触发走 AppModel
+            // @Published 旗标（commands 闭包无法用 @EnvironmentObject，同
+            // DataCommands/showImport 先例），sheet 挂主窗口（见上）。
+            CommandMenu("帮助") {
+                Button("键盘快捷键…") { model.showShortcuts = true }
+                Button("使用入门…") { model.showHelp = true }
             }
         }
 

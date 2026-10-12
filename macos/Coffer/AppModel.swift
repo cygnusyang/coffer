@@ -79,6 +79,15 @@ final class AppModel: ObservableObject {
     /// 「关于 Coffer」对话框 sheet 触发（应用菜单「关于 Coffer…」；自建关于
     /// 视图以容纳「检查更新…」按钮，见 AboutUpdateView）。
     @Published var showAbout = false
+    /// 「键盘快捷键」速查 sheet 触发（v2.9.1，GitLab issue #5）：帮助菜单
+    /// 「键盘快捷键…」触发，CommandGroup 菜单不可达视图层 @State，与
+    /// showImport/showAbout 提升同先例。帮助无密级，锁定/解锁态均可触发，
+    /// 故不随 lock() 清理（静态只读面板，无密级内容残留问题）。
+    @Published var showShortcuts = false
+    /// 「使用入门」sheet 触发（v2.9.1，GitLab issue #6）：帮助菜单「使用
+    /// 入门…」触发，正文为本地静态文案（零网络纪律，禁外链/禁自动更新
+    /// 检查）。与 showShortcuts 同纪律：无密级、不随 lock() 清理。
+    @Published var showHelp = false
     /// 新建条目 sheet 触发类别（v2.9.0 P7，docs/14 §A P7 §3.1）：自 MainView
     /// 本地 @State 提升到 AppModel @Published——CommandGroup 菜单不可达视图层
     /// @State，与 showImport/showImportOpvault 提升同先例。⌘N 置 `.login`

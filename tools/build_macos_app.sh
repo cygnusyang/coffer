@@ -169,7 +169,7 @@ printf '签名身份: %s (%s)\n' "${IDENTITY_NAME}" "${IDENTITY_HASH}"
 
 # keychain-access-groups 是受限 entitlement，必须嵌入 provisioning profile
 # 授权，否则进程 spawn 即被 SIGKILL（BUG-2 方案 A.2）。App 与 coffer 共用同一 profile。
-PROFILE="${ROOT_DIR}/macos/build/app.coffer.Coffer.provisionprofile"
+PROFILE="${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile"
 if [[ ! -f "${PROFILE}" ]]; then
   die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
 fi
@@ -188,7 +188,7 @@ cat > "${CLI_APP_DIR}/Contents/Info.plist" <<'PLIST_EOF'
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>app.coffer.Coffer</string>
+	<string>top.cygnusyang.coffer</string>
 	<key>CFBundleExecutable</key>
 	<string>coffer</string>
 	<key>CFBundlePackageType</key>
@@ -252,7 +252,7 @@ if strings "${HELPER_APP_DIR}/Contents/MacOS/coffer-update" | grep -q 'COFFER_UP
   die "OTA install helper 编译漏传 -D COFFER_UPDATER_PRODUCTION：产物含测试 relaunch seam env 分支。"
 fi
 
-# 最小 Info.plist：CFBundleIdentifier=app.coffer.Coffer.updater（同 TeamID 同 DR），
+# 最小 Info.plist：CFBundleIdentifier=top.cygnusyang.coffer.updater（同 TeamID 同 DR），
 # LSMinimumSystemVersion 对齐主 App 14.0。无 XML 注释（规避 plutil/codesign 解析坑）。
 cat > "${HELPER_APP_DIR}/Contents/Info.plist" <<'PLIST_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -260,7 +260,7 @@ cat > "${HELPER_APP_DIR}/Contents/Info.plist" <<'PLIST_EOF'
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>app.coffer.Coffer.updater</string>
+	<string>top.cygnusyang.coffer.updater</string>
 	<key>CFBundleExecutable</key>
 	<string>coffer-update</string>
 	<key>CFBundlePackageType</key>

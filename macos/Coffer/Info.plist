@@ -11,7 +11,7 @@
 	<key>CFBundleIconFile</key>
 	<string>Coffer</string>
 	<key>CFBundleIdentifier</key>
-	<string>app.coffer.Coffer</string>
+	<string>top.cygnusyang.coffer</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

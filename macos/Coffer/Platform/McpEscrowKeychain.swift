@@ -10,7 +10,7 @@
 //     `coffer-real-machine-keychain-acl-consent` 实证坑）。kSecAttrAccessControl
 //     与 kSecAttrAccessible 互斥（BUG-2 实证）——本条目不设 ACL，直接设
 //     accessible，无此冲突。
-//   - access group = "A6DS985SJJ.app.coffer.Coffer"（与 App entitlement 同组，
+//   - access group = "A6DS985SJJ.top.cygnusyang.coffer"（与 App entitlement 同组，
 //     Coffer.entitlements:27；组内二进制读取静默放行，无跨组同意弹窗——
 //     D-6 spike 实证 Security 层对 entitlement 列表内 group 完全静默）
 //   - 本封装只搬运 mcp_key 字节，不做任何加解密——派生与封装统一在 Rust
@@ -64,7 +64,7 @@ struct McpEscrowKeychain {
     /// Keychain access group（与 App entitlement 同组，Coffer.entitlements:27；
     /// 组内二进制读取静默放行——CLI 同 bundle 同身份同组签名读取的承载，
     /// docs/29 §5.1 / D-6）。
-    static let accessGroup = "A6DS985SJJ.app.coffer.Coffer"
+    static let accessGroup = "A6DS985SJJ.top.cygnusyang.coffer"
 
     // MARK: - 项查询 / 存取
 

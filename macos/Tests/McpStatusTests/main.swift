@@ -185,7 +185,7 @@ check(
     "coffer：vaultDirPath 常规路径 → 原样（§7.1 形态）"
 )
 check(
-    McpRegisterCommand.build(provider: "coffer", vault: "ignored", vaultDirPath: "/Users/me/Library/Containers/app.coffer.Coffer/Data/Documents/Coffer/uuid", cofferBinaryPath: cofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR=/Users/me/Library/Containers/app.coffer.Coffer/Data/Documents/Coffer/uuid -- \(cofferBin) mcp --provider coffer",
+    McpRegisterCommand.build(provider: "coffer", vault: "ignored", vaultDirPath: "/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid", cofferBinaryPath: cofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR=/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid -- \(cofferBin) mcp --provider coffer",
     "coffer：沙盒容器路径 → 原样（vault 参数被忽略，走 vaultDirPath）"
 )
 check(

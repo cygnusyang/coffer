@@ -10,7 +10,7 @@
 #   1) Xcode → Settings → Accounts 已登录 Apple ID（Apple Development 证书
 #      在 login keychain 中，build_macos_app.sh 方案 A 同源，BUG-2 纪律）；
 #   2) 已跑过 ./tools/make_provisioning_profile.sh 生成
-#      macos/build/app.coffer.Coffer.provisionprofile（免费账号 7 天有效）。
+#      macos/build/top.cygnusyang.coffer.provisionprofile（免费账号 7 天有效）。
 #
 # 输出: /tmp/coffer-ci-secrets/
 #   coffer_ci_cert.p12    —— 证书+私钥（导出密码 = CI 的 APPLE_CERT_PASSWORD）
@@ -64,7 +64,7 @@ rm -f "$OUT/export.err"
 [ -s "$OUT/coffer_ci_cert.p12" ] || { echo "!! 导出的 p12 为空。" >&2; exit 1; }
 echo "    已导出: $OUT/coffer_ci_cert.p12"
 
-PROFILE="macos/build/app.coffer.Coffer.provisionprofile"
+PROFILE="macos/build/top.cygnusyang.coffer.provisionprofile"
 if [ ! -f "$PROFILE" ]; then
   echo "!! 缺少 ${PROFILE}（先跑 ./tools/make_provisioning_profile.sh）。" >&2
   exit 1

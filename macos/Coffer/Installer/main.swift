@@ -31,7 +31,7 @@
 //     配置 currentAppPath != 锚 → exit 4（未做任何修改）。生产路径严禁读环境变量。
 //   - newAppPath 载荷验签：basename 必须为 Coffer.app；用 Security framework 静态验签，
 //     DR = anchor apple generic and certificate leaf[subject.OU]="A6DS985SJJ" and
-//     identifier "app.coffer.Coffer"；embedded.provisionprofile 必须存在且未过期。
+//     identifier "top.cygnusyang.coffer"；embedded.provisionprofile 必须存在且未过期。
 //     任一失败 → exit 2（未做任何修改）。
 //   - backupPath/resultFilePath 软锚：绝对路径 + 形状约束（.app / .json）。
 //   - C-2 收敛不变式（2026-10-10 复审）：任何被 relaunch 的包必须「刚刚通过 DR」——
@@ -71,9 +71,9 @@ private let expectedCurrentAppPath: String = {
 
 /// 新包静态验签的 DR（Designated Requirement）：锚定 Apple 证书链 + TeamID(OU) +
 /// 应用 identifier。本机任意进程即使伪造配置也无法让非 Apple 签名载荷通过：
-/// 证书由 Apple 签发、OU 必须是 A6DS985SJJ、identifier 必须是 app.coffer.Coffer。
+/// 证书由 Apple 签发、OU 必须是 A6DS985SJJ、identifier 必须是 top.cygnusyang.coffer。
 private let updatePackageRequirement =
-    "anchor apple generic and certificate leaf[subject.OU] = \"A6DS985SJJ\" and identifier \"app.coffer.Coffer\""
+    "anchor apple generic and certificate leaf[subject.OU] = \"A6DS985SJJ\" and identifier \"top.cygnusyang.coffer\""
 
 // MARK: - 退出码（契约 docs/35 §6.4，冻结）
 

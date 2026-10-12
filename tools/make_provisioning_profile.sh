@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# make_provisioning_profile.sh —— 生成/刷新 app.coffer.Coffer 的 Mac App Development
+# make_provisioning_profile.sh —— 生成/刷新 top.cygnusyang.coffer 的 Mac App Development
 # 描述文件（provisioning profile）。（BUG-2 方案 A.2，见 docs/KNOWN-ISSUES.md）
 #
 # 背景：macOS 数据保护钥匙串的访问组列表完全由 keychain-access-groups
@@ -12,7 +12,7 @@
 #     -allowProvisioningDeviceRegistration 自动完成，Apple ID 免费账号即可）
 #   - profile 有效期仅 7 天 → 过期后重跑本脚本刷新，再重跑 build_macos_app.sh
 #
-# 产物：macos/build/app.coffer.Coffer.provisionprofile（供 build_macos_app.sh
+# 产物：macos/build/top.cygnusyang.coffer.provisionprofile（供 build_macos_app.sh
 # 嵌入 Contents/embedded.provisionprofile；位于 gitignore 的 macos/build/ 内，
 # 含设备注册信息，不入库）。
 #
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_PROFILE="${ROOT_DIR}/macos/build/app.coffer.Coffer.provisionprofile"
+OUT_PROFILE="${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile"
 STORE="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
@@ -35,19 +35,19 @@ xcodebuild -project "${ROOT_DIR}/tools/profilegen/ProfileGen.xcodeproj" \
   -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
   build >/dev/null || die "profile 生成失败：请确认 Xcode → Settings → Accounts 已登录 Apple ID（免费账号即可）。"
 
-step "2/2 提取 app.coffer.Coffer 的最新 profile"
+step "2/2 提取 top.cygnusyang.coffer 的最新 profile"
 [[ -d "${STORE}" ]] || die "未找到 profile 存储（${STORE}）。"
 LATEST=""
 while IFS= read -r -d '' f; do
-  # 只取授权了 keychain-access-groups 且对应 app.coffer.Coffer 的 profile
-  if security cms -D -i "${f}" 2>/dev/null | grep -q 'app.coffer.Coffer' \
+  # 只取授权了 keychain-access-groups 且对应 top.cygnusyang.coffer 的 profile
+  if security cms -D -i "${f}" 2>/dev/null | grep -q 'top.cygnusyang.coffer' \
     && security cms -D -i "${f}" 2>/dev/null | grep -q 'keychain-access-groups'; then
     if [[ -z "${LATEST}" || "${f}" -nt "${LATEST}" ]]; then
       LATEST="${f}"
     fi
   fi
 done < <(find "${STORE}" -name '*.provisionprofile' -print0)
-[[ -n "${LATEST}" ]] || die "存储中无 app.coffer.Coffer 的有效 profile。"
+[[ -n "${LATEST}" ]] || die "存储中无 top.cygnusyang.coffer 的有效 profile。"
 
 mkdir -p "$(dirname "${OUT_PROFILE}")"
 cp "${LATEST}" "${OUT_PROFILE}"

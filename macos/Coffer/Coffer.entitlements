@@ -38,7 +38,7 @@
 	     docs/35 §2.2）。 -->
 	<key>keychain-access-groups</key>
 	<array>
-		<string>A6DS985SJJ.app.coffer.Coffer</string>
+		<string>A6DS985SJJ.top.cygnusyang.coffer</string>
 	</array>
 </dict>
 </plist>

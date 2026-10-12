@@ -9,8 +9,8 @@ import Foundation
 struct UpdateManifest: Codable, Equatable {
     /// 当前识别的 schema 版本（契约 6.1：恒 1，不识别即拒装）。
     static let currentSchemaVersion = 1
-    /// 恒 `app.coffer.Coffer`；不匹配即拒装（契约 6.1）。
-    static let expectedAppId = "app.coffer.Coffer"
+    /// 恒 `top.cygnusyang.coffer`；不匹配即拒装（契约 6.1）。
+    static let expectedAppId = "top.cygnusyang.coffer"
 
     let schemaVersion: Int
     let appId: String
@@ -33,7 +33,7 @@ struct UpdateManifest: Codable, Equatable {
         case missingField(String)
         /// schemaVersion ≠ 当前识别版本。
         case unsupportedSchemaVersion(Int)
-        /// appId 与 `app.coffer.Coffer` 不匹配。
+        /// appId 与 `top.cygnusyang.coffer` 不匹配。
         case wrongAppId(String)
 
         var errorDescription: String? {

@@ -45,7 +45,7 @@ func required(_ name: String) -> String {
 
 // --- 契约固定字段（docs/35 §6.1，冻结，不可由调用方改写）---
 let schemaVersion: Int = 1
-let appId: String = "app.coffer.Coffer"
+let appId: String = "top.cygnusyang.coffer"
 
 // --- 读入可变字段 + 边界校验 ---
 let version = required("MF_VERSION")

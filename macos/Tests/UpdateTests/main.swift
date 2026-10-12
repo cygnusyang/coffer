@@ -304,7 +304,7 @@ do {
     let data = try TestFixture.signedManifestData(fields: TestFixture.manifestFields())
     let m = try UpdateManifest.parse(data)
     check("TC-MAN-01", "合法清单解析 → 各字段正确",
-          m.schemaVersion == 1 && m.appId == "app.coffer.Coffer"
+          m.schemaVersion == 1 && m.appId == "top.cygnusyang.coffer"
           && m.version == "2.7.0" && m.minimumVersion == "2.6.0"
           && m.buildTime == "2026-10-10T00:00:00Z"
           && m.downloadUrl == TestFixture.validDownloadUrl
@@ -936,7 +936,7 @@ do {
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0"><dict>
     <key>CFBundleExecutable</key><string>FakeHelper</string>
-    <key>CFBundleIdentifier</key><string>app.coffer.Coffer.updater</string>
+    <key>CFBundleIdentifier</key><string>top.cygnusyang.coffer.updater</string>
     <key>CFBundleName</key><string>FakeHelper</string>
     </dict></plist>
     """.utf8).write(to: infoPlist)

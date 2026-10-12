@@ -10,7 +10,7 @@
 //
 // 安全纪律（硬性）：
 //   - 建库工作目录由外部（脚本 mktemp）传入，本进程先断言目标路径
-//     不命中真实库前缀 ~/Library/Containers/app.coffer.Coffer/ 再执行；
+//     不命中真实库前缀 ~/Library/Containers/top.cygnusyang.coffer/ 再执行；
 //   - 样本缺失 / 为空 → 明确报错退出（exit 2）；
 //   - 临时工作目录进程内删除（defer），脚本侧 trap 二次保险。
 //
@@ -72,7 +72,7 @@ guard sampleSize > 0 else {
 
 // 安全纪律：工作目录绝不允许命中真实库路径前缀
 let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
-let realVaultPrefix = home + "/Library/Containers/app.coffer.Coffer"
+let realVaultPrefix = home + "/Library/Containers/top.cygnusyang.coffer"
 let normalizedWorkDir = URL(fileURLWithPath: workDir).standardizedFileURL.path
 guard !normalizedWorkDir.hasPrefix(realVaultPrefix) else {
     fatal("安全拦截：工作目录 \(workDir) 命中真实库前缀 \(realVaultPrefix)，拒绝执行")

@@ -141,7 +141,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = A6DS985SJJ;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = app.coffer.Coffer;
+				PRODUCT_BUNDLE_IDENTIFIER = top.cygnusyang.coffer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -153,7 +153,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = A6DS985SJJ;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = app.coffer.Coffer;
+				PRODUCT_BUNDLE_IDENTIFIER = top.cygnusyang.coffer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;

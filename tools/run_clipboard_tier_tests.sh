@@ -8,7 +8,7 @@
 #
 # 用法：./tools/run_clipboard_tier_tests.sh [--vault-dir <库工作目录>]
 #   --vault-dir 可选：提供则追加「真实库 导出→校验→恢复」回环段
-#   （默认真实路径：~/Library/Containers/app.coffer.Coffer/Data/Documents/Coffer）
+#   （默认真实路径：~/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer）
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,7 +41,7 @@ swiftc -O \
 # 3) 真实库导出/恢复回环涉及用户真实数据，应显式授权后执行。
 # 用法：./tools/run_clipboard_tier_tests.sh [--vault-dir <库工作目录>]
 #   不传 --vault-dir 时跳过 T8（打印 SKIP），其余段不受影响。
-DEFAULT_VAULT_DIR="${HOME}/Library/Containers/app.coffer.Coffer/Data/Documents/Coffer"
+DEFAULT_VAULT_DIR="${HOME}/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer"
 ARGS=()
 
 # BUG-10 复发协议（docs/KNOWN-ISSUES.md BUG-10，2026-10-03 加固）：

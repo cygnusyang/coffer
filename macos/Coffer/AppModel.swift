@@ -792,7 +792,7 @@ final class AppModel: ObservableObject {
 
     /// 降级验证开关（docs/08 §9 T04 验收①）：强制视为「无 Touch ID 设备」，
     /// 验证全 UI 降级路径（设置入口隐藏 / LockView 无按钮 / 建库步骤不出现）。
-    /// 用法：`defaults write app.coffer.Coffer debugDisableTouchID -bool true`
+    /// 用法：`defaults write top.cygnusyang.coffer debugDisableTouchID -bool true`
     /// 后重启 App；`-bool false` / `defaults delete` 恢复。
     nonisolated static let debugDisableTouchIDKey = "debugDisableTouchID"
 

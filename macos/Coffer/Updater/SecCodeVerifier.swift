@@ -28,13 +28,13 @@ enum SecCodeVerifier {
     /// 团队 ID（Apple Development 证书，docs/35 §1；P-S spike 主锚）。
     static let teamID = "A6DS985SJJ"
     /// 期望 bundle identifier（契约 6.1 appId 同值）。
-    static let expectedIdentifier = "app.coffer.Coffer"
+    static let expectedIdentifier = "top.cygnusyang.coffer"
     /// 嵌套 Contents/Helpers 的期望 identifier 集合（契约 §2.3 第 3 级，H-3）：
     /// 嵌套 coffer.app 与 CofferUpdater.app（对照 build_macos_app.sh 3.5/3.6
     /// 装配的 CFBundleIdentifier 值）。
     static let expectedHelperIdentifiers: Set<String> = [
-        "app.coffer.Coffer",
-        "app.coffer.Coffer.updater",
+        "top.cygnusyang.coffer",
+        "top.cygnusyang.coffer.updater",
     ]
 
     /// 验签显式错误（fail-closed：任何一级不过即拒装）。

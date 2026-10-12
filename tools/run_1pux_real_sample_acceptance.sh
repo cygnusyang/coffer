@@ -7,7 +7,7 @@
 # 纪律：
 #   - 真实样本不入库（.local-samples/ 被 git 忽略，仅本机在位）；
 #   - 测试建库工作目录为 mktemp 临时目录，进程内 defer 删除 +
-#     本脚本 trap 二次保险，绝不触碰 ~/Library/Containers/app.coffer.Coffer/
+#     本脚本 trap 二次保险，绝不触碰 ~/Library/Containers/top.cygnusyang.coffer/
 #     （测试进程内有前缀断言，命中即拒绝执行）；
 #   - 样本缺失/为空 → 明确报错退出并提示来源。
 #

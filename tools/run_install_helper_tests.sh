@@ -9,7 +9,7 @@
 # 安全门（C-1/H-1，2026-10-10 dev-reviewer 修复轮）：
 #   - currentAppPath 硬锚定：≠ 锚 → exit 4（零副作用）
 #   - newAppPath 载荷：basename 必须为 Coffer.app + 静态验签（DR: anchor apple generic
-#     and certificate leaf[subject.OU]="A6DS985SJJ" and identifier "app.coffer.Coffer"）
+#     and certificate leaf[subject.OU]="A6DS985SJJ" and identifier "top.cygnusyang.coffer"）
 #     + embedded.provisionprofile 存在且未过期 → 任一失败 exit 2（零副作用）
 #   故凡需走到替换/relaunch 的用例，新包必须是「Coffer.app 命名 + Apple Development
 #   签名 + 有效 profile」（make_signed_new_app 构造，依赖本机 Apple Development 身份——
@@ -133,7 +133,7 @@ PLIST_EOF
   printf '%s' "${marker}" > "${app_dir}/Contents/Resources/${marker}"
 }
 
-# 造一个能通过 helper 载荷门的「新包」：Coffer.app 命名 + CFBundleIdentifier=app.coffer.Coffer
+# 造一个能通过 helper 载荷门的「新包」：Coffer.app 命名 + CFBundleIdentifier=top.cygnusyang.coffer
 # + Apple Development 签名 + embedded.provisionprofile（security cms -S 伪造，ExpirationDate 受控）。
 # $1=app 目录（含 Coffer.app）；$2=marker；$3=mode：valid(未来过期) / expired(过去) / noprofile(无 profile)
 # 顺序：先写 Info.plist + profile，再 codesign（签名封存整包资源，对齐真实 App 装配）。
@@ -147,7 +147,7 @@ make_signed_new_app() {
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>app.coffer.Coffer</string>
+	<string>top.cygnusyang.coffer</string>
 	<key>CFBundleExecutable</key>
 	<string>hello</string>
 	<key>CFBundleName</key>

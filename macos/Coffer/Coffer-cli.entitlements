@@ -13,7 +13,7 @@
 	     AMFI 在 spawn 门直接 SIGKILL（D-6 spike 实证，/tmp/spike-escrow/log.md）。 -->
 	<key>keychain-access-groups</key>
 	<array>
-		<string>A6DS985SJJ.app.coffer.Coffer</string>
+		<string>A6DS985SJJ.top.cygnusyang.coffer</string>
 	</array>
 </dict>
 </plist>

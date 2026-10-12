@@ -263,15 +263,20 @@ struct ActiveItemList: View {
             }
         }
         .overlay {
+            // 空态 overlay 分三路（issue #2 + H-1 收窄）：搜索态「无匹配结果」
+            // 保持纯文本原样（空态下给按钮会误导为可导入）；双按钮主路径仅
+            // 限 `sidebarFilter == .all` 的真·全库空——按收藏/分类筛选出的空
+            // 列表，新建/导入的条目不会落在当前筛选下，带按钮会「导入了却
+            // 没看到」困惑，只给纯文本提示。
             if model.items.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: model.searchText.isEmpty ? "tray" : "magnifyingglass")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.secondary)
-                    Text(model.searchText.isEmpty ? "暂无条目" : "无匹配结果").font(.headline)
-                    Text(model.searchText.isEmpty ? "点击工具栏「新建」创建第一个条目" : "换个关键词试试")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                if model.searchText.isEmpty {
+                    if model.sidebarFilter == .all {
+                        emptyVaultPrompt
+                    } else {
+                        filterEmptyPrompt
+                    }
+                } else {
+                    noMatchPrompt
                 }
             }
         }
@@ -297,6 +302,74 @@ struct ActiveItemList: View {
         case .favorites: return "收藏"
         case .category(let category): return category.displayName
         case .trash: return "回收站"
+        }
+    }
+
+    // MARK: - 空态提示（issue #2）
+
+    /// 真·全库空（sidebarFilter == .all 且无搜索词）空态：图标 + 「暂无
+    /// 条目」+ 两条主路径按钮。「新建第一个条目」置 `.login`（与 ⌘N 同
+    /// 默认类别，docs/14 P7 §3.1）；「导入已有密码…」为四格式 Menu，与
+    /// 工具栏「导入」菜单同源同标签（issue #2 裁定：从 1Password 等来的
+    /// 用户点按钮须直接选格式，不得落进 CSV 向导错向）。筛选空 / 搜索态
+    /// 分别走 filterEmptyPrompt / noMatchPrompt，不重复此双按钮（H-1）。
+    private var emptyVaultPrompt: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "tray")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text("暂无条目").font(.headline)
+            HStack(spacing: 10) {
+                Button("新建第一个条目") {
+                    model.pendingNewCategory = .login
+                }
+                .buttonStyle(.borderedProminent)
+                Menu {
+                    Button("CSV…") { model.showImport = true }
+                    Button("1Password (.1pux)…") { model.showImportPux = true }
+                    Button("Bitwarden (.json)…") { model.showImportBitwarden = true }
+                    Button("1Password (OPVault)…") { model.showImportOpvault = true }
+                } label: {
+                    Text("导入已有密码…")
+                }
+                .menuStyle(.borderedButton)
+            }
+        }
+    }
+
+    /// 非 .all 筛选（收藏/分类）下列表为空的纯文本提示（H-1 收窄）：双
+    /// 按钮主路径只属真·全库空；筛选空时新建/导入的条目不会落在当前筛选
+    /// 下，故只给文案不给按钮。「暂无收藏/该分类暂无条目」区分筛选语境；
+    /// .trash 不进本视图（TrashListView 独立渲染），.all 空态由
+    /// emptyVaultPrompt 接管。
+    private var filterEmptyPrompt: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tray")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text(filterEmptyTitle).font(.headline)
+        }
+    }
+
+    private var filterEmptyTitle: String {
+        switch model.sidebarFilter {
+        case .favorites: return "暂无收藏"
+        case .category: return "该分类暂无条目"
+        case .all, .trash: return "暂无条目"
+        }
+    }
+
+    /// 搜索「无匹配结果」空态（issue #2：保持原样，不加按钮——搜索态下
+    /// 双按钮会误导为「空库可导入」）。
+    private var noMatchPrompt: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text("无匹配结果").font(.headline)
+            Text("换个关键词试试")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 

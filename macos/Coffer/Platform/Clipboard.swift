@@ -86,15 +86,28 @@ final class ClipboardManager {
         return min(Self.defaultTotpDelaySecs, clearSecs / 2)
     }
 
-    /// 复制文本到剪贴板并按当前档位安排自动清除。
+    /// 复制文本到剪贴板并按当前档位安排自动清除（委托给显式时长版，传当前档位）。
     /// - Parameter value: 明文（密码 / TOTP 验证码 / 其他敏感字段值）
     func copyWithAutoClear(_ value: String) {
+        copyWithAutoClear(value, clearSecs: clearAfterSeconds)
+    }
+
+    /// 复制文本到剪贴板并按**显式时长**安排自动清除（P5-A / FR-17.2）。本次
+    /// 复制以 `clearSecs` 覆盖用户档位调度清除；changeCount 守卫与
+    /// `schedulePendingClear` 同纪律（清除任务闭包内**局部捕获**写入时
+    /// changeCount，不依赖单例槽位）；`clearOnLock` 覆盖（经单例槽位记录本次
+    /// 写入，锁定时若仍为本内容即清）。
+    /// - Parameters:
+    ///   - value: 明文（密码 / 恢复码 / 其他敏感字段值）
+    ///   - clearSecs: 本次清除时长（秒）。> 0 走定时清除；== 0 视作「本次
+    ///     不清除定时路径」但保留锁定兜底（与档位 0 同语义，勿 asyncAfter(0)）。
+    func copyWithAutoClear(_ value: String, clearSecs: TimeInterval) {
         guard !value.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
         writtenChangeCount = pasteboard.changeCount
-        scheduleClear()
+        schedulePendingClear(clearAfter: clearSecs)
     }
 
     /// 普通复制（非敏感内容：用户名 / 网址 / TOTP 验证码等，
@@ -163,17 +176,14 @@ final class ClipboardManager {
 
     /// 运行时改档（AppModel.clipboardClearSecs.didSet 调用，FR-14.2）：
     /// 更新档位；若已有待执行清除任务则取消并按新间隔重排（新值 0 = 从不
-    /// → 只取消、不重排）。无待执行任务时改档对下一次复制即生效。
-    /// 非法值直接忽略（保持旧档位）——入口只有 AppModel 设置页，此处
-    /// 兜底防非法值经其他路径进入。
+    /// → 只取消、不重排，由 schedulePendingClear 的 delay <= 0 分支处理）。
+    /// 无待执行任务时改档对下一次复制即生效。非法值直接忽略（保持旧档位）
+    /// ——入口只有 AppModel 设置页，此处兜底防非法值经其他路径进入。
     func updateClearInterval(secs: Int) {
         guard Self.isValidClearSecs(secs) else { return }
         clearAfterSeconds = TimeInterval(secs)
         guard clearWorkItem != nil else { return }
-        clearWorkItem?.cancel()
-        clearWorkItem = nil
-        guard secs > 0 else { return }
-        schedulePendingClear()
+        schedulePendingClear(clearAfter: clearAfterSeconds)
     }
 
     /// 会话锁定时的剪贴板处置（AppModel.lock() 调用）：
@@ -185,11 +195,19 @@ final class ClipboardManager {
     /// 绝不误清用户数据（changeCount 守卫）。
     func clearOnLock() {
         // FR-5.6：锁定即取消 pending TOTP 序列复制（会话已锁，验证码不该
-        // 再落剪贴板）；密码副本按下方既有守卫处置。
+        // 再落剪贴板）；密码副本按 clearWrittenIfUnchanged 既有守卫处置。
         totpWorkItem?.cancel()
         totpWorkItem = nil
         clearWorkItem?.cancel()
         clearWorkItem = nil
+        clearWrittenIfUnchanged()
+    }
+
+    /// P6 —— verify 步进板清除（clearOnLock 的公开子集，供恢复码验证步调用）。
+    /// 语义：clipboardUnchanged 校验通过则清板 + 复位 writtenChangeCount；不触碰
+    /// TOTP 序列（pending TOTP 复制与定时清除任务均不取消——到点任务经
+    /// schedulePendingClear 闭包内的 written 局部捕获 + changeCount 守卫自然失效）。
+    func clearWrittenIfUnchanged() {
         guard writtenChangeCount != -1 else { return }
         let pasteboard = NSPasteboard.general
         if Self.clipboardUnchanged(currentChangeCount: pasteboard.changeCount,
@@ -199,17 +217,13 @@ final class ClipboardManager {
         writtenChangeCount = -1
     }
 
-    /// 按当前档位调度定时清除。
-    private func scheduleClear() {
+    /// 以当前 writtenChangeCount 挂一个到点清除任务（首次调度 / 改档重排 /
+    /// 显式时长覆盖共用）。`delay <= 0`（档位 0「从不」）→ 只取消待执行任务、
+    /// 不重排——writtenChangeCount 保留，锁定兜底仍有效（勿 asyncAfter(0)）。
+    private func schedulePendingClear(clearAfter delay: TimeInterval) {
         clearWorkItem?.cancel()
         clearWorkItem = nil
-        // 0（从不）：跳过调度。writtenChangeCount 保留，锁定兜底仍有效。
-        guard clearAfterSeconds > 0 else { return }
-        schedulePendingClear()
-    }
-
-    /// 以当前 writtenChangeCount 挂一个到点清除任务（首次调度 / 改档重排共用）。
-    private func schedulePendingClear() {
+        guard delay > 0 else { return }
         let written = writtenChangeCount
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -226,7 +240,7 @@ final class ClipboardManager {
         }
         clearWorkItem = work
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + clearAfterSeconds,
+            deadline: .now() + delay,
             execute: work
         )
     }

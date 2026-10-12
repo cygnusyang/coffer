@@ -105,7 +105,8 @@ struct RecoveryCodeSetupSheet: View {
         case confirm    // ③ 主密码确认
     }
 
-    /// 剪贴板固定自动清空时长（FR-17.2：恢复码仅显示一次，不受用户档位影响）。
+    /// 剪贴板固定自动清空时长（FR-17.2 一次性纪律，不受用户档位影响——恢复码
+    /// 仅显示一次，「从不」档位不得让其永久留在剪贴板）。
     private static let clipboardClearSecs: TimeInterval = 30
     /// 复制反馈「已复制」提示的展示时长。
     private static let copiedFeedbackSecs: TimeInterval = 2
@@ -121,9 +122,6 @@ struct RecoveryCodeSetupSheet: View {
     @State private var showCopied = false
     /// 复制反馈提示的复位任务（随视图消失即弃）。
     @State private var copiedResetTask: Task<Void, Never>?
-    /// 剪贴板 30s 自动清空任务（仅用于重复复制时取消旧任务；DispatchQueue
-    /// 自身持有该 work item，视图消失后仍会到点执行，changeCount 守卫保证不误清）。
-    @State private var clipboardClearItem: DispatchWorkItem?
 
     var body: some View {
         Group {
@@ -231,31 +229,15 @@ struct RecoveryCodeSetupSheet: View {
         }
     }
 
-    /// 复制恢复码并固定 30s 自动清空（FR-17.2）。不走
-    /// ClipboardManager.copyWithAutoClear：其清除时长跟随用户档位（「从不」
-    /// 档位会让恢复码永久留在剪贴板，违反一次性纪律）；此处固定 30s，
-    /// changeCount 守卫沿用同一纪律（用户期间复制别的内容则绝不误清）。
+    /// 复制恢复码并固定 30s 自动清空（FR-17.2）。统一走
+    /// `ClipboardManager.copyWithAutoClear(_:clearSecs:)`（P5-A 单点化，
+    /// DESIGN.md D-3.1）：本次复制以固定 30s 覆盖用户档位（「从不」档位不得
+    /// 让恢复码永久留在剪贴板，违反一次性纪律）；changeCount 守卫 + 锁定兜底
+    /// （clearOnLock 立即清）由 ClipboardManager 单点承担，本视图不再手写
+    /// 第二套清除实现。
     private func copyCode() {
         guard !code.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(code, forType: .string)
-        let written = pasteboard.changeCount
-        // 多次复制：取消旧未到点任务，只保留最近一次（ClipboardManager 同纪律）
-        clipboardClearItem?.cancel()
-        clipboardClearItem = nil
-        let work = DispatchWorkItem {
-            let pb = NSPasteboard.general
-            // changeCount 守卫：期间用户复制了自己的内容则不动（绝不误清）
-            if pb.changeCount == written {
-                pb.clearContents()
-            }
-        }
-        clipboardClearItem = work
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + Self.clipboardClearSecs,
-            execute: work
-        )
+        ClipboardManager.shared.copyWithAutoClear(code, clearSecs: Self.clipboardClearSecs)
 
         // 复制反馈提示（短暂展示后复位）
         showCopied = true

@@ -144,7 +144,10 @@ struct ItemDetailView: View {
                 Image(systemName: details.category.symbolName)
                     .font(.title2)
                     .foregroundStyle(.tint)
-                Text(details.title).font(.title2.bold())
+                // D-5.2（ST-03）：详情标题最多 2 行，尾部截断，防超长标题撑坏 header。
+                Text(details.title)
+                    .font(.title2.bold())
+                    .lineLimit(1...2)
                 if details.isFavorite {
                     Image(systemName: "star.fill")
                         .font(.callout)

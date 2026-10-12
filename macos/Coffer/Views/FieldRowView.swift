@@ -41,9 +41,12 @@ struct PlainFieldRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
+            // D-5.4（ST-05）：固定宽标签 lineLimit(1) + 尾部截断，不挤压值区。
             Text(field.name)
                 .foregroundStyle(.secondary)
                 .frame(width: 120, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
             if let value = field.value, !value.isEmpty {
                 if field.fieldType == .multiline {
                     Text(value)
@@ -100,9 +103,12 @@ struct ConcealedFieldRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
+            // D-5.4（ST-05）：固定宽标签 lineLimit(1) + 尾部截断，不挤压值区。
             Text(field.name)
                 .foregroundStyle(.secondary)
                 .frame(width: 120, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Group {
                 if let revealed {
                     Text(revealed)

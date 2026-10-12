@@ -82,8 +82,8 @@ release:
 
     # ---- 落地 provisioning profile ----
     - mkdir -p macos/build
-    - echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > macos/build/app.coffer.Coffer.provisionprofile
-    - '[ -s macos/build/app.coffer.Coffer.provisionprofile ] || { echo "profile base64 解码后为空"; exit 1; }'
+    - echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > macos/build/top.cygnusyang.coffer.provisionprofile
+    - '[ -s macos/build/top.cygnusyang.coffer.provisionprofile ] || { echo "profile base64 解码后为空"; exit 1; }'
 
     # ---- 构建 + 签名 + 零网络核查 ----
     - ./tools/build_macos_app.sh --rebuild-bindings

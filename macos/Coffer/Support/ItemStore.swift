@@ -33,9 +33,7 @@ extension AppModel {
                     list = list.filter { $0.isFavorite }
                 case .category(let category):
                     list = list.filter { $0.category == category }
-                // .health：中栏渲染体检页，列表保持全量活动条目——
-                // 体检页行点击跳转条目时以 items 做存在性静默降级校验。
-                case .all, .trash, .health:
+                case .all, .trash:
                     break
                 }
                 items = list

@@ -2,7 +2,8 @@
 //
 // 只读语义：本视图只调 `VaultSession.healthReport(nowSecs:)`（Rust 侧全量
 // 解密 + 启发式扫描），不做任何写入。healthReport 需解锁态（Rust 1001 门禁）
-// ——入口在侧栏（仅解锁区可达），View 内仍 guard session 兜底。
+// ——v2.9.0 P4 迁详情区整页 destination，入口=中列工具栏「安全体检」按钮
+// （仅解锁区可达），View 内仍 guard session 兜底。
 //
 // now_secs 注入纪律：必须传真实时钟（Int64(Date().timeIntervalSince1970)）。
 // 陈旧判定 = now - updated_at，传 0 会让全部条目瞬间判 stale（FR-6.4 失真）。
@@ -55,12 +56,18 @@ struct HealthCheckView: View {
     @State private var report: FfiHealthReport?
     /// 首次加载进行中标记。
     @State private var isLoading = true
+    /// 加载失败的就地错误文案（nil = 无错误；ST-02 就地错误态，不触发
+    /// ffiErrorAlert 弹窗——错误文本仍经 ErrorPresenter 直出，本地持有
+    /// 不写全局 lastErrorMessage，避免与就地错误态叠加呈现）。
+    @State private var loadError: String?
 
     var body: some View {
         Group {
             if isLoading {
                 ProgressView("正在体检…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let loadError {
+                errorState(loadError)
             } else if let report {
                 reportList(report)
             }
@@ -68,6 +75,38 @@ struct HealthCheckView: View {
         .navigationTitle("安全体检")
         .task { await loadReport() }
         .ffiErrorAlert($model.lastErrorMessage)
+    }
+
+    // MARK: 就地错误态（ST-02，docs/14 §A P4 §4 / DESIGN.md D-7.3）
+
+    /// 加载失败就地错误态：图标 + 错误文案 + 「重试」按钮（D-7.2 空态模式
+    /// 同构：图标 40pt + headline + callout 次级色 + 主动作）。重试重跑
+    /// loadReport()，成功回报告、失败保留错误态可再重试。
+    private func errorState(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 40))
+                .foregroundStyle(.orange)
+            Text("体检加载失败")
+                .font(.headline)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("重试") {
+                retry()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    private func retry() {
+        loadError = nil
+        report = nil
+        isLoading = true
+        Task { await loadReport() }
     }
 
     // MARK: 报告列表
@@ -261,6 +300,10 @@ struct HealthCheckView: View {
     /// 触发的同步 reloadItems 之后在活动列表中找不到该 ID，此处直接返回，
     /// 不发起选中、不弹错误（报告快照与实时列表的固有竞态，保持简单）。
     private func jump(to itemId: String) {
+        // P4（v2.9.0）：先退出安全体检 destination（detail 切回条目详情），
+        // 再切走过滤（防中栏仍渲染本视图时自吞选中事件），最后选中条目
+        // （didSet 自动 loadSelectedDetails）。
+        model.showHealthDestination = false
         // sidebarFilter didSet 同步执行 reloadItems，返回后 items 即为最新。
         model.sidebarFilter = .all
         guard model.items.contains(where: { $0.uuid == itemId }) else { return }
@@ -270,13 +313,14 @@ struct HealthCheckView: View {
     // MARK: - 加载
 
     private func loadReport() async {
-        // 侧栏入口仅解锁区可达，session 必非 nil；防御性 guard 兜底
-        // （1001 场景不应发生，发生即按错误呈现）。
+        // 入口（工具栏「安全体检」按钮 → 详情区 destination）仅解锁区可达，
+        // session 必非 nil；防御性 guard 兜底（1001 场景不应发生，发生即按
+        // 就地错误态呈现）。
         guard let session = model.session else {
             isLoading = false
             let errText = "内部错误：安全体检需解锁后查看。"
             DiagLog.append(errText)
-            model.lastErrorMessage = errText
+            loadError = errText
             return
         }
         do {
@@ -287,11 +331,14 @@ struct HealthCheckView: View {
                 try session.healthReport(nowSecs: now)
             }.value
             report = fetched
+            loadError = nil
         } catch {
-            // 错误文案 Rust 侧已脱敏，直出并落诊断日志（同 AuditLogView）。
+            // 错误文案 Rust 侧已脱敏，经 ErrorPresenter 直出并落诊断日志
+            // （同 AuditLogView）；就地错误态呈现，不写全局 lastErrorMessage
+            // 以免与弹窗叠加（ST-02 / DESIGN.md D-7.3）。
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
-            model.lastErrorMessage = errText
+            loadError = errText
         }
         isLoading = false
     }

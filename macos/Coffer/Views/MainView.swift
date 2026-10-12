@@ -46,6 +46,11 @@ struct MainView: View {
                 model.loadSelectedDetails()
             }
         }
+        // P4（v2.9.0）：选择任一列表条目即退出安全体检 destination 回条目详情
+        // （跳条目路径 HealthCheckView.jump 已先行清位，此处对程序性选中为 no-op）。
+        .onChange(of: model.selectedItemID) { _, _ in
+            model.showHealthDestination = false
+        }
         .sheet(item: $newSheetCategory) { category in
             ItemEditView(mode: .create(category))
                 .environmentObject(model)
@@ -104,8 +109,6 @@ struct MainView: View {
             }
             Section {
                 Label("回收站", systemImage: "trash").tag(SidebarFilter.trash)
-                // 安全体检入口（FR-6.2–6.7，v0.3.0-T05 T-D）
-                Label("安全体检", systemImage: "cross.case.fill").tag(SidebarFilter.health)
             }
         }
         .listStyle(.sidebar)
@@ -118,9 +121,6 @@ struct MainView: View {
         Group {
             if model.sidebarFilter == .trash {
                 TrashListView()
-            } else if model.sidebarFilter == .health {
-                // 安全体检页（FR-6.2–6.7，T-D）：整页视图，不走条目列表
-                HealthCheckView()
             } else {
                 ActiveItemList()
             }
@@ -135,6 +135,15 @@ struct MainView: View {
                 } label: {
                     Label(model.vaultName.isEmpty ? "密码库" : model.vaultName,
                           systemImage: "vault")
+                }
+                // 安全体检入口（v2.9.0 P4，docs/14 §A P4 §2）：主入口，发现性
+                // 优先（工具栏）。toggle 语义：点击进入详情区整页体检；再次
+                // 点击退出回条目详情（选择任一列表条目同样退出，见下方
+                // onChange(of: model.selectedItemID)）。
+                Button {
+                    model.showHealthDestination.toggle()
+                } label: {
+                    Label("安全体检", systemImage: "cross.case.fill")
                 }
                 Menu {
                     ForEach(FfiItemCategory.editableCategories, id: \.self) { category in
@@ -204,7 +213,11 @@ struct MainView: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if let details = model.currentDetails {
+        // P4（v2.9.0）：详情区按优先级渲染——安全体检整页 destination 最优先，
+        // 覆盖条目详情与「未选中」占位（docs/14 §A P4 §2）。
+        if model.showHealthDestination {
+            HealthCheckView()
+        } else if let details = model.currentDetails {
             ItemDetailView(details: details)
                 .id(details.uuid)
         } else {
@@ -286,8 +299,6 @@ struct ActiveItemList: View {
         case .favorites: return "收藏"
         case .category(let category): return category.displayName
         case .trash: return "回收站"
-        // 防御分支：.health 下中栏渲染 HealthCheckView，本标题不可达。
-        case .health: return "安全体检"
         }
     }
 

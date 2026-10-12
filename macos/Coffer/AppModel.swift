@@ -150,6 +150,16 @@ final class AppModel: ObservableObject {
         recoveryOfferSkipped && !hasRecoveryWrap
     }
 
+    // MARK: P4 安全体检 destination（v2.9.0，docs/14 §A P4 §2/§4）
+
+    /// 详情区「安全体检」整页 destination 呈现标记（P4）：true 时详情区
+    /// 渲染 HealthCheckView 整页（优先级最高，覆盖条目详情与「未选中」占位）。
+    /// 入口=中列工具栏「安全体检」按钮（toggle 语义）；退出=再次点击按钮 /
+    /// 选择任一列表条目（MainView onChange 清位）/ 体检页跳条目
+    /// （HealthCheckView.jump 先行清位）/ 锁定（lock() 复位，与 selectedItemID
+    /// 同纪律，防锁定后残留 destination）。
+    @Published var showHealthDestination = false
+
     // MARK: 条目列表 / 详情状态（T05 阶段二）
 
     /// 当前过滤 + 搜索下的条目摘要列表。
@@ -659,6 +669,9 @@ final class AppModel: ObservableObject {
         items = []
         currentDetails = nil
         selectedItemID = nil
+        // P4（v2.9.0）：体检 destination 随 selectedItemID 同纪律复位，防锁定
+        // 后回到解锁态残留体检页（AC-2.9.0-P4-5/10）。
+        showHealthDestination = false
         searchText = ""
         // 退避倒计时兜底清 nil（FR-12.5）：lock 只能从解锁态进入，而成功
         // 解锁已在 Rust 侧清零计数，此处是状态一致性兜底（新开会话计数

@@ -1314,14 +1314,14 @@ CI Linux runner 重复跑 Rust workflow 观察偶发红；同树重跑绿即为�
 
 ---
 
-## BUG-20（🟡 顺延登记）：UpdateTests TC-HOST-01 白名单断言与 OTAEndpointPolicy 契约漂移——allowedHosts 已扩 5 host，断言仍恰 4 host（测试断言 vs 契约漂移，非生产缺陷）
+## BUG-20（✅ 已核销）：UpdateTests TC-HOST-01 白名单断言与 OTAEndpointPolicy 契约漂移——allowedHosts 已扩 5 host，断言仍恰 4 host（测试断言 vs 契约漂移，非生产缺陷）
 
 **登记日期**：2026-10-12
 **发现环境**：v2.9.0 发版节点回归（M8 判据核销轮），`tools/run_update_tests.sh` 实测
 **分级**：S4（测试断言与契约漂移，非生产缺陷）/ P2 / 来源版本 v2.8.x（GitLab 端点切换批 287c37d）/ 发现版本 v2.9.0
-**状态**：🟡 修复已在工作树落地（并行轮 REV-DEV-01，未提交），待 commit/集成后正式核销
-**核销记录**：—（并行轮已修：`macos/Tests/UpdateTests/main.swift` TC-HOST-01 断言改 5 host + 增 TC-HOST-02 gitlab.internal.invalid 正例与带端口 fail-closed/放行两负正例；2026-10-12 dev-tester 复跑 `tools/run_update_tests.sh` → **177 passed / 0 failed / 2 skipped ALL GREEN**（日志 /tmp/v290_update_tests_post.log）——修复已验证，待提交后转 ✅ 正式核销）
-**证据**：2026-10-12 实测 `tools/run_update_tests.sh` → 173 passed / 1 failed / 2 skipped，唯一 FAILED = TC-HOST-01（日志 /tmp/v290_update_tests.log）；`macos/Coffer/Updater/OTAEndpointPolicy.swift:16-22` allowedHosts 现为 5 host（含 `gitlab.internal.invalid`，287c37d 增列，Pro trunk），`macos/Tests/UpdateTests/main.swift:697-700` 仍断言恰 4 GitHub host
+**状态**：✅ 已核销（lead 提交 aa56842，2026-10-12）
+**核销记录**：lead 提交 **aa56842**（`macos/Tests/UpdateTests/main.swift`）：TC-HOST-01 断言改 **5 host**（4 GitHub + `gitlab.internal.invalid`）；TC-HOST-02 修正首刀误断为正确形态——带端口 URL 经 `isAllowedURL` 放行 + 裸 host 带端口字符串（`gitlab.internal.invalid`）fail-closed 拒绝，两条正反断言。复跑 `tools/run_update_tests.sh` → **EXIT=0 / 177 检查 / 0 FAIL**（与 dev-tester 先前 177/0/2 ALL GREEN 一致）。**BUG-20 正式核销 ✅**。
+**证据**：2026-10-12 实测 `tools/run_update_tests.sh` → 173 passed / 1 failed / 2 skipped，唯一 FAILED = TC-HOST-01（日志 /tmp/v290_update_tests.log）；`macos/Coffer/Updater/OTAEndpointPolicy.swift:16-22` allowedHosts 现为 5 host（含 `gitlab.internal.invalid`，287c37d 增列，Pro trunk），`macos/Tests/UpdateTests/main.swift:697-700` 当时断言恰 4 GitHub host（**已随 aa56842 更新**：现 :700-714 断言 5 host + TC-HOST-02 两条正反）
 
 ### 现象（预期/实际 分行写）
 
@@ -1334,7 +1334,7 @@ CI Linux runner 重复跑 Rust workflow 观察偶发红；同树重跑绿即为�
 
 ### 修复路径
 
-测试侧：TC-HOST-01 断言更新为 5 host 集合（补 `gitlab.internal.invalid`），随下次更新器测试维护窗口一并处置（本版判据核销不越界改测试断言，如实登记）。
+测试侧（**已随 aa56842 提交**）：TC-HOST-01 断言更新为 5 host 集合（补 `gitlab.internal.invalid`）；TC-HOST-02 修正首刀误断——剥端口语义在 URL 解析层（`url.host` 永不含端口），policy 层是裸 host 精确匹配，故带端口 URL 放行、带端口 host 字符串 fail-closed 拒绝。
 
 ### 复现与诊断
 

@@ -123,7 +123,7 @@
 - **D-3.2（时长入参化）** `ClipboardManager` 提供带 `clearSecs:` 入参的复制 API：默认走用户档位；调用方可传固定时长（恢复码 30s 安全纪律——「从不」档位不得让恢复码永久留板）。判定：RecoveryCodeSetupSheet 迁到该 API，删除本地实现。
 - **D-3.3（changeCount 守卫单点）** 清除与写入路径的 changeCount 守卫只存在于 `ClipboardManager`；锁定兜底 `clearOnLock` 覆盖全部敏感副本。判定：清除决策一律调用 `clipboardUnchanged`。
 - **D-3.4（例外登记）** TOTP 验证码复制走 `copyPlain`（FR-5.5：30s 轮换自失效，清除只有摩擦）是**已裁定例外**，不得扩散到密码/恢复码等持久敏感值。判定：新增「不清除复制」入口须 lead 裁定并登记。
-- **P-3.1（待回填）** `copyWithAutoClear(value:clearSecs:)` 的最终签名与迁移落地（P5 实现细节，需 dev-team 接口确认后回填本规范第 2 版）。对接锚点：`P-3.1`。
+- **P-3.1（已回填，定稿）** 显式时长版 API 最终签名：`copyWithAutoClear(_ value: String, clearSecs: TimeInterval)`（`Platform/Clipboard.swift:104`）。语义：`clearSecs > 0` 按显式时长调度定时清除，changeCount 守卫于清除任务闭包内**局部捕获**写入时计数（不依赖单例槽位）；`clearSecs == 0` 视作「本次不清除定时路径」但保留 `clearOnLock` 锁定兜底（勿 asyncAfter(0)）；`clearOnLock` 覆盖全部敏感副本。既有 `copyWithAutoClear(_:)`（:91）委托本方法传当前用户档位。迁移落地：恢复码复制唯一入口 `RecoveryCodeSetupSheet.copyCode()`（:253-255）改走本 API，传固定 `Self.clipboardClearSecs = 30`（FR-17.2 一次性纪律，不受用户档位影响）；手写 DispatchWorkItem 路径与 `clipboardClearItem` 状态已删除（29afba3）。全仓无第二套手写自动清除。对接锚点：`P-3.1`。
 
 ### 迁移指引
 
@@ -411,7 +411,7 @@
 |---|---|---|---|
 | P-1.1 | 成功反馈完整形态矩阵（强度阈值 + 操作清单 + 文案结构） | ui-ux（P5 反馈规格） | P5 定稿后回填 |
 | P-2.1 | 一次性首次高亮兜底（P2-A）：accent 圆点 + 「未完成设置」footnote；触发=引导跳过且功能未启用、清除=启用对应功能；挂 `bio_offer_skipped` / `recovery_offer_skipped` UserDefaults 契约 | ui-ux（P2-A 高亮规格）/ dev-team（UserDefaults 契约） | P2 合并实现时定稿 |
-| P-3.1 | `copyWithAutoClear(value:clearSecs:)` 最终签名与迁移 | dev-team（P5 剪贴板单点化） | 实现后回填 |
+| P-3.1 | `copyWithAutoClear(_ value: String, clearSecs: TimeInterval)` 最终签名与迁移（**已回填**，见 §3 G3 条款） | dev-team（P5 剪贴板单点化） | 已回填（v2.9.0 M5） |
 | P-6.1 | reveal 后明文自动收回触发集 | ui-ux（SEC-02 交互规格） | 规格定稿后回填 |
 | P-6.2 | TOTP 可选隐藏开关评估结论 | ui-ux / lead（SEC-03 backlog） | 评估完成 |
 | P-9.1 | P7 快捷键最终键表 + HK-2/3/4 冲突回归 | dev-team（P7） | P7 落地后回填 |
@@ -429,6 +429,7 @@
 | D-10.2 | 新增（已裁定） | docs/13 §5 lead 裁定 2（锁定时关闭设置窗口） |
 | D-1.2a | 新增（已登记例外，评审 REV2-02） | 恢复码复制反馈 2s + 「（30 秒后自动清除）」文案例外——FR-17.2 一次性纪律，安全提示不可丢；ux-spec P5 §5.1 为权威 |
 | P-2.1 | 新增（已裁定，评审 REV2-03） | docs/13 lead 裁定⑤ P2-A 一次性首次高亮兜底（跳过引导后 accent 圆点 + 「未完成设置」footnote） |
+| P-3.1 | 变更（占位 → 已回填定稿） | v2.9.0 M5 回填：`copyWithAutoClear(_:clearSecs:)` 显式时长版签名 + 恢复码复制迁统一 API（固定 30s）落定，见 §3 G3 |
 
 ---
 
@@ -436,7 +437,7 @@
 
 - 章节数：**10 个行为缺口章**（G1–G10）+ 组件库存量 / 命名 / 可访问性 / HIG 核对 / 待回填登记 / 变更登记等支撑章。
 - 可定稿条款（D-*）：**46 条**（G1:5 / G2:5 / G3:4 / G4:3 / G5:4 / G6:3 / G7:4 / G8:3 / G9:3 / G10:4 / 命名 3 / 可访问性 5）。
-- 待回填条款（P-*）：**6 条**（P-1.1、P-2.1、P-3.1、P-6.1、P-6.2、P-9.1）。
+- 待回填条款（P-*）：**5 条**（P-1.1、P-2.1、P-6.1、P-6.2、P-9.1；P-3.1 已回填，见 §3 G3）。
 - 明确**本轮不立**：视觉 token / 色彩 / 间距 / 圆角 / 阴影 / 字体样式 / 图标规范（§0.3 占位）。
 - 与 ui-ux 对接锚点：§15 表（P-1.1 反馈矩阵、P-6.1 明文自动收回、P-6.2 TOTP 隐藏开关为主要交互规格接口）。
 

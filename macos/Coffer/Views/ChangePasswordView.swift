@@ -117,7 +117,8 @@ struct ChangePasswordView: View {
     }
 
     private func submit() {
-        // 设置页仅在解锁态可达，session 必非 nil；防御性 guard 兜底。
+        // 设置页仅在解锁态可达（v2.9.0 锁定态关闭设置窗口后此不变量成立，
+        // docs/14 §A P2 §3），session 必非 nil；防御性 guard 兜底。
         guard let session = model.session, canSubmit else { return }
         // 密码不落状态：拷贝进异步调用后立刻清空本地输入（docs/07 §2.4）。
         // 失败后重试需重新输入三个密码，系有意的安全行为（与

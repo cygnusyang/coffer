@@ -69,8 +69,10 @@ struct CofferMainApp: App {
         // v2.4.1：设置独立窗口（对齐 macOS 系统设置样式——左上角红绿灯
         // 关闭钮，右上角无「完成」按钮）。Window scene 自带 titlebar 红绿灯；
         // SettingsView 内不再需要自定义关闭控件（已移除 X 按钮）。
+        // v2.9.0 P2-B（docs/14 §A P2 §3）：SettingsWindowHost 在 phase 离开
+        // .unlocked 时关闭本窗口（候选 1 主案，自窗口内自关）。
         Window("设置", id: "settings") {
-            SettingsView()
+            SettingsWindowHost()
                 .environmentObject(model)
         }
 
@@ -113,6 +115,34 @@ private struct DataCommands: Commands {
                 .keyboardShortcut(",", modifiers: .command)
                 .disabled(model.phase != .unlocked)
         }
+    }
+}
+
+/// 设置窗口宿主（v2.9.0 P2-B，docs/14 §A P2 §3.2 候选 1）：薄包装，只负责在
+/// phase 离开 `.unlocked`（→ .locked / .noVault）时关闭设置窗口。
+///
+/// 可靠性依据：设置窗口 scene 内容不随 phase 切换拆树（拆树的只有主窗口
+/// WindowGroup 内 RootView 的 switch），故本视图在 phase 变化后仍存活，
+/// onChange 必然触发——自窗口内自关，零跨场景耦合；`dismissWindow(id:)`
+/// 对不存在的窗口为 no-op 安全。窗口上正挂的 sheet（改密等）随窗口一并
+/// 拆除（AC-2.9.0-P2B-5），与「锁定即拆解锁态表面」语义一致。
+///
+/// 菜单纪律（AC-2.9.0-P2B-3）：DataCommands「设置…」保留 `.disabled(phase !=
+/// .unlocked)`——锁定态无法打开设置窗口 + 已开者被本宿主关闭，自相矛盾解除。
+private struct SettingsWindowHost: View {
+    @EnvironmentObject
+    private var model: AppModel
+    @Environment(\.dismissWindow)
+    private var dismissWindow
+
+    var body: some View {
+        SettingsView()
+            .environmentObject(model)
+            .onChange(of: model.phase) { _, newPhase in
+                if newPhase != .unlocked {
+                    dismissWindow(id: "settings")
+                }
+            }
     }
 }
 

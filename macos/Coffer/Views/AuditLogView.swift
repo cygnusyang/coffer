@@ -102,8 +102,9 @@ struct AuditLogView: View {
             }
             .navigationTitle("审计日志")
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                // D-4.1（CO-06）：只读查看页关闭语义——「关闭」+ .cancellationAction（Esc 生效）。
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
                 }
             }
         }

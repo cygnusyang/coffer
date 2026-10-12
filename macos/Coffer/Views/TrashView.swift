@@ -8,6 +8,9 @@ struct TrashListView: View {
     private var model: AppModel
 
     @State private var confirmPurgeAll = false
+    /// FW-03（v2.9.0 docs/13 §5 / DESIGN.md D-8.2）：清空回收站聚合反馈文案
+    /// （成功 N 条 / 失败 M 条 + 原因）；非 nil 即呈现，不逐条弹窗。
+    @State private var purgeResult: String?
 
     var body: some View {
         List(selection: $model.selectedItemID) {
@@ -53,16 +56,54 @@ struct TrashListView: View {
             titleVisibility: .visible
         ) {
             Button("全部彻底删除", role: .destructive) {
-                for summary in model.items {
-                    do {
-                        try model.deleteItem(itemId: summary.uuid, hard: true)
-                    } catch {
-                        model.handleFfiError(error)
-                        break
-                    }
-                }
+                purgeAll()
             }
             Button("取消", role: .cancel) {}
         }
+        // FW-03：聚合反馈一次呈现（D-8.2），替代原先「首错中断 + 静默吞错」。
+        .alert("清空回收站", isPresented: Binding(
+            get: { purgeResult != nil },
+            set: { if !$0 { purgeResult = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(purgeResult ?? "")
+        }
+    }
+
+    // MARK: - 清空回收站（FW-03 聚合反馈）
+
+    /// D-8.1/D-8.2（FW-03）：批量硬删不中断继续——单条失败记入聚合结果，继续
+    /// 清剩余条目；完成后一次呈现「成功 N 条 / 失败 M 条 + 原因」，不逐条弹窗。
+    /// 1001 会话失效仍切锁定界面（与 handleFfiError 同语义）但不中断（视图随
+    /// phase 切换即将拆除，循环自然以失败聚合收尾）。
+    private func purgeAll() {
+        var succeeded = 0
+        var failures: [(title: String, reason: String)] = []
+        for summary in model.items {
+            do {
+                try model.deleteItem(itemId: summary.uuid, hard: true)
+                succeeded += 1
+            } catch {
+                if case let .Coffer(code, _) = error as? FfiError, code == 1001 {
+                    model.handleFfiError(error)
+                }
+                failures.append((summary.title, ErrorPresenter.text(error)))
+            }
+        }
+        purgeResult = Self.purgeSummaryText(succeeded: succeeded, failures: failures)
+    }
+
+    /// 聚合反馈文案（纯函数，D-8.2）：全成功「已彻底删除 N 条」；有失败追加
+    /// 失败数与逐条原因。
+    static func purgeSummaryText(succeeded: Int, failures: [(title: String, reason: String)]) -> String {
+        var text = "已彻底删除 \(succeeded) 条"
+        if !failures.isEmpty {
+            text += "，\(failures.count) 条失败"
+            for failure in failures {
+                text += "\n「\(failure.title)」：\(failure.reason)"
+            }
+        }
+        return text
     }
 }

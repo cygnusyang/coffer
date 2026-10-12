@@ -19,6 +19,9 @@ pub(crate) fn fake_op() -> PathBuf {
 }
 
 /// fake op 的「未登录」哨兵（tests/fixtures/op/op 内定义）。
+/// common 逐测试目标编译：仅 cli.rs 经 `use common::*` 消费，
+/// 其余目标各自定义本地常量，故不消费的目标会报 dead_code——显式豁免。
+#[allow(dead_code)]
 pub(crate) const FAKE_OP_EXPIRED_SESSION: &str = "COFFER_FAKE_OP_EXPIRED_SESSION";
 
 /// 每用例独立临时目录（tag 必唯一，规避 BUG-12 并行撞名）。

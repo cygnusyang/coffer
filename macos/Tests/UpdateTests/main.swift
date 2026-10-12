@@ -694,15 +694,25 @@ check("TC-VER-13", "负组件可比较：-1.0 < 0.0",
 // MARK: - TC-HOST 白名单 host 判定（纯函数）
 
 let allowed = OTAEndpointPolicy.allowedHosts
-check("TC-HOST-01", "白名单恰为契约 4 host", allowed == [
+// 2026-10-12 对齐：白名单 4→5 host（GitLab 迁移轮 287c37d 增列 gitlab.internal.invalid，
+// 契约注记见 docs/03-功能设计/11-OTA设计.md「GitLab 迁移轮扩展注记」；旧断言
+// 「恰为 4 host」自该批起结构性红，TC-HOST-01 登记 KNOWN-ISSUES 顺延项随本轮核销）。
+check("TC-HOST-01", "白名单恰为契约 5 host（4 GitHub + GitLab）", allowed == [
     "api.github.com", "github.com", "objects.githubusercontent.com",
-    "release-assets.githubusercontent.com",
+    "release-assets.githubusercontent.com", "gitlab.internal.invalid",
 ])
 
 check("TC-HOST-02", "api.github.com 放行", OTAEndpointPolicy.isAllowedHost("api.github.com"))
 check("TC-HOST-02", "github.com 放行", OTAEndpointPolicy.isAllowedHost("github.com"))
 check("TC-HOST-02", "objects.githubusercontent.com 放行", OTAEndpointPolicy.isAllowedHost("objects.githubusercontent.com"))
 check("TC-HOST-02", "release-assets.githubusercontent.com 放行", OTAEndpointPolicy.isAllowedHost("release-assets.githubusercontent.com"))
+check("TC-HOST-02", "gitlab.internal.invalid 放行", OTAEndpointPolicy.isAllowedHost("gitlab.internal.invalid"))
+// 剥端口语义在 URL 解析层（url.host 永不含端口），policy 层是裸 host 精确匹配：
+// 带端口 host 字符串必须 fail-closed 拒绝，带端口 URL 经 isAllowedURL 放行。
+check("TC-HOST-02", "裸 host 精确匹配：带端口 host 字符串拒绝（fail-closed）",
+      !OTAEndpointPolicy.isAllowedHost("gitlab.internal.invalid"))
+check("TC-HOST-02", "带端口 URL 放行（url.host 不含端口）",
+      OTAEndpointPolicy.isAllowedURL(URL(string: "https://gitlab.internal.invalid/coffer/app.xml")!))
 
 check("TC-HOST-03", "https + 白名单 host URL 放行",
       OTAEndpointPolicy.isAllowedURL(URL(string: TestFixture.validDownloadUrl)!))

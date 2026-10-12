@@ -221,9 +221,10 @@ struct RestoreBackupView: View {
                 let errText: String
                 if let ffiError = error as? FfiError,
                    case let .Coffer(code, _) = ffiError, code == 1004 {
-                    // 专属文案（1004）：解释「同 ID 库已存在」与出路——
-                    // 恢复当前库自身的备份即命中此码
-                    errText = "错误 1004：该库已存在于工作目录（相同库 ID）。如需覆盖请先删除现有库后再恢复。"
+                    // 专属文案（1004）：解释「同 ID 库已存在」与可操作出路——
+                    // UI 无删除库能力（VaultSwitcherView 明示不做，独立设计决策点），
+                    // 不引导删除；库已存在即无需恢复，或改选其他备份文件
+                    errText = "错误 1004：工作目录中已存在相同库 ID 的库，本次未做任何改动。若这正是要恢复的库，直接解锁使用即可；若选错了备份文件，请重新选择其他备份。"
                 } else {
                     errText = ErrorPresenter.text(error)
                 }

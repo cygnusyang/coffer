@@ -332,7 +332,7 @@ struct RecoveryCodeSetupSheet: View {
     private func enterVerify() {
         ClipboardManager.shared.clearWrittenIfUnchanged()
         if verifyPositions.isEmpty {
-            verifyPositions = Self.randomVerifyPositions(wordCount: Self.recoveryWordCount(code))
+            verifyPositions = RecoveryVerifySupport.randomVerifyPositions(wordCount: RecoveryVerifySupport.recoveryWordCount(code))
         }
         verifyInputs = Array(repeating: "", count: verifyPositions.count)
         showVerifyMismatch = false
@@ -342,7 +342,7 @@ struct RecoveryCodeSetupSheet: View {
 
     /// 「确认抄写」可用性：三个输入框均非空（空任一禁用）。
     private var canSubmitVerify: Bool {
-        !verifyInputs.isEmpty && verifyInputs.allSatisfy { !$0.isEmpty }
+        RecoveryVerifySupport.canSubmitVerify(verifyInputs)
     }
 
     /// 提交验证：三词逐位比对（归一化：小写 / 折叠连续空格 / trim，大小写不敏感）。
@@ -353,8 +353,8 @@ struct RecoveryCodeSetupSheet: View {
         let words = code.split(whereSeparator: \.isWhitespace).map(String.init)
         for (index, position) in verifyPositions.enumerated() {
             guard position >= 1, position <= words.count,
-                  Self.normalizeRecoveryWord(words[position - 1])
-                      == Self.normalizeRecoveryWord(verifyInputs[index]) else {
+                  RecoveryVerifySupport.normalizeRecoveryWord(words[position - 1])
+                      == RecoveryVerifySupport.normalizeRecoveryWord(verifyInputs[index]) else {
                 showVerifyMismatch = true
                 verifyInputs = Array(repeating: "", count: verifyInputs.count)
                 return
@@ -382,32 +382,9 @@ struct RecoveryCodeSetupSheet: View {
         showRegenerateConfirmLine = false
     }
 
-    /// 从恢复码 12 词中随机抽 `count` 个不同位置（1-based，升序便于展示）。
-    /// 本实例内固定由调用方持有结果保证（仅「重新生成」后重抽）；纯函数可
-    /// scratch 自证（AC-2.9.0-P6-3：3 个不同位置 / 实例内稳定 / regenerate 重抽）。
-    static func randomVerifyPositions(wordCount: Int, count: Int = 3) -> [Int] {
-        guard wordCount >= count else {
-            // 防御分支：词数 < 抽取个数（正常 BIP39-12 恒 12 词不可达）→ 返回
-            // 全部位置；wordCount <= 0 → 空（Array(1...0) 下界越上界在 Swift
-            // 会 trap，显式避让，scratch 自证实锤）。
-            guard wordCount > 0 else { return [] }
-            return Array(1...wordCount)
-        }
-        return (0..<wordCount).shuffled().prefix(count).sorted().map { $0 + 1 }
-    }
-
-    /// 恢复码词数（BIP39-12 恒为 12；从 code 派生以便自证与防御，不硬编码）。
-    static func recoveryWordCount(_ code: String) -> Int {
-        code.split(whereSeparator: \.isWhitespace).count
-    }
-
-    /// 词输入归一化（纯函数，可 scratch 自证，AC-2.9.0-P6-5）：小写 + 折叠
-    /// 连续空格 + trim；比较时大小写不敏感（接受用户误输大写）。
-    static func normalizeRecoveryWord(_ input: String) -> String {
-        input.lowercased()
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-    }
+    // 纯函数面（recoveryWordCount / normalizeRecoveryWord / canSubmitVerify /
+    // randomVerifyPositions）已外置 RecoveryVerifySupport.swift（v2.9.0 基层
+    // 测试化搬移，行为逐字不变）；本视图仅持有状态与调用。
 
     // MARK: - ③ 主密码确认（D-6：先验证身份再写 header）
 

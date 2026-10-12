@@ -27,6 +27,8 @@ struct VaultSetupView: View {
     @State private var confirm = ""
     @State private var localError: String?
     @State private var isCreating = false
+    /// #1 恢复备份入口 sheet 开关（仅首次建库 noVault 呈现；局部状态，不提升 AppModel）。
+    @State private var showRestore = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -65,13 +67,30 @@ struct VaultSetupView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!canSubmit)
 
-            Text("密码强度校验在创建时执行：评分不足（zxcvbn < 3）将被拒绝。")
+            // #4 去黑话：强度条到绿（score 3+）即通过 Rust zxcvbn 门禁，
+            // 用用户语替代「zxcvbn < 3」黑话。
+            Text("为安全起见，强度达到绿色即可创建密码库。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            // #1 重装/换机用户首屏恢复入口：仅首次建库（noVault）呈现，
+            // 库切换器「新建密码库」路径不加（已有库场景语义不符）。
+            if isFirstVault {
+                Button("已有备份？从备份恢复…") { showRestore = true }
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ffiErrorAlert($model.lastErrorMessage)
+        .sheet(isPresented: $showRestore) {
+            // #1 从备份恢复（FR-8.1 回环，T-H）：与设置页 SettingsView 同挂法；
+            // RestoreBackupView 工厂级恢复全程不读会话，完成走 openSession → .locked，
+            // sheet 随 phase 切换拆树自动收口（docs/15 §1 T-A 裁定）。
+            RestoreBackupView()
+                .environmentObject(model)
+        }
         .alert("无法创建", isPresented: Binding(
             get: { localError != nil },
             set: { if !$0 { localError = nil } }
@@ -103,6 +122,13 @@ struct VaultSetupView: View {
                     Text(estimate.warnings.joined(separator: "；"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+                // #4 强度内联预警：本地估算非权威（Rust zxcvbn 1010 才是创建
+                // 门禁），仅作引导、不禁用创建按钮（估算/权威错位陷阱）。
+                if score < 3 {
+                    Text("强度不足，建议加长或混入不相关的词")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
             }
         }

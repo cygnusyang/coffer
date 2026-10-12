@@ -79,6 +79,13 @@ final class AppModel: ObservableObject {
     /// 「关于 Coffer」对话框 sheet 触发（应用菜单「关于 Coffer…」；自建关于
     /// 视图以容纳「检查更新…」按钮，见 AboutUpdateView）。
     @Published var showAbout = false
+    /// 新建条目 sheet 触发类别（v2.9.0 P7，docs/14 §A P7 §3.1）：自 MainView
+    /// 本地 @State 提升到 AppModel @Published——CommandGroup 菜单不可达视图层
+    /// @State，与 showImport/showImportOpvault 提升同先例。⌘N 置 `.login`
+    /// （`editableCategories` 首项）；工具栏「新建」菜单置用户所选类别；
+    /// sheet 关闭时 sheet(item:) 绑定自动置 nil。lock() 内清 nil（防锁定后
+    /// 残留 sheet，与 selectedItemID/currentDetails 同组纪律）。
+    @Published var pendingNewCategory: FfiItemCategory?
 
     /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
     ///
@@ -180,6 +187,86 @@ final class AppModel: ObservableObject {
     }
     /// 选中条目的完整详情（Concealed 值已掩码）。
     @Published var currentDetails: FfiItemDetails?
+
+    // MARK: 复制禁用谓词 + 复制动作（v2.9.0 P7 / REV2-08，docs/14 §A P7 §2.2）
+
+    /// 复制密码禁用谓词（⌘⇧C 菜单项与列表 Enter 按钮**同一来源**，REV2-08）：
+    /// `currentDetails` 为 nil 或无密码字段时禁用——HK-3 同一语义（含 FR-5.6
+    /// TOTP 序列复制）。视图层只消费、不各自派生，无「菜单可用/按钮禁用」分叉。
+    var canCopyPassword: Bool {
+        currentDetails?.fields.contains { $0.designation == .password } ?? false
+    }
+
+    /// 复制用户名禁用谓词（⌘U，HK-4 同语义：无用户名禁用）。用户名为普通
+    /// 字段，值已随详情直出（掩码纪律只约束 Concealed 字段），不经
+    /// fieldValue 跨桥——与 MainView 原局部 `selectedUsername` 判定一致，
+    /// 上收为 AppModel 派生谓词（REV2-08）。
+    var canCopyUsername: Bool {
+        guard let field = currentDetails?.fields.first(where: {
+            $0.designation == .username
+        }), let value = field.value, !value.isEmpty else { return false }
+        return true
+    }
+
+    /// 复制验证码禁用谓词（⌥⇧C）：`currentDetails` 为 nil 或条目无 TOTP
+    /// （`totp == nil`）时禁用。
+    var canCopyTotp: Bool {
+        currentDetails?.totp != nil
+    }
+
+    /// 复制选中条目密码（HK-3 / P7 ⌘⇧C 与 Enter 共用，docs/15 §3.3.3
+    /// FR-5.6 序列）：条目含 TOTP（details.totp 非空）才走「密码 → 延迟 →
+    /// TOTP」序列，否则单次自动清除复制（现状）。明文经 fieldValue 随取随
+    /// 用，不落状态。无选中 / 无密码字段由谓词 canCopyPassword 禁用拦截，
+    /// 此处 guard 兜底。
+    func copySelectedPassword() {
+        guard let itemId = selectedItemID,
+              let details = currentDetails,
+              let passwordField = details.fields.first(where: {
+                  $0.designation == .password
+              }) else { return }
+        do {
+            guard let password = try fieldValue(itemId: itemId, fieldId: passwordField.uuid),
+                  !password.isEmpty else { return }
+            if details.totp != nil {
+                // totpProvider 延迟执行取 fresh code；闭包体内访问本 @MainActor
+                // 的 AppModel，经 assumeIsolated 进入——ClipboardManager 保证
+                // 回调只在主队列触发。self 强捕获无循环（ClipboardManager 为
+                // 单例，AppModel 不反向持有它）。
+                ClipboardManager.shared.copyPasswordThenTotp(password: password) {
+                    MainActor.assumeIsolated { try? self.totpCode(itemId: itemId).code }
+                }
+            } else {
+                ClipboardManager.shared.copyWithAutoClear(password)
+            }
+        } catch {
+            // 1001（取值时会话已锁）→ 切回锁定界面；其余 code+message 直出
+            handleFfiError(error)
+        }
+    }
+
+    /// 复制选中条目用户名（HK-4 / P7 ⌘U，copyPlain 不自动清除，与
+    /// FieldRowView 普通字段复制同纪律）。无用户名由谓词 canCopyUsername
+    /// 禁用拦截，此处 guard 兜底。
+    func copySelectedUsername() {
+        guard let field = currentDetails?.fields.first(where: {
+            $0.designation == .username
+        }), let value = field.value, !value.isEmpty else { return }
+        ClipboardManager.shared.copyPlain(value)
+    }
+
+    /// 复制选中条目当前 TOTP 验证码（P7 ⌥⇧C，FR-5.5：copyPlain 不清除——
+    /// 验证码 30/60 s 内自动轮换）。无选中 / 无 TOTP 由谓词 canCopyTotp
+    /// 禁用拦截，此处 guard 兜底。
+    func copySelectedTotp() {
+        guard let itemId = selectedItemID, currentDetails?.totp != nil else { return }
+        do {
+            let code = try totpCode(itemId: itemId)
+            ClipboardManager.shared.copyPlain(code.code)
+        } catch {
+            handleFfiError(error)
+        }
+    }
 
     // MARK: 自动锁定配置（T05 阶段四）
 
@@ -676,6 +763,9 @@ final class AppModel: ObservableObject {
         // P4（v2.9.0）：体检 destination 随 selectedItemID 同纪律复位，防锁定
         // 后回到解锁态残留体检页（AC-2.9.0-P4-5/10）。
         showHealthDestination = false
+        // P7（v2.9.0）：新建条目 sheet 类别随 selectedItemID/currentDetails 同组
+        // 复位，防锁定后残留 sheet（AC-2.9.0-P7-8）。
+        pendingNewCategory = nil
         searchText = ""
         // 退避倒计时兜底清 nil（FR-12.5）：lock 只能从解锁态进入，而成功
         // 解锁已在 Rust 侧清零计数，此处是状态一致性兜底（新开会话计数

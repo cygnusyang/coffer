@@ -56,6 +56,41 @@ struct CofferMainApp: App {
             // DataCommands（@Environment openWindow）触发，不再走 showSettings。
             DataCommands(model: model)
 
+            // P7（v2.9.0，docs/14 §A P7 §2/§3）：⌘N/⌘L 文件菜单「新建条目」
+            // 槽位。⌘N 以 `replacing: .newItem` 覆盖隐式「新建窗口」绑定——
+            // Coffer 为单窗口 WindowGroup，默认绑定 ⌘N 会开第二个主窗口
+            // （既有隐患），替换即移除该绑定，⌘N 只触发新建条目 sheet
+            // （AC-2.9.0-P7-11）。⌘L 与 ⌘N 同组：语义 = `model.lock()` 仅锁
+            // 当前库；菜单栏「锁定全部」（StatusItemController.lockAll）保留
+            // 无键、语义为全局锁定全部，二者并存不混（AC-2.9.0-P7-2）。
+            CommandGroup(replacing: .newItem) {
+                Button("新建条目…") { model.pendingNewCategory = .login }
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+                Button("锁定 Coffer") { model.lock() }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+            }
+
+            // P7（v2.9.0，docs/14 §A P7 §2/§3）：编辑菜单剪贴板槽位追加三条
+            // 复制命令。用 `after: .pasteboard` 而非 `replacing:`——保留标准
+            // 剪切/拷贝/粘贴/全选菜单项（replacing 会移除 ⌘C/⌘V/⌘A，偏离
+            // macOS 惯例，架构方案 §4.4，lead 裁定）。禁用谓词由 AppModel
+            // 从 currentDetails 派生（REV2-08），菜单项与列表上下文按钮读
+            // 同一谓词，无「菜单可用/按钮禁用」分叉（AC-2.9.0-P7-7）。
+            // ⌥⇧C 为 ⌘⇧C 相邻的复制验证码键（FR-5.5 copyPlain 不清除）。
+            CommandGroup(after: .pasteboard) {
+                Button("复制密码") { model.copySelectedPassword() }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(!model.canCopyPassword)
+                Button("复制用户名") { model.copySelectedUsername() }
+                    .keyboardShortcut("u", modifiers: .command)
+                    .disabled(!model.canCopyUsername)
+                Button("复制验证码") { model.copySelectedTotp() }
+                    .keyboardShortcut("c", modifiers: [.option, .shift])
+                    .disabled(!model.canCopyTotp)
+            }
+
             // OTA 更新入口（v2.7.0，docs/35 §2.6 用户裁定）：应用菜单同项
             // （对齐 Sparkle 惯例，「关于」下即「检查更新…」快捷入口）+ 关于
             // 对话框主入口；设置页明确不放任何更新入口。

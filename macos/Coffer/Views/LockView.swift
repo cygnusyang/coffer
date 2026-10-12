@@ -141,10 +141,11 @@ struct LockView: View {
 
     /// Touch ID 解锁（docs/08 §7.2 时序；编排细节在 AppModel.unlockWithTouchID）。
     /// isBusy 互斥与主密码解锁共用：AppModel 内部 guard isBusy；本地
-    /// isUnlocking 兜底防双击。退避门禁期内同样防呆（Rust 侧 bio 豁免
-    /// 门禁，禁用只为界面一致性——主密码被门禁时单开 Touch ID 通道易困惑）。
+    /// isUnlocking 兜底防双击。退避门禁期内不防呆——unlock_with_biometric
+    /// 完全豁免退避（vault.rs 裁定：bio 成功即清退避、门禁不计数），门禁期
+    /// 恰是连续输错主密码的正常用户改用生物识别的窗口（对齐本文件头注释）。
     private func unlockWithTouchID() {
-        guard !isUnlocking, !isBackoffBlocked else { return }
+        guard !isUnlocking else { return }
         isUnlocking = true
         Task {
             await model.unlockWithTouchID()

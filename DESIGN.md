@@ -124,6 +124,7 @@
 - **D-3.3（changeCount 守卫单点）** 清除与写入路径的 changeCount 守卫只存在于 `ClipboardManager`；锁定兜底 `clearOnLock` 覆盖全部敏感副本。判定：清除决策一律调用 `clipboardUnchanged`。
 - **D-3.4（例外登记）** TOTP 验证码复制走 `copyPlain`（FR-5.5：30s 轮换自失效，清除只有摩擦）是**已裁定例外**，不得扩散到密码/恢复码等持久敏感值。判定：新增「不清除复制」入口须 lead 裁定并登记。
 - **P-3.1（已回填，定稿）** 显式时长版 API 最终签名：`copyWithAutoClear(_ value: String, clearSecs: TimeInterval)`（`Platform/Clipboard.swift:104`）。语义：`clearSecs > 0` 按显式时长调度定时清除，changeCount 守卫于清除任务闭包内**局部捕获**写入时计数（不依赖单例槽位）；`clearSecs == 0` 视作「本次不清除定时路径」但保留 `clearOnLock` 锁定兜底（勿 asyncAfter(0)）；`clearOnLock` 覆盖全部敏感副本。既有 `copyWithAutoClear(_:)`（:91）委托本方法传当前用户档位。迁移落地：恢复码复制唯一入口 `RecoveryCodeSetupSheet.copyCode()`（:253-255）改走本 API，传固定 `Self.clipboardClearSecs = 30`（FR-17.2 一次性纪律，不受用户档位影响）；手写 DispatchWorkItem 路径与 `clipboardClearItem` 状态已删除（29afba3）。全仓无第二套手写自动清除。对接锚点：`P-3.1`。
+- **P-2.1（已回填，定稿）** 一次性首次高亮兜底契约（P2-A，22036fa）：落盘仅「跳过」旗标 `bio_offer_skipped` / `recovery_offer_skipped`（`AppModel` @Published + didSet 落盘，对齐 clipboardClearSecs 模式）；**「已完成」不落盘**——由 `touchIDStatus` / `hasRecoveryWrap` live 派生。派生条件：`showBioSetupHighlight = bioOfferSkipped && touchIDStatus == .disabled`、`showRecoverySetupHighlight = recoveryOfferSkipped && !hasRecoveryWrap`。清除路径双通道：①对应功能启用成功（`enableTouchID` / `enableRecoveryCode` 成功清位）②完成后 live 派生自然转 false。呈现落点：`SettingsView` securitySection 条件渲染 `FirstRunSetupHighlightRow`（accent 圆点 + 「未完成设置」footnote，小组件两侧复用）。对接锚点：`P-2.1`。
 
 ### 迁移指引
 
@@ -365,7 +366,7 @@
 | 复制反馈 Label（已复制/checkmark） | `FieldRowView.swift:65-67` / `TotpCodeView.swift:51-52` | G1 D-1.2 |
 | 密码强度条 | `PasswordStrengthSection.swift`（ChangePasswordView:64 引用） | 已组件化，维持 |
 | 关闭/完成按钮（语义矩阵） | `HistorySheet.swift:70-75` / `ExportView.swift:312-314` | G4 语义基准 |
-| 一次性首次高亮（首次引导兜底，lead 裁定⑤ P2-A 已纳入） | `RootView.swift:19-38`（`pendingBioOffer` / `pendingRecoveryOffer` 引导可跳过） | accent 圆点 + 「未完成设置」footnote；**触发**=引导步骤被跳过且对应功能未启用；**清除**=启用对应功能（P2-A 兜底，承接 P2 合并后跳过语义）；契约挂 UserDefaults（`bio_offer_skipped` / `recovery_offer_skipped`），待回填 P-2.1 |
+| 一次性首次高亮（首次引导兜底，lead 裁定⑤ P2-A 已纳入） | `RootView.swift:19-38`（`pendingBioOffer` / `pendingRecoveryOffer` 引导可跳过） | accent 圆点 + 「未完成设置」footnote；**触发**=引导步骤被跳过且对应功能未启用；**清除**=启用对应功能（P2-A 兜底，承接 P2 合并后跳过语义）；契约挂 UserDefaults（`bio_offer_skipped` / `recovery_offer_skipped`），P-2.1 已回填（见 G2 规范条款） |
 | ffiErrorAlert（统一错误呈现） | `AppModel.lastErrorMessage` + `.ffiErrorAlert`（全仓） | 错误通道，已统一 |
 
 ---
@@ -410,7 +411,7 @@
 | 锚点 | 内容 | 依赖方 | 触发条件 |
 |---|---|---|---|
 | P-1.1 | 成功反馈完整形态矩阵（强度阈值 + 操作清单 + 文案结构） | ui-ux（P5 反馈规格） | P5 定稿后回填 |
-| P-2.1 | 一次性首次高亮兜底（P2-A）：accent 圆点 + 「未完成设置」footnote；触发=引导跳过且功能未启用、清除=启用对应功能；挂 `bio_offer_skipped` / `recovery_offer_skipped` UserDefaults 契约 | ui-ux（P2-A 高亮规格）/ dev-team（UserDefaults 契约） | P2 合并实现时定稿 |
+| P-2.1 | 一次性首次高亮兜底（P2-A）：accent 圆点 + 「未完成设置」footnote；触发=引导跳过且功能未启用、清除=启用对应功能；挂 `bio_offer_skipped` / `recovery_offer_skipped` UserDefaults 契约（**已回填**，见 G2 规范条款） | ui-ux（P2-A 高亮规格）/ dev-team（UserDefaults 契约） | 已回填（v2.9.0 M2+lead） |
 | P-3.1 | `copyWithAutoClear(_ value: String, clearSecs: TimeInterval)` 最终签名与迁移（**已回填**，见 §3 G3 条款） | dev-team（P5 剪贴板单点化） | 已回填（v2.9.0 M5） |
 | P-6.1 | reveal 后明文自动收回触发集 | ui-ux（SEC-02 交互规格） | 规格定稿后回填 |
 | P-6.2 | TOTP 可选隐藏开关评估结论 | ui-ux / lead（SEC-03 backlog） | 评估完成 |
@@ -430,6 +431,7 @@
 | D-1.2a | 新增（已登记例外，评审 REV2-02） | 恢复码复制反馈 2s + 「（30 秒后自动清除）」文案例外——FR-17.2 一次性纪律，安全提示不可丢；ux-spec P5 §5.1 为权威 |
 | P-2.1 | 新增（已裁定，评审 REV2-03） | docs/13 lead 裁定⑤ P2-A 一次性首次高亮兜底（跳过引导后 accent 圆点 + 「未完成设置」footnote） |
 | P-3.1 | 变更（占位 → 已回填定稿） | v2.9.0 M5 回填：`copyWithAutoClear(_:clearSecs:)` 显式时长版签名 + 恢复码复制迁统一 API（固定 30s）落定，见 §3 G3 |
+| P-2.1 | 变更（待定稿 → 已回填定稿） | v2.9.0 M2 落地 + lead 回填：跳过旗标 UserDefaults 契约（@Published+didSet）+「已完成」live 派生 + FirstRunSetupHighlightRow 呈现落点，见 G2 规范条款 |
 
 ---
 
@@ -437,7 +439,7 @@
 
 - 章节数：**10 个行为缺口章**（G1–G10）+ 组件库存量 / 命名 / 可访问性 / HIG 核对 / 待回填登记 / 变更登记等支撑章。
 - 可定稿条款（D-*）：**46 条**（G1:5 / G2:5 / G3:4 / G4:3 / G5:4 / G6:3 / G7:4 / G8:3 / G9:3 / G10:4 / 命名 3 / 可访问性 5）。
-- 待回填条款（P-*）：**5 条**（P-1.1、P-2.1、P-6.1、P-6.2、P-9.1；P-3.1 已回填，见 §3 G3）。
+- 待回填条款（P-*）：**4 条**（P-1.1、P-6.1、P-6.2、P-9.1；P-3.1 见 §3 G3、P-2.1 见 G2 规范条款，均已回填）。
 - 明确**本轮不立**：视觉 token / 色彩 / 间距 / 圆角 / 阴影 / 字体样式 / 图标规范（§0.3 占位）。
 - 与 ui-ux 对接锚点：§15 表（P-1.1 反馈矩阵、P-6.1 明文自动收回、P-6.2 TOTP 隐藏开关为主要交互规格接口）。
 

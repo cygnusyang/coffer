@@ -233,6 +233,10 @@ final class ClipboardManager {
     /// 语义：clipboardUnchanged 校验通过则清板 + 复位 writtenChangeCount；不触碰
     /// TOTP 序列（pending TOTP 复制与定时清除任务均不取消——到点任务经
     /// schedulePendingClear 闭包内的 written 局部捕获 + changeCount 守卫自然失效）。
+    ///
+    /// REV-DEV-02（接受+文档化）：按写入时 changeCount 清板，若更早的未过期
+    /// 敏感写入仍持有同一 changeCount，会被本调用连带清除——fail-safe 方向
+    /// （早清不泄密），接受不修。
     func clearWrittenIfUnchanged() {
         guard writtenChangeCount != -1 else { return }
         let pasteboard = NSPasteboard.general

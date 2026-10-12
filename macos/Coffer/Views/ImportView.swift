@@ -3,6 +3,11 @@
 // 流程（docs/07 §3）：precheck_csv 只读可反复调用 → UI 展示报告（含警告、
 // 未映射列、公式前缀单元格）→ 用户确认 → import_csv 单事务 all-or-nothing
 // → 结果展示 + 提示删除明文 CSV 源文件。
+//
+// v2.9.0 P3：脚手架收敛到共享壳 ImportWizardShell（docs/14 §A P3）。本视图
+// 只提供 ImportFormatConfig + 私有报告 body + 状态机内容闭包；壳统一头部/
+// 尺寸/选文件/导入中/结果页骨架与预检失败 alert。**事务语义 all-or-nothing
+// 逐字保留**（importingCopy / 单事务行 / 无失败追加文案）。
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -22,6 +27,8 @@ struct ImportView: View {
     }
 
     @State private var step: Step = .pickFile
+    // 预检失败与导入失败共用本 alert（CSV 与其余格式不同：两路都回选文件，
+    // 不经 ffiErrorAlert——保持重构前行为等价）。
     @State private var errorMessage: String?
 
     /// 导入事务执行中（关闭按钮此时禁用，防丢结果页）。
@@ -30,79 +37,68 @@ struct ImportView: View {
         return false
     }
 
+    /// CSV 格式配置（docs/14 §A P3 §3 逐字对照表）。
+    static let importFormatConfig = ImportFormatConfig(
+        title: "导入 CSV（1Password 9 列）",
+        icon: "square.and.arrow.down.on.square",
+        pickTitle: "选择从 1Password 导出的 CSV 文件",
+        pickDescription: "支持 1Password 9 列格式（Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes）",
+        pickButtonLabel: "选择文件…",
+        windowWidth: 520, windowHeight: 460,
+        precheckErrorAlertTitle: "导入失败",
+        transactionSemantics: .allOrNothing,
+        importingCopy: "正在导入（单事务，全部成功或全部回滚）…",
+        failureSuffix: "",
+        doneFooter: "所有行已在单事务内写入（全部成功或全部回滚）。",
+        failureRecovery: .backToPick,
+        canChooseDirectories: false,
+        allowedContentTypes: [.commaSeparatedText, .plainText, .data],
+        panelMessage: "选择 1Password 导出的 CSV 文件（UTF-8）"
+    )
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("导入 CSV（1Password 9 列）").font(.headline)
-                Spacer()
-                // 显式关闭出口（全步骤可见）：macOS sheet 点外部不关闭、
-                // 无按钮时 Esc 无效——必须提供退出（BUG-6 修复）。
-                // 导入执行中禁用（单事务后台进行，中途关 sheet 会丢失
-                // 结果页；事务本身 all-or-nothing，无数据风险）。
-                Button("关闭") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isImporting)
-            }
-            .padding()
-
-            Divider()
-
-            Group {
-                switch step {
-                case .pickFile:
-                    pickFileBody
-                case .report(let report, let path):
-                    reportBody(report, path: path)
-                case .importing:
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("正在导入（单事务，全部成功或全部回滚）…")
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .done(let result, let path):
-                    doneBody(result, path: path)
+        ImportWizardShell(
+            config: Self.importFormatConfig,
+            isImporting: isImporting,
+            onClose: { dismiss() },
+            precheckError: $errorMessage,
+            onPrecheckErrorDismiss: { step = .pickFile }
+        ) {
+            switch step {
+            case .pickFile:
+                ImportScaffold.pickBody(config: Self.importFormatConfig) { pickAndPrecheck() }
+            case .report(let report, let path):
+                reportBody(report, path: path)
+            case .importing:
+                ImportScaffold.importingBody(Self.importFormatConfig.importingCopy)
+            case .done(let result, let path):
+                ImportScaffold.doneSkeleton(
+                    count: result.importedRows,
+                    doneFooter: Self.importFormatConfig.doneFooter,
+                    path: path,
+                    onDone: { dismiss() }
+                ) {
+                    // 特有内容：删源警示（明文密码源文件）
+                    Label("该 CSV 含明文密码，建议导入完成后立即删除源文件。",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.leading)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding()
-        }
-        .frame(width: 520, height: 460)
-        .alert("导入失败", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("好", role: .cancel) { step = .pickFile }
-        } message: {
-            Text(errorMessage ?? "")
         }
     }
 
     // MARK: - 选文件
 
-    private var pickFileBody: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "square.and.arrow.down.on.square")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("选择从 1Password 导出的 CSV 文件")
-                .font(.callout)
-            Text("支持 1Password 9 列格式（Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes）")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("选择文件…") { pickAndPrecheck() }
-                .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     private func pickAndPrecheck() {
+        let config = Self.importFormatConfig
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
+        panel.canChooseDirectories = config.canChooseDirectories
+        panel.canChooseFiles = !config.canChooseDirectories
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.commaSeparatedText, .plainText, .data]
-        panel.message = "选择 1Password 导出的 CSV 文件（UTF-8）"
+        panel.allowedContentTypes = config.allowedContentTypes
+        panel.message = config.panelMessage
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
@@ -131,9 +127,9 @@ struct ImportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 24) {
-                        statLabel("数据行", report.totalRows)
-                        statLabel("可导入", report.validRows)
-                        statLabel("跳过空行", report.skippedRows.count)
+                        ImportScaffold.statLabel("数据行", report.totalRows)
+                        ImportScaffold.statLabel("可导入", report.validRows)
+                        ImportScaffold.statLabel("跳过空行", report.skippedRows.count)
                     }
                     .font(.callout)
 
@@ -176,17 +172,6 @@ struct ImportView: View {
         }
     }
 
-    private func statLabel(_ title: String, _ count: UInt32) -> some View {
-        VStack(spacing: 2) {
-            Text("\(count)").font(.title3.monospacedDigit().bold())
-            Text(title).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    private func statLabel(_ title: String, _ count: Int) -> some View {
-        statLabel(title, UInt32(max(0, count)))
-    }
-
     private func reportLine<Items: Sequence>(_ prefix: String, _ items: Items) -> some View {
         Text(prefix + " " + items.map { "\($0)" }.joined(separator: "、"))
             .font(.caption)
@@ -216,38 +201,6 @@ struct ImportView: View {
                 }
             }
         }
-    }
-
-    // MARK: - 结果
-
-    private func doneBody(_ result: FfiCsvImportResult, path: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 44))
-                .foregroundStyle(.green)
-            Text("导入完成：新建 \(result.importedRows) 条条目")
-                .font(.headline)
-            Text("所有行已在单事务内写入（全部成功或全部回滚）。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Label("该 CSV 含明文密码，建议导入完成后立即删除源文件。", systemImage: "exclamationmark.triangle")
-                .font(.callout)
-                .foregroundStyle(.orange)
-                .multilineTextAlignment(.leading)
-            Text(URL(fileURLWithPath: path).path)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-            Spacer()
-            HStack {
-                Spacer()
-                Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - 辅助

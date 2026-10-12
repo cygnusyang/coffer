@@ -64,6 +64,10 @@ final class AppModel: ObservableObject {
     @Published var showImportPux = false
     /// 导入 Bitwarden JSON sheet（工具栏「导入」菜单，v0.5.0 PK3 FR-10.1）。
     @Published var showImportBitwarden = false
+    /// 导入 OPVault sheet（v2.9.0 P3 IA-06：工具栏「导入」菜单 + 菜单栏「数据」
+    /// 双渠道同源触发。自 MainView 本地 @State 提升到 AppModel @Published，
+    /// 与 showImport/showImportPux/showImportBitwarden 同纪律）。
+    @Published var showImportOpvault = false
     /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
     @Published var showExport = false
     /// 库切换器 sheet（v0.4 FR-1.2，MB-1：MainView 工具栏切换器触发，

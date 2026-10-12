@@ -107,6 +107,11 @@ private struct DataCommands: Commands {
             // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
             Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
                 .disabled(model.phase != .unlocked)
+            // OPVault 导入（v2.9.0 P3 IA-06）：import_opvault 有 1001 门禁
+            // （需解锁态），与其余导入同纪律禁用于锁定态；默认无快捷键
+            // （与 Bitwarden 一致，AC-2.9.0-P3-9b）。
+            Button("导入 1Password (OPVault)…") { model.showImportOpvault = true }
+                .disabled(model.phase != .unlocked)
             Button("导出…") { model.showExport = true }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(model.phase != .unlocked)

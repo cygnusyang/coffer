@@ -18,13 +18,19 @@
 // 与 CSV/1PUX 导入的关键差异（文案必须如实）：
 //   - OPVault 导入是 **all-or-nothing**（任一解密/映射失败 → 2002，零落库），
 //     与 CSV import_csv 同纪律，**非** 1PUX/Bitwarden 的每条目独立事务——
-//     失败错误文案不得声称「部分条目可能已导入」。
+//     失败错误文案不得提示「部分条目已写入」类的部分导入语义（零落库）。
 //   - 预检是**结构层**预检（不触密码），与 CSV/1PUX 的完整预检语义不同，
 //     偏差在本向导内显式标注（TC-OPV-05）。
 //
 // 密码纪律（docs/07 §2.4 主密码同源延伸）：opvault 主密码只作方法参数
 // 传入，@State 仅为输入框暂存，导入发起时捕获即弃清空（LockView 同纪律）；
 // 失败回密码页重输，不在任意步骤间保留。
+//
+// v2.9.0 P3：脚手架收敛到共享壳 ImportWizardShell（docs/14 §A P3）。本视图
+// 提供 ImportFormatConfig + 私有 password/precheck 扩展步 + 报告/结果特有
+// body；all-or-nothing 事务语义逐字保留（importingCopy / 无失败追加文案，
+// 失败回密码页重输）。5-step 状态机（含密码步 + 结构预检步）为格式特有，
+// 不进壳。
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -62,75 +68,66 @@ struct OpvaultImportView: View {
         return false
     }
 
+    /// OPVault 格式配置（docs/14 §A P3 §3 逐字对照表）。
+    static let importFormatConfig = ImportFormatConfig(
+        title: "导入 1Password（OPVault）",
+        icon: "folder",
+        pickTitle: "选择 1Password OPVault 目录",
+        pickDescription: "OPVault 是 1Password 旧版（vault 格式）的目录归档，需输入 1Password 主密码导入。\n导入为 all-or-nothing：密码错或数据损坏不会写入任何条目。",
+        pickButtonLabel: "选择目录…",
+        windowWidth: 560, windowHeight: 540,
+        precheckErrorAlertTitle: "预检失败",
+        transactionSemantics: .allOrNothing,
+        importingCopy: "正在导入（解密 + 逐条目写入，全部成功或全部回滚）…",
+        failureSuffix: "",
+        doneFooter: nil,
+        failureRecovery: .backToPassword,
+        canChooseDirectories: true,
+        allowedContentTypes: [],
+        panelMessage: "选择包含 default/profile.js 的 OPVault 根目录"
+    )
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("导入 1Password（OPVault）").font(.headline)
-                Spacer()
-                // 显式关闭出口（BUG-5 同类修复）：macOS sheet 点外部不关闭、
-                // 无按钮时 Esc 无效。导入执行中禁用（同 1PUX/Bitwarden 纪律）。
-                Button("关闭") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isImporting)
-            }
-            .padding()
-
-            Divider()
-
-            Group {
-                switch step {
-                case .pickDirectory:
-                    pickDirectoryBody
-                case .password(let path):
-                    passwordBody(path: path)
-                case .precheck(let report, let path):
-                    precheckBody(report, path: path)
-                case .importing:
-                    importingBody
-                case .done(let result, let path):
-                    doneBody(result, path: path)
+        ImportWizardShell(
+            config: Self.importFormatConfig,
+            isImporting: isImporting,
+            onClose: { dismiss() },
+            precheckError: $precheckError,
+            onPrecheckErrorDismiss: { step = .pickDirectory }
+        ) {
+            switch step {
+            case .pickDirectory:
+                ImportScaffold.pickBody(config: Self.importFormatConfig) { pickDirectory() }
+            case .password(let path):
+                passwordBody(path: path)
+            case .precheck(let report, let path):
+                precheckBody(report, path: path)
+            case .importing:
+                ImportScaffold.importingBody(Self.importFormatConfig.importingCopy)
+            case .done(let result, let path):
+                ImportScaffold.doneSkeleton(
+                    count: result.importedItems,
+                    doneFooter: Self.importFormatConfig.doneFooter,
+                    path: path,
+                    onDone: { dismiss() }
+                ) {
+                    doneExtra(result)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding()
-        }
-        .frame(width: 560, height: 540)
-        .alert("预检失败", isPresented: Binding(
-            get: { precheckError != nil },
-            set: { if !$0 { precheckError = nil } }
-        )) {
-            Button("好", role: .cancel) { step = .pickDirectory }
-        } message: {
-            Text(precheckError ?? "")
         }
         .ffiErrorAlert($model.lastErrorMessage)
     }
 
     // MARK: - ① 选目录
 
-    private var pickDirectoryBody: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "folder")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("选择 1Password OPVault 目录")
-                .font(.callout)
-            Text("OPVault 是 1Password 旧版（vault 格式）的目录归档，需输入 1Password 主密码导入。\n导入为 all-or-nothing：密码错或数据损坏不会写入任何条目。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("选择目录…") { pickDirectory() }
-                .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     private func pickDirectory() {
+        let config = Self.importFormatConfig
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseDirectories = config.canChooseDirectories
+        panel.canChooseFiles = !config.canChooseDirectories
         panel.allowsMultipleSelection = false
-        panel.message = "选择包含 default/profile.js 的 OPVault 根目录"
+        panel.allowedContentTypes = config.allowedContentTypes
+        panel.message = config.panelMessage
         guard panel.runModal() == .OK, let url = panel.url else { return }
         step = .password(path: url.path)
     }
@@ -140,11 +137,7 @@ struct OpvaultImportView: View {
     private func passwordBody(path: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("输入 1Password 主密码").font(.headline)
-            Text(URL(fileURLWithPath: path).path)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.middle)
+            ImportScaffold.pathLine(path)
             SecureField("1Password 主密码", text: $password, prompt: Text("请输入 OPVault 主密码"))
                 .textFieldStyle(.roundedBorder)
             Text("结构预检不校验密码是否正确（见下一步），密码用于导入时解密条目。")
@@ -199,10 +192,10 @@ struct OpvaultImportView: View {
                         .multilineTextAlignment(.leading)
 
                     HStack(spacing: 24) {
-                        statLabel("Profile", report.profileName)
-                        statLabel("KDF 迭代", "\(report.iterations)")
-                        statLabel("band 文件", "\(report.bandFileCount)")
-                        statLabel("附件", "\(report.attachmentCount)")
+                        ImportScaffold.statLabel("Profile", report.profileName)
+                        ImportScaffold.statLabel("KDF 迭代", "\(report.iterations)")
+                        ImportScaffold.statLabel("band 文件", "\(report.bandFileCount)")
+                        ImportScaffold.statLabel("附件", "\(report.attachmentCount)")
                     }
                     .font(.callout)
 
@@ -240,29 +233,14 @@ struct OpvaultImportView: View {
         }
     }
 
-    private func statLabel(_ title: String, _ value: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.title3.monospacedDigit().bold())
-            Text(title).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
     // MARK: - ④ 导入（all-or-nothing；2002 密码错/数据损坏在导入步呈现）
-
-    private var importingBody: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            // 如实反映 all-or-nothing：任一解密/映射失败 → 2002，零落库
-            Text("正在导入（解密 + 逐条目写入，全部成功或全部回滚）…")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 
     /// OPVault 导入（需解锁态：锁定态 Rust 返回 1001；写路径较慢，
     /// Task.detached 包裹）。密码捕获即弃清空（LockView 同纪律）。
     /// 唯一调用点：结构预检页「开始导入」。
     /// 失败（2002 等）回密码页重输——all-or-nothing，零落库（TC-OPV-03/04），
-    /// 无需「部分条目可能已导入」提示。
+    /// failureSuffix 空（不提示部分导入语义）。恢复方向 = failureRecovery
+    /// .backToPassword（重输密码重试）。
     private func doImport(path: String) {
         let session = model.session
         let vaultDir = model.vaultDirPath
@@ -289,6 +267,7 @@ struct OpvaultImportView: View {
                     // 错误纪律：落 DiagLog + lastErrorMessage → .ffiErrorAlert。
                     // 2002（密码错或数据损坏）/ 1001（锁定）/ 6002/6003（只读
                     // 拒绝，TC-OPV-07）经 ErrorPresenter 直出；回密码页重输重试。
+                    // failureSuffix 空（all-or-nothing 零落库，不追加部分导入）。
                     DiagLog.append(ErrorPresenter.text(error))
                     model.lastErrorMessage = ErrorPresenter.text(error)
                     step = .password(path: path)
@@ -297,77 +276,47 @@ struct OpvaultImportView: View {
         }
     }
 
-    // MARK: - ⑤ 结果页（成功计数 + 未导入清单 + 附件跳过计数）
+    // MARK: - ⑤ 结果特有区（成功计数 + 未导入清单 + 附件跳过计数）
 
-    private func doneBody(_ result: FfiOpvaultImportResult, path: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 44))
-                .foregroundStyle(.green)
-            Text("导入完成：新建 \(result.importedItems) 条条目")
-                .font(.headline)
+    /// 结果页特有区：附件跳过/回收站计数 + 未导入清单（壳骨架之外格式私有，
+    /// 长清单经 ScrollView 滚动，AC-2.9.0-P3-9）。
+    private func doneExtra(_ result: FfiOpvaultImportResult) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                // 附件 out-of-scope（TC-OPV-10）：跳过并计数，不静默
+                if result.report.attachmentCount > 0 {
+                    Text("附件 \(result.report.attachmentCount) 个已跳过（本版不导入）。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                if result.report.trashedItems > 0 {
+                    Text("回收站条目 \(result.report.trashedItems) 条（按归档态导入）。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    // 附件 out-of-scope（TC-OPV-10）：跳过并计数，不静默
-                    if result.report.attachmentCount > 0 {
-                        Text("附件 \(result.report.attachmentCount) 个已跳过（本版不导入）。")
+                // 未导入项逐条列出（TC-OPV-11：Tombstone 等不静默）
+                if !result.report.notImported.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("未导入 \(result.report.notImported.count) 条", systemImage: "xmark.circle")
                             .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    if result.report.trashedItems > 0 {
-                        Text("回收站条目 \(result.report.trashedItems) 条（按归档态导入）。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    // 未导入项逐条列出（TC-OPV-11：Tombstone 等不静默）
-                    if !result.report.notImported.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("未导入 \(result.report.notImported.count) 条", systemImage: "xmark.circle")
-                                .font(.callout)
-                                .foregroundStyle(.orange)
-                            ForEach(result.report.notImported, id: \.uuid) { item in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Text(item.title.isEmpty ? "（无标题）" : item.title)
-                                        .font(.caption)
-                                        .lineLimit(1)
-                                    if !item.title.isEmpty {
-                                        Text(String(item.uuid.suffix(8)))
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    Spacer()
-                                }
-                                Text(item.reason)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-
-                    ForEach(result.report.warnings, id: \.self) { warning in
-                        Label(warning, systemImage: "info.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.orange)
+                        ImportScaffold.failureList(
+                            result.report.notImported,
+                            id: \.uuid, title: \.title, reason: \.reason,
+                            emptyTitleFallback: "（无标题）"
+                        )
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
-            Text(URL(fileURLWithPath: path).path)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-            HStack {
-                Spacer()
-                Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                ForEach(result.report.warnings, id: \.self) { warning in
+                    Label(warning, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - 辅助

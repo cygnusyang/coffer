@@ -17,6 +17,10 @@
 // 导出的 encryptedPrivateKey 恒为 EncString 形态（attach key 不随导出解包），
 // 当前真实导出实际不可导入——本向导**不声称「Bitwarden passkey 导入可用」**，
 // passkey 导入情况一律以预检报告逐行数据为准。
+//
+// v2.9.0 P3：脚手架收敛到共享壳 ImportWizardShell（docs/14 §A P3）。本视图
+// 提供 ImportFormatConfig + 私有报告/结果特有 body；per-item 事务语义逐字
+// 保留（importingCopy / failureSuffix，失败回报告页可重试）。
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -52,76 +56,65 @@ struct BitwardenImportView: View {
         return false
     }
 
+    /// Bitwarden 格式配置（docs/14 §A P3 §3 逐字对照表）。
+    static let importFormatConfig = ImportFormatConfig(
+        title: "导入 Bitwarden（.json）",
+        icon: "doc.text",
+        pickTitle: "选择 Bitwarden 导出的未加密 JSON 文件",
+        pickDescription: "Bitwarden JSON 是官方导出格式，导入为每条目独立事务。\npasskey（fido2Credentials）导入支持受导出字段形态影响，具体以预检报告为准。",
+        pickButtonLabel: "选择文件…",
+        windowWidth: 560, windowHeight: 560,
+        precheckErrorAlertTitle: "预检失败",
+        transactionSemantics: .perItem,
+        importingCopy: "正在导入（每条目独立事务，已完成的条目保留）…",
+        failureSuffix: "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。",
+        doneFooter: nil,
+        failureRecovery: .backToReport,
+        canChooseDirectories: false,
+        allowedContentTypes: [.json, .plainText, .data],
+        panelMessage: "选择 Bitwarden 导出的未加密 JSON 文件"
+    )
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("导入 Bitwarden（.json）").font(.headline)
-                Spacer()
-                // 显式关闭出口（BUG-5 同类修复）：macOS sheet 点外部不关闭、
-                // 无按钮时 Esc 无效。导入执行中禁用——非 all-or-nothing，
-                // 中途关 sheet 丢结果页，用户无从判断已导入多少。
-                Button("关闭") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isImporting)
-            }
-            .padding()
-
-            Divider()
-
-            Group {
-                switch step {
-                case .pickFile:
-                    pickFileBody
-                case .report(let report, let path):
-                    reportBody(report, path: path)
-                case .importing:
-                    importingBody
-                case .done(let result, let path):
-                    doneBody(result, path: path)
+        ImportWizardShell(
+            config: Self.importFormatConfig,
+            isImporting: isImporting,
+            onClose: { dismiss() },
+            precheckError: $precheckError,
+            onPrecheckErrorDismiss: { step = .pickFile }
+        ) {
+            switch step {
+            case .pickFile:
+                ImportScaffold.pickBody(config: Self.importFormatConfig) { pickAndPrecheck() }
+            case .report(let report, let path):
+                reportBody(report, path: path)
+            case .importing:
+                ImportScaffold.importingBody(Self.importFormatConfig.importingCopy)
+            case .done(let result, let path):
+                ImportScaffold.doneSkeleton(
+                    count: result.importedItems,
+                    doneFooter: Self.importFormatConfig.doneFooter,
+                    path: path,
+                    onDone: { dismiss() }
+                ) {
+                    doneExtra(result)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding()
-        }
-        .frame(width: 560, height: 560)
-        .alert("预检失败", isPresented: Binding(
-            get: { precheckError != nil },
-            set: { if !$0 { precheckError = nil } }
-        )) {
-            Button("好", role: .cancel) { step = .pickFile }
-        } message: {
-            Text(precheckError ?? "")
         }
         .ffiErrorAlert($model.lastErrorMessage)
     }
 
     // MARK: - 选文件
 
-    private var pickFileBody: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("选择 Bitwarden 导出的未加密 JSON 文件")
-                .font(.callout)
-            Text("Bitwarden JSON 是官方导出格式，导入为每条目独立事务。\npasskey（fido2Credentials）导入支持受导出字段形态影响，具体以预检报告为准。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("选择文件…") { pickAndPrecheck() }
-                .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     private func pickAndPrecheck() {
+        let config = Self.importFormatConfig
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
+        panel.canChooseDirectories = config.canChooseDirectories
+        panel.canChooseFiles = !config.canChooseDirectories
         panel.allowsMultipleSelection = false
         // Bitwarden 导出为 JSON 文本：接受 json，兜底 .plainText/.data
-        panel.allowedContentTypes = [.json, .plainText, .data]
-        panel.message = "选择 Bitwarden 导出的未加密 JSON 文件"
+        panel.allowedContentTypes = config.allowedContentTypes
+        panel.message = config.panelMessage
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
@@ -152,10 +145,10 @@ struct BitwardenImportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 24) {
-                        statLabel("总条目", report.totalItems)
-                        statLabel("可导入", report.importableItems)
-                        statLabel("Passkey 总数", report.passkeyTotal)
-                        statLabel("可导入 Passkey", report.passkeyImportable)
+                        ImportScaffold.statLabel("总条目", report.totalItems)
+                        ImportScaffold.statLabel("可导入", report.importableItems)
+                        ImportScaffold.statLabel("Passkey 总数", report.passkeyTotal)
+                        ImportScaffold.statLabel("可导入 Passkey", report.passkeyImportable)
                     }
                     .font(.callout)
 
@@ -218,16 +211,10 @@ struct BitwardenImportView: View {
         }
     }
 
-    private func statLabel(_ title: String, _ count: UInt32) -> some View {
-        VStack(spacing: 2) {
-            Text("\(count)").font(.title3.monospacedDigit().bold())
-            Text(title).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
     /// 失败 passkey 行清单（TCB-7 不静默丢弃）：item_title + index +
     /// 结构化 kind + reason + item_id 全量直出，程序判定以 kind 为唯一依据
-    /// （L-2，reason 仅供人类阅读）。
+    /// （L-2，reason 仅供人类阅读）。形态与 1PUX/OPVault 未导入清单不同，
+    /// 保持格式私有（不进共享 failureList）。
     private func failureSection(
         _ title: String,
         failures: [FfiBwPasskeyFailure],
@@ -276,18 +263,10 @@ struct BitwardenImportView: View {
 
     // MARK: - 导入
 
-    private var importingBody: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            // 如实反映非 all-or-nothing：每条目独立事务，已完成的条目保留
-            Text("正在导入（每条目独立事务，已完成的条目保留）…")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     /// 导入（需解锁态：锁定态 Rust 返回 1001；写路径较慢，Task.detached
     /// 包裹）。失败后回 report 页可重试——但部分导入已发生，错误文案必须
-    /// 提示重试将重复新建（内核语义，如实呈现）。
+    /// 提示重试将重复新建（内核语义，如实呈现）。恢复方向 = failureRecovery
+    /// .backToReport（保留 lastReport，可重试）。
     private func doImport(path: String) {
         step = .importing
         let session = model.session
@@ -314,10 +293,11 @@ struct BitwardenImportView: View {
                 await MainActor.run {
                     // 错误纪律：落 DiagLog（与 AppModel / 审计日志同纪律）+
                     // lastErrorMessage → .ffiErrorAlert。附加部分导入提示：
-                    // 每条目独立事务，中途失败已导入条目保留，重试会重复新建。
+                    // 每条目独立事务，中途失败已导入条目保留，重试会重复新建
+                    // （failureSuffix 逐字，per-item 必有——AC-2.9.0-P3T-5）。
                     DiagLog.append(ErrorPresenter.text(error))
                     model.lastErrorMessage = ErrorPresenter.text(error)
-                        + "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。"
+                        + Self.importFormatConfig.failureSuffix
                     if let lastReport, let lastPath {
                         step = .report(lastReport, path: lastPath)
                     } else {
@@ -328,16 +308,11 @@ struct BitwardenImportView: View {
         }
     }
 
-    // MARK: - 结果
+    // MARK: - 结果特有区
 
-    private func doneBody(_ result: FfiBwImportResult, path: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 44))
-                .foregroundStyle(.green)
-            Text("导入完成：新建 \(result.importedItems) 条条目")
-                .font(.headline)
-
+    /// 结果页特有区：passkey 计数（壳骨架之外格式私有）。
+    private func doneExtra(_ result: FfiBwImportResult) -> some View {
+        VStack(spacing: 8) {
             // passkey 计数直出本次导入报告（result.report 与导入同管线产出，
             // FR-7.4 所见即所得）；真实导出 encryptedPrivateKey 多为 EncString
             // → passkeyImportable 恒 0，此处自然隐藏，不构成可用性声明。
@@ -353,21 +328,7 @@ struct BitwardenImportView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
             }
-
-            Text(URL(fileURLWithPath: path).path)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-            Spacer()
-            HStack {
-                Spacer()
-                Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - 辅助

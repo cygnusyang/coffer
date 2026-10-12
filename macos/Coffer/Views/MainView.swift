@@ -14,10 +14,6 @@ struct MainView: View {
     // "settings") 触发（见 CofferApp 的 Window scene），本视图与菜单共用。
     @Environment(\.openWindow)
     private var openWindow
-    // OPVault 导入（v0.7.0-T06）：AppModel 由 T08 并行占用（文件互斥纪律，
-    // docs/22 §2.5.1），不加 @Published——本入口仅工具栏「导入」菜单可达
-    // （菜单栏 ⌘ 快捷键入口留 T11 收尾合并，lead 已知晓）。
-    @State private var showImportOpvault = false
 
     var body: some View {
         NavigationSplitView {
@@ -169,7 +165,7 @@ struct MainView: View {
                     Button("CSV…") { model.showImport = true }
                     Button("1Password (.1pux)…") { model.showImportPux = true }
                     Button("Bitwarden (.json)…") { model.showImportBitwarden = true }
-                    Button("1Password (OPVault)…") { showImportOpvault = true }
+                    Button("1Password (OPVault)…") { model.showImportOpvault = true }
                 } label: {
                     Label("导入", systemImage: "square.and.arrow.down")
                 }
@@ -199,7 +195,7 @@ struct MainView: View {
             BitwardenImportView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showImportOpvault) {
+        .sheet(isPresented: $model.showImportOpvault) {
             OpvaultImportView()
                 .environmentObject(model)
         }

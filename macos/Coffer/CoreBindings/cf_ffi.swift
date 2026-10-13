@@ -662,6 +662,26 @@ public protocol CofferAppProtocol: AnyObject, Sendable {
     func createVault(baseDir: String, name: String, password: String) throws  -> FfiVaultBrief
     
     /**
+     * 删除一个库（v2.10.0，docs/17 §2.1 C5）：许可门禁 → uuid 校验 →
+     * 会话注册表 lock+forget → 委托 cf-session 物理删除
+     * （rename-then-delete）。
+     *
+     * 注册表 forget 并入本方法（docs/17 §2.3 裁定：不新增独立
+     * `forget_session` FFI）：`VaultSession` 是 CofferApp 自有状态，
+     * 删除天然有权限移除。
+     *
+     * # 错误
+     *
+     * - 只读许可拒绝 → 6002 / 6003（`LicensedOp::VaultWrite`，与
+     * [`Self::create_vault`] 同门禁同组）；
+     * - `vault_uuid` 非法（路径拼接逃逸）→ 5002（镜像 [`Self::open_vault`]）；
+     * - 目录不存在 → `Ok(())`（幂等，第二次删同库不报错）；
+     * - 文件族删除 I/O 失败 / 部分删除 → 5001（可重试，tombstone 残留
+     * 无害）。
+     */
+    func deleteVault(baseDir: String, vaultUuid: String) throws 
+    
+    /**
      * 导出加密备份（FR-8.1，docs/09 §3.1）：工作目录打包为 `.coffer`
      * （ZIP 交换形态），成功后自动执行结构校验并给源库
      * `meta.last_backup_at` 打点（FR-8.5）。
@@ -836,6 +856,34 @@ open func createVault(baseDir: String, name: String, password: String)throws  ->
         FfiConverterString.lower(password),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * 删除一个库（v2.10.0，docs/17 §2.1 C5）：许可门禁 → uuid 校验 →
+     * 会话注册表 lock+forget → 委托 cf-session 物理删除
+     * （rename-then-delete）。
+     *
+     * 注册表 forget 并入本方法（docs/17 §2.3 裁定：不新增独立
+     * `forget_session` FFI）：`VaultSession` 是 CofferApp 自有状态，
+     * 删除天然有权限移除。
+     *
+     * # 错误
+     *
+     * - 只读许可拒绝 → 6002 / 6003（`LicensedOp::VaultWrite`，与
+     * [`Self::create_vault`] 同门禁同组）；
+     * - `vault_uuid` 非法（路径拼接逃逸）→ 5002（镜像 [`Self::open_vault`]）；
+     * - 目录不存在 → `Ok(())`（幂等，第二次删同库不报错）；
+     * - 文件族删除 I/O 失败 / 部分删除 → 5001（可重试，tombstone 残留
+     * 无害）。
+     */
+open func deleteVault(baseDir: String, vaultUuid: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_cofferapp_delete_vault(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(baseDir),
+        FfiConverterString.lower(vaultUuid),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -10126,6 +10174,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_cofferapp_create_vault() != 44549) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_cofferapp_delete_vault() != 54187) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_cofferapp_export_backup() != 7932) {

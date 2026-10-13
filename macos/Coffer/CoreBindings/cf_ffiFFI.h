@@ -264,6 +264,11 @@ uint64_t uniffi_cf_ffi_fn_constructor_cofferapp_new(RustCallStatus *_Nonnull out
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_create_vault(uint64_t ptr, RustBuffer base_dir, RustBuffer name, RustBuffer password, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_DELETE_VAULT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_DELETE_VAULT
+void uniffi_cf_ffi_fn_method_cofferapp_delete_vault(uint64_t ptr, RustBuffer base_dir, RustBuffer vault_uuid, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_EXPORT_BACKUP
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_FN_METHOD_COFFERAPP_EXPORT_BACKUP
 RustBuffer uniffi_cf_ffi_fn_method_cofferapp_export_backup(uint64_t ptr, RustBuffer vault_dir, RustBuffer out_path, RustCallStatus *_Nonnull out_status
@@ -947,6 +952,12 @@ uint16_t uniffi_cf_ffi_checksum_func_validate_clipboard_clear_secs(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_CREATE_VAULT
 #define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_CREATE_VAULT
 uint16_t uniffi_cf_ffi_checksum_method_cofferapp_create_vault(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_DELETE_VAULT
+#define UNIFFI_FFIDEF_UNIFFI_CF_FFI_CHECKSUM_METHOD_COFFERAPP_DELETE_VAULT
+uint16_t uniffi_cf_ffi_checksum_method_cofferapp_delete_vault(void
     
 );
 #endif

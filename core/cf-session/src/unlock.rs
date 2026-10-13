@@ -119,10 +119,23 @@ pub fn create_vault_with_kdf(
     password: &str,
     kdf: KdfParams,
 ) -> SessionResult<VaultBrief> {
+    // 建库写侧名校验（v2.10.0，docs/17 §6.2 F4 / AC-2.10.0-NM-1）：
+    // 只拦新建；读侧（open_container / open_vault）严禁加 display_name 校验，
+    // 既有含首尾空格 / 超长库名必须照常打开（兼容红线，docs/17 §6.2 ①）。
     if name.trim().is_empty() {
         return Err(CfError::InvalidArgument(
             "vault name must not be empty".into(),
         ));
+    }
+    if name != name.trim() {
+        return Err(CfError::InvalidArgument(
+            "vault name must not have leading or trailing whitespace".into(),
+        ));
+    }
+    if name.len() > MAX_VAULT_NAME_LEN {
+        return Err(CfError::InvalidArgument(format!(
+            "vault name must not exceed {MAX_VAULT_NAME_LEN} bytes"
+        )));
     }
     kdf.validate()
         .map_err(|_| CfError::InvalidArgument("kdf params out of range".into()))?;
@@ -454,5 +467,365 @@ fn cleanup_orphans_best_effort(vault_dir: &Path) {
     }
     if let Ok(conn) = Connection::open(&db_path) {
         let _ = cf_store::AttachmentRepo::cleanup_orphans(vault_dir, &conn);
+    }
+}
+
+/// 库显示名长度上限（字节，v2.10.0 建库写侧校验，docs/04-测试与验收/17 §7
+/// AC-2.10.0-NM-1）。只拦**新建**；既有超长库名读侧照常打开（兼容红线，
+/// 见 [`create_vault_with_kdf`] 文档）。
+const MAX_VAULT_NAME_LEN: usize = 128;
+
+/// 物理删除一个库（v2.10.0，docs/17 §2.1 C5）：rename-then-delete，重试收敛。
+///
+/// 执行序列：
+/// 0. 清扫历史 tombstone（`<base_dir>/.coffer-deleted-<uuid>-*`）：重试收敛
+///    （docs/17 §6.3）——「①成功而②/③失败」的残留在下一次删除时先被重跑
+///    ②去 header + ③物理删除；无匹配 / base_dir 不存在 → 幂等 no-op；
+/// 1. `vault_uuid` 必须是合法 UUID 文本（防路径拼接逃逸，镜像 [`open_vault`]）
+///    ——非法 → [`CfError::InvalidArgument`]（5002）；
+/// 2. 目标目录 `<base_dir>/<uuid>/` 不存在 → `Ok(())`（幂等：对齐
+///    [`crate::unlock`] 对缺失/损坏目录的韧性，删一半重试语义友好）；
+/// 3. `fs::rename` 到 tombstone（`<base_dir>/.coffer-deleted-<uuid>-<epoch>`）：
+///    rename 成功即库从规范位置消失；
+/// 4. 移除 tombstone 内的 `header.json`：使残留 tombstone 对 list_vaults
+///    **不可见**（docs/17 §2.1 机制「tombstone 目录无 header.json →
+///    open_container 失败 → 被 list_vaults 天然跳过」——rename 整个库目录
+///    会把 header.json 一并带进 tombstone，须显式移除才能达成该机制）；
+///    孤儿目录本无 `header.json` → NotFound 按幂等 no-op（见 [`delete_vault`]
+///    文档「孤儿库」语义）；
+/// 5. 物理 `fs::remove_dir_all(tombstone)` 收尾。
+///
+/// # 错误
+///
+/// - uuid 非法 → [`CfError::InvalidArgument`]（5002）；
+/// - 文件族删除 I/O 失败（部分删除，如步骤 4/5 之一失败）→
+///   [`CfError::Io`]（5001，可重试；重试先清扫历史 tombstone 收敛）：
+///   - 步骤 4 成功而 5 失败的残留已无 header.json → 不被 list_vaults 枚举；
+///   - 步骤 4 失败（header 仍在，如 tombstone 只读）→ 残留被枚举（幽灵），
+///     恢复权限后重试即收敛（HIGH-1）；启动期清扫归 backlog（docs/16 §6.2）。
+///
+/// 不做 header 解析：按 uuid 路径直删，不读 header——不产生 1005 路径，
+/// 与「孤儿库 / 忘密库无密码即可删」语义一致（docs/17 §2.1）。
+pub fn delete_vault(base_dir: &Path, vault_uuid: &str) -> SessionResult<()> {
+    let uuid = uuid::Uuid::parse_str(vault_uuid).map_err(|_| {
+        CfError::InvalidArgument("vault_uuid is not a valid uuid".into())
+    })?;
+    // 步骤 0：先清扫历史 tombstone，使「①成功而②/③失败」的残留在下一次
+    // 删除时按契约收敛（HIGH-1，docs/17 §6.3 重试收敛）。
+    cleanup_tombstones(base_dir, &uuid)?;
+    let vault_dir = base_dir.join(uuid.to_string());
+    if !vault_dir.exists() {
+        return Ok(());
+    }
+    let tombstone = base_dir.join(format!(
+        ".coffer-deleted-{uuid}-{}",
+        crate::unix_now()?
+    ));
+    std::fs::rename(&vault_dir, &tombstone).map_err(|e| CfError::Io(e.to_string()))?;
+    // 去 header.json（见函数文档步骤 4）：使物理删除失败时残留的 tombstone
+    // 也不被 list_vaults 枚举；孤儿库本无 header.json → remove_file 报
+    // NotFound 按幂等 no-op（与「目录不存在 → Ok」一致，docs/17 §2.1）。
+    remove_tombstone_header(&tombstone)?;
+    std::fs::remove_dir_all(&tombstone).map_err(|e| CfError::Io(e.to_string()))?;
+    Ok(())
+}
+
+/// 清扫指定 uuid 的历史 tombstone（delete_vault 步骤 0）：对
+/// `<base_dir>/.coffer-deleted-<uuid>-*` 每个重跑「②去 header + ③
+/// remove_dir_all」，使「①成功而②/③失败」的部分删除残留按契约收敛
+/// （docs/17 §6.3 重试收敛）。base_dir 不存在 / 无匹配 tombstone → 幂等
+/// no-op。
+fn cleanup_tombstones(base_dir: &Path, uuid: &uuid::Uuid) -> SessionResult<()> {
+    let prefix = format!(".coffer-deleted-{uuid}-");
+    let entries = match std::fs::read_dir(base_dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(CfError::Io(e.to_string())),
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with(&prefix) {
+            continue;
+        }
+        remove_tombstone_header(&entry.path())?;
+        std::fs::remove_dir_all(entry.path()).map_err(|e| CfError::Io(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// 步骤 ② 原子操作：移除 tombstone 内 `header.json`，使残留 tombstone 对
+/// list_vaults 不可见。NotFound（孤儿库无 header）按幂等 no-op，其余 I/O
+/// 错误报 Io（可重试）。delete_vault 新 tombstone 与 cleanup_tombstones
+/// 历史 tombstone 共用本步骤。
+fn remove_tombstone_header(tombstone: &Path) -> SessionResult<()> {
+    match std::fs::remove_file(tombstone.join("header.json")) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(CfError::Io(e.to_string())),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests_support::temp_dir;
+
+    /// 测试用快速 KDF 档位（8 MiB / t=1 / p=1，约几十毫秒）。
+    fn fast_kdf() -> KdfParams {
+        KdfParams::new(8 * 1024, 1, 1).unwrap()
+    }
+
+    /// 强密码（zxcvbn score ≥ 3，可过建库门禁）。
+    const STRONG_PASSWORD: &str = "correct-horse-battery-staple-42!";
+
+    /// 建一个测试库（返回 brief，uuid 即目录名）。
+    fn setup_vault(base: &Path, name: &str) -> cf_domain::vault::Vault {
+        create_vault_with_kdf(base, name, STRONG_PASSWORD, fast_kdf()).unwrap()
+    }
+
+    // ------------------------------------------------------ delete_vault
+
+    /// delete_vault：删除后 `<base>/<uuid>` 目录消失（文件族物理删除）。
+    #[test]
+    fn delete_vault删除后目录消失() {
+        let base = temp_dir("del_gone");
+        let brief = setup_vault(&base, "删除库");
+        let vault_dir = base.join(brief.uuid.to_string());
+        assert!(vault_dir.is_dir(), "建库后目录应存在");
+
+        delete_vault(&base, &brief.uuid.to_string()).unwrap();
+
+        assert!(!vault_dir.exists(), "删除后库目录应消失");
+        // 无 tombstone 残留（成功路径物理收尾干净）
+        let leftovers: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert!(leftovers.is_empty(), "成功删除不应残留 tombstone");
+    }
+
+    /// delete_vault：目录不存在 → Ok（幂等，第二次删同库不报错）。
+    #[test]
+    fn delete_vault不存在目录_幂等成功() {
+        let base = temp_dir("del_idem");
+        let uuid = uuid::Uuid::now_v7();
+        delete_vault(&base, &uuid.to_string()).unwrap();
+        // 幂等删除无副作用：不创建库目录、不残留 tombstone
+        assert!(!base.join(uuid.to_string()).exists());
+        let leftovers: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert!(leftovers.is_empty(), "不存在目录的删除不得残留 tombstone");
+    }
+
+    /// delete_vault：孤儿目录（无 header.json）照常可删——步骤② remove_file
+    /// NotFound 按幂等 no-op（docs/17 §2.1：孤儿库/忘密库无密码即可删语义，
+    /// 与「目录不存在 → Ok」幂等一致）。
+    #[test]
+    fn delete_vault孤儿目录无header_可删() {
+        let base = temp_dir("del_orphan");
+        let uuid = uuid::Uuid::now_v7();
+        let vault_dir = base.join(uuid.to_string());
+        std::fs::create_dir_all(&vault_dir).unwrap();
+
+        delete_vault(&base, &uuid.to_string()).unwrap();
+        assert!(!vault_dir.exists(), "孤儿目录删除后应消失");
+        let leftovers: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert!(leftovers.is_empty(), "孤儿目录成功删除不应残留 tombstone");
+    }
+
+    /// delete_vault：非法 uuid → 5002（防路径拼接逃逸，镜像 open_vault）。
+    #[test]
+    fn delete_vault非法uuid_返回5002() {
+        let base = temp_dir("del_bad");
+        for bad in ["../escape", "not-a-uuid", "../vaults/../../etc/passwd"] {
+            let err = delete_vault(&base, bad).unwrap_err();
+            assert_eq!(err.code(), 5002, "应拒 {bad:?}");
+            assert!(matches!(err, CfError::InvalidArgument(_)));
+        }
+    }
+
+    /// delete_vault：rename 成功但 remove_dir_all 失败（只读子目录注入）→
+    /// 库从规范位置消失、tombstone 残留且**不被枚举**（已去 header.json →
+    /// open_container 失败 → list_vaults 跳过，docs/17 §2.4 测试 4）。
+    #[test]
+    fn delete_vault重命名后立即对枚举不可见() {
+        let base = temp_dir("del_tomb");
+        let brief = setup_vault(&base, "墓碑库");
+        let uuid = brief.uuid.to_string();
+        let vault_dir = base.join(&uuid);
+
+        // 注入只读子目录（内含一个文件）：rename 不受影响；remove_dir_all
+        // 删子目录内的文件需该目录 +w，故失败（Unix 目录权限语义）
+        let ro_dir = vault_dir.join("attachments");
+        std::fs::create_dir_all(&ro_dir).unwrap();
+        std::fs::write(ro_dir.join("blob.dat"), b"x").unwrap();
+        let mut perms = std::fs::metadata(&ro_dir).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&ro_dir, perms).unwrap();
+
+        let err = delete_vault(&base, &uuid).unwrap_err();
+        assert!(matches!(err, CfError::Io(_)), "remove_dir_all 应失败：{err}");
+        assert_eq!(err.code(), 5001);
+
+        // 库从规范位置消失（rename 生效）
+        assert!(!vault_dir.exists(), "删除失败后库目录也不应存在于规范位置");
+
+        // tombstone 残留
+        let tombstones: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert_eq!(tombstones.len(), 1, "应残留一个 tombstone");
+
+        // tombstone 不被枚举：无 header.json → open_container 失败（机制
+        // 与 list_vaults 跳过一致）；同时 list_vaults 侧另有 FFI 级断言
+        let tombstone_dir = tombstones[0].path();
+        assert!(!tombstone_dir.join("header.json").exists(), "tombstone 不应含 header.json");
+        assert!(
+            cf_format::open_container(&tombstone_dir).is_err(),
+            "无 header.json 的 tombstone 不应被 open_container 识别为库"
+        );
+
+        // 还原写权限（仅属主 rwx，不放开其他），让临时目录可被测试框架回收
+        let ro_dir_now = tombstone_dir.join("attachments");
+        let mut perms = std::fs::metadata(&ro_dir_now).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o700);
+        std::fs::set_permissions(&ro_dir_now, perms).unwrap();
+    }
+
+    /// delete_vault 重试收敛（HIGH-1，docs/17 §6.3 冻结契约）：库根只读 →
+    /// rename 成功（只须 base_dir 父目录可写）、remove_file(header.json) 失败
+    /// → 首调 5001，tombstone 残留且**仍含 header**（幽灵可枚举）；恢复权限
+    /// 重试 → 先清扫历史 tombstone（重跑 ②③）→ Ok 且无残留、不再被枚举。
+    #[test]
+    fn delete_vault重试收敛_首调失败后重试成功() {
+        let base = temp_dir("del_retry");
+        let brief = setup_vault(&base, "重试库");
+        let uuid = brief.uuid.to_string();
+        let vault_dir = base.join(&uuid);
+
+        // 库根只读：rename 可过（父目录可写），remove_file(header) 因
+        // tombstone 继承库根只读权限而失败 → 首调 5001
+        let mut perms = std::fs::metadata(&vault_dir).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&vault_dir, perms.clone()).unwrap();
+
+        let err = delete_vault(&base, &uuid).unwrap_err();
+        assert_eq!(err.code(), 5001, "库根只读应使 remove_file 失败");
+
+        // 规范路径已消失、tombstone 残留且仍含 header.json（幽灵，会被
+        // list_vaults 枚举——这正是必须重试收敛的原因）
+        assert!(!vault_dir.exists(), "rename 后规范路径应消失");
+        let tombstones: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert_eq!(tombstones.len(), 1, "应残留一个含 header 的 tombstone");
+        assert!(
+            tombstones[0].path().join("header.json").exists(),
+            "②失败路径下 header.json 应仍在 tombstone 中"
+        );
+
+        // 恢复库根写权限后重试 → 清扫历史 tombstone 收敛，Ok 且无残留
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o700);
+        std::fs::set_permissions(tombstones[0].path(), perms).unwrap();
+        delete_vault(&base, &uuid).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert!(leftovers.is_empty(), "重试后应无 tombstone 残留");
+    }
+
+    // ------------------------------------------- 建库名校验（G-D，NM-1）
+
+    /// create_vault 拒首尾空白库名（docs/17 §6.2 F4，AC-2.10.0-NM-1）。
+    #[test]
+    fn create_vault拒绝首尾空白库名() {
+        let base = temp_dir("nm_ws");
+        for name in ["  我的密码库", "我的密码库  ", "  我的密码库  "] {
+            let err = create_vault_with_kdf(&base, name, STRONG_PASSWORD, fast_kdf())
+                .unwrap_err();
+            assert_eq!(err.code(), 5002, "应拒 {name:?}");
+            assert!(matches!(err, CfError::InvalidArgument(_)));
+        }
+    }
+
+    /// create_vault 拒全空白库名（既有空名校验不变，NM-1 全空白用例）。
+    #[test]
+    fn create_vault拒绝全空白库名() {
+        let base = temp_dir("nm_blank");
+        let err =
+            create_vault_with_kdf(&base, "   ", STRONG_PASSWORD, fast_kdf()).unwrap_err();
+        assert_eq!(err.code(), 5002);
+        assert!(matches!(err, CfError::InvalidArgument(_)));
+    }
+
+    /// create_vault 拒超长库名（> 128 字节，NM-1 超长用例）。
+    #[test]
+    fn create_vault拒绝超长库名() {
+        let base = temp_dir("nm_long");
+        let too_long = "a".repeat(MAX_VAULT_NAME_LEN + 1);
+        let err = create_vault_with_kdf(&base, &too_long, STRONG_PASSWORD, fast_kdf())
+            .unwrap_err();
+        assert_eq!(err.code(), 5002);
+        assert!(matches!(err, CfError::InvalidArgument(_)));
+    }
+
+    /// create_vault 边界 128 合法（NM-1 边界用例：len == 上限放行）。
+    #[test]
+    fn create_vault边界128合法() {
+        let base = temp_dir("nm_128");
+        let ok = "a".repeat(MAX_VAULT_NAME_LEN);
+        let brief = create_vault_with_kdf(&base, &ok, STRONG_PASSWORD, fast_kdf()).unwrap();
+        assert_eq!(brief.display_name, ok);
+    }
+
+    /// create_vault 多字节库名字节口径（MEDIUM-1 裁定：128 = UTF-8 字节数，
+    /// 实现用 `name.len()` 即字节，维持不动；本测试锁语义）：
+    /// 43 个 CJK 字符 = 129B > 128 → 拒；42 个 CJK 字符 = 126B ≤ 128 → 过。
+    #[test]
+    fn create_vault中文字节口径_128() {
+        let base = temp_dir("nm_cjk");
+        // "密" 是 3 字节 UTF-8：43 * 3 = 129B > 128
+        let err = create_vault_with_kdf(&base, &"密".repeat(43), STRONG_PASSWORD, fast_kdf())
+            .unwrap_err();
+        assert_eq!(err.code(), 5002);
+        assert!(matches!(err, CfError::InvalidArgument(_)));
+        // 42 * 3 = 126B ≤ 128
+        let ok = "密".repeat(42);
+        let brief = create_vault_with_kdf(&base, &ok, STRONG_PASSWORD, fast_kdf()).unwrap();
+        assert_eq!(brief.display_name, ok);
+    }
+
+    /// 读侧回归（NM-2 兼容红线）：既有含首尾空白库名**照常打开**——
+    /// 建库写侧校验不得引入读侧 display_name 校验（docs/17 §6.2 ①）。
+    /// 构造方式：建正常库后直接把 header.json 的 display_name 改成含空白，
+    /// 模拟历史上已存在的此类库。
+    #[test]
+    fn 既有首尾空白库名可打开_不受新校验影响() {
+        let base = temp_dir("nm_legacy_space");
+        let brief = setup_vault(&base, "正常名");
+        let vault_dir = base.join(brief.uuid.to_string());
+        let header_path = vault_dir.join("header.json");
+        let mut root: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&header_path).unwrap()).unwrap();
+        root["display_name"] = serde_json::Value::String("  我的密码库  ".to_owned());
+        std::fs::write(&header_path, serde_json::to_vec_pretty(&root).unwrap()).unwrap();
+
+        let session = open_vault(&vault_dir).unwrap();
+        assert_eq!(session.display_name(), "  我的密码库  ");
     }
 }

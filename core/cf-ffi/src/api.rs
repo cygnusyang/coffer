@@ -157,6 +157,42 @@ impl CofferApp {
         }
     }
 
+    /// 删除一个库（v2.10.0，docs/17 §2.1 C5）：许可门禁 → uuid 校验 →
+    /// 会话注册表 lock+forget → 委托 cf-session 物理删除
+    /// （rename-then-delete）。
+    ///
+    /// 注册表 forget 并入本方法（docs/17 §2.3 裁定：不新增独立
+    /// `forget_session` FFI）：`VaultSession` 是 CofferApp 自有状态，
+    /// 删除天然有权限移除。
+    ///
+    /// # 错误
+    ///
+    /// - 只读许可拒绝 → 6002 / 6003（`LicensedOp::VaultWrite`，与
+    ///   [`Self::create_vault`] 同门禁同组）；
+    /// - `vault_uuid` 非法（路径拼接逃逸）→ 5002（镜像 [`Self::open_vault`]）；
+    /// - 目录不存在 → `Ok(())`（幂等，第二次删同库不报错）；
+    /// - 文件族删除 I/O 失败 / 部分删除 → 5001（可重试，tombstone 残留
+    ///   无害）。
+    pub fn delete_vault(&self, base_dir: String, vault_uuid: String) -> Result<(), FfiError> {
+        self.license_check(LicensedOp::VaultWrite)?;
+        let uuid = uuid::Uuid::parse_str(&vault_uuid).map_err(|_| {
+            FfiError::from(CfError::InvalidArgument(
+                "vault_uuid is not a valid uuid".into(),
+            ))
+        })?;
+        let key = uuid.to_string();
+
+        // C5 防御性锁定 + forget：命中注册表先 lock（幂等），再 drop——
+        // 防止 Swift 侧漏锁导致「在打开连接上删库」致 WAL/SHM 半删
+        // （与 lock_all 同型调用先例）。
+        if let Some(session) = self.sessions_lock().remove(&key) {
+            session.inner.lock();
+        }
+        session_call(AssertUnwindSafe(|| {
+            cf_session::delete_vault(Path::new(&base_dir), &key)
+        }))
+    }
+
     /// 密码强度评估（zxcvbn 0–4 + 改进建议；纯计算，无会话依赖）。
     ///
     /// 建库前尚无会话（v0.1 已知限制），建库界面的强度条由本工厂方法
@@ -1230,6 +1266,159 @@ mod tests {
             Ok(_) => panic!("非法 uuid 应被拒绝"),
         };
         assert_eq!(err.code(), 5002);
+    }
+
+    // ------------------------------------------------- delete_vault（v2.10.0）
+
+    /// delete_vault FFI 全链路：建库 → 打开 → 删除 → list_vaults 空 →
+    /// open_vault 1003（注册表 forget 的直接可观测证据）。
+    #[test]
+    fn delete_vault全链路_建库开库删库() {
+        let base = temp_base("del_ffi");
+        let brief = setup_vault(&base, "全链路库");
+        let base_str = base.to_string_lossy().into_owned();
+        let app = app();
+        let session = app
+            .open_vault(base_str.clone(), brief.uuid.to_string())
+            .unwrap();
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+
+        app.delete_vault(base_str.clone(), brief.uuid.to_string())
+            .unwrap();
+
+        // 文件已删 + 注册表已 forget → list 空
+        let briefs = app.list_vaults(base_str.clone()).unwrap();
+        assert!(briefs.is_empty(), "删除后 list_vaults 应为空");
+        // open_vault → 1003（目录已删；若注册表未 forget，此调用将尝试
+        // 重建会话并同样因目录缺失失败，故 1003 是删除生效的确定证据）
+        let outcome = app.open_vault(base_str, brief.uuid.to_string());
+        let err = match outcome {
+            Err(e) => e,
+            Ok(_) => panic!("删除后 open_vault 应返回 1003"),
+        };
+        assert_eq!(err.code(), 1003);
+    }
+
+    /// delete_vault 先锁会话再删（C5 防御性锁定）：对先前会话对象调只读
+    /// 用例 → 1001，且会话已转锁定态。
+    #[test]
+    fn delete_vault先锁会话再删() {
+        let base = temp_base("del_lock");
+        let brief = setup_vault(&base, "锁删库");
+        let base_str = base.to_string_lossy().into_owned();
+        let app = app();
+        let session = app
+            .open_vault(base_str.clone(), brief.uuid.to_string())
+            .unwrap();
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+        assert!(session.is_unlocked());
+
+        app.delete_vault(base_str.clone(), brief.uuid.to_string())
+            .unwrap();
+
+        // 防御性锁定生效：会话转锁定态，只读用例 1001（而非 1003 等）
+        assert!(!session.is_unlocked(), "删除后会话应被锁定");
+        assert_eq!(session.list_items(None).unwrap_err().code(), 1001);
+    }
+
+    /// delete_vault 删除失败残留语义（tombstone）：rename 成功但
+    /// remove_dir_all 失败（只读子目录注入）→ 5001，且 list_vaults 不再
+    /// 枚举该库、tombstone 残留不被枚举（docs/17 §2.4 测试 4 FFI 侧）。
+    #[test]
+    fn delete_vault删除失败残留tombstone不被枚举() {
+        let base = temp_base("del_tomb_ffi");
+        let brief = setup_vault(&base, "墓碑库");
+        let uuid = brief.uuid.to_string();
+        let base_str = base.to_string_lossy().into_owned();
+
+        // 注入只读子目录（内含一个文件）使 remove_dir_all 失败
+        let ro_dir = base.join(&uuid).join("attachments");
+        std::fs::create_dir_all(&ro_dir).unwrap();
+        std::fs::write(ro_dir.join("blob.dat"), b"x").unwrap();
+        let mut perms = std::fs::metadata(&ro_dir).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&ro_dir, perms).unwrap();
+
+        let app = app();
+        let err = app
+            .delete_vault(base_str.clone(), uuid.clone())
+            .unwrap_err();
+        assert_eq!(err.code(), 5001, "删除失败应报 Io(5001)");
+
+        // list_vaults 不再枚举该库（tombstone 已去 header.json，被跳过）
+        let briefs = app.list_vaults(base_str).unwrap();
+        assert!(
+            briefs.iter().all(|b| b.vault_uuid != uuid),
+            "删除失败后库不应再被 list_vaults 枚举"
+        );
+
+        // tombstone 残留于磁盘（等待启动期清扫归 backlog）
+        let tombstones: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".coffer-deleted-"))
+            .collect();
+        assert_eq!(tombstones.len(), 1, "应残留一个 tombstone");
+
+        // 还原写权限（仅属主 rwx，不放开其他），让临时目录可被测试框架回收
+        let ro_dir_now = tombstones[0].path().join("attachments");
+        let mut perms = std::fs::metadata(&ro_dir_now).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o700);
+        std::fs::set_permissions(&ro_dir_now, perms).unwrap();
+    }
+
+    /// delete_vault 非法 uuid → 码 5002（防路径拼接逃逸，镜像
+    /// open_vault 非法 uuid 测试）。
+    #[test]
+    fn delete_vault非法uuid_拒绝() {
+        let base = temp_base("del_bad");
+        let app = app();
+        for bad in ["../escape", "not-a-uuid", "../../etc/passwd"] {
+            let err = app
+                .delete_vault(base.to_string_lossy().into_owned(), bad.to_owned())
+                .unwrap_err();
+            assert_eq!(err.code(), 5002, "应拒 {bad:?}");
+        }
+    }
+
+    /// delete_vault 许可拒绝 → 6002 / 6003（VaultWrite 门禁组，镜像
+    /// create_vault 既有门禁测试；拒绝发生在 uuid 校验与文件操作之前）。
+    #[test]
+    fn delete_vault许可拒绝_6002_6003() {
+        struct FixedGate(LicenseDecision);
+        impl LicenseGate for FixedGate {
+            fn check(&self, _op: LicensedOp) -> LicenseDecision {
+                self.0
+            }
+        }
+
+        let base = temp_base("del_gate");
+        let base_str = base.to_string_lossy().into_owned();
+        let uuid = uuid::Uuid::now_v7().to_string();
+
+        let expired = app();
+        expired.set_license_gate(Arc::new(FixedGate(LicenseDecision::Deny(
+            LicenseDenial::TrialExpired,
+        ))));
+        assert_eq!(
+            expired
+                .delete_vault(base_str.clone(), uuid.clone())
+                .unwrap_err()
+                .code(),
+            6002
+        );
+
+        let abnormal = app();
+        abnormal.set_license_gate(Arc::new(FixedGate(LicenseDecision::Deny(
+            LicenseDenial::StateUnavailable,
+        ))));
+        assert_eq!(
+            abnormal
+                .delete_vault(base_str.clone(), uuid)
+                .unwrap_err()
+                .code(),
+            6003
+        );
     }
 
     /// 端到端冒烟：otpauth 解析 → 建条目（含 TOTP）→ 搜索 → 详情掩码

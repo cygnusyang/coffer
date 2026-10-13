@@ -86,7 +86,7 @@ use cf_totp::TotpConfig;
 
 pub use diag::DiagnosticSummary;
 pub use types::{BiometricStatus, ItemDetails, TotpCode, VaultInfo};
-pub use unlock::{create_vault, create_vault_with_kdf, open_vault};
+pub use unlock::{create_vault, create_vault_with_kdf, delete_vault, open_vault};
 pub use unlock_bio::{new_biometric_unwrap_key, K_BIO_LEN};
 pub use unlock_mcp::{MCP_KEYCHAIN_SERVICE, MCP_KEY_LEN, MCP_PROVIDER};
 pub use usecase::attachments::AttachmentInfo;

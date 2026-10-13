@@ -98,25 +98,24 @@ struct HistorySheet: View {
     private var historyList: some View {
         List {
             ForEach(entries) { entry in
-                Button {
-                    guard !isRestoring else { return } // 防双击
-                    pendingRestore = entry
-                    showRestoreConfirm = true
-                } label: {
-                    HStack {
-                        // 快照明文不跨 FFI（见文件头）：只渲染元数据，
-                        // 无任何内容预览。
-                        Text("版本 \(entry.version)")
-                            .font(.headline)
-                        Spacer()
-                        Text(Self.timestampText(entry.createdAt))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                // FRICT-22（AC-2.10.0-FR-7）：行尾显式「回滚」按钮明示可操作，
+                // 破坏性回滚不再靠「整行静默可点」发现；点击目标收敛到按钮。
+                HStack {
+                    Text("版本 \(entry.version)")
+                        .font(.headline)
+                    Spacer()
+                    Text(Self.timestampText(entry.createdAt))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Button("回滚") {
+                        guard !isRestoring else { return } // 防双击
+                        pendingRestore = entry
+                        showRestoreConfirm = true
                     }
+                    .controlSize(.small)
+                    .disabled(isRestoring)
                 }
-                .buttonStyle(.plain)
-                .disabled(isRestoring)
             }
         }
         .listStyle(.inset)

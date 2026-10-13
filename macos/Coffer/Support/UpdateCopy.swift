@@ -66,6 +66,13 @@ enum UpdateCopy {
         UserDefaults.standard.set(version, forKey: skippedVersionDefaultsKey)
     }
 
+    /// 清除跳过记录（FRICT-14，AC-2.10.0-FR-9「恢复显示跳过的更新」入口动作）：
+    /// 误点「跳过此版本」后可反悔——现状全仓无清除路径，误点即永久隐藏含安全
+    /// 补丁的版本，不可逆。
+    static func clearSkippedVersion() {
+        UserDefaults.standard.removeObject(forKey: skippedVersionDefaultsKey)
+    }
+
     /// 该版本是否应呈现「可更新」提示（§2.6 跳过语义）：
     /// 已跳过的版本与不高于它的版本（≤ skipped）不再呈现——手动检查命中时按
     /// 「已是最新」处理（不重复推销）；只有严格更新的版本（> skipped）才重新提示。
@@ -125,7 +132,11 @@ enum UpdateCopy {
                                      canInstall: false, canRetry: false, canClose: false)
         case .updateAvailable(let info):
             let present = shouldPresentUpdate(version: info.version, skippedVersion: skippedVersion)
-            return UpdateButtonState(canCheck: false, canDownload: present, canSkip: present,
+            // FRICT-14（AC-2.10.0-FR-9）：securityCritical 版本**禁用「跳过」**——
+            // 安全补丁若可被「跳过此版本」永久藏掉（误点即不可逆），漏洞暴露窗口
+            // 无限拉长；禁跳过 + 「恢复显示跳过的更新」入口（§7 OP6② 必改项）。
+            return UpdateButtonState(canCheck: false, canDownload: present,
+                                     canSkip: present && !info.securityCritical,
                                      canInstall: false, canRetry: false, canClose: true)
         case .upToDate:
             return UpdateButtonState(canCheck: true, canDownload: false, canSkip: false,

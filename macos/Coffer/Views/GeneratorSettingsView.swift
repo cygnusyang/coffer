@@ -25,6 +25,17 @@ struct GeneratorSettingsView: View {
     @State private var didLoad = false
     /// 保存反馈：nil=未操作；true=已保存（TC-GEN-01）；false=校验失败（TC-GEN-03）。
     @State private var saveOutcome: Bool?
+    /// FRICT-13（AC-2.10.0-FR-4）：保存成功出口语义——「保存成功仍点『放弃』退出」
+    /// 自相矛盾。保存成功后出口切「完成」（confirmationAction）；「放弃」仅保留给
+    /// 未保存草稿态。保存成功时记录快照，`hasUnsavedChanges` 对比当前草稿。
+    @State private var savedSnapshot: GeneratorDefaults?
+
+    /// FRICT-13：当前草稿相对「最后保存快照」是否有未保存改动。
+    /// nil 快照 = 尚未保存过 → 有改动（保持「放弃」）；相等 = 干净 → 「完成」。
+    private var hasUnsavedChanges: Bool {
+        guard let savedSnapshot else { return true }
+        return draft != savedSnapshot
+    }
 
     /// 分隔符 UI 预设（镜像 ItemEditView 同款选择器；存储侧是解析后的字符串，
     /// 预设只是展示层映射，见 `separatorChoice` 绑定）。
@@ -91,8 +102,16 @@ struct GeneratorSettingsView: View {
             .formStyle(.grouped)
             .navigationTitle("生成器默认参数")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("放弃") { dismiss() }
+                // FRICT-13（AC-2.10.0-FR-4）：无未保存改动 → 「完成」
+                // （confirmationAction）；有未保存改动 → 「放弃」。
+                if hasUnsavedChanges {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("放弃") { dismiss() }
+                    }
+                } else {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { dismiss() }
+                    }
                 }
             }
         }
@@ -171,5 +190,9 @@ struct GeneratorSettingsView: View {
 
     private func save() {
         saveOutcome = model.saveGeneratorDefaults(draft)
+        // FRICT-13：仅保存成功记录快照（出口切「完成」）；校验失败保持「放弃」。
+        if saveOutcome == true {
+            savedSnapshot = draft
+        }
     }
 }

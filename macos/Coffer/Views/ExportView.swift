@@ -33,6 +33,7 @@
 // 备份提醒可触发（提醒评估已接入，T-G：仅备份流导出成功时重评估——
 // CSV 导出不打点 last_backup_at，不消横幅）。
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -371,9 +372,19 @@ struct ExportView: View {
                 .foregroundStyle(.tertiary)
                 .lineLimit(2)
                 .truncationMode(.middle)
+                // FRICT-21（AC-2.10.0-FR-6）：路径可选中复制（不再凭记忆找文件）。
+                .textSelection(.enabled)
             Spacer()
             if onExportCompleted == nil {
                 HStack {
+                    // FRICT-21（AC-2.10.0-FR-6）：一键在 Finder 定位导出文件。
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: result.filePath)])
+                    } label: {
+                        Label("在 Finder 中显示", systemImage: "folder")
+                    }
+                    .controlSize(.small)
                     Spacer()
                     Button("完成") { dismiss() }
                         .buttonStyle(.borderedProminent)

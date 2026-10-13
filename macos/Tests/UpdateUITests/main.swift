@@ -109,6 +109,9 @@ do {
     UpdateCopy.recordSkippedVersion("2.7.1")
     check("recordSkippedVersion: 更新版本覆盖旧记录（单调地板）",
           UpdateCopy.skippedVersion() == "2.7.1")
+    UpdateCopy.clearSkippedVersion()
+    check("clearSkippedVersion: 清除后读回 nil（FRICT-14 恢复入口，AC-2.10.0-FR-9）",
+          UpdateCopy.skippedVersion() == nil)
 }
 
 // MARK: - 下载 URL 信任校验（§2.2 / §6.2 白名单，TC-OTA-UI-04）
@@ -162,6 +165,14 @@ do {
     check("buttonState updateAvailable + 新版本 > 跳过版本: 重新推销",
           UpdateCopy.buttonState(for: .updateAvailable(makeInfo(version: "2.7.1")), skippedVersion: "2.7.0")
             == UpdateButtonState(canCheck: false, canDownload: true, canSkip: true,
+                                 canInstall: false, canRetry: false, canClose: true))
+    check("buttonState updateAvailable securityCritical: 禁跳过（FRICT-14，AC-2.10.0-FR-9）",
+          UpdateCopy.buttonState(for: .updateAvailable(makeInfo(version: "2.7.2", critical: true)), skippedVersion: nil)
+            == UpdateButtonState(canCheck: false, canDownload: true, canSkip: false,
+                                 canInstall: false, canRetry: false, canClose: true))
+    check("buttonState updateAvailable securityCritical + 已跳过旧版: 禁跳过仍可下载（FRICT-14）",
+          UpdateCopy.buttonState(for: .updateAvailable(makeInfo(version: "2.7.2", critical: true)), skippedVersion: "2.7.0")
+            == UpdateButtonState(canCheck: false, canDownload: true, canSkip: false,
                                  canInstall: false, canRetry: false, canClose: true))
     check("buttonState downloading: 可关闭、不可下载/检查",
           UpdateCopy.buttonState(for: .downloading(0.5), skippedVersion: nil)

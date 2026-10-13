@@ -16,6 +16,7 @@
 // 只捕获局部 let（factory、路径字符串），不捕获 self 的可变状态；状态机
 // 执行页无按钮，天然防双击（AppModel.isBusy 只读门禁兜底）。
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -116,8 +117,14 @@ struct RestoreBackupView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        // 与 ExportView 备份流同源：.coffer 归档无独立 UTType，用 .data 兜底
-        panel.allowedContentTypes = [.data]
+        // FRICT-23（AC-2.10.0-FR-8）：面板默认只显示 .coffer——.coffer 归档无
+        // 独立 UTType，用「扩展名动态 UTType」过滤（不再 .data 全量兜底肉眼找）。
+        // 仍可从面板切换到「所有文件」访问其他类型，不锁死选择。
+        if let cofferType = UTType(filenameExtension: "coffer") {
+            panel.allowedContentTypes = [cofferType]
+        } else {
+            panel.allowedContentTypes = [.data]
+        }
         panel.message = "选择加密备份文件（.coffer）"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         step = .verifying(path: url.path)
@@ -256,8 +263,18 @@ struct RestoreBackupView: View {
                 .foregroundStyle(.tertiary)
                 .lineLimit(2)
                 .truncationMode(.middle)
+                // FRICT-21（AC-2.10.0-FR-6，结果页同构）：路径可选中复制。
+                .textSelection(.enabled)
             Spacer()
             HStack {
+                // FRICT-21（AC-2.10.0-FR-6，结果页同构）：一键在 Finder 定位恢复目录。
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting(
+                        [URL(fileURLWithPath: restoredDir)])
+                } label: {
+                    Label("在 Finder 中显示", systemImage: "folder")
+                }
+                .controlSize(.small)
                 Spacer()
                 Button("好") { handoffToRestoredVault(report: report) }
                     .buttonStyle(.borderedProminent)

@@ -45,7 +45,10 @@ struct ImportView: View {
         pickDescription: "支持 1Password 9 列格式（Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes）",
         pickButtonLabel: "选择文件…",
         windowWidth: 520, windowHeight: 460,
-        precheckErrorAlertTitle: "导入失败",
+        // FRICT-11（AC-2.10.0-FR-3）：预检失败 alert 标题「预检失败」——与其余
+        // 三格式一致，不再误用「导入失败」（预检失败时零落库，用户会误以为数据
+        // 已写入一半）。
+        precheckErrorAlertTitle: "预检失败",
         transactionSemantics: .allOrNothing,
         importingCopy: "正在导入（单事务，全部成功或全部回滚）…",
         failureSuffix: "",

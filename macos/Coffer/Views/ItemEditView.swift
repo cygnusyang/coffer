@@ -48,6 +48,12 @@ struct ItemEditView: View {
     @State private var existingTotpMeta: FfiTotpMeta?
     /// 用户显式点了「移除」：保存时提交 .remove（粘贴新 URI 会覆盖本标记）。
     @State private var totpRemoved = false
+    /// FRICT-03（AC-2.10.0-FR-1）：populate 初始快照，用于取消/Esc 前脏态检测。
+    /// 新建模式在 populate 前即脏（fields 初始为空行，一输入即变）——
+    /// 快照在 populate 末尾采集，语义 =「自装载/清空以来是否改过」。
+    @State private var initialSnapshot: FormSnapshot?
+    /// 「放弃更改？」确认弹窗（有未保存改动时取消/Esc 弹出，AC-2.10.0-FR-1）。
+    @State private var showDiscardConfirm = false
 
     private var category: FfiItemCategory {
         switch mode {
@@ -168,6 +174,14 @@ struct ItemEditView: View {
         } message: {
             Text(saveError ?? "")
         }
+        // FRICT-03（AC-2.10.0-FR-1）：放弃更改确认——「继续编辑」默认焦点，
+        // 「放弃更改」destructive 才真正 dismiss（Esc 再次触发仍走 attemptCancel）。
+        .alert("放弃更改？", isPresented: $showDiscardConfirm) {
+            Button("继续编辑", role: .cancel) {}
+            Button("放弃更改", role: .destructive) { dismiss() }
+        } message: {
+            Text("你尚未保存对此条目的更改。")
+        }
     }
 
     // MARK: - TOTP 三态区（保留 / 替换 / 移除）
@@ -212,6 +226,14 @@ struct ItemEditView: View {
                 prompt: Text("otpauth://totp/…?secret=…")
             )
             .focused($otpauthFocused)
+            .onChange(of: otpauthText) { _, newValue in
+                // FRICT-06（AC-2.10.0-FR-2）：粘贴新 URI 时同步清「移除」标记——
+                // 保存走 .replace（替换），文案不能再承诺「保存后移除现有 TOTP」。
+                if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   totpRemoved {
+                    totpRemoved = false
+                }
+            }
             Button("扫码") { showScan = true }
                 .controlSize(.small)
                 .help("用相机扫描 TOTP otpauth:// 二维码（FR-5.3）")
@@ -242,7 +264,9 @@ struct ItemEditView: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button("取消") { dismiss() }
+            // FRICT-03（AC-2.10.0-FR-1）：取消/Esc 出口做脏态守卫——有未保存
+            // 改动先弹「放弃更改？」确认，不再瞬间丢全部输入。
+            Button("取消") { attemptCancel() }
                 .keyboardShortcut(.cancelAction)
             Button {
                 save()
@@ -294,6 +318,42 @@ struct ItemEditView: View {
                     fieldId: nil
                 )
             }
+        }
+        // FRICT-03：装载/清空完成即采集初始快照（脏态检测基准）。
+        initialSnapshot = currentSnapshot()
+    }
+
+    /// FRICT-03：当前表单状态 → 快照（与 initialSnapshot 比较判脏）。
+    private func currentSnapshot() -> FormSnapshot {
+        FormSnapshot(
+            title: title,
+            urlText: urlText,
+            tagsText: tagsText,
+            otpauthText: otpauthText,
+            totpRemoved: totpRemoved,
+            rows: rows.map {
+                FormSnapshot.RowSnapshot(
+                    name: $0.name,
+                    value: $0.value,
+                    designation: $0.designation,
+                    unchanged: $0.unchanged
+                )
+            }
+        )
+    }
+
+    /// FRICT-03：是否有未保存改动（无快照 = 尚未装载，视为无脏）。
+    private var isDirty: Bool {
+        guard let initialSnapshot else { return false }
+        return currentSnapshot() != initialSnapshot
+    }
+
+    /// FRICT-03：取消/Esc 出口——有未保存改动先弹「放弃更改？」确认。
+    private func attemptCancel() {
+        if isDirty {
+            showDiscardConfirm = true
+        } else {
+            dismiss()
         }
     }
 
@@ -515,6 +575,27 @@ struct ItemEditView: View {
 }
 
 // MARK: - 表单行数据
+
+/// FRICT-03（AC-2.10.0-FR-1）脏态检测快照：populate 装载后的初始状态。
+/// 只比较用户可改的载荷字段（name/value/unchanged/designation/totpRemoved/
+/// 文本），不含 id（行内 UUID 与持久 ID 都不影响「是否有未保存改动」）。
+/// 新建模式在 populate 前即脏——快照在 populate 末尾采集，语义 =「自装载/
+/// 清空以来是否改过」。
+struct FormSnapshot: Equatable {
+    var title: String
+    var urlText: String
+    var tagsText: String
+    var otpauthText: String
+    var totpRemoved: Bool
+    var rows: [RowSnapshot]
+
+    struct RowSnapshot: Equatable {
+        var name: String
+        var value: String
+        var designation: FfiDesignation?
+        var unchanged: Bool
+    }
+}
 
 struct EditFieldRow: Identifiable {
     let id = UUID()

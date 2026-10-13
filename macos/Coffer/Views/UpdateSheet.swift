@@ -222,6 +222,18 @@ struct UpdateSheet: View {
         Divider()
         HStack(spacing: 12) {
             Spacer()
+            // FRICT-14（AC-2.10.0-FR-9）：恢复显示跳过的更新——低存在感入口，
+            // 有跳过记录且非 busy 时呈现（busy 态禁一切，与「跳过」对称）。
+            if UpdateCopy.skippedVersion() != nil, !UpdateCopy.isBusy(state) {
+                Button {
+                    restoreSkippedUpdates()
+                } label: {
+                    Label("恢复显示跳过的更新", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
             if buttons.canSkip {
                 Button("跳过此版本") { skipCurrentVersion() }
             }
@@ -274,5 +286,14 @@ struct UpdateSheet: View {
             UpdateCopy.recordSkippedVersion(info.version)
         }
         dismiss()
+    }
+
+    /// FRICT-14（AC-2.10.0-FR-9）：恢复显示跳过的更新——清除跳过记录后重查，
+    /// 让被藏掉的（含 securityCritical）版本重新进入可更新呈现。
+    private func restoreSkippedUpdates() {
+        UpdateCopy.clearSkippedVersion()
+        // 若当前 state 仍是 updateAvailable，重查会经 effectiveState 重新呈现；
+        // 若已到 idle/其他，重查刷新到最新服务端状态（顺带清理过期缓存态）。
+        model.checkForUpdates()
     }
 }

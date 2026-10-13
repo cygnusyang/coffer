@@ -31,7 +31,11 @@ struct OnboardingWizard: View {
     /// pendingBioOffer 已清，不能据旗标回溯，须在此记快照决定指示器显隐。
     @State private var isTwoStep = false
 
-    /// Step1 主密码临时输入（D-6：不能预填——密码不落任何属性）。
+    /// Step1 主密码输入 + A1 跨步暂存（docs/15 §2.2，偏差 D-A1）：Step1 启用成功
+    /// 后**不再清空**，保留为「本向导会话已确认的主密码」（向导 @State，生命周期 =
+    /// 向导展示期），Step2 恢复码 confirm 步作一次性授权（RecoveryCodeSetupSheet
+    /// authorizationPassword）。清空时机 = confirm 提交即清 / 跳过 / onDisappear /
+    /// lock 相变（全路径兜底防残留，D-A1 grep 门禁）。
     @State private var password = ""
     /// Step1 enable 慢调用（Argon2id 约 1s）进行中标记。
     @State private var isEnabling = false
@@ -55,6 +59,11 @@ struct OnboardingWizard: View {
         .ffiErrorAlert($model.lastErrorMessage)
         .onAppear {
             isTwoStep = model.pendingBioOffer && model.pendingRecoveryOffer
+        }
+        .onDisappear {
+            // A1 兜底清空（D-A1）：向导收口（两旗标清 / lock 相变 / 视图拆除）时
+            // 暂存密码必清——confirm 提交即清是主路径，此处兜底防任何残留。
+            password = ""
         }
     }
 
@@ -118,19 +127,24 @@ struct OnboardingWizard: View {
     /// 后 header，D-9；失败补偿删除 Keychain 项）。成功 → 清引导旗标进 Step2；
     /// bioOfferSkipped 在 AppModel.enableTouchID 成功路径清位（高亮不出现）。
     /// 失败（1002 / Keychain 失败）→ lastErrorMessage 呈现，步骤保留可重试。
+    ///
+    /// A1（docs/15 §2.2，偏差 D-A1）：成功路径**保留**暂存密码供 Step2 复用
+    /// （不再「提交即清」）；失败 → 清暂存回 Step1 手动重输（现状可重试语义）。
     private func enable() {
         guard !password.isEmpty, !isEnabling else { return }
-        // 密码不落状态：拷贝进异步调用后立刻清空本地输入（docs/07 §2.4）
         let secret = password
-        password = ""
         isEnabling = true
         Task {
             let ok = await model.enableTouchID(password: secret)
             isEnabling = false
             if ok {
+                // A1：暂存密码保留（跨 Step1→Step2 复用）；每次 enable 仍独立
+                // recover_dek 校验（1002 纪律不变）
                 model.pendingBioOffer = false
+            } else {
+                // 失败：暂存密码判定不可用，清空回 Step1 手动重输（D-A1 清空路径）
+                password = ""
             }
-            // 失败：步骤保留可重试，错误文案经 lastErrorMessage 呈现
         }
     }
 
@@ -166,14 +180,22 @@ struct OnboardingWizard: View {
                 model.pendingRecoveryOffer = false
             }
         }) {
-            RecoveryCodeSetupSheet()
-                .environmentObject(model)
+            // A1（docs/15 §2.2）：Step1 已确认的暂存密码作一次性授权传入——
+            // Step2 无授权密码（Step1 跳过）时回退手动形态（nil 入参，行为不变）。
+            // onAuthorizationConsumed：confirm 提交即清向导暂存（成败均清）。
+            RecoveryCodeSetupSheet(
+                authorizationPassword: password.isEmpty ? nil : password,
+                onAuthorizationConsumed: { password = "" }
+            )
+            .environmentObject(model)
         }
     }
 
     /// 跳过 Step2（硬约束「勿砍可跳过」）：清引导旗标 + 记「跳过」（设置页
     /// 恢复码区首次高亮兜底触发，AC-2.9.0-P2A-5/11），不产生任何持久状态变更。
     private func skipRecovery() {
+        // A1：跳过即清暂存密码（D-A1 清空路径，防残留兜底）
+        password = ""
         model.pendingRecoveryOffer = false
         model.recoveryOfferSkipped = true
     }

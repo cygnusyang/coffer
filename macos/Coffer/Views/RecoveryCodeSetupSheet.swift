@@ -94,11 +94,28 @@ struct RecoveryCodeSettingsSection: View {
 }
 
 /// 恢复码生成 / 重生成五步流程 sheet（FR-17.2，docs/31 §4.3 / §2.4）。
+///
+/// A1 向导内密码归一（v2.10.0，docs/15 §2.2，偏差 D-A1）：首启引导向导 Step1
+/// 已确认的主密码经 `authorizationPassword` 传入作为**一次性授权**（非预填文本、
+/// 非静默自动提交）——confirm 步默认「继续」（使用刚输入的主密码）+「改为手动
+/// 输入主密码」旁路（显式授权，非替用户做主）。nil = 现状路径（设置页进入，
+/// 独立 SecureField，逐字文案不变）。
 struct RecoveryCodeSetupSheet: View {
     @EnvironmentObject
     private var model: AppModel
     @Environment(\.dismiss)
     private var dismiss
+
+    /// A1：向导授权密码（一次性；nil = 手动输入路径）。跨步暂存由向导持有，
+    /// 本视图在 confirm 提交时拷贝进调用链后清空（D-A1「提交即清」，成败均清）。
+    let authorizationPassword: String?
+    /// A1：授权密码被消费（confirm 提交或走旁路）后回调向导清空其跨步暂存。
+    let onAuthorizationConsumed: (() -> Void)?
+
+    init(authorizationPassword: String? = nil, onAuthorizationConsumed: (() -> Void)? = nil) {
+        self.authorizationPassword = authorizationPassword
+        self.onAuthorizationConsumed = onAuthorizationConsumed
+    }
 
     /// 流程步骤（docs/31 §2.4：生成 → 展示 → 抄写确认 → 确认 → 启用）。
     private enum Step {
@@ -119,6 +136,13 @@ struct RecoveryCodeSetupSheet: View {
     @State private var code = ""
     /// 主密码临时输入（docs/07 §2.4）：提交即清空，不落 @State 之外。
     @State private var password = ""
+    /// A1：用户点了「改为手动输入主密码」旁路（旁路即清向导暂存，回手动形态）。
+    @State private var manualInput = false
+
+    /// A1：是否处于授权形态（confirm 步默认「继续」而非空 SecureField）。
+    private var hasAuthorization: Bool {
+        authorizationPassword != nil && !manualInput
+    }
     /// enable 慢调用（Argon2id 约 1s）进行中标记。
     @State private var isEnabling = false
     /// 复制反馈（「已复制（30 秒后自动清除）」短暂提示）。
@@ -395,29 +419,50 @@ struct RecoveryCodeSetupSheet: View {
                 .foregroundStyle(.tint)
             Text("确认主密码")
                 .font(.title3.bold())
-            Text("出于安全考虑，主密码不会被保存，请重新输入一次以确认身份，之后恢复码才会启用。")
+            // A1（docs/15 §2.2，偏差 D-A1）：向导授权形态文案（复用刚输入的主密码，
+            // 非预填、非静默自动提交——显式授权）；手动路径保留现状文案。
+            Text(hasAuthorization
+                 ? "将使用你刚输入的主密码完成此设置，恢复码才会启用。"
+                 : "出于安全考虑，主密码不会被保存，请重新输入一次以确认身份，之后恢复码才会启用。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 260)
-                .onSubmit(confirmEnable)
+            if hasAuthorization {
+                // A1 授权形态：无输入框，默认「继续」+「改为手动输入主密码」旁路。
+                // 旁路即清向导暂存（防残留）+ 回手动形态（docs/15 §2.2/§2.4）。
+                HStack(spacing: 12) {
+                    Button("改为手动输入主密码") { switchToManualInput() }
+                    Button("继续") { confirmEnable() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isEnabling || model.isBusy)
+                }
+            } else {
+                SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 260)
+                    .onSubmit(confirmEnable)
+
+                HStack(spacing: 12) {
+                    Button("取消") { cancelFlow() }
+                    Button("启用恢复码") { confirmEnable() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(password.isEmpty || isEnabling || model.isBusy)
+                }
+            }
 
             if isEnabling {
                 ProgressView {
                     Text("正在启用…（密钥派生约需 1 秒）")
                 }
             }
-
-            HStack(spacing: 12) {
-                Button("取消") { cancelFlow() }
-                Button("启用恢复码") { confirmEnable() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(password.isEmpty || isEnabling || model.isBusy)
-            }
         }
+    }
+
+    /// A1 旁路：改用手动输入主密码——立即清向导暂存（防残留），回手动形态。
+    private func switchToManualInput() {
+        onAuthorizationConsumed?()
+        manualInput = true
     }
 
     // MARK: - ④ 启用
@@ -425,10 +470,21 @@ struct RecoveryCodeSetupSheet: View {
     /// 提交：主密码不落状态，拷贝进异步调用后立刻清空本地输入（docs/07 §2.4）。
     /// 契约签名无返回（成功 = 未新增错误）；失败（1002）经 lastErrorMessage →
     /// ffiErrorAlert 呈现，本 sheet 保留可重试（需重新输入主密码）。
+    ///
+    /// A1（docs/15 §2.2，偏差 D-A1）：授权形态下 `secret = authorizationPassword`
+    /// （向导已确认的主密码，一次性授权）；确认提交（`enableRecoveryCode` 触发）
+    /// 后立即清向导暂存（onAuthorizationConsumed），**无论成败**——Step2 含恢复码
+    /// 展示/抄写/验证为分钟级流程，驻留必须收敛到「提交即清」而非「流程结束才清」。
     private func confirmEnable() {
-        guard !password.isEmpty, !isEnabling, !model.isBusy else { return }
-        let secret = password
+        guard !isEnabling, !model.isBusy else { return }
+        guard hasAuthorization || !password.isEmpty else { return }
+        let secret = hasAuthorization ? (authorizationPassword ?? "") : password
         password = ""
+        // A1：提交即清向导暂存（成败均清，不等 onDisappear）；旁路后 hasAuthorization
+        // 为 false，不重复触发。
+        if hasAuthorization {
+            onAuthorizationConsumed?()
+        }
         isEnabling = true
         let codeToEnable = code
         Task {
@@ -438,6 +494,11 @@ struct RecoveryCodeSetupSheet: View {
             if model.lastErrorMessage == errBefore {
                 // 成功：恢复码已生效（旧 wrap 已被覆盖），关闭 sheet
                 finishFlow()
+            } else if hasAuthorization {
+                // A1 失败语义（docs/15 §2.5 判据 8）：授权密码同串理论失败（数据
+                // 损坏路径）→ 回「改为手动输入主密码」旁路重试（暂存已清，旁路
+                // 后为手动形态）。
+                manualInput = true
             }
         }
     }

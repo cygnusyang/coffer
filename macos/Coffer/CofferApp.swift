@@ -173,7 +173,12 @@ private struct DataCommands: Commands {
             Divider()
             Button("设置…") { openWindow(id: "settings") }
                 .keyboardShortcut(",", modifiers: .command)
-                .disabled(model.phase != .unlocked)
+                // M-2（docs/15 §2.4，AC-2.10.0-A1-10）：首启向导置位期间
+                // （pendingBioOffer || pendingRecoveryOffer）同样禁用——向导内
+                // 设置窗结构性不可达，并发覆盖路径确定性消除（对齐 phase !=
+                // .unlocked 既有纪律；向导收口旗标全清后自动恢复可开）。
+                .disabled(model.phase != .unlocked
+                          || model.pendingBioOffer || model.pendingRecoveryOffer)
         }
     }
 }

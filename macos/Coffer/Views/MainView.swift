@@ -156,11 +156,17 @@ struct MainView: View {
                 }
                 // 统一设置入口（docs/09-v0.2实现方案.md §3.7）
                 // v2.4.1：改独立窗口（openWindow id "settings"，左上角红绿灯关闭）
+                // M-2（docs/15 §2.4，AC-2.10.0-A1-10）：首启向导置位期间
+                // （pendingBioOffer || pendingRecoveryOffer）禁用——与菜单栏
+                // 「设置…」同谓词（对齐 phase != .unlocked 纪律），向导内设置
+                // 窗结构性不可达，消除并发覆盖路径；向导收口后恢复可开。
                 Button {
                     openWindow(id: "settings")
                 } label: {
                     Label("设置", systemImage: "gearshape")
                 }
+                .disabled(model.phase != .unlocked
+                          || model.pendingBioOffer || model.pendingRecoveryOffer)
                 // 导入入口菜单（v0.3.0-T05 FR-7.1；v0.5.0 PK3 增 Bitwarden 源；
                 // v0.7.0-T06 增 OPVault）：四格式并列
                 Menu {

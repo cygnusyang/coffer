@@ -13,6 +13,14 @@
 // 列表刷新（vaultBriefs @Published 驱动）、管理面保持打开。
 // 许可降级（UDR-7 / AC-2.10.0-EN-7）：只读许可（model.canManageVaults ==
 // false）→ 入口在源侧隐藏；行内 [删除…] 不渲染（本视图内不逐项报错）。
+//
+// v2.10.0-T5④（UX issue #1 完整版，lead r0.4 裁定，AC-2.10.0-UX-2）：管理面
+// 底部加「从备份恢复…」动作——锁定态恢复入口**经本管理面可达**（工厂级恢复
+// 面，RestoreBackupView 挂 CofferApp 工厂、1004 冲突语义自含），LockView 不
+// 加第三个链接（低存在感链接上限 = 忘记主密码？/ 管理密码库…，R-A 裁定）；
+// P2-B 主面不回归：恢复不从不锁界面的 LockView 直达，改经管理面（锁定态
+// LockView → 管理密码库… → 从备份恢复…）。恢复入口不要求 canManageVaults
+//（删除才受只读许可门控；恢复与 ExportView 同契约，任何许可均可用）。
 
 import SwiftUI
 
@@ -25,6 +33,9 @@ struct VaultManagementView: View {
 
     /// 选中待删目标（驱动 DeleteVaultConfirmSheet 多步向导）。
     @State private var targetToDelete: FfiVaultBrief?
+
+    /// 从备份恢复 sheet（UX #1：工厂级恢复面，行为与设置页数据节同构）。
+    @State private var showRestore = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,8 +56,25 @@ struct VaultManagementView: View {
                 }
             }
             .listStyle(.plain)
+
+            Divider()
+
+            // UX #1 锁定态恢复入口（AC-2.10.0-UX-2）：工厂级恢复面。与设置页
+            // 数据节「从备份恢复…」同标签同契约（RestoreBackupView 自含 1004
+            // 冲突语义）；恢复无需 canManageVaults（任何许可均可用）。
+            HStack {
+                Button {
+                    showRestore = true
+                } label: {
+                    Label("从备份恢复…", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.borderless)
+                .padding(.leading, 12)
+                Spacer()
+            }
+            .padding(.vertical, 8)
         }
-        .frame(width: 480, height: 380)
+        .frame(width: 480, height: 400)
         .onAppear {
             model.reloadVaultBriefs()
         }
@@ -62,6 +90,12 @@ struct VaultManagementView: View {
         }
         .sheet(item: $targetToDelete) { brief in
             DeleteVaultConfirmSheet(target: brief)
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $showRestore) {
+            // 从备份恢复流程（FR-8.1 回环，T-H）：校验 → 确认 → 恢复 →
+            // openSession 引导解锁（1004 冲突语义自含，工厂级恢复）。
+            RestoreBackupView()
                 .environmentObject(model)
         }
         .ffiErrorAlert($model.lastErrorMessage)

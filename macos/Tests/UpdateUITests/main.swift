@@ -216,6 +216,19 @@ do {
     check("progressPercentText 0.334 → 33%", UpdateCopy.progressPercentText(0.334) == "33%")
 }
 
+// MARK: - 编译时间文案（v2.9.2-T1：关于页编译时间，build 注入 CofferBuildTime）
+
+do {
+    check("buildTimeText: 正常值透传（UTC 格式原样展示）",
+          UpdateCopy.buildTimeText("2026-10-13 02:10 UTC") == "2026-10-13 02:10 UTC")
+    check("buildTimeText: nil → 开发构建（未走构建脚本的调试运行）",
+          UpdateCopy.buildTimeText(nil) == "开发构建")
+    check("buildTimeText: 空串 → 开发构建",
+          UpdateCopy.buildTimeText("") == "开发构建")
+    check("buildTimeText: 空白串 → 开发构建",
+          UpdateCopy.buildTimeText("   ") == "开发构建")
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

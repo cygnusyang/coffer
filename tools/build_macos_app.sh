@@ -139,6 +139,12 @@ step "3/4 组装 Coffer.app bundle"
 # 构建时 Resources 尚不存在，若后建则 cp 失败中止——v0.6.0 批次发现）
 mkdir -p "${APP_DIR}/Contents/Resources"
 cp "${SRC_DIR}/Info.plist" "${APP_DIR}/Contents/Info.plist"
+# v2.9.2-T1：注入编译时间（UTC）到产物 Info.plist——关于页「编译时间」行展示
+# （UpdateCopy.buildTimeText 读 Bundle.main；nil/空回退「开发构建」）。源 plist
+# 无此键，PlistBuddy Add 恒新增；CI release job 走同一脚本自动获得。
+BUILD_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
+/usr/libexec/PlistBuddy -c "Add :CofferBuildTime string ${BUILD_TIME}" "${APP_DIR}/Contents/Info.plist" \
+  || die "Info.plist 注入 CofferBuildTime 失败。"
 if [[ -f "${SRC_DIR}/Resources/Coffer.icns" ]]; then
   cp "${SRC_DIR}/Resources/Coffer.icns" "${APP_DIR}/Contents/Resources/Coffer.icns"
 fi

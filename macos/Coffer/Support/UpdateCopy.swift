@@ -164,6 +164,17 @@ enum UpdateCopy {
     static var appVersionText: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
     }
+
+    /// 编译时间展示文案（v2.9.2-T1，docs/35 §2.6 关于页扩展）：build 脚本注入
+    /// 产物 Info.plist 的 `CofferBuildTime`（UTC，格式 `%Y-%m-%d %H:%M UTC`）。
+    /// nil / 空白 → 「开发构建」（本机 swiftc 直编、测试进程或未注入键的运行）。
+    static func buildTimeText(_ raw: String?) -> String {
+        guard let raw,
+              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "开发构建"
+        }
+        return raw
+    }
 }
 
 /// UpdateSheet 各交互按钮的可用性快照（纯函数派生；Equatable 供测试断言）。

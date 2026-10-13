@@ -5,6 +5,10 @@
 // 不放任何更新入口，用户裁定）。视觉对齐系统关于面板（居中式）+ 既有
 // LabeledContent/设置页的字体与次级色纪律。
 //
+// v2.9.2-T1（VK 关于页编译时间）：「版本」行下加「编译时间」行，便于测试时
+// 区分构建——build 脚本注入产物 Info.plist 键 `CofferBuildTime`（UTC），
+// Swift 侧读 Bundle，缺键/空串回退「开发构建」（UpdateCopy.buildTimeText）。
+//
 // 挂载：CofferApp.swift 的 RootView().sheet(isPresented: $model.showAbout)，由
 // 应用菜单「关于 Coffer…」触发。
 
@@ -15,6 +19,13 @@ struct AboutUpdateView: View {
     private var model: AppModel
     @Environment(\.dismiss)
     private var dismiss
+
+    /// 编译时间展示（v2.9.2-T1）：build 注入产物 Info.plist 键 `CofferBuildTime`，
+    /// 缺键/空 → UpdateCopy.buildTimeText 回退「开发构建」。
+    private var buildTimeText: String {
+        UpdateCopy.buildTimeText(
+            Bundle.main.object(forInfoDictionaryKey: "CofferBuildTime") as? String)
+    }
 
     var body: some View {
         NavigationStack {
@@ -29,6 +40,10 @@ struct AboutUpdateView: View {
                         .font(.title2.bold())
                     Text("版本 \(UpdateCopy.appVersionText)")
                         .font(.callout)
+                        .foregroundStyle(.secondary)
+                    // 编译时间（v2.9.2-T1）：build 注入 CofferBuildTime，缺键 → 「开发构建」
+                    Text("编译时间 \(buildTimeText)")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 // 了解 Coffer 自述区（issue #3）：一句话定位每个能力，破解「全靠撞见」。
@@ -51,7 +66,7 @@ struct AboutUpdateView: View {
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 8)
             }
-            .frame(width: 360, height: 350)
+            .frame(width: 360, height: 370)
             .navigationTitle("关于 Coffer")
             .toolbar {
                 // D-4.1（CO-06）：只读查看页关闭语义——「关闭」+ .cancellationAction（Esc 生效）。

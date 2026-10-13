@@ -682,10 +682,13 @@ final class AppModel: ObservableObject {
 
     // MARK: - 库删除（v2.10.0 D1，docs/17 §3）
 
-    /// 是否可管理（删除）密码库（UDR-7 / C6，AC-2.10.0-EN-7）：试用已结束
-    /// （Rust VaultWrite 门禁 6002 拦截写）为只读态 → 隐藏「管理密码库…」
-    /// 入口与行内 [删除…]。公开构建默认 .unactivated（全功能免费版）恒可
-    /// 管理。只读判定委托 DeleteVaultPolicy.canManage 纯函数（可独立单测）。
+    /// 是否可管理（删除）密码库（UDR-7 / C6，AC-2.10.0-EN-7）：**逐许可状态
+    /// 镜像 Rust license.rs `LicensedOp::VaultWrite` 实际判定**（lead 正式裁定
+    /// r0.5）——`expired`（6002）与 `unavailable`（6003 只读退化，fail-closed）
+    /// 隐藏「管理密码库…」入口与行内 [删除…]，其余状态放行。公开构建默认
+    /// .unactivated（PermitAllGate 恒放行）恒可管理。只读判定委托
+    /// DeleteVaultPolicy.canManage 纯函数（可独立单测，docs/04 §1 EN-7 逐状态
+    /// 对表）。
     var canManageVaults: Bool {
         DeleteVaultPolicy.canManage(licenseStatus: LicenseAssembly.shared.licenseStatus())
     }

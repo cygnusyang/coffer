@@ -34,18 +34,21 @@ func brief(_ uuid: String, _ name: String, _ createdAt: Int64) -> FfiVaultBrief 
     )
 }
 
-// ---- 1. 只读许可判定（UDR-7 / C6，AC-2.10.0-EN-7 自动段）----
+// ---- 1. 只读许可判定（UDR-7 / C6，AC-2.10.0-EN-7 自动段）
+//    逐许可状态镜像 Rust VaultWrite 判定（lead 正式裁定 r0.5，docs/01 §14.5/§14.8）----
 
 check(DeleteVaultPolicy.canManage(licenseStatus: .unactivated) == true,
-      "公开构建未激活（全功能免费版）→ 可管理")
+      "公开构建未激活（PermitAllGate 恒放行）→ 可管理")
 check(DeleteVaultPolicy.canManage(licenseStatus: .trial(remainingDays: 5)) == true,
-      "试用中 → 可管理")
+      "试用中（剩余 >0）→ 可管理")
+check(DeleteVaultPolicy.canManage(licenseStatus: .trial(remainingDays: 0)) == false,
+      "试用剩余 0 天 → fail-closed 隐藏（防御，防 6002 漏出）")
 check(DeleteVaultPolicy.canManage(licenseStatus: .active(serialMasked: "…")) == true,
-      "已激活 → 可管理")
+      "已激活（买断永久有效）→ 可管理")
 check(DeleteVaultPolicy.canManage(licenseStatus: .expired) == false,
-      "试用已结束（只读模式）→ 不可管理")
-check(DeleteVaultPolicy.canManage(licenseStatus: .unavailable) == true,
-      "许可模块不可用 → 归可管理（Rust 门禁兜底）")
+      "试用已结束（只读模式 6002）→ 不可管理")
+check(DeleteVaultPolicy.canManage(licenseStatus: .unavailable) == false,
+      "许可模块不可用（只读退化 6003，fail-closed）→ 不可管理")
 
 // ---- 2. 库名逐字符确认 trim 比对（UDR-1，AC-2.10.0-CF-2 自动段）----
 

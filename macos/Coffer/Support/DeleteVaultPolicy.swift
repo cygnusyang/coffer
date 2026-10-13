@@ -20,17 +20,32 @@ enum DeleteVaultPolicyError: Error {
 }
 
 enum DeleteVaultPolicy {
-    /// 只读许可判定（UDR-7 / C6，AC-2.10.0-EN-7）：试用已结束（Rust VaultWrite
-    /// 门禁 6002 拦截写）为只读态 → 隐藏「管理密码库…」入口与行内 [删除…]。
-    /// 公开构建默认 .unactivated（全功能免费版）恒可管理；.unavailable（激活
-    /// 模块异常）归可管理——非既定只读态，调用时由 Rust 门禁兜底（与
-    /// create_vault 拒绝口径一致：UI 不逐项预判，写拒绝走 FFI 错误面）。
+    /// 只读许可判定（UDR-7 / C6，AC-2.10.0-EN-7）：**逐许可状态镜像 Rust
+    /// license.rs `LicensedOp::VaultWrite` 实际判定**（lead 正式裁定 r0.5，
+    /// docs/04-测试与验收/17 §1 EN-7）——UI 隐藏口径与 Rust 拒绝口径完全一致，
+    /// 否则「UI 隐藏但 Rust 放行」或「UI 显示但 6002/6003 漏出」的口径劈叉。
+    ///
+    /// 逐状态依据（docs/01-需求与架构/03-详细设计.md §14.5/§14.6/§14.8）：
+    /// - `.unactivated`（公开构建默认，PermitAllGate 恒放行；官方=试用中）→ 放行；
+    /// - `.trial(remainingDays > 0)` → 放行（6002 仅「试用已结束」触发）；
+    /// - `.trial(remainingDays <= 0)` → **fail-closed 隐藏**（理论上 Rust 已转
+    ///   `.expired`，此态防御兜底，防 6002 漏出）；
+    /// - `.active` → 放行（买断制永久有效）；
+    /// - `.expired` → 拒绝（6002 TrialExpired，只读）；
+    /// - `.unavailable` → **fail-closed 隐藏**（§14.8 只读退化 6003：Keychain 读
+    ///   取失败 / 机器指纹缺失致「无法证明未过期 / 激活态无法确认」→ VaultWrite
+    ///   拒绝；非既定可写态，拿不准一律隐藏）。
+    ///
+    /// 公开构建 .unactivated 恒可管理（全功能免费版）。Rust 新增许可状态时
+    /// Swift 侧同步；未知新状态默认隐藏（fail-closed）。
     static func canManage(licenseStatus: LicenseStatus) -> Bool {
         switch licenseStatus {
-        case .expired:
-            return false
-        default:
+        case .unactivated, .active:
             return true
+        case .trial(let remainingDays):
+            return remainingDays > 0
+        case .expired, .unavailable:
+            return false
         }
     }
 

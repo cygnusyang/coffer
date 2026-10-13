@@ -146,12 +146,14 @@ release:
       TAG="${CI_COMMIT_TAG}"
       PKG_URL="$(cat /tmp/pkg_url.txt)"
       AUTH="PRIVATE-TOKEN: ${RELEASE_TOKEN}"
-      curl -sf --header "$AUTH" --upload-file "macos/build/Coffer-${TAG}.zip" \
-        "${PKG_URL}/Coffer-${TAG}.zip"
-      curl -sf --header "$AUTH" --upload-file "macos/build/Coffer-${TAG}.dmg" \
-        "${PKG_URL}/Coffer-${TAG}.dmg"
-      curl -sf --header "$AUTH" --upload-file "macos/build/update-manifest.json" \
-        "${PKG_URL}/update-manifest.json"
+      # --retry 挡瞬时网络抖动（v2.10.0 pipeline 353 实证：5.8M zip 上传 18s 后被断线 exit 55）；
+      # generic package 同名重传幂等（覆盖），可安全重试
+      curl -sf --retry 3 --retry-delay 5 --retry-all-errors --header "$AUTH" \
+        --upload-file "macos/build/Coffer-${TAG}.zip" "${PKG_URL}/Coffer-${TAG}.zip"
+      curl -sf --retry 3 --retry-delay 5 --retry-all-errors --header "$AUTH" \
+        --upload-file "macos/build/Coffer-${TAG}.dmg" "${PKG_URL}/Coffer-${TAG}.dmg"
+      curl -sf --retry 3 --retry-delay 5 --retry-all-errors --header "$AUTH" \
+        --upload-file "macos/build/update-manifest.json" "${PKG_URL}/update-manifest.json"
       DESCRIPTION="$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read()))' macos/build/release-body.txt)"
       cat > /tmp/release.json <<JSON
       {

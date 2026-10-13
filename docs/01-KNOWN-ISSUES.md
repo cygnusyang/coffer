@@ -1392,11 +1392,11 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 **标题**：加密备份导出与 1PUX 导出在沙盒化 App 内必失败：`temp_sibling_path` 在用户所选目标文件同目录创建 `.tmp-<pid>-<seq>` 兄弟临时文件，App Sandbox 只授予保存面板所选文件本身的写权限（`com.apple.security.files.user-selected.read-write`），同目录创建兄弟文件无授权 → `File::create` 得 EPERM（os error 1）→ `CfError::Io("创建临时文件失败")` → 外层折叠错误 2003 ExportFailed
 **严重级**：HIGH（核心功能不可用；备份/迁移主路径被沙盒阻断）
 **优先级**：P0（当版修复）
-**状态**：🔴 当版修复中（v2.9.2）
+**状态**：🟢 已修复（v2.9.2，56bc5dc；真机导出冒烟待用户）
 **来源版本**：v2.4.0 沙盒单渠道化引入（9fde5c4/2674dc2/44c2a35），潜伏至 v2.9.1 真机导出才暴露
 **复现步骤**：沙盒化 Coffer.app → 导出 → 加密备份（或 1PUX）→ NSSavePanel 选目标 → 确认 → 弹「操作失败 错误 2003: export failed: 创建临时文件失败： Operation not permitted (os error 1)」
 **预期**：导出成功，目标处生成备份包
 **实际**：EPERM 拒绝创建兄弟临时文件，导出失败；CSV 导出不受影响（`fs::write` 直写目标，csv.rs:139）
 **根因锚点**：core/cf-exporter/src/backup.rs:122+276（temp_sibling_path）、pux.rs:140+591（同型复制实现）
 **处置**：cf-exporter 新增共享落定 helper：①先试同目录兄弟临时 + rename（CLI 非沙盒保持原子落定不变）；②create/rename 得权限类错误（EPERM=1/EACCES=13）→ 回退容器 tmp 建临时 → 写完 File::create(out_path)（保存面板已授权）+ 复制 + fsync → verify → 清理；权限类判定 `raw_os_error() ∈ {1, 13}`，其余错误原样上抛。TDD。
-**核销记录**：（待修复 commit 后回填）
+**核销记录**：v2.9.2 修复 commit 56bc5dc——cf-exporter 新增共享落定 helper `atomic_out::write_via_temp`（双策略，实现+注释与处置裁定一致），backup.rs/pux.rs 接线、孪生 temp_sibling_path 收敛（BUG-12 纪律）、pux write_zip 补 sync_all 对齐 backup（reviewer LOW）；新增 7 测试。dev-reviewer Approve（0 CRITICAL/0 HIGH；MEDIUM-1 注释失实已改如实、LOW 全修或登记）。门禁：workspace 1383/0（基线 1376 只增不减）+ clippy -D warnings 零告警。**接受限制**：回退策略（沙盒内）为非原子退化——write_fn 失败不触碰目标，但复制中途失败（如目标盘满）可能留半截目标；沙盒只授予所选文件本身，无原子替换可解，不视为回归。真机导出冒烟（加密备份 + 1PUX + CSV）待用户。

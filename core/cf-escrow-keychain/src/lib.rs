@@ -50,6 +50,30 @@ use security_framework_sys::item::{
 #[cfg(target_os = "macos")]
 use security_framework_sys::keychain_item::SecItemCopyMatching;
 
+/// 测试接缝（macOS；非 test 构建无任何残留）：`SecItemCopyMatching` 是本 crate
+/// 唯一的真机 FFI 依赖（:242 生产调用点），单测无法直接驱动其返回码。此宏在
+/// `not(test)` 构建下展开为**原调用原文**（release 机器码对象 cgu `.o` 与加缝前
+/// 逐字节一致——rlib 含 rmeta 元数据随宏新增而变化，非机器码，见 v2.10.0 覆盖率轮
+/// 留档）；`test` 构建下转发到
+/// [`tests::__test_hook_copy_matching`]，使成功 / `errSecItemNotFound` /
+/// `errSecInteractionNotAllowed` 三态分支可被确定性驱动（lead 裁定 A：零行为
+/// 变化的测试性接缝）。
+#[cfg(target_os = "macos")]
+macro_rules! sec_item_copy_matching {
+    ($query:expr, $result:expr) => {{
+        #[cfg(test)]
+        {
+            $crate::tests::__test_hook_copy_matching($query, $result)
+        }
+        #[cfg(not(test))]
+        {
+            // SAFETY：query 为有效 CFDictionaryRef；result 为栈上有效写缓冲；
+            // 仅 errSecSuccess 时 result 为 +1 CFDataRef（生产路径拷贝后 CFRelease）。
+            unsafe { SecItemCopyMatching($query, $result) }
+        }
+    }};
+}
+
 /// Keychain 读取错误。
 ///
 /// 载荷纪律（docs/30 §1.2）：本类型**不携带任何密钥材料**——`Vec<u8>` 只在
@@ -214,8 +238,9 @@ pub fn read_generic_password(
     let mut result: CFTypeRef = std::ptr::null();
     // SAFETY：query 是有效 CFDictionaryRef（本函数返回前 CFRelease）；result 是
     // 栈上有效写缓冲。返回 errSecSuccess 时 result 为 +1 的 CFDataRef（拷贝后须
-    // CFRelease）；其余状态 result 未写入、不得读取。
-    let status = unsafe { SecItemCopyMatching(query, &mut result) };
+    // CFRelease）；其余状态 result 未写入、不得读取。非 test 构建经宏展开为直调
+    // `SecItemCopyMatching` 原文，汇编级不变。
+    let status = sec_item_copy_matching!(query, &mut result);
     // SAFETY：query 的 +1 引用到此释放（本函数不再使用）。
     unsafe { CFRelease(query as CFTypeRef) };
 
@@ -289,6 +314,180 @@ fn cf_string(value: &str) -> Result<CFStringRef, EscrowKeychainError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_foundation_sys::data::CFDataCreate;
+    use core_foundation_sys::dictionary::CFDictionaryRef;
+
+    // ── SecItemCopyMatching mock（v2.10.0 覆盖率轮，lead 裁定 A）─────────────
+    // 生产缝 `sec_item_copy_matching!` 在 test 构建下转发到此。线程局部状态，
+    // 测试间天然隔离（cargo test 每用例一线程）；`mock_sec_item` 每次覆盖旧值，
+    // 下个用例即使复用同一线程也会被覆盖，无跨用例泄漏。
+
+    /// mock 状态：`Off` = 直通真 `SecItemCopyMatching`（供 `real_keychain_roundtrip`
+    /// 在 `--ignored` 下仍走真机路径）；`On` = 按配置返回码驱动生产三态分支。
+    #[derive(Clone, Debug)]
+    enum MockState {
+        Off,
+        On {
+            status: i32,
+            data: Option<Vec<u8>>,
+        },
+    }
+
+    thread_local! {
+        static COPY_MATCHING_MOCK: std::cell::RefCell<MockState> =
+            const { std::cell::RefCell::new(MockState::Off) };
+    }
+
+    /// 生产缝的测试 hook：`Off` 时直通真 `SecItemCopyMatching`；`On` 时返回配置码，
+    /// 成功分支须写一个有效 +1 CFDataRef（生产路径 `CFDataGet*` 读取后 `CFRelease`）。
+    #[cfg(target_os = "macos")]
+    pub(crate) fn __test_hook_copy_matching(
+        query: CFDictionaryRef,
+        result: *mut CFTypeRef,
+    ) -> i32 {
+        COPY_MATCHING_MOCK.with(|m| match &*m.borrow() {
+            MockState::Off => unsafe { SecItemCopyMatching(query, result) },
+            MockState::On { status, data } => {
+                if *status == errSecSuccess {
+                    if let Some(bytes) = data {
+                        // SAFETY：测试辅助；+1 引用由生产路径 CFRelease，防泄漏。
+                        let cf = unsafe {
+                            CFDataCreate(
+                                kCFAllocatorDefault,
+                                bytes.as_ptr(),
+                                bytes.len() as CFIndex,
+                            )
+                        };
+                        unsafe { *result = cf as CFTypeRef };
+                    }
+                    // data=None → result 保持 null，驱动生产 `errSecSuccess but
+                    // result is null` 防御分支（真实契约下不发生，:251-253）。
+                }
+                *status
+            }
+        })
+    }
+
+    /// 开启 mock（覆盖旧状态；用例内调用，无需显式复位——下个用例会再覆盖）。
+    fn mock_sec_item(status: i32, data: Option<Vec<u8>>) {
+        COPY_MATCHING_MOCK.with(|m| {
+            *m.borrow_mut() = MockState::On { status, data };
+        });
+    }
+
+    /// 关闭 mock（防御性收尾；正常收尾由下个用例的 mock_sec_item 覆盖即可）。
+    fn clear_mock() {
+        COPY_MATCHING_MOCK.with(|m| {
+            *m.borrow_mut() = MockState::Off;
+        });
+    }
+
+    /// `SecItemCopyMatching` 三态分支（lead 裁定 A 的 mock 用例）：成功 →
+    /// `Ok(Some(data))`，数据逐字节一致；mock 关闭时直通真机，故此处断言走 mock。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_mock_success_returns_data() {
+        let secret = b"mock-escrow-key-material".to_vec();
+        mock_sec_item(errSecSuccess, Some(secret.clone()));
+        let got = read_generic_password("cn.coffer.escrow", "vault-mock", "A6DS985SJJ.app.coffer.Coffer")
+            .expect("success branch must return Ok(Some)")
+            .expect("item must be present");
+        clear_mock();
+        assert_eq!(got, secret, "mock 成功分支须逐字节返回数据");
+    }
+
+    /// `errSecItemNotFound`（-25300）→ `Ok(None)`（调用方显示「未托管」）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_mock_item_not_found_returns_none() {
+        mock_sec_item(errSecItemNotFound, None);
+        let got = read_generic_password("cn.coffer.escrow", "vault-mock", "A6DS985SJJ.app.coffer.Coffer")
+            .expect("not-found must not be an error");
+        clear_mock();
+        assert!(got.is_none(), "errSecItemNotFound 须映射 Ok(None)");
+    }
+
+    /// `errSecInteractionNotAllowed`（-25308）→ `Err(OsStatus)`（fail-closed，
+    /// docs/30 §1.2：其余 OSStatus 一律错误、不静默假成功）。与 -34018 等其余码
+    /// 共用 classify_status 的 `other` 臂，此用例驱动该臂 + `os_status` 构造。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_mock_interaction_not_allowed_returns_err() {
+        mock_sec_item(-25308, None);
+        let err = read_generic_password("cn.coffer.escrow", "vault-mock", "A6DS985SJJ.app.coffer.Coffer")
+            .expect_err("interaction-not-allowed must fail closed");
+        clear_mock();
+        assert!(matches!(
+            err,
+            EscrowKeychainError::OsStatus {
+                code: -25308,
+                description
+            } if description.contains("errSecInteractionNotAllowed")
+        ));
+    }
+
+    /// 成功 + 空载荷：`len <= 0` → `Vec::new()`（生产 :243-244 分支）。
+    /// 注：`CFDataGetBytePtr` 对空 CFData 的平台行为可能落防御分支 `:236-242`
+    /// （`ptr.is_null()` → Platform）——两种结局都覆盖了新行；此断言按本机实测
+    /// 收敛，若改平台行为漂移需重测。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_mock_success_empty_data() {
+        mock_sec_item(errSecSuccess, Some(Vec::new()));
+        let got = read_generic_password("cn.coffer.escrow", "vault-mock", "A6DS985SJJ.app.coffer.Coffer");
+        clear_mock();
+        match got {
+            Ok(Some(v)) => assert!(v.is_empty(), "空载荷应返回空 Vec"),
+            Ok(None) => panic!("errSecSuccess 不应映射 Ok(None)"),
+            Err(EscrowKeychainError::Platform(d)) => {
+                // 防御分支：空 CFData 的 GetBytePtr 返回 null（平台实现差异）。
+                assert!(
+                    d.contains("CFDataGetBytePtr returned null"),
+                    "防御分支错误信息须指明空载荷根因: {d}"
+                );
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// 成功但 result 为 null（真实 Keychain 契约下不发生——kSecReturnData=true
+    /// 必有数据；防御性拒绝）：mock 返回 `errSecSuccess` 但不写 result，驱动
+    /// `errSecSuccess but result is null` 分支（:251-253）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_mock_success_null_result_is_rejected() {
+        mock_sec_item(errSecSuccess, None);
+        let err = read_generic_password(
+            "cn.coffer.escrow",
+            "vault-mock",
+            "A6DS985SJJ.app.coffer.Coffer",
+        )
+        .expect_err("null result on success must fail closed");
+        clear_mock();
+        assert!(matches!(
+            err,
+            EscrowKeychainError::Platform("errSecSuccess but result is null")
+        ));
+    }
+
+    /// `Display` 四变体可读（v2.10.0 覆盖率补 :82-89 各臂；`:104-112` 已由
+    /// `os_status_description_covers_all_known_codes` 覆盖）。
+    #[test]
+    fn error_display_covers_all_variants() {
+        let cases = [
+            (
+                EscrowKeychainError::InvalidArgument("service is empty"),
+                "invalid argument",
+            ),
+            (EscrowKeychainError::Unsupported, "unsupported on this platform"),
+            (EscrowKeychainError::Platform("boom"), "platform error"),
+            (EscrowKeychainError::os_status(-25308), "keychain OSStatus -25308"),
+        ];
+        for (err, needle) in cases {
+            let s = err.to_string();
+            assert!(s.contains(needle), "display 应含 {needle}: {s}");
+        }
+    }
 
     /// 三态映射纯逻辑：errSecSuccess → 成功；errSecItemNotFound → `Ok(None)`；
     /// 其余 OSStatus → `Err(OsStatus)`（含原始错误码）。
@@ -311,6 +510,35 @@ mod tests {
         let msg = e.to_string();
         assert!(msg.contains("-34018"), "必须含原始错误码: {msg}");
         assert!(msg.contains("errSecMissingEntitlement"), "必须含可读名: {msg}");
+    }
+
+    /// `os_status_description` 全部已知码 match 臂可读（v2.10.0 覆盖率补：
+    /// :104-112 的 errSecSuccess/-50/-25291/-25293/-25299/errSecItemNotFound/
+    /// -25308/-34018 各臂此前未被单测触及）；未识别码回退带码字符串。
+    #[test]
+    fn os_status_description_covers_all_known_codes() {
+        for (code, expect_contains) in [
+            (errSecSuccess, "errSecSuccess"),
+            (-50, "errSecParam"),
+            (-25291, "errSecNotAvailable"),
+            (-25293, "errSecAuthFailed"),
+            (-25299, "errSecDuplicateItem"),
+            (errSecItemNotFound, "errSecItemNotFound"),
+            (-25308, "errSecInteractionNotAllowed"),
+            (-34018, "errSecMissingEntitlement"),
+        ] {
+            let d = os_status_description(code);
+            assert!(
+                d.contains(expect_contains),
+                "code {code} 描述应含 {expect_contains}: {d}"
+            );
+        }
+        let unknown = os_status_description(-9999);
+        assert!(unknown.contains("-9999"), "未识别码须回退带原始码: {unknown}");
+        assert!(
+            unknown.contains("unrecognized"),
+            "未识别码须标记 unrecognized: {unknown}"
+        );
     }
 
     /// 载荷纪律（docs/30 §1.2）：错误类型不携带密钥材料——Debug/Display 均不泄露。
@@ -362,6 +590,36 @@ mod tests {
         ));
     }
 
+    /// `cf_string` 边界：空串 / 普通 ASCII / 超长 / Unicode（多字节 UTF-8）/
+    /// 内嵌 NUL（v2.10.0 覆盖率补 :272-287——CFStringCreateWithCString 是纯 CF
+    /// 调用，任何 macOS 上下文可跑，不触钥匙串）。成功路径 +1 引用须 CFRelease。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cf_string_edge_cases() {
+        // 空串：CFString 合法（非空输入校验在调用方，本函数不拒空串）。
+        let s = cf_string("").expect("empty string is a valid CFString");
+        unsafe { CFRelease(s as CFTypeRef) };
+
+        // 普通 ASCII（与生产查询条件同形态）。
+        let s = cf_string("cn.coffer.escrow").expect("ascii ok");
+        unsafe { CFRelease(s as CFTypeRef) };
+
+        // 超长（4 KiB，远大于 kSecAttr* 典型长度；CFString 无长度上限）。
+        let long = "a".repeat(4096);
+        let s = cf_string(&long).expect("long string ok");
+        unsafe { CFRelease(s as CFTypeRef) };
+
+        // Unicode（多字节 UTF-8，kCFStringEncodingUTF8 按字节拷贝）。
+        let s = cf_string("托管密钥-escrow-🔑").expect("unicode ok");
+        unsafe { CFRelease(s as CFTypeRef) };
+
+        // 内嵌 NUL → InvalidArgument（CString 拒绝，fail-fast）。
+        assert!(matches!(
+            cf_string("has\0nul"),
+            Err(EscrowKeychainError::InvalidArgument(_))
+        ));
+    }
+
     /// 真 Keychain 往返集成测试——**真机/签名环境执行**：需有效签名身份 +
     /// `keychain-access-groups` entitlement（数据保护钥匙串访问），参照
     /// `tools/run_keychain_tests.sh` 先例。普通 `cargo test` 跳过（`#[ignore]`）：
@@ -374,7 +632,7 @@ mod tests {
     mod keychain_integration {
         use super::*;
         use core_foundation_sys::data::CFDataCreate;
-        use core_foundation_sys::dictionary::CFDictionaryRef;
+        use core_foundation_sys::dictionary::{CFDictionaryGetCount, CFDictionaryRef};
         use security_framework_sys::item::kSecValueData;
         use security_framework_sys::keychain_item::{SecItemAdd, SecItemDelete};
 
@@ -462,12 +720,70 @@ mod tests {
             dict
         }
 
+        /// 辅助函数纯 CF 构造正确性（v2.10.0 覆盖率补 :441-522——test_dict /
+        /// test_cf_string / write_attributes / delete_query 此前仅被 `#[ignore]`
+        /// roundtrip 间接调用，常规门禁不执行）。直接驱动：验证字典非空 + 键数
+        /// 正确；纯 CF 无 Keychain 副作用，确定性。
+        #[test]
+        fn helper_functions_build_valid_cf_dictionaries() {
+            // test_cf_string：非空 CFString（+1，用完释放）。
+            let s = test_cf_string("helper-svc");
+            assert!(!s.is_null(), "test_cf_string 不得返回 null");
+            unsafe { CFRelease(s as CFTypeRef) };
+
+            // test_dict 空字典（0 键）+ 单对（1 键）。
+            let empty = test_dict(&[]);
+            assert!(!empty.is_null());
+            assert_eq!(unsafe { CFDictionaryGetCount(empty) }, 0);
+            unsafe { CFRelease(empty as CFTypeRef) };
+
+            let k1 = test_cf_string("k1");
+            let v1 = test_cf_string("v1");
+            let one = test_dict(&[(k1 as CFTypeRef, v1 as CFTypeRef)]);
+            assert!(!one.is_null());
+            assert_eq!(unsafe { CFDictionaryGetCount(one) }, 1);
+            // 释放自身 +1：k1/v1 各被字典 retain 一次（共 2 持有），字典 +1 释放
+            // 会连带释放其 retain——逐个释放自身 +1 即可平衡。
+            unsafe {
+                CFRelease(k1 as CFTypeRef);
+                CFRelease(v1 as CFTypeRef);
+                CFRelease(one as CFTypeRef);
+            }
+
+            // write_attributes：6 键（与生产查询同口径，kSecValueData 承载数据）。
+            let attrs = write_attributes(
+                "svc",
+                "acct",
+                "A6DS985SJJ.app.coffer.Coffer",
+                b"helper-data",
+            );
+            assert!(!attrs.is_null());
+            assert_eq!(
+                unsafe { CFDictionaryGetCount(attrs) },
+                6,
+                "write_attributes 应含 6 键"
+            );
+            unsafe { CFRelease(attrs as CFTypeRef) };
+
+            // delete_query：5 键（无 kSecValueData，幂等定位）。
+            let del = delete_query("svc", "acct", "A6DS985SJJ.app.coffer.Coffer");
+            assert!(!del.is_null());
+            assert_eq!(
+                unsafe { CFDictionaryGetCount(del) },
+                5,
+                "delete_query 应含 5 键"
+            );
+            unsafe { CFRelease(del as CFTypeRef) };
+        }
+
         /// 写入 → 读取逐字节一致；删除后 read 须 `Ok(None)`（吊销即独立吊销，
         /// docs/30 §1.2）。多库隔离由 account=vault_uuid 定位覆盖（此处用唯一化
         /// account 验证条目定位不串库）。
         #[test]
         #[ignore = "真机/签名环境执行：需 keychain-access-groups entitlement + 签名身份"]
         fn real_keychain_roundtrip() {
+            // 防御性复位：防 mock 用例 panic 后线程 TLS 残留 `On` 状态污染真机路径。
+            clear_mock();
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system clock before epoch")

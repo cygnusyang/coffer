@@ -46,8 +46,9 @@ struct CofferMainApp: App {
                     UpdateSheet(updater: model.updater)
                         .environmentObject(model)
                 }
-                // G-C（v2.9.1，GitLab issue #5/#6）：帮助面板 sheet 挂载，
-                // 由帮助菜单「键盘快捷键…」/「使用入门…」触发（同 showAbout
+                // G-C（v2.9.1，GitLab issue #5/#6）+ 帮助中心（v2.10.1，
+                // docs/19 §3）：帮助面板 sheet 挂载，由帮助菜单「键盘快捷
+                // 键…」/「使用入门…」/「帮助中心…」触发（同 showAbout
                 // 模式——commands 无法挂 sheet，走 AppModel @Published 旗标 +
                 // 主窗口 sheet）。帮助无密级，锁定/解锁态均可打开。
                 .sheet(isPresented: $model.showShortcuts) {
@@ -55,6 +56,9 @@ struct CofferMainApp: App {
                 }
                 .sheet(isPresented: $model.showHelp) {
                     GettingStartedView()
+                }
+                .sheet(isPresented: $model.showHelpCenter) {
+                    HelpCenterView()
                 }
         }
         .windowToolbarStyle(.unified)
@@ -110,14 +114,20 @@ struct CofferMainApp: App {
                 Button("检查更新…") { model.checkForUpdates() }
             }
 
-            // G-C（v2.9.1，GitLab issue #5/#6）：帮助菜单——键盘快捷键速查
-            // + 使用入门。帮助无密级：两项均不 disabled，锁定/解锁态都可用
-            // （与「关于」同纪律，不涉及任何密级内容）。触发走 AppModel
-            // @Published 旗标（commands 闭包无法用 @EnvironmentObject，同
-            // DataCommands/showImport 先例），sheet 挂主窗口（见上）。
-            CommandMenu("帮助") {
+            // G-C（v2.9.1，GitLab issue #5/#6）+ 帮助中心（v2.10.1，
+            // docs/19 §3）：帮助菜单——键盘快捷键速查 + 使用入门 + 帮助中心。
+            // `CommandGroup(replacing: .help)` 修复根因（docs/19 §8 W2 专项）：
+            // AppKit 按「帮助」标题把顶级菜单当 helpMenu 处理并注入系统帮助
+            // 搜索框，未注册 Help Book 时空菜单点开报错——替换（而非自定义
+            // CommandMenu）后注入行为可能残留，但「不再报错」即修复实证。
+            // 帮助无密级：三项均不 disabled，锁定/解锁态都可用（与「关于」
+            // 同纪律，不涉及任何密级内容）。触发走 AppModel @Published 旗标
+            // （commands 闭包无法用 @EnvironmentObject，同 DataCommands/
+            // showImport 先例），sheet 挂主窗口（见上）。
+            CommandGroup(replacing: .help) {
                 Button("键盘快捷键…") { model.showShortcuts = true }
                 Button("使用入门…") { model.showHelp = true }
+                Button("帮助中心…") { model.showHelpCenter = true }
             }
         }
 

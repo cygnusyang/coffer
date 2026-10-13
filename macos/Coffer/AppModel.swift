@@ -94,6 +94,11 @@ final class AppModel: ObservableObject {
     /// 入门…」触发，正文为本地静态文案（零网络纪律，禁外链/禁自动更新
     /// 检查）。与 showShortcuts 同纪律：无密级、不随 lock() 清理。
     @Published var showHelp = false
+    /// 「帮助中心」sheet 触发（v2.10.1，docs/19 §3/§7）：帮助菜单「帮助
+    /// 中心…」触发，正文为九章静态本地文案（零网络纪律同 showHelp；内容
+    /// 源 HelpCenterContent）。与 showShortcuts/showHelp 同纪律：无密级、
+    /// 不随 lock() 清理。
+    @Published var showHelpCenter = false
     /// 新建条目 sheet 触发类别（v2.9.0 P7，docs/14 §A P7 §3.1）：自 MainView
     /// 本地 @State 提升到 AppModel @Published——CommandGroup 菜单不可达视图层
     /// @State，与 showImport/showImportOpvault 提升同先例。⌘N 置 `.login`

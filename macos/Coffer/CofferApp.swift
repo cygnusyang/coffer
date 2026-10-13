@@ -54,7 +54,7 @@ struct CofferMainApp: App {
                     ShortcutsSheet()
                 }
                 .sheet(isPresented: $model.showHelp) {
-                    HelpContentView()
+                    GettingStartedView()
                 }
         }
         .windowToolbarStyle(.unified)

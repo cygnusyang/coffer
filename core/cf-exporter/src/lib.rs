@@ -45,6 +45,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_docs)]
 
+mod atomic_out;
 pub mod backup;
 pub mod csv;
 pub mod pux;

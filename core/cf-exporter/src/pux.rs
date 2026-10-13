@@ -35,13 +35,14 @@
 //! - passkey **不导出** + 计数（TC-EXP-07）；
 //! - 分类反向映射复用 cf-domain §6.4.1 权威表（`opvault_code`），未命中
 //!   兜底 `003`（SecureNote，TC-EXP-08）；
-//! - 原子落盘：临时兄弟文件 → rename（备份包同型，FR-8.6 纪律）。
+//! - 原子落盘：同目录兄弟临时 → rename，沙盒（EPERM/EACCES）回退容器 tmp
+//!   写 + 直写目标（`atomic_out::write_via_temp`，备份包同型，BUG-22 / FR-8.6）。
 
-use std::fs;
+use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
+use crate::atomic_out::write_via_temp;
 use cf_domain::category::ItemCategory;
 use cf_domain::field::{Designation, FieldType};
 use cf_domain::item::ItemState;
@@ -135,15 +136,11 @@ pub fn export_one_pux(
         files.extend(emitted.files);
     }
 
-    // 临时文件 → rename：任何一步失败都清理临时文件，目标不留半截
-    //（备份包同型纪律，FR-8.6）
-    let tmp_path = temp_sibling_path(out_path);
-    if let Err(e) = write_zip(&tmp_path, &item_jsons, &files) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(export_err(e));
-    }
-    if let Err(e) = finalize_export(&tmp_path, out_path) {
-        let _ = fs::remove_file(&tmp_path);
+    // 原子落定：同目录兄弟临时 + rename；沙盒/只读目录（EPERM/EACCES）回退
+    // 容器 tmp 写 + 直写目标（BUG-22）。策略 1 任何一步失败都清理临时文件，
+    // 目标不留半截（备份包同型纪律，FR-8.6）；策略 2 为非原子退化（复制中途
+    // 失败可能留半截目标，备份包同型，BUG-22 条目已登记此限制）。
+    if let Err(e) = write_via_temp(out_path, |file| write_zip(file, &item_jsons, &files)) {
         return Err(export_err(e));
     }
 
@@ -528,14 +525,10 @@ pub fn category_to_1p_code(category: ItemCategory) -> String {
 // ------------------------------------------------------------ 落盘
 
 /// 写标准 ZIP：`export.attributes` + `export.data` + `files/` 附件。
-fn write_zip(
-    tmp_path: &Path,
-    items: &[Value],
-    files: &[(String, Vec<u8>)],
-) -> Result<(), CfError> {
-    let f = fs::File::create(tmp_path)
-        .map_err(|e| CfError::Io(format!("创建临时 1PUX 文件失败：{e}")))?;
-    let mut zip = ZipWriter::new(f);
+///
+/// `file` 为已打开的临时文件（创建与权限判定由 [`write_via_temp`] 负责）。
+fn write_zip(file: File, items: &[Value], files: &[(String, Vec<u8>)]) -> Result<(), CfError> {
+    let mut zip = ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let attributes = json!({"version": 3, "createdAt": unix_now()?});
@@ -556,14 +549,10 @@ fn write_zip(
         zip.start_file(entry, opts).map_err(zip_err)?;
         zip.write_all(content).map_err(io_err)?;
     }
-    zip.finish().map_err(zip_err)?;
-    Ok(())
-}
-
-/// 临时文件 → 目标路径（原子落定；失败由调用方清理临时文件）。
-fn finalize_export(tmp_path: &Path, out_path: &Path) -> Result<(), CfError> {
-    fs::rename(tmp_path, out_path)
-        .map_err(|e| CfError::Io(format!("落定 1PUX 导出文件失败：{e}")))?;
+    zip.finish()
+        .map_err(zip_err)?
+        .sync_all()
+        .map_err(|e| CfError::Io(format!("fsync 1PUX 导出文件失败：{e}")))?;
     Ok(())
 }
 
@@ -585,17 +574,6 @@ fn zip_err(e: zip::result::ZipError) -> CfError {
 /// ZIP 数据写入错误（io 层）→ [`CfError::Io`]（外层折叠为 ExportFailed）。
 fn io_err(e: std::io::Error) -> CfError {
     CfError::Io(format!("1PUX ZIP 数据写入失败：{e}"))
-}
-
-/// 同目录的唯一临时兄弟路径（备份包 `backup.rs` 同型实现）。
-fn temp_sibling_path(out_path: &Path) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
-    let mut name = out_path
-        .file_name()
-        .map_or_else(|| "export.1pux".to_owned(), |n| n.to_string_lossy().to_string());
-    name.push_str(&format!(".tmp-{}-{seq}", std::process::id()));
-    out_path.with_file_name(name)
 }
 
 /// 当前 Unix 秒；系统时钟早于 epoch 时返回错误（不猜测）。

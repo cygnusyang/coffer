@@ -41,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::atomic_out::write_via_temp;
 use cf_domain::CfError;
 use cf_format::header::{validate_header, Header, FORMAT_VERSION};
 use cf_store::repo::meta::MetaRepo;
@@ -117,21 +118,22 @@ pub fn export_backup(vault_dir: &Path, out_path: &Path) -> Result<BackupExportRe
         )));
     }
 
-    // 临时文件 → fsync → rename：任何一步失败（含打包中途 IO 失败）都
-    // 清理临时文件，目标路径不留半截文件（FR-8.6 / TC-EXP-10、11）
-    let tmp_path = temp_sibling_path(out_path);
-    let result = write_zip(vault_dir, &files, &tmp_path)
-        .and_then(|()| finalize_and_verify(&tmp_path, out_path, files.len()));
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp_path);
-    } else {
+    // 原子落定：同目录兄弟临时 + rename；沙盒/只读目录（EPERM/EACCES）回退
+    // 容器 tmp 写 + 直写目标（BUG-22）。策略 1 任何一步失败都清理临时文件，
+    // 目标路径不留半截文件（FR-8.6 / TC-EXP-10、11）；策略 2 为沙盒约束下的
+    // 非原子退化——write_fn 失败不触碰目标，但复制中途失败（如盘满）可能留
+    // 半截目标（沙盒只授予所选文件本身，无更优解，BUG-22 条目已登记此限制）。
+    let result = write_via_temp(out_path, |file| write_zip(vault_dir, &files, file))
+        .and_then(|()| finalize_backup(out_path, files.len()))
+        .map_err(export_err);
+    if result.is_ok() {
         // 导出成功 → 给源库 meta.last_backup_at 打点（FR-8.5，docs/09 §2.2）。
         // 失败不致命（见 stamp_last_backup 文档），不影响导出结果。
         stamp_last_backup(vault_dir);
         // FR-12.6 本地审计：备份导出成功事件（同一静默纪律）。
         stamp_audit(vault_dir, AuditEvent::BackupExport, None);
     }
-    result.map_err(export_err)
+    result
 }
 
 /// 导出路径的错误归一：文件系统层 [`CfError::Io`] 折叠为
@@ -225,8 +227,9 @@ fn collect_recursive(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<
 }
 
 /// 把文件列表写入 ZIP（Deflate、UTF-8 文件名，docs/03 §1.4）。
-fn write_zip(vault_dir: &Path, files: &[PathBuf], tmp_path: &Path) -> Result<(), CfError> {
-    let file = File::create(tmp_path).map_err(|e| CfError::Io(format!("创建临时文件失败：{e}")))?;
+///
+/// `file` 为已打开的临时文件（创建与权限判定由 [`write_via_temp`] 负责）。
+fn write_zip(vault_dir: &Path, files: &[PathBuf], file: File) -> Result<(), CfError> {
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -248,13 +251,9 @@ fn write_zip(vault_dir: &Path, files: &[PathBuf], tmp_path: &Path) -> Result<(),
     Ok(())
 }
 
-/// rename 临时文件到目标路径并执行导出后自检（FR-8.6）。
-fn finalize_and_verify(
-    tmp_path: &Path,
-    out_path: &Path,
-    file_count: usize,
-) -> Result<BackupExportResult, CfError> {
-    fs::rename(tmp_path, out_path).map_err(|e| CfError::Io(format!("落定备份文件失败：{e}")))?;
+/// 导出后自检 + 元数据（落定 rename/复制已由 [`write_via_temp`] 完成，
+/// FR-8.6）。
+fn finalize_backup(out_path: &Path, file_count: usize) -> Result<BackupExportResult, CfError> {
     // 自检失败 → 导出整体失败（不留坏包；错误语义原样透出）
     verify_backup(out_path)?;
     let size_bytes = fs::metadata(out_path)
@@ -266,22 +265,6 @@ fn finalize_and_verify(
         size_bytes,
         verified: true,
     })
-}
-
-/// 同目录的唯一临时兄弟路径（`.coffer` → `.coffer.tmp-<pid>-<seq>`）。
-///
-/// BUG-12 同型修复：原 pid+纳秒 在粗时钟下同 pid 同 tick 撞名；改为
-/// 进程内原子计数器（进程内唯一由构造保证，跨进程由 pid 保证），
-/// 创建/重命名/清理语义不变。
-fn temp_sibling_path(out_path: &Path) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
-    let mut name = out_path.file_name().map_or_else(
-        || "backup.coffer".to_owned(),
-        |n| n.to_string_lossy().to_string(),
-    );
-    name.push_str(&format!(".tmp-{}-{seq}", std::process::id()));
-    out_path.with_file_name(name)
 }
 
 // ---------------------------------------------------------------- 校验

@@ -73,6 +73,12 @@ final class AppModel: ObservableObject {
     /// 库切换器 sheet（v0.4 FR-1.2，MB-1：MainView 工具栏切换器触发，
     /// sheet 挂 RootView——与导入/设置同一跨视图触发模式）。
     @Published var showVaultSwitcher = false
+    /// 密码库管理面 sheet（v2.10.0 D1，docs/17 §4）：库切换 sheet 底部深链 /
+    /// LockView「管理密码库…」工厂级入口经此在**主窗**（RootView）呈现，
+    /// 规避 sheet-on-sheet（UDR-6，先关切换 sheet 再弹管理面）。设置「数据」
+    /// 区入口走 SettingsView 本地 @State sheet（设置窗源，F3 随窗口自关），
+    /// 不占本状态。
+    @Published var showVaultManagement = false
     /// OTA 更新 sheet 触发（v2.7.0，docs/35 §2.6）：应用菜单「检查更新…」+
     /// 关于对话框「检查更新…」按钮共用；设置页不放任何更新入口（用户裁定）。
     @Published var showUpdateSheet = false
@@ -452,6 +458,19 @@ final class AppModel: ObservableObject {
     /// 失效回退 createdAt 最新）；删除该键即回退旧行为（可逆）。
     nonisolated static let lastVaultUUIDDefaultsKey = "lastVaultUUID"
 
+    /// 删除库后的落位结果（v2.10.0 D1，docs/17 §3.1）：视图 Step5 反馈与
+    /// 管理面生命周期据此呈现。Equatable 以断言。
+    enum DeleteVaultLanding: Equatable {
+        /// 多库：当前会话落位到 createdAt 最近者（已锁 / 保持锁定态引导解锁）。
+        case switchedToMostRecent(FfiVaultBrief)
+        /// 单库：删光全库，落 .noVault 空库首屏（VaultSetupView）。
+        case noVault
+        /// 删非当前库：会话不变（解锁态保持、不切库、不重建 session、不重写
+        /// lastVaultUUID），仅列表刷新 + 反馈（lead 裁定 2026-10-13，docs/17
+        /// §3.3；AC-2.10.0-DL-6）。
+        case sessionUnchanged
+    }
+
     // MARK: - 路径
 
     /// 库工作目录（沙盒内 Documents/Coffer）。
@@ -658,6 +677,96 @@ final class AppModel: ObservableObject {
             let errText = ErrorPresenter.text(error)
             DiagLog.append(errText)
             lastErrorMessage = errText
+        }
+    }
+
+    // MARK: - 库删除（v2.10.0 D1，docs/17 §3）
+
+    /// 是否可管理（删除）密码库（UDR-7 / C6，AC-2.10.0-EN-7）：试用已结束
+    /// （Rust VaultWrite 门禁 6002 拦截写）为只读态 → 隐藏「管理密码库…」
+    /// 入口与行内 [删除…]。公开构建默认 .unactivated（全功能免费版）恒可
+    /// 管理。只读判定委托 DeleteVaultPolicy.canManage 纯函数（可独立单测）。
+    var canManageVaults: Bool {
+        DeleteVaultPolicy.canManage(licenseStatus: LicenseAssembly.shared.licenseStatus())
+    }
+
+    /// 删除库编排（docs/17 §3，工厂级）：`lock()` 锁旧（仅删当前库，C5）→
+    /// FFI delete_vault（内含会话注册表 lock+forget + 文件族 rename-then-delete）
+    /// → Keychain 双清 best-effort（C2）→ lastVaultUUID 清键（C4）→
+    /// reloadVaultBriefs → 落位（**仅删当前库**：多库切 createdAt 最近者
+    /// `.locked` / 单库 `.noVault`；删非当前库返回 `.sessionUnchanged` 会话
+    /// 不变，lead 裁定 2026-10-13，docs/17 §3.3）。
+    ///
+    /// 错误语义（docs/17 §3.4）：FFI 失败 → 返回 .failure（视图留驻可重试），
+    /// lastErrorMessage 已置（ffiErrorAlert 呈现）；删当前库失败（已先锁）→
+    /// 用户处锁定态可重解锁重试，无数据丢失。Keychain 双清失败非致命
+    /// （库已删，orphan 项无害，仅 DiagLog 登记）。
+    @discardableResult
+    func deleteVault(uuid: String) async -> Result<DeleteVaultLanding, Error> {
+        guard !isBusy else { return .failure(DeleteVaultPolicyError.busy) }
+        isBusy = true
+        defer { isBusy = false }
+
+        let isCurrent = (uuid == vaultUUID)
+        // C5 删当前库先锁旧：防在打开连接上删库导致 WAL/SHM 半删。lock()
+        // 幂等清 Rust 会话密钥 + UI 明文状态 + 剪贴板 + phase → .locked。
+        if isCurrent {
+            lock()
+        }
+
+        do {
+            let factory = self.factory
+            let dir = self.baseDir.path
+            try await Task.detached(priority: .userInitiated) {
+                try factory.deleteVault(baseDir: dir, vaultUuid: uuid)
+            }.value
+
+            // C2 Keychain 双清（best-effort）：库已删，orphan Keychain 项
+            // 无害（docs/16 §4.4 接受残余），清理失败仅落诊断日志不弹错。
+            do { _ = try BiometricKeychain().delete(vaultUUID: uuid) }
+            catch { DiagLog.append("deleteVault K_bio 清理失败（无害）: \(error)") }
+            do { _ = try McpEscrowKeychain().delete(vaultUUID: uuid) }
+            catch { DiagLog.append("deleteVault escrow 清理失败（无害）: \(error)") }
+
+            if isCurrent {
+                // 步骤 6：清当前会话状态（lock() 只锁不清 uuid；此处删除后
+                // 彻底清空，供落位重开会话）。
+                session = nil
+                vaultUUID = ""
+                vaultName = ""
+                lockBackoffDeadline = nil
+            }
+
+            // C4 lastVaultUUID 清键（仅指向被删库时；删除该键 bootstrap 回退
+            // createdAt 最新，可逆）。
+            if UserDefaults.standard.string(forKey: Self.lastVaultUUIDDefaultsKey) == uuid {
+                UserDefaults.standard.removeObject(forKey: Self.lastVaultUUIDDefaultsKey)
+            }
+
+            reloadVaultBriefs()
+
+            // 落位（docs/17 §3.2/§3.3，AC-2.10.0-DL-5/6）：**仅删当前库落位**
+            // ——多库切 createdAt 最近者（不自动解锁，回主窗 LockView 引导）；
+            // 单库 .noVault。删非当前库（isCurrent == false）**不做落位**：当前
+            // 会话不变（解锁态保持、不切库），仅列表刷新 + .sessionUnchanged 反馈
+            // （lead 裁定 2026-10-13：删非当前 B 时按 createdAt 跳到 C 属无来由
+            // 跳变；当前 A 恒非被删目标，无自切可能）。
+            if isCurrent {
+                if let next = DeleteVaultPolicy.selectLandingVault(
+                    briefs: vaultBriefs, deletedUUID: uuid
+                ) {
+                    openSession(next)
+                    return .success(.switchedToMostRecent(next))
+                }
+                phase = .noVault
+                return .success(.noVault)
+            }
+            return .success(.sessionUnchanged)
+        } catch {
+            let errText = ErrorPresenter.text(error)
+            DiagLog.append(errText)
+            lastErrorMessage = errText
+            return .failure(error)
         }
     }
 

@@ -32,6 +32,15 @@ struct RootView: View {
                 VaultSwitcherView()
                     .environmentObject(model)
             }
+            // 密码库管理面 sheet（v2.10.0 D1）：库切换底部深链 / LockView
+            // 「管理密码库…」经主窗呈现（UDR-6 规避 sheet-on-sheet）。锁定/
+            // 建库相变时随 RootView 内容切换：删光全库（.noVault）→ 管理面
+            // 自关落 VaultSetupView；删当前库多库（.locked）→ 管理面保持
+            // 列表刷新（UDR-4 生命周期在 VaultManagementView 内处理）。
+            .sheet(isPresented: $model.showVaultManagement) {
+                VaultManagementView()
+                    .environmentObject(model)
+            }
     }
 
     @ViewBuilder

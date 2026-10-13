@@ -89,10 +89,26 @@ struct LockView: View {
                     // 按钮下方次级形态；点击呈现 RecoveryResetSheet（两分支
                     // 按可用性在 sheet 内显隐，空态由 sheet 自处理——入口
                     // 不做可用性预判，避免死胡同由 sheet 呈现文案引导）。
+                    // 「忘记主密码？」标签保留给恢复入口不动（R-A 裁定，
+                    // AC-2.10.0-EN-3）。
                     Button("忘记主密码？") { showRecoveryReset = true }
                         .buttonStyle(.bordered)
                         .disabled(isUnlocking)
                 }
+            }
+
+            // v2.10.0 D1 工厂级入口（R-A 裁定 / UDR-2，AC-2.10.0-EN-3）：
+            // 低存在感次级链接「管理密码库…」→ VaultManagementView（全库
+            // 管理面，与设置入口同构）。锁定态仍可见全库、可删任意库（含
+            // 当前锁定库）；不直接删，行内删除仍走多步向导确认。经
+            // model.showVaultManagement 在主窗（RootView）以 sheet 呈现。
+            // UDR-7 只读许可隐藏。
+            if model.canManageVaults {
+                Button("管理密码库…") { model.showVaultManagement = true }
+                    .buttonStyle(.plain)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .disabled(isUnlocking)
             }
         }
         .padding(40)

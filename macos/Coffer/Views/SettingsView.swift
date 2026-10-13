@@ -36,6 +36,10 @@ struct SettingsView: View {
     @State private var showChangePassword = false
     /// 「从备份恢复」sheet（T-H：RestoreBackupView 加密备份恢复流程，FR-8.1）。
     @State private var showRestore = false
+    /// 「管理密码库」sheet（v2.10.0 D1：VaultManagementView 库管理面，
+    /// 设置窗源本地呈现，随 SettingsWindowHost 在 phase 离开 .unlocked 时
+    /// 整窗拆除，F3）。
+    @State private var showVaultManagement = false
     /// 「审计日志」sheet（T-I：AuditLogView 只读审计日志查看，FR-12.6）。
     @State private var showAuditLog = false
     /// 「许可」sheet（FR-15.7：LicenseSettingsView 许可状态 / 激活入口）。
@@ -109,6 +113,13 @@ struct SettingsView: View {
         .sheet(isPresented: $showNetworkSelfCert) {
             // 网络能力自证（FR-14.5，T08）：静态说明页，无 AppModel 依赖。
             NetworkSelfCertView()
+        }
+        .sheet(isPresented: $showVaultManagement) {
+            // 密码库管理面（v2.10.0 D1，docs/16 §4.5 线框）：设置窗源 sheet。
+            // 删当前库 → phase 离开 .unlocked → SettingsWindowHost 整窗自关
+            // （F3），sheet 随窗拆除；删非当前库 → 管理面保持列表刷新。
+            VaultManagementView()
+                .environmentObject(model)
         }
     }
 
@@ -239,6 +250,18 @@ struct SettingsView: View {
                 Label("从备份恢复…", systemImage: "arrow.counterclockwise")
             }
             // T-H：弹出 RestoreBackupView（见 body 的 showRestore sheet）
+
+            // v2.10.0 D1 主入口（docs/16 §4.5 线框：与「从备份恢复… / 审计
+            // 日志…」同级）：UDR-7 只读许可用户隐藏（对齐 create_vault 拒绝
+            // 口径，AC-2.10.0-EN-1/EN-7）。
+            if model.canManageVaults {
+                Button {
+                    showVaultManagement = true
+                } label: {
+                    Label("管理密码库…", systemImage: "archivebox")
+                }
+                // 弹出 VaultManagementView（见 body 的 showVaultManagement sheet）
+            }
 
             Button {
                 showAuditLog = true

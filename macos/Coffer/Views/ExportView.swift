@@ -43,6 +43,28 @@ struct ExportView: View {
     @Environment(\.dismiss)
     private var dismiss
 
+    // MARK: C8 参数化（v2.10.0 D1，docs/17 §4.6 / docs/16 §5 C8）：
+    // 删除向导导出步传入目标库与加密限定（UDR-1 根治：naive 复用会导当前库
+    // 而非待删库）。默认 nil/false → 现有调用点（MainView 工具栏导出）
+    // 零改动，行为与现状完全一致。
+
+    /// 目标库目录（库目录 `<base>/<uuid>`，非工作目录）。nil → 当前库
+    /// （model.vaultDirPath，现状行为）。UDR-1：向导导出步必须传此参数，
+    /// 否则导出恒导当前库 = 假备份下数据丢失。
+    var targetVaultDir: String?
+    /// 目标库名（建议文件名 / 展示用）。nil → 当前库名（现状行为）。
+    var targetVaultName: String?
+    /// 目标库 masked UUID（前 8 + …，D-5.1/5.3）。nil → 不渲染目标行。
+    var targetVaultMaskedUUID: String?
+    /// 全目标仅加密备份（UDR-3）：隐藏三入口 Picker，CSV/1PUX 分支不可达
+    /// （明文导出不在删除向导内提供，用户可事后解锁导出）。
+    var encryptedOnly = false
+    /// 向导内嵌模式回调（docs/17 §4.2 Step2）：加密备份导出完成（自检
+    /// verified）时触发，向导据此放行 Step3（强制保数据）。非 nil → 本视图
+    /// 抑制自有「关闭/完成」dismiss——内嵌时 dismiss 会误关外层向导 sheet，
+    /// 出口交由向导「已导出，继续删除」承担。
+    var onExportCompleted: (() -> Void)?
+
     /// 顶部三入口。
     enum Tab {
         case encrypted
@@ -102,22 +124,48 @@ struct ExportView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("导出").font(.headline)
-                Picker("", selection: $tab) {
-                    Text("加密备份").tag(Tab.encrypted)
-                    Text("CSV 明文").tag(Tab.csv)
-                    Text("1PUX 明文").tag(Tab.pux)
+                // C8：encryptedOnly（删除向导）隐藏三入口 Picker——全目标仅
+                // 加密备份（UDR-3），CSV/1PUX 分支不可达。
+                if !encryptedOnly {
+                    Picker("", selection: $tab) {
+                        Text("加密备份").tag(Tab.encrypted)
+                        Text("CSV 明文").tag(Tab.csv)
+                        Text("1PUX 明文").tag(Tab.pux)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 300)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
                 Spacer()
                 // 显式关闭出口（BUG-5 同类修复：macOS sheet 点外部不关闭、
                 // 无按钮时 Esc 无效）。导出执行中禁用（结果页会丢，任务
                 // 本身不受影响；备份/CSV 均为写目标文件，无中断损坏面）。
-                Button("关闭") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isAnyExporting)
+                // C8：内嵌模式（onExportCompleted 非 nil）抑制关闭按钮——
+                // dismiss 会误关外层向导 sheet，取消由向导统一承担。
+                if onExportCompleted == nil {
+                    Button("关闭") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(isAnyExporting)
+                }
             }
             .padding()
+
+            // C8 显式目标库展示（S-6 必落，AC-2.10.0-EX-3）：仅向导导出步
+            // （target 参数非空）渲染——「正在导出密码库：『名称』（UUID…）」，
+            // 防用户误以为在导当前库（UDR-1）。
+            if let name = targetVaultName, onExportCompleted != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "archivebox")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("正在导出密码库：『\(name)』（\(targetVaultMaskedUUID ?? "")）")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
 
             Divider()
 
@@ -194,6 +242,8 @@ struct ExportView: View {
     }
 
     /// 建议文件名：Coffer备份-<库名>-<yyyyMMdd>.coffer；库名取不到用固定前缀。
+    /// C8：目标库名 = `targetVaultName ?? model.vaultName`（UDR-1 同名问题：
+    /// 向导导出待删库须用待删库名，而非当前库名）。
     private func suggestedFileName() -> String {
         let formatter = DateFormatter()
         // 固定 en_US_POSIX：文件名时间戳不受用户日历（佛历/和历等）与数字
@@ -201,10 +251,11 @@ struct ExportView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd"
         let stamp = formatter.string(from: Date())
-        if model.vaultName.isEmpty {
+        let name = targetVaultName ?? model.vaultName
+        if name.isEmpty {
             return "Coffer备份-\(stamp).coffer"
         }
-        return "Coffer备份-\(model.vaultName)-\(stamp).coffer"
+        return "Coffer备份-\(name)-\(stamp).coffer"
     }
 
     // MARK: - ② 确认页（UI 义务，docs/09 §3.1）
@@ -246,21 +297,35 @@ struct ExportView: View {
     }
 
     /// 导出（工厂级调用，TC-EXP-08；全库打包可能较慢，放后台线程执行）。
+    /// C8（UDR-1）：导出目标 = `targetVaultDir ?? model.vaultDirPath`——向导
+    /// 导出步传目标库目录，naive 复用默认导当前库的隐患由此根治。
     private func doExport(path: String) {
         guard !model.isBusy else { return }
         step = .exporting
         let factory = model.factory
-        let vaultDir = model.vaultDirPath
+        let vaultDir = targetVaultDir ?? model.vaultDirPath
+        // C8：仅导出当前库（targetVaultDir == nil，工具栏导出等既有路径）才
+        // 重评估备份提醒——Rust 打点是**目标库**的 last_backup_at，向导导出
+        // 的是待删库，用它去消当前库横幅会误消（T-G 语义错位）。
+        let shouldEvaluateReminder = (targetVaultDir == nil)
         Task.detached(priority: .userInitiated) {
             do {
                 let result = try factory.exportBackup(vaultDir: vaultDir, outPath: path)
                 await MainActor.run {
                     step = .done(result)
-                    // 备份提醒重评估（FR-8.5，T-G）：Rust 在 exportBackup
-                    // 成功路径已打点 meta.last_backup_at，重算后横幅自然消失
-                    // （距上次备份不再超期 → shouldSuggestBackup 返回 false）。
-                    // 仅备份流接入：CSV 导出不打点 last_backup_at，不应消横幅。
-                    model.evaluateBackupReminder()
+                    if shouldEvaluateReminder {
+                        // 备份提醒重评估（FR-8.5，T-G）：Rust 在 exportBackup
+                        // 成功路径已打点 meta.last_backup_at，重算后横幅自然消失
+                        // （距上次备份不再超期 → shouldSuggestBackup 返回 false）。
+                        // 仅备份流接入：CSV 导出不打点 last_backup_at，不应消横幅。
+                        model.evaluateBackupReminder()
+                    }
+                    // C8 内嵌模式：加密备份完成（自检 verified）即通知向导放行
+                    // Step3——verified=false 按失败呈现，不放行（强制保数据，
+                    // AC-2.10.0-EX-4）。
+                    if result.verified {
+                        onExportCompleted?()
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -307,12 +372,16 @@ struct ExportView: View {
                 .lineLimit(2)
                 .truncationMode(.middle)
             Spacer()
-            HStack {
-                Spacer()
-                Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+            if onExportCompleted == nil {
+                HStack {
+                    Spacer()
+                    Button("完成") { dismiss() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                }
             }
+            // C8 内嵌模式：不渲染「完成」dismiss——出口交由向导
+            // 「已导出，继续删除」承担（onExportCompleted 已触发放行）。
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }

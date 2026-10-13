@@ -5,8 +5,10 @@
 // 单活跃会话不变量，先开新、失败安全，成功即锁旧装配新）→「新建库」
 // 入口（复用 VaultSetupView，建库成功 → openSession 现状路径）。
 //
-// 明确不做（docs/15 §3.2.1）：删除库、库重命名、库间数据合并；多会话
-// 并存（切换 = 锁旧开新，锁定态由 RootView → LockView 承担解锁引导）。
+// 明确不做（docs/15 §3.2.1）：库重命名、库间数据合并；多会话并存
+// （切换 = 锁旧开新，锁定态由 RootView → LockView 承担解锁引导）。
+// 删除库经设置「管理密码库…」/ 切换器底部深链 / LockView「管理密码库…」
+// → VaultManagementView（v2.10.0 D1，docs/16 §4.6）。
 //
 // UI 纪律（docs/07 §2.4）：sheet 必须提供显式关闭出口（关闭/返回按钮 +
 // .keyboardShortcut(.cancelAction)，BUG-3/5 条款）；FFI 错误经
@@ -91,6 +93,24 @@ struct VaultSwitcherView: View {
                 Label("新建密码库…", systemImage: "plus")
             }
             .padding(.vertical, 12)
+
+            // v2.10.0 D1 底部深链（docs/16 §4.5 线框，UDR-6）：**先关切换
+            // sheet，再从主窗弹管理面**——规避 sheet-on-sheet（UDR-6）。弱化
+            // 次级样式（与「新建密码库…」区分）。UDR-7 只读许可隐藏。
+            if model.canManageVaults {
+                Button {
+                    // 关切换 sheet（dismiss）→ 主窗弹 VaultManagementView
+                    // （model.showVaultManagement，RootView sheet）。
+                    dismiss()
+                    model.showVaultManagement = true
+                } label: {
+                    Label("管理密码库…", systemImage: "archivebox")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 12)
+            }
         }
     }
 

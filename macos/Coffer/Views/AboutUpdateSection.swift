@@ -9,6 +9,12 @@
 // 区分构建——build 脚本注入产物 Info.plist 键 `CofferBuildTime`（UTC），
 // Swift 侧读 Bundle，缺键/空串回退「开发构建」（UpdateCopy.buildTimeText）。
 //
+// v2.10.0-T5①（UX issue #3 完整版）：「了解 Coffer」自述区从三行最小版扩展为
+// 全能力自我介绍——本地存储零同步 / 零网络架构（OTA 更新除外）/ Touch ID·恢复码 /
+// 加密备份恢复 / MCP 协作，每条一句话定位入口（破解「全靠撞见」）。纯静态文案，
+// 零网络调用、无外链（docs/10 TC-NET，AC-2.10.0-UX-5）；指引路径须与
+// SettingsView 真实分节一致（设置→安全 / 设置→数据 / 设置→MCP，AC-2.10.0-UX-4）。
+//
 // 挂载：CofferApp.swift 的 RootView().sheet(isPresented: $model.showAbout)，由
 // 应用菜单「关于 Coffer…」触发。
 
@@ -46,17 +52,35 @@ struct AboutUpdateView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                // 了解 Coffer 自述区（issue #3）：一句话定位每个能力，破解「全靠撞见」。
-                // 纯静态文案——本机零联网 / 无云端同步是有意设计，不是缺功能。
+                // 了解 Coffer 自述区（issue #3 完整版，v2.10.0-T5①）：一句话定位每个
+                // 能力 + 入口指引，破解「全靠撞见」。纯静态文案——本机零联网 / 无
+                // 云端同步是有意设计，不是缺功能（零网络纪律 docs/10 TC-NET）。
                 Divider()
                     .frame(width: 280)
-                VStack(spacing: 6) {
+                VStack(spacing: 10) {
                     Text("了解 Coffer")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text("数据只存在本机、永不联网、没有云端同步——这是有意设计，不是缺功能。")
-                    Text("想让 AI/自动化安全取用密码？可用 CLI 与 MCP（设置 → MCP / Agent 协作）。")
-                    Text("备份：解锁后「导出」生成加密备份，换机/重装可在首屏「从备份恢复」导回。")
+                    capabilityRow(
+                        icon: "internaldrive",
+                        title: "本地存储 · 零同步",
+                        detail: "密码只保存在本机，不连接云端、不与其他设备同步。")
+                    capabilityRow(
+                        icon: "wifi.slash",
+                        title: "零网络架构",
+                        detail: "除软件更新（OTA）外，应用不做任何网络请求。")
+                    capabilityRow(
+                        icon: "touchid",
+                        title: "Touch ID · 恢复码",
+                        detail: "生物识别解锁与忘记密码重置：设置 → 安全。")
+                    capabilityRow(
+                        icon: "arrow.counterclockwise",
+                        title: "加密备份 · 恢复",
+                        detail: "解锁后「导出」生成加密备份，换机/重装导回：设置 → 数据。")
+                    capabilityRow(
+                        icon: "terminal",
+                        title: "MCP · Agent 协作",
+                        detail: "让 AI / 自动化安全取用密码：设置 → MCP / Agent 协作。")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -66,7 +90,7 @@ struct AboutUpdateView: View {
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 8)
             }
-            .frame(width: 360, height: 370)
+            .frame(width: 360, height: 420)
             .navigationTitle("关于 Coffer")
             .toolbar {
                 // D-4.1（CO-06）：只读查看页关闭语义——「关闭」+ .cancellationAction（Esc 生效）。
@@ -74,6 +98,18 @@ struct AboutUpdateView: View {
                     Button("关闭") { dismiss() }
                 }
             }
+        }
+    }
+
+    /// 自述区能力行：图标 + 标题 + 一句话定位（纯静态文案，无外链/无导航动作）。
+    private func capabilityRow(icon: String, title: String, detail: String) -> some View {
+        VStack(spacing: 2) {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

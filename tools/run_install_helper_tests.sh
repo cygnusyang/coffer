@@ -57,13 +57,42 @@ HELPER_SRC_DIR="${COFFER_HELPER_SRC_DIR:-${ROOT_DIR}/macos/Coffer/Installer}"
 command -v swiftc >/dev/null 2>&1 || { echo "ERROR: 未找到 swiftc。" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: 未找到 python3。" >&2; exit 1; }
 command -v security >/dev/null 2>&1 || { echo "ERROR: 未找到 security。" >&2; exit 1; }
+command -v openssl >/dev/null 2>&1 || { echo "ERROR: 未找到 openssl（SKID 解析用，macOS 系统工具）。" >&2; exit 1; }
 
-# 签名身份（CN 兼作 security cms -S 的证书昵称）。载荷 DR 验签依赖真实 Apple Development
-# 签名，缺失即无法测 C-1 门——与 build_macos_app.sh 的同一前置（找不到即明确失败）。
+# 签名身份 = find-identity 首列 SHA-1 hash（唯一标识）。本机 keychain 存同 CN 双
+# Apple Development 证书（免费账号每周重签循环的正常产物），CN 昵称传 security cms
+# -S -N 会报「matches more than one certificate」歧义（dev-tester #41 归因）——
+# hash 消歧：codesign --sign 接受 hash（build_macos_app.sh 同款 IDENTITY_HASH），
+# security cms -S 则用 -Z <subjectKeyID>（见 signing_skid）。载荷 DR 验签依赖真实
+# Apple Development 签名，缺失即无法测 C-1 门——与 build_macos_app.sh 的同一前置
+# （找不到即明确失败）。
 SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
-  | awk -F'"' '/Apple Development/{print $2; exit}')"
+  | awk '/Apple Development/{print $2; exit}')"
 if [[ -z "${SIGNING_IDENTITY}" ]]; then
   echo "ERROR: 未找到 Apple Development 签名身份（载荷 DR 验签与 profile 伪造依赖真实签名）。" >&2
+  exit 1
+fi
+
+# 由所选身份的证书解析 subject key ID（security cms -S -Z 的签名标识：SHA-1 hash 既
+# 非 -N 可认的昵称、也非 -Z 要的 SKID，须从证书 X.509 Subject Key Identifier 扩展
+# 提取）。openssl 为 macOS 系统工具，与 security/codesign 同前提。
+signing_skid() {
+  security find-certificate -a -c "Apple Development" -Z -p 2>/dev/null \
+    | awk -v want="${SIGNING_IDENTITY}" '
+        /^SHA-1 hash:/ { cur = $3 }
+        /^-----BEGIN CERTIFICATE-----$/ { in_cert = 1; buf = $0 "\n"; next }
+        in_cert { buf = buf $0 "\n" }
+        /^-----END CERTIFICATE-----$/ && in_cert {
+            in_cert = 0
+            if (cur == want) print buf
+        }
+      ' \
+    | openssl x509 -noout -text 2>/dev/null \
+    | awk '/Subject Key Identifier/{ getline; gsub(/[ :]/, ""); print; exit }'
+}
+SIGNING_SKID="$(signing_skid)"
+if [[ -z "${SIGNING_SKID}" ]]; then
+  echo "ERROR: 无法从签名身份 ${SIGNING_IDENTITY} 解析 subject key ID（伪造 profile 的 security cms -S -Z 签名依赖）。" >&2
   exit 1
 fi
 
@@ -173,7 +202,7 @@ PLIST_EOF
 </dict>
 </plist>
 PLIST_EOF
-    security cms -S -N "${SIGNING_IDENTITY}" -i "${prof_plist}" \
+    security cms -S -Z "${SIGNING_SKID}" -i "${prof_plist}" \
       -o "${app_dir}/Contents/embedded.provisionprofile" >/dev/null 2>&1 \
       || { echo "ERROR: 伪造 profile（security cms -S）失败。" >&2; exit 1; }
   fi

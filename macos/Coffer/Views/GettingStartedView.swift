@@ -7,7 +7,8 @@
 //   - 解锁：锁定页主密码 / Touch ID（LockView）
 //   - 新建 / 导入 / 导出：主窗工具栏 + ⌘N / ⌘I / ⌘⇧I / ⌘E（MainView / DataCommands）
 //   - 备份提醒：设置 → 备份提醒（SettingsView ③）
-//   - 恢复：首屏「从备份恢复…」（noVault）或 设置 → 数据（SettingsView ⑥）
+//   - 恢复：首屏「从备份恢复…」（noVault）/ 设置 → 数据（SettingsView ⑥）/
+//     锁定态「管理密码库…」→「从备份恢复…」（UX #1 管理面，T5-LOW-2 补行）
 //   - 快捷键：帮助菜单「键盘快捷键…」（ShortcutsSheet）
 //   - Touch ID / 恢复码：设置 → 安全（SettingsView ⑤，TouchIDSettingsSection /
 //     RecoveryCodeSettingsSection）
@@ -79,7 +80,7 @@ struct GettingStartedView: View {
             rows: [
                 "导入：从其他密码管理器迁入——工具栏「导入」（CSV / 1Password / Bitwarden / OPVault）或 ⌘I / ⌘⇧I。",
                 "导出备份：工具栏「导出」（或 ⌘E）生成加密备份文件，建议定期保存到安全位置。",
-                "恢复：换机 / 重装后，在首屏点「从备份恢复…」；有既有库时在 设置 → 数据 恢复。",
+                "恢复：换机 / 重装后在首屏点「从备份恢复…」；有既有库时在 设置 → 数据 恢复，锁定态可经「管理密码库…」→「从备份恢复…」直达（UX #1，docs/04/17 §11）。",
                 "快捷键：全部快捷键见帮助菜单「键盘快捷键…」（含 ⌘⇧C 复制密码、⌘U 复制用户名等）。",
             ])
     }

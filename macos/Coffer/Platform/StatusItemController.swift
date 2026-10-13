@@ -16,8 +16,8 @@
 //     锁梁 + 实心锁体，解锁态锁梁向左上旋开、右腿抬离锁体顶边），随 phase
 //     切换。禁用彩色——菜单栏图标必须 template，由系统按深浅色自适应渲染。
 //
-// 切片纪律（docs/15 §6.1 S3）：只读消费 AppModel（Combine 订阅 $phase /
-// $vaultName）+ 调既有 API，不新增不改 AppModel 状态机。
+// 切片纪律：只读消费 AppModel（Combine 订阅 $phase / $vaultName）+ 调既有 API，
+// 不新增不改 AppModel 状态机。
 //
 // 线程契约：start/stop 主线程调用（start 经 AppDelegate.attach，落点
 // RootView.onAppear；stop 经 applicationWillTerminate）；@Published 在主线程

@@ -836,13 +836,15 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 
 ---
 
-## PL-5（🟡 顺延 v0.5.1）：CrossCopySheet 目标库 Touch ID 解锁同型双弹窗——PL-4 修复后 read 带全新 context 稳定双弹
+## PL-5（✅ 已核销）：CrossCopySheet 目标库 Touch ID 解锁同型双弹窗——PL-4 修复后 read 带全新 context 稳定双弹
 
 **登记日期**：2026-10-02
 **发现环境**：v0.5.0 代码审查（dev-reviewer 复查 PL-4 时发现 CrossCopySheet.swift:300 亦涉 K_bio 读取，存在与 PL-4 同型的「预认证 + Keychain 读」双弹窗）
 **分级**：S3（目标库解锁体验缺陷，可降级主密码）/ P3 / 来源版本 v0.5.0 / 发现版本 v0.5.0
 **状态**：✅ 已核销（v0.5.1 修复路径①落地，2026-10-04 用户真机确认）
 **核销记录**：修复 commit `1943fd0`（fix v0.5.1——删除 CrossCopySheet 预认证 `authenticateWithBiometrics`，仅保留 Keychain 自有单次认证，与 AppModel 解锁同型；错误呈现统一走 `TouchIDUnlockPresentation.resolve`，TouchIDError 拆分至 `Support/TouchIDError.swift`）。复验 = 用户真机确认跨库复制目标库解锁步骤指纹框**只弹 1 次**。回归测试全绿：run_touchid_error_presentation_tests.sh 9/9（新增）+ run_touchid_status_tests.sh 19/19 + run_auto_prompt_biometric_tests.sh 30/30 + run_touchid_auth_failure_tests.sh 6/6（新增）。
+
+> **回填修订（2026-10-14，全簿 🟡 滞留核查）**：本条目此前标题标记「🟡 顺延 v0.5.1」为**登记簿滞留**（同 v2.1.0 BUG-15 回填先例）——实际已于 2026-10-04 核销：修复 commit `1943fd0`（fix v0.5.1）落地 + 用户真机确认单弹 + 回归四脚本全绿（见上方核销记录；docs/04 无独立 PL-5 判据行，PL-4 同轮核销记录见 `05-v0.5验收判据骨架.md` r1.5）。本条为核销回填：**标题/状态/核销记录按 v0.5.1 实况更新，历史登记行（登记日期/发现环境/分级/证据/现象/根因/修复路径/复现与诊断）不改写**，仅追加本说明。
 **证据**：代码面——`CrossCopySheet.swift:297` 保留 `authenticateWithBiometrics(context:)` 预认证（PL-4 只删了 AppModel 侧，此调用点当时判为纯 FFI 确认未动）；`:300` `BiometricKeychain.read` 现带全新 LAContext（PL-4 签名变更后的最小适配点）。
 
 ### 现象（预期/实际 分行写）

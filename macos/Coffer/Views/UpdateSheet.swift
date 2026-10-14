@@ -152,7 +152,7 @@ struct UpdateSheet: View {
     private var upToDateContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label {
-                Text("已是最新版本")
+                Text(UpdateCopy.upToDateText)
                     .font(.headline)
             } icon: {
                 Image(systemName: "checkmark.circle")

@@ -35,13 +35,13 @@ struct CofferMainApp: App {
                 .frame(minWidth: 820, minHeight: 540)
                 .onAppear { appDelegate.attach(model: model) }
                 // OTA 更新 / 关于对话框 sheet 挂载（v2.7.0，docs/35 §2.6）：
-                // showAbout / showUpdateSheet 由应用菜单与 AboutUpdateView 触发；
-                // 更新 sheet 从关于对话框按钮触达时叠加在关于 sheet 之上。
-                // 设置页不放任何更新入口（用户裁定）。
+                // showAbout 由应用菜单「关于 Coffer…」触发；showUpdateSheet 由关于页
+                // 「检查更新…」按钮与 UpdateSheet 内部重试触发。BUG-24 复测裁定
+                // （2026-10-14 用户）：检查阶段静默——关于页不消费 updater state，
+                // 结果经 UpdateSheet 呈现（无新版本 → 「已是最新版本」；有新版本 →
+                // 下载进度）。设置页不放任何更新入口（用户裁定）。
                 .sheet(isPresented: $model.showAbout) {
-                    // BUG-24：注入 model.updater（@ObservedObject）——关于页「检查更新…」
-                    // 按钮需消费 updater.state 呈现 .checking 即时反馈（同 UpdateSheet 注入先例）。
-                    AboutUpdateView(updater: model.updater)
+                    AboutUpdateView()
                         .environmentObject(model)
                 }
                 .sheet(isPresented: $model.showUpdateSheet) {
@@ -107,13 +107,13 @@ struct CofferMainApp: App {
                     .disabled(!model.canCopyTotp)
             }
 
-            // OTA 更新入口（v2.7.0，docs/35 §2.6 用户裁定）：应用菜单同项
-            // （对齐 Sparkle 惯例，「关于」下即「检查更新…」快捷入口）+ 关于
-            // 对话框主入口；设置页明确不放任何更新入口。
+            // 「关于 Coffer…」菜单项——唯一 OTA 检查入口裁定（BUG-24 复测
+            // 2026-10-14 用户）：应用菜单「检查更新…」同项入口移除，只保留关于页
+            // 主入口（用户：「顶上的 coffer 菜单中有『检查升级』，『关于』中也有
+            // 升级。需要保留在『关于』中的那个升级」）；v2.7.0 §2.6 双入口裁定被
+            // 本轮取代。检查静默、结果经 UpdateSheet 呈现。
             CommandGroup(replacing: .appInfo) {
                 Button("关于 Coffer…") { model.showAbout = true }
-                Divider()
-                Button("检查更新…") { model.checkForUpdates() }
             }
 
             // G-C（v2.9.1，GitLab issue #5/#6）+ 帮助中心（v2.10.1，

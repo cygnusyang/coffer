@@ -1,8 +1,9 @@
 // AboutUpdateSection.swift —— 「关于 Coffer」最小关于对话框（v2.7.0，docs/35 §2.6）。
 //
 // 项目此前无「关于」对话框；按 §2.6 入口裁定自建最小关于区（App 名 + 版本 +
-// 「检查更新…」按钮），承载 OTA 主入口（另一入口 = 应用菜单同项；设置页明确
-// 不放任何更新入口，用户裁定）。视觉对齐系统关于面板（居中式）+ 既有
+// 「检查更新…」按钮），承载 OTA 主入口（设置页明确不放任何更新入口，用户裁定；
+// 应用菜单「检查更新…」同项入口于 BUG-24 复测裁定 2026-10-14 移除，只留本页
+// 入口）。视觉对齐系统关于面板（居中式）+ 既有
 // LabeledContent/设置页的字体与次级色纪律。
 //
 // v2.9.2-T1（VK 关于页编译时间）：「版本」行下加「编译时间」行，便于测试时
@@ -23,18 +24,8 @@ import SwiftUI
 struct AboutUpdateView: View {
     @EnvironmentObject
     private var model: AppModel
-    /// Updater 状态机（BUG-24，2026-10-14 用户裁定「点了应该马上就有回应」）：
-    /// 观察 state——此前按钮只调 model.checkForUpdates()，视图不消费 updater state，
-    /// 网络慢/断时表现为「点了没反应」。`.checking` 时按钮禁用 + 原位进行中反馈，
-    /// 与 UpdateSheet 同态（CofferApp 以 model.updater 注入，同 UpdateSheet 先例）。
-    @ObservedObject
-    private var updater: UpdaterManager
     @Environment(\.dismiss)
     private var dismiss
-
-    init(updater: UpdaterManager) {
-        self.updater = updater
-    }
 
     /// 编译时间展示（v2.9.2-T1）：build 注入产物 Info.plist 键 `CofferBuildTime`，
     /// 缺键/空 → UpdateCopy.buildTimeText 回退「开发构建」。
@@ -96,25 +87,15 @@ struct AboutUpdateView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 // OTA 主入口（§2.6 裁定）：版本区常驻「检查更新…」按钮。
-                // BUG-24（2026-10-14 用户裁定）：点击须立即有回应——`.checking` 时
-                // 按钮禁用 + 原位「正在检查更新…」（ProgressView + 文案，对齐
-                // UpdateSheet 同态）；其余 state 呈现路径不变，点击仍走
-                // model.checkForUpdates()（内部 canStartCheck 防重入）。
-                Button {
+                // BUG-24 复测裁定（2026-10-14 用户）：检查阶段静默——关于页不消费
+                // updater state、无原位进度条（复测否决首版 spinner 形态）；结果经
+                // UpdateSheet 呈现（无新版本 → 「已是最新版本」；有新版本 → 下载
+                // 进度），upToDate/下载呈现设计不动。点击仍走 model.checkForUpdates()
+                // （内部 canStartCheck 防重入），按钮为纯文案入口。
+                Button(UpdateCopy.checkButtonTitle) {
                     model.checkForUpdates()
-                } label: {
-                    if UpdateCopy.isChecking(updater.state) {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(UpdateCopy.checkingFeedbackText)
-                        }
-                    } else {
-                        Text("检查更新…")
-                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(UpdateCopy.isChecking(updater.state))
                 .padding(.top, 8)
             }
             .frame(width: 360, height: 420)

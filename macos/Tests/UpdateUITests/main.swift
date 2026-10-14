@@ -260,17 +260,17 @@ do {
             && genericLine.contains("OTA-test") && genericLine.contains("code=42"))
 }
 
-// MARK: - 检查更新进行中反馈（BUG-24：点击「检查更新…」须立即有回应）
+// MARK: - 更新入口文案（BUG-24 复测裁定，2026-10-14：检查静默、结果经 UpdateSheet 呈现）
 
 do {
-    check("checkingFeedbackText: 进行中文案存在（.checking 按钮原位反馈）",
+    check("checkButtonTitle: 关于页检查按钮为纯文案入口「检查更新…」",
+          UpdateCopy.checkButtonTitle == "检查更新…")
+    check("checkButtonTitle: 按钮文案 ≠ 进行中文案（About 无原位 spinner 切换）",
+          UpdateCopy.checkButtonTitle != UpdateCopy.checkingFeedbackText)
+    check("checkingFeedbackText: UpdateSheet .checking 呈现进行中文案（单一事实源）",
           UpdateCopy.checkingFeedbackText == "正在检查更新…")
-    check("isChecking: .checking → true", UpdateCopy.isChecking(.checking))
-    check("isChecking: .idle → false", !UpdateCopy.isChecking(.idle))
-    check("isChecking: .upToDate → false", !UpdateCopy.isChecking(.upToDate))
-    check("isChecking: .failed → false", !UpdateCopy.isChecking(.failed("x")))
-    check("isChecking: .updateAvailable → false",
-          !UpdateCopy.isChecking(.updateAvailable(makeInfo(version: "2.7.0"))))
+    check("upToDateText: 无新版本 → 结果经 UpdateSheet 呈现「已是最新版本」",
+          UpdateCopy.upToDateText == "已是最新版本")
 }
 
 // MARK: - 汇总

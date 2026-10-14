@@ -209,18 +209,20 @@ enum UpdateCopy {
             + " | underlying=\(underlying)"
     }
 
-    // MARK: - 检查更新进行中反馈（BUG-24：点击「检查更新…」须立即有回应）
+    // MARK: - 更新入口文案（BUG-24 复测裁定，2026-10-14）
 
-    /// `.checking` 时按钮原位的进行中文案（对齐 UpdateSheet.checkingContent 同态；
-    /// AboutUpdateView 与 UpdateSheet 共用同一事实源）。
+    /// 关于页「检查更新…」按钮标题：纯文案入口。BUG-24 复测裁定：检查阶段静默，
+    /// 按钮不消费 updater state、无原位进度条——区别于 checkingFeedbackText，
+    /// 不存在「按钮文案 → 进行中反馈」的切换。
+    static let checkButtonTitle = "检查更新…"
+
+    /// UpdateSheet `.checking` 呈现的进行中文案。检查结果一律经 UpdateSheet 呈现
+    /// （About 静默；UpdateSheet 呈现正在检查 / 已是最新 / 下载进度），单一事实源。
     static let checkingFeedbackText = "正在检查更新…"
 
-    /// 是否检查进行中（视图据此禁用「检查更新…」按钮 + 呈现原位进行中反馈；
-    /// 其余 state 呈现路径不变）。
-    static func isChecking(_ state: UpdaterState) -> Bool {
-        if case .checking = state { return true }
-        return false
-    }
+    /// UpdateSheet `.upToDate` 呈现文案：无新版本 → 告诉用户当前是最新版本
+    /// （BUG-24 复测裁定：upToDate 呈现设计不动）。
+    static let upToDateText = "已是最新版本"
 }
 
 /// UpdateSheet 各交互按钮的可用性快照（纯函数派生；Equatable 供测试断言）。

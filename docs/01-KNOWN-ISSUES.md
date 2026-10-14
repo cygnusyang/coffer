@@ -1726,3 +1726,11 @@ helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agen
 
 门禁基线：cargo 1409/0/10 + UpdateTests 227/0/2（T1 新增 TC-SHA-01/02 + TC-CKSM-01~05，自 217 增至 227）+ UpdateUITests 91/0 + OTA 集成 38/0/0。
 顺延：#89 自证页「完全离线」措辞张力（v2.10.3 候选）。~~增强：manifest 加 zip SHA256 前置校验（登记未实现）~~ → 已随 v2.10.3 T1 落地，见上节。
+
+## #89（✅ 已核销 v2.10.3：2026-10-15）：自证页与 OTA 网络豁免事实冲突——页面宣称「不含网络权限/完全离线」且自证步骤指示用户验证一个现在为假的断言
+
+**发现环境**：v2.10.2 发版后 lead 巡检（2026-10-15）；顺延登记自 OTA 修复轮核销记录。
+**严重级/优先级**：MEDIUM / P2（用户可见的诚实性缺陷——自证页教用户跑一条会看到矛盾的验证，非功能性缺陷）。
+**现象**：v2.7.0 起 entitlements 含 `com.apple.security.network.client`（OTA 更新豁免，docs/35 §2.2），但 NetworkSelfCertView 四处仍是 OTA 之前的事实：①标题「本 App 不含网络权限（零网络架构）」；②正文「完全离线运行」；③静态自证步骤 1「输出中不应出现任何 com.apple.security.network.* 键」——用户照做会看到 network.client，页面自相矛盾；④步骤 2「不应有 Network.framework / CFNetwork 等网络框架」——otool 实证 CFNetwork 在链接表内（URLSession 依赖）。
+**修复路径**：1e46c70（v2.10.3-T3）——标题改「数据都在本机，不上传云端」；正文改「本机不上传 + Rust 核心依赖图零网络（check_no_network.sh 自证）+ 唯一联网例外=OTA 白名单」；步骤 1 改「最多允许出现 network.client 一项（软件更新豁免），不得出现 network.server 或其他 network.*」；步骤 2 改诚实断言（otool 实证：无第三方网络库、CFNetwork 属预期、无独立 Network.framework）；运行时节补「OTA 下载进行中除外」限定；头注同步。FR-14.5 需求行同步修订注记（docs/01-需求与架构/01-需求分析.md）。
+**核销测试**：swiftc -parse OK；无测试锁旧文案（grep 证实 CofferTests/CofferUITests 零依赖）；otool/codesign 实证见 commit。

@@ -510,6 +510,148 @@ do {
           !fm.fileExists(atPath: fixedPath))
 }
 
+// MARK: - TC-INT-04 BUG-31 带 quarantine 载荷全流程（Gatekeeper 拒启防线）
+
+// BUG-31 真机定谳（第四次复测）：沙盒 App 自身网络下载的产物带 com.apple.quarantine
+// （macOS 26 对沙盒 App 下载打 provenance+quarantine）→ Gatekeeper 对「quarantine +
+// 开发证书」新 App 拒启 → helper relaunch open exit 1 → 回滚旧版。修复 = helper 在
+// verifyPayload 后、backupAndReplace 前递归剥 quarantine。本用例：newApp 副本打
+// quarantine（xattr -w 测试值）→ exec helper → 断言替换成功 + relaunch gate 通过 +
+// 替换后目标无 quarantine + 文件日志含「已剥除隔离标记」（证明剥隔离步骤真实执行）。
+// 前置：同 TC-INT-01（签名产物 + helper + Apple Development 身份，供重签保 DR）。
+do {
+    let fm = FileManager.default
+    guard FileManager.default.fileExists(atPath: artifactPath),
+          FileManager.default.fileExists(atPath: helperBin) else {
+        skip("TC-INT-04", "（前置缺失）", "签名产物或 helper 缺失（同 TC-INT-01 前置）")
+        failures.removeAll()
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+    guard let identity = signingIdentity() else {
+        skip("TC-INT-04", "（前置缺失）", "缺 Apple Development 签名身份（载荷重签保 DR 依赖）")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+
+    let tmpRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-int-quar-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmpRoot) }
+
+    // ---- dstApp（当前 App：真实产物副本）----
+    let dstApp = tmpRoot.appendingPathComponent("dst/Coffer.app")
+    try fm.createDirectory(at: dstApp.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: [artifactPath, dstApp.path])
+    guard let originalVersion = appVersion(dstApp), !originalVersion.isEmpty else {
+        check("TC-INT-04", "dstApp 版本可读（前置 sanity）", false, "无法读取副本版本")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / \(failures.count) failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+
+    // ---- newApp：版本改写 99.99.99 + 重签保 DR（同 TC-INT-01）----
+    let newBuildApp = tmpRoot.appendingPathComponent("newbuild/Coffer.app")
+    try fm.createDirectory(at: newBuildApp.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: [artifactPath, newBuildApp.path])
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleShortVersionString 99.99.99",
+                          newBuildApp.appendingPathComponent("Contents/Info.plist").path])
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleVersion 999999",
+                          newBuildApp.appendingPathComponent("Contents/Info.plist").path])
+    let resign = try runProcess("/usr/bin/codesign",
+                                args: ["--force", "--sign", identity,
+                                       "--preserve-metadata=entitlements,requirements,flags",
+                                       newBuildApp.path])
+    check("TC-INT-04", "newApp 重签成功（保 DR，载荷合法性前提）",
+          resign.status == 0, "exit=\(resign.status) stderr=\(resign.stderr)")
+    let zipPath = tmpRoot.appendingPathComponent("new.zip")
+    try runProcess("/usr/bin/ditto", args: ["-c", "-k", "--keepParent", newBuildApp.path, zipPath.path])
+    let stageDir = tmpRoot.appendingPathComponent("stage")
+    try fm.createDirectory(at: stageDir, withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: ["-x", "-k", zipPath.path, stageDir.path])
+    let newApp = stageDir.appendingPathComponent("Coffer.app")
+    check("TC-INT-04", "解压产物版本 99.99.99",
+          fm.fileExists(atPath: newApp.path) && appVersion(newApp) == "99.99.99",
+          "version=\(appVersion(newApp) ?? "nil")")
+
+    // ---- BUG-31：给 newApp 打 quarantine（模拟沙盒 App 网络下载残留；普通用户可写，
+    //      spike 实证）+ 确认真实存在（sanity：让「已剥除」断言有可剥对象）----
+    let quarantineValue = "0286;00000000;Coffer;"
+    let setQuar = try runProcess("/usr/bin/xattr",
+                                 args: ["-w", "com.apple.quarantine", quarantineValue, newApp.path])
+    check("TC-INT-04", "newApp 打 quarantine 成功（BUG-31 场景构造前提）",
+          setQuar.status == 0, "exit=\(setQuar.status) stderr=\(setQuar.stderr)")
+    let readQuar = try runProcess("/usr/bin/xattr",
+                                  args: ["-p", "com.apple.quarantine", newApp.path])
+    check("TC-INT-04", "quarantine 属性真实存在（sanity，strip 有可剥对象）",
+          readQuar.status == 0 && readQuar.stdout.contains(quarantineValue),
+          "exit=\(readQuar.status) out=\(readQuar.stdout)")
+
+    // ---- 配置 + 跑 helper（argv 取参源，env 隔离同 TC-INT-01）----
+    let backupPath = tmpRoot.appendingPathComponent("backup/Coffer.app").path
+    let resultPath = tmpRoot.appendingPathComponent("result-quar.json").path
+    let relaunchLog = tmpRoot.appendingPathComponent("relaunch-quar.log").path
+    let configPath = tmpRoot.appendingPathComponent("config-quar.json").path
+    try writeConfig(configPath, newApp: newApp.path, currentApp: dstApp.path,
+                    backup: backupPath, result: resultPath, pid: deadPID())
+    removeFixedConfigIfPresent()
+    let helper4 = try runProcess(helperBin, args: ["--config", configPath],
+                                 env: ["COFFER_UPDATER_TEST_ANCHOR": dstApp.path,
+                                       "COFFER_UPDATER_TEST_FAKE_RELAUNCH": relaunchLog,
+                                       "COFFER_UPDATER_CONFIG": ""])
+
+    // ---- 断言：替换 → relaunch gate → result 全流程 + quarantine 已剥 ----
+    check("TC-INT-04", "带 quarantine 载荷 → helper exit 0（剥隔离→备份→替换→relaunch→result）",
+          helper4.status == 0,
+          "exit=\(helper4.status) stderr=\(helper4.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
+    if let result = readResult(resultPath) {
+        check("TC-INT-04", "result.json success=true", result.0, "\(result)")
+        check("TC-INT-04", "result.json code=0", result.1 == 0, "\(result)")
+    } else {
+        check("TC-INT-04", "result.json 可解析且字段齐全", false, "无法读取/解析 result")
+    }
+    check("TC-INT-04", "目标 dstApp 已被替换（版本=99.99.99）",
+          appVersion(dstApp) == "99.99.99", "actual=\(appVersion(dstApp) ?? "nil")")
+    let backupQuar = URL(fileURLWithPath: backupPath)
+    check("TC-INT-04", "备份为旧版本（\(originalVersion)）",
+          fm.fileExists(atPath: backupPath) && appVersion(backupQuar) == originalVersion,
+          "backup=\(appVersion(backupQuar) ?? "nil")")
+    if let logData = try? String(contentsOf: URL(fileURLWithPath: relaunchLog), encoding: .utf8) {
+        check("TC-INT-04", "relaunch gate 通过：fake 桩记录目标 dstApp（open 被隔离）",
+              logData.contains(dstApp.path), "log=\(logData.trimmingCharacters(in: .whitespacesAndNewlines))")
+    } else {
+        check("TC-INT-04", "relaunch gate 通过：fake 桩记录目标 dstApp（open 被隔离）",
+              false, "relaunch.log 缺失")
+    }
+    // 替换后目标（即被剥隔离的新包 move 到位）无 quarantine——strip 随 move 生效。
+    let targetQuar = try runProcess("/usr/bin/xattr",
+                                    args: ["-p", "com.apple.quarantine", dstApp.path])
+    check("TC-INT-04", "替换后目标无 quarantine（剥隔离随 move 生效）",
+          targetQuar.status != 0, "exit=\(targetQuar.status) out=\(targetQuar.stdout)")
+
+    // 文件日志留痕：剥隔离步骤真实执行（含本场 newApp 唯一路径，跨场并发可定位）。
+    let fileLogPath = "/tmp/coffer-update.log"
+    if let logText = try? String(contentsOfFile: fileLogPath, encoding: .utf8) {
+        let stripLine = logText.split(separator: "\n").first {
+            $0.contains("已剥除隔离标记") && $0.contains(newApp.path)
+        }
+        check("TC-INT-04", "文件日志记录「已剥除隔离标记」+ 本场 newApp 路径",
+              stripLine != nil, "log=\(fileLogPath)")
+    } else {
+        check("TC-INT-04", "文件日志记录「已剥除隔离标记」+ 本场 newApp 路径",
+              false, "无法读取 \(fileLogPath)")
+    }
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

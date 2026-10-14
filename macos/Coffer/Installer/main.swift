@@ -437,17 +437,26 @@ enum RelaunchFailure {
 
 /// 底层启动：用 /usr/bin/open -n 启动 App（与 App→helper 同一 LaunchServices 路径；
 /// 目标在固定位置 /Applications，无 App translocation 风险）。返回 nil = 启动成功。
+/// BUG-31 诊断加固：捕获 open 的 stderr 并入错误信息——真机现场 open exit 1 曾无任何
+/// 错误文本（Gatekeeper 拒启隔离+开发证书新 App），下一步定位无从下手；有了 stderr
+/// 就能一眼区分「Gatekeeper 拒启」vs「其它启动故障」。
 func launchViaOpen(at path: String) -> String? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     process.arguments = ["-n", path]
+    let errPipe = Pipe()
+    process.standardError = errPipe
     do {
         try process.run()
         process.waitUntilExit()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let errText = String(data: errData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if process.terminationStatus == 0 {
             return nil
         }
-        return "open -n 启动失败（target=\(path)），退出码 \(process.terminationStatus)"
+        let detail = errText.isEmpty ? "" : "；stderr: \(errText)"
+        return "open -n 启动失败（target=\(path)），退出码 \(process.terminationStatus)\(detail)"
     } catch {
         return "open 无法启动（target=\(path)）: \(error)"
     }
@@ -661,6 +670,58 @@ func verifyInstalledResult(config: InstallConfig) -> Int32? {
     return nil
 }
 
+// MARK: - BUG-31 quarantine 剥除（Gatekeeper 拒启防线）
+
+/// 递归剥除新包上的 com.apple.quarantine 扩展属性（BUG-31 真机定谳，第四次复测）。
+///
+/// 背景：沙盒 App 自身网络下载的产物带 quarantine（macOS 26 对沙盒 App 下载打
+/// provenance+quarantine，App 未设 LSFileQuarantineEnabled 亦然）；Gatekeeper 对
+/// 「quarantine + 开发证书」的新 App 拒启 → helper relaunch 的 open -n exit 1 →
+/// 回滚旧版（备份→替换→回滚→重启旧版全链正常，只断 relaunch 一环）。helper 非沙盒
+/// 有全权剥属性；App 沙盒内剥自己下载文件受限，helper 代劳是正解（App 侧不动）。
+///
+/// 调用点纪律（见 run 主流程 step 4.5）：**必须在 verifyPayload 之后**——验签先于剥
+/// 属性，剥属性不构成绕验签面（验签不受 quarantine 影响，真机残留 xattr 下验签仍过，
+/// 实证）；且必须在 backupAndReplace 之前——剥了才会被 Gatekeeper 放行。
+///
+/// 容错：属性不存在时递归 -dr 返回 0（spike 实证），天然不报错；探测顶层属性仅用于
+/// 日志措辞诚实（有 → 「已剥除隔离标记」，无 → 「无 quarantine 属性」），无论何种
+/// 情况递归 -dr 都执行（quarantine 若打在内层文件同样被剥）。
+func stripQuarantine(from appPath: String) {
+    let runXattr = { (args: [String]) -> (Int32, String) in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = args
+        let errPipe = Pipe()
+        process.standardError = errPipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let errText = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return (process.terminationStatus, errText)
+        } catch {
+            return (1, "xattr 无法启动: \(error)")
+        }
+    }
+    // 探测：.app 的 quarantine 标记打在 bundle 目录自身；exit 0 = 存在。
+    let probe = runXattr(["-p", "com.apple.quarantine", appPath])
+    let hadQuarantine = probe.0 == 0
+    // 递归剥除（-dr：存在则剥、不存在 rc=0 幂等容错）。
+    let strip = runXattr(["-dr", "com.apple.quarantine", appPath])
+    if strip.0 == 0 {
+        if hadQuarantine {
+            log("已剥除隔离标记（com.apple.quarantine，递归）: \(appPath)")
+        } else {
+            log("无 quarantine 属性可剥（递归 -dr 幂等兜底）: \(appPath)")
+        }
+    } else {
+        let detail = strip.1.isEmpty ? "" : "，stderr: \(strip.1)"
+        log("quarantine 剥离失败（容错继续）: \(appPath)（xattr exit=\(strip.0)\(detail)）")
+    }
+}
+
 // MARK: - 主流程
 
 /// 前置校验路径存在；失败返回退出码（1/2，result 已写、已尽力恢复旧 App）。
@@ -762,6 +823,12 @@ func run(arguments: [String]) -> Int32 {
         return finish(config, success: false, code: ExitCode.relaunchFailed, message: "等待应用退出超时，更新未执行。")
     }
     log("App 进程（pid=\(config.pid)）已退出。")
+
+    // 4.5 BUG-31：剥除新包 quarantine（Gatekeeper 拒启防线）。必须在 verifyPayload
+    //     （step 3.5）之后——验签先于剥属性，剥属性不构成绕验签面；且在备份替换之前
+    //     （step 5）——剥了才会被 Gatekeeper 放行 relaunch。放等待之后剥：超时 exit 3
+    //     路径保持对新包零副作用。helper 非沙盒全权，App 沙盒内剥自己下载文件受限。
+    stripQuarantine(from: config.newAppPath)
 
     // 5. 备份 → 替换
     if let code = backupAndReplace(config: config) {

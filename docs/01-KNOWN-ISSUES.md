@@ -1677,3 +1677,33 @@ helper 取参优先级 **env → 固定路径 → argv**，`resolveConfigPath` �
 
 ### 复测判据（真机核销，看哪些文件）
 ①`/tmp/coffer-update.log` 首行 `argv=` 为空属**预期**（BUG-30 场景），关键看紧随的「取参来源：env COFFER_UPDATER_CONFIG=…」或「取参来源：固定路径 …」行——任一路径源命中即取参成功；三源皆无仍会打印用法文本 exit 4 ②DiagLog 应有 `BUG-30：env 注入 COFFER_UPDATER_CONFIG` + `BUG-30：固定 config 已写` 行 ③`/Applications/Coffer.app` 版本变更 + result 文件 success=true + App 自动重开。若首行 argv 为空且无任何「取参来源」行 → 三源全部断裂（固定 config 写失败 + env 未传播），按 DiagLog 的固定 config 写失败插桩排查。
+
+## BUG-31（🔴 当版修复，核销版本=下一版）：沙盒 App 下载产物带 quarantine → Gatekeeper 拒启开发证书新 App → helper relaunch open exit 1 回滚
+
+**登记日期**：2026-10-15
+**发现环境**：OTA 全链路真机测试第四次复测（用户从 /Applications/Coffer.app 正确启动，BUG-30 三层冗余取参修复后复测——**BUG-30 修复被真机验证成功**，helper 日志「取参来源：固定路径」命中兜底）
+**分级**：HIGH / P1（OTA 安装主路径断一环：备份→替换→回滚→重启旧版全链正常，只断 relaunch）/ 来源版本 v2.7.0（OTA 首版，同一下载链路）/ 发现版本 v2.10.1（测试构建）
+**状态**：🔴 当版修复（核销版本=下一版，真机全链路待第五次复测核销）
+**核销记录**：修复 = helper 端剥 quarantine + relaunch open stderr 诊断加固（同 commit，见「修复路径」）。复验：`tools/run_ota_integration_tests.sh` 38/0/0（+TC-INT-04 十二项）+ `tools/run_update_tests.sh` 217/0/2 不回归 + `tools/run_update_ui_tests.sh` 91/0 + build exit 0。**真机核销判据**：全链路后 ①`/tmp/coffer-update.log` 有「已剥除隔离标记（com.apple.quarantine，递归）」行 ②`/Applications/Coffer.app` 版本变更 + result 文件 success=true + App 自动重开——三者齐备才算修复闭环。
+
+### 现象（预期/实际 分行写）
+- **预期**：替换后 helper relaunch 新 App，安装完成
+- **实际**：helper relaunch 的 open exit 1（**无错误文本**）→ exit 3 → 回滚旧版并重启旧 App。备份→替换→回滚→重启旧版全链正常，**只断 relaunch 一环**
+
+### 根因（已实证，lead 证据链）
+helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agent=Coffer=App 自身网络下载所打）+ TeamIdentifier=A6DS985SJJ（开发证书）。App 未设 LSFileQuarantineEnabled 但 macOS 26 仍对沙盒 App 网络下载打隔离（provenance+quarantine 实证）。/Applications 旧版无隔离（磁盘拷贝安装）→ 平时能跑。helper relaunch 用 open -n → Gatekeeper 评估隔离+开发证书 → 拒启 → open exit 1 → 回滚。
+
+### 修复路径（helper 端，最小面；App 侧不动）
+1. **剥 quarantine**：Installer/main.swift 在 verifyPayload 通过后、backupAndReplace 前 `xattr -dr com.apple.quarantine <newAppPath>` 递归剥隔离（helper 非沙盒有全权；属性不存在时 -dr rc=0 幂等容错不报错；log 一行「已剥除隔离标记」或「无 quarantine 属性可剥」）。**顺序必须在验签之后**——剥属性不构成绕验签面（验签不受 quarantine 影响：真机残留 xattr 下验签仍过，实证）。
+2. **relaunch stderr 诊断加固**：launchViaOpen 捕获 open 的 stderr 并入错误信息——本次 open exit 1 无错误文本，现场无法一眼定位；下次据此区分 Gatekeeper 拒启 vs 其它启动故障。
+3. **App 侧不动**：沙盒 App 剥自己下载文件的 quarantine 受限，helper 代劳是正解。
+
+### 增强备注（登记不实现，下版评估）
+**清单加 zip SHA256 前置校验**：manifest 增加 downloadUrl 对应 zip 的 SHA256，App 下载后解压前先校验——防下载损坏/传输篡改（与剥隔离正交，属下载完整性加固，文档化留待下版）。
+
+### 测试（门禁，全绿只增不减）
+- `run_ota_integration_tests.sh`：TC-INT-04 带 quarantine 载荷全流程——newApp 副本打 quarantine（xattr -w 测试值 `0286;00000000;Coffer;`，spike 实证普通用户可写）→ exec helper → 断言替换成功 + relaunch gate 通过 + 替换后目标无 quarantine + 文件日志含「已剥除隔离标记」；TC-INT-01/02/03 不回归
+- `run_update_tests.sh` 217/0/2 不回归 + `run_update_ui_tests.sh` 91/0 + 全量 build exit 0
+
+### 复测判据（第五次真机核销，看哪些文件）
+①`/tmp/coffer-update.log` 应有「已剥除隔离标记（com.apple.quarantine，递归）: <newAppPath>」行（证明剥隔离步骤真实执行）②若 relaunch 仍失败，错误信息应含 open 的 stderr 文本（本次为空的对照点），据此定位 Gatekeeper 拒启 vs 其它 ③`/Applications/Coffer.app` 版本变更 + result 文件 success=true + App 自动重开。三者齐备才算修复闭环。

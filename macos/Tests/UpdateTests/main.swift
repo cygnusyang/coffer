@@ -33,6 +33,7 @@
 
 import Foundation
 import CryptoKit
+import Security
 
 // MARK: - 断言与汇总
 
@@ -228,6 +229,22 @@ func firstCodeSigningIdentity() -> String? {
     let afterOpen = line.index(after: open)
     guard let close = line[afterOpen...].firstIndex(of: "\"") else { return nil }
     return String(line[afterOpen..<close])
+}
+
+/// BUG-21：探测 .app 产物的实际 TeamID（kSecCodeInfoTeamIdentifier）。Developer ID /
+/// Apple Development 签名都带 TeamID；adhoc 构建无 TeamID（返回 nil）。供正例断言
+/// 的**环境门控**：产物 TeamID 命中本仓 `SecCodeVerifier.teamID`（A6DS985SJJ）才跑
+/// 真实签名正例（TC-SEC-02/03/05/INST-03），否则显式 SKIP——adhoc 构建缺签名身份是
+/// 环境问题，不是代码失败（计数语义诚实化，BUG-21）。
+func artifactTeamID(of url: URL) -> String? {
+    var staticCode: SecStaticCode?
+    guard SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode) == errSecSuccess,
+          let code = staticCode else { return nil }
+    var info: CFDictionary?
+    guard SecCodeCopySigningInformation(
+        code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+        let dict = info as? [String: Any] else { return nil }
+    return dict[kSecCodeInfoTeamIdentifier as String] as? String
 }
 
 /// 计数型 fetcher：记录 fetch 次数（用于断言「不应被调用 / 仅调用一次」）。
@@ -778,63 +795,76 @@ do {
               realCdHash.count == 40 && realCdHash.allSatisfy { $0.isHexDigit },
               "实际 \(realCdHash)")
 
-        // 用真实 cdHash → 三级验签全过
-        do {
-            try SecCodeVerifier.verifyApp(at: artifact, expectedCdHash: realCdHash)
-            check("TC-SEC-02", "DR(TeamID+identifier)+CDHash 比对通过（真实产物）", true)
-        } catch {
-            check("TC-SEC-02", "DR(TeamID+identifier)+CDHash 比对通过（真实产物）", false, "\(error)")
+        // BUG-21 环境门控：以下正例断言依赖「真实 Apple 签名 + 本仓 TeamID
+        // A6DS985SJJ」的产物（Developer ID / Apple Development 都带 TeamID——本地
+        // 构建即 Apple Development）；adhoc 构建无 TeamID → 显式 SKIP（计数语义
+        // 诚实化：不把环境缺签名身份当代码失败）。门控条件 = 产物实际 TeamID 命中
+        // 本仓 TeamID，正是这些断言成立的前提。
+        let hasExpectedTeamID = artifactTeamID(of: artifact) == SecCodeVerifier.teamID
+        if hasExpectedTeamID {
+            // 用真实 cdHash → 三级验签全过
+            do {
+                try SecCodeVerifier.verifyApp(at: artifact, expectedCdHash: realCdHash)
+                check("TC-SEC-02", "DR(TeamID+identifier)+CDHash 比对通过（真实产物）", true)
+            } catch {
+                check("TC-SEC-02", "DR(TeamID+identifier)+CDHash 比对通过（真实产物）", false, "\(error)")
+            }
+
+            // H-3 正面：对真实产物的嵌套 Contents/Helpers/*.app 逐一验签通过
+            do {
+                try SecCodeVerifier.verifyNestedHelpers(in: artifact)
+                check("TC-SEC-05", "嵌套 Contents/Helpers 逐一验签通过（真实产物，H-3 正面）", true)
+            } catch {
+                check("TC-SEC-05", "嵌套 Contents/Helpers 逐一验签通过（真实产物，H-3 正面）", false, "\(error)")
+            }
+
+            // 篡改 cdHash → 拒绝（次锚生效）
+            let wrongCdHash = realCdHash == String(repeating: "0", count: 40)
+                ? "1" + realCdHash.dropFirst()
+                : String(repeating: "0", count: 40)
+            do {
+                try SecCodeVerifier.verifyApp(at: artifact, expectedCdHash: wrongCdHash)
+                check("TC-SEC-03", "cdHash 不匹配 → 拒绝（次锚）", false, "竟然通过")
+            } catch SecCodeVerifier.VerificationError.cdHashMismatch {
+                check("TC-SEC-03", "cdHash 不匹配 → 拒绝（次锚）", true)
+            } catch {
+                check("TC-SEC-03", "cdHash 不匹配 → 拒绝（次锚）", false, "错误类型 \(error)")
+            }
+
+            // 完整链路（无网络）：真实产物 → zip → prepare 解压 → 三级验签通过。
+            // 证明 ditto 打/解 zip 保留签名（下载→解压→验签的离线闭环）。
+            do {
+                let zipDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("coffer-ota-sec-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
+                try FileManager.default.createDirectory(at: zipDir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: zipDir) }
+                let zipURL = zipDir.appendingPathComponent("Coffer.zip")
+                try OTAInstaller.archiveApp(artifact, to: zipURL)
+                let installer = OTAInstaller(helperURL: URL(fileURLWithPath: "/tmp/unused-helper"))
+                let extracted = try await installer.prepare(downloadedArchive: zipURL)
+                do {
+                    try SecCodeVerifier.verifyApp(at: extracted, expectedCdHash: realCdHash)
+                    check("TC-INST-03", "真实产物 zip→解压→三级验签通过（ditto 保留签名）", true)
+                } catch {
+                    check("TC-INST-03", "真实产物 zip→解压→三级验签通过（ditto 保留签名）", false, "\(error)")
+                }
+            } catch {
+                check("TC-INST-03", "真实产物 zip→解压→三级验签通过（ditto 保留签名）", false, "\(error)")
+            }
+        } else {
+            skip("TC-SEC-02", "产物非本仓 TeamID 签名 → SKIP", "adhoc 构建（BUG-21 环境门控）")
+            skip("TC-SEC-03", "产物非本仓 TeamID 签名 → SKIP", "adhoc 构建（BUG-21 环境门控）")
+            skip("TC-SEC-05", "产物非本仓 TeamID 签名 → SKIP", "adhoc 构建（BUG-21 环境门控）")
+            skip("TC-INST-03", "产物非本仓 TeamID 签名 → SKIP", "adhoc 构建（BUG-21 环境门控）")
         }
 
-        // H-3 正面：对真实产物的嵌套 Contents/Helpers/*.app 逐一验签通过
-        do {
-            try SecCodeVerifier.verifyNestedHelpers(in: artifact)
-            check("TC-SEC-05", "嵌套 Contents/Helpers 逐一验签通过（真实产物，H-3 正面）", true)
-        } catch {
-            check("TC-SEC-05", "嵌套 Contents/Helpers 逐一验签通过（真实产物，H-3 正面）", false, "\(error)")
-        }
-
-        // 篡改 cdHash → 拒绝（次锚生效）
-        let wrongCdHash = realCdHash == String(repeating: "0", count: 40)
-            ? "1" + realCdHash.dropFirst()
-            : String(repeating: "0", count: 40)
-        do {
-            try SecCodeVerifier.verifyApp(at: artifact, expectedCdHash: wrongCdHash)
-            check("TC-SEC-03", "cdHash 不匹配 → 拒绝（次锚）", false, "竟然通过")
-        } catch SecCodeVerifier.VerificationError.cdHashMismatch {
-            check("TC-SEC-03", "cdHash 不匹配 → 拒绝（次锚）", true)
-        } catch {
-            check("TC-SEC-03", "cdHash 不匹配 → 拒绝（次锚）", false, "错误类型 \(error)")
-        }
-
-        // 非 .app 路径 → 显式报错
+        // 非 .app 路径 → 显式报错（与签名类型无关，独立断言，不入门控）
         let nonApp = URL(fileURLWithPath: "/etc/hosts")
         do {
             try SecCodeVerifier.verifyApp(at: nonApp, expectedCdHash: realCdHash)
             check("TC-SEC-04", "非 .app 路径 → 显式报错", false, "竟然通过")
         } catch {
             check("TC-SEC-04", "非 .app 路径 → 显式报错", true)
-        }
-
-        // 完整链路（无网络）：真实产物 → zip → prepare 解压 → 三级验签通过。
-        // 证明 ditto 打/解 zip 保留签名（下载→解压→验签的离线闭环）。
-        do {
-            let zipDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("coffer-ota-sec-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
-            try FileManager.default.createDirectory(at: zipDir, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: zipDir) }
-            let zipURL = zipDir.appendingPathComponent("Coffer.zip")
-            try OTAInstaller.archiveApp(artifact, to: zipURL)
-            let installer = OTAInstaller(helperURL: URL(fileURLWithPath: "/tmp/unused-helper"))
-            let extracted = try await installer.prepare(downloadedArchive: zipURL)
-            do {
-                try SecCodeVerifier.verifyApp(at: extracted, expectedCdHash: realCdHash)
-                check("TC-INST-03", "真实产物 zip→解压→三级验签通过（ditto 保留签名）", true)
-            } catch {
-                check("TC-INST-03", "真实产物 zip→解压→三级验签通过（ditto 保留签名）", false, "\(error)")
-            }
-        } catch {
-            check("TC-INST-03", "真实产物 zip→解压→三级验签通过（ditto 保留签名）", false, "\(error)")
         }
 
         // H-3 负面（identifier）：复制真实嵌套 helper → 改 CFBundleIdentifier →

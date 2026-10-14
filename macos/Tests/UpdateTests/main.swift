@@ -2132,6 +2132,85 @@ let manager = UpdaterManager()
 check("TC-WIRE-01", "UpdaterManager() 便捷构造可用（生产接线编译级验证）",
       manager.state == .idle, "state=\(manager.state)")
 
+// MARK: - BUG-28：OTA 网络层禁用 URLCache（manifest + 产物必须永远 fresh）
+
+/// MockURLProtocol：拦截 OTANetworkSession 内部 session 的全部请求（经注入的
+/// protocolClasses），返回 canned 响应——让 fetch/download 两路径在 CI 无真网
+/// 下走通 OTANetworkSession 生产代码（不联网，payload 为本地字节）。
+final class MockURLProtocol: URLProtocol {
+    static var payload = Data("ota-payload".utf8)
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: TestError(message: "mock 请求无 url"))
+            return
+        }
+        let response = HTTPURLResponse(url: url, statusCode: 200,
+                                       httpVersion: "HTTP/1.1", headerFields: nil)!
+        // .notAllowed：显式不入缓存——与 BUG-28「OTA 绝不接受缓存」同向双保险。
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.payload)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+/// 注入 MockURLProtocol 的会话配置（交给 OTANetworkSession——其 init 净化缓存
+/// 但保留 protocolClasses，故两路径内部 session 会经 mock 走通生产代码）。
+func mockURLProtocolConfiguration() -> URLSessionConfiguration {
+    let c = URLSessionConfiguration.ephemeral
+    c.protocolClasses = [MockURLProtocol.self]
+    return c
+}
+
+do {
+    // 主断言：三种构造输入（默认 / 显式 .default / 带缓存自定义）都必须被净化
+    // （urlCache=nil + reloadIgnoringLocalCacheData）。fetch/download 两路径共用
+    // 这一个 configuration 建 session（OTANetworkLayer 第 58/69 行），断言其一
+    // 即覆盖两路径的配置面。
+    let byDefault = OTANetworkSession()
+    check("TC-OTA-CACHE-01", "默认构造：urlCache=nil",
+          byDefault.configuration.urlCache == nil)
+    check("TC-OTA-CACHE-01", "默认构造：requestCachePolicy=reloadIgnoringLocalCacheData",
+          byDefault.configuration.requestCachePolicy == .reloadIgnoringLocalCacheData)
+
+    let explicitDefault = OTANetworkSession(configuration: .default)
+    check("TC-OTA-CACHE-01", "显式 .default（原 bug 输入）仍净化：urlCache=nil",
+          explicitDefault.configuration.urlCache == nil)
+    check("TC-OTA-CACHE-01", "显式 .default 仍净化：policy 覆盖",
+          explicitDefault.configuration.requestCachePolicy == .reloadIgnoringLocalCacheData)
+
+    let cacheConfig = URLSessionConfiguration.ephemeral
+    cacheConfig.urlCache = URLCache(memoryCapacity: 1_000_000, diskCapacity: 10_000_000)
+    let withCache = OTANetworkSession(configuration: cacheConfig)
+    check("TC-OTA-CACHE-01", "带缓存自定义配置被无条件净化：urlCache=nil",
+          withCache.configuration.urlCache == nil)
+    check("TC-OTA-CACHE-01", "带缓存自定义配置被无条件净化：policy 覆盖",
+          withCache.configuration.requestCachePolicy == .reloadIgnoringLocalCacheData)
+
+    // 两路径行为面：fetch（manifest）与 download（产物）都经净化后的配置建
+    // session 并走通，返回 fresh 数据——「两条 fetch/download 路径都要断言到」。
+    let manifestURL = URL(string: "https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json")!
+    MockURLProtocol.payload = Data("cached-manifest-must-never-be-used".utf8)
+    let fetchSession = OTANetworkSession(configuration: mockURLProtocolConfiguration())
+    let manifest = try await fetchSession.fetchManifest(from: manifestURL)
+    check("TC-OTA-CACHE-02", "fetch（manifest）路径经净化配置走通且返回 fresh 数据",
+          manifest == Data("cached-manifest-must-never-be-used".utf8),
+          "bytes=\(manifest.count)")
+
+    MockURLProtocol.payload = Data("fresh-zip-bytes".utf8)
+    let downloadSession = OTANetworkSession(configuration: mockURLProtocolConfiguration())
+    let zipURL = URL(string: "https://gitlab.internal.invalid/api/v4/projects/97/packages/generic/coffer/2.10.2/Coffer.zip")!
+    let downloaded = try await downloadSession.download(from: zipURL) { _ in }
+    let downloadedData = try Data(contentsOf: downloaded)
+    check("TC-OTA-CACHE-02", "download（产物）路径经净化配置走通且返回 fresh 数据",
+          downloadedData == Data("fresh-zip-bytes".utf8),
+          "bytes=\(downloadedData.count)")
+} catch {
+    check("TC-OTA-CACHE", "夹具异常", false, "\(error)")
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

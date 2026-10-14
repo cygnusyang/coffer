@@ -146,6 +146,10 @@ enum SecCodeVerifier {
 
         let actual = try cdHashHex(of: url)
         guard actual.caseInsensitiveCompare(expectedCdHash) == .orderedSame else {
+            // BUG-28 顺带（2026-10-14）：expected/actual 两个 hex 落一行 DiagLog——
+            // 下次「清单与产物 CDHash 不符」30 秒定位（两 hex 均为公开签名信息，
+            // 不含敏感数据）。此分支即缓存旧 manifest 的可见症状。
+            DiagLog.append("OTA 验签 CDHash 不符：expected=\(expectedCdHash) actual=\(actual)")
             throw VerificationError.cdHashMismatch(expected: expectedCdHash, actual: actual)
         }
 

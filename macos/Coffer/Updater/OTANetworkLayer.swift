@@ -39,13 +39,22 @@ struct OTADownloadMoveError: Error, LocalizedError {
 /// URLSession 实现：请求前 `OTAEndpointPolicy.validate`（https + host 白名单），
 /// 每个操作独立 session（OTA 低频手动触发，隔离状态最简）。
 final class OTANetworkSession: ManifestFetching, DataDownloading {
-    private let configuration: URLSessionConfiguration
+    /// 建 session 用的配置，fetch（manifest）/download（产物）两路径共用。
+    /// internal 仅作测试观测缝（BUG-28 断言缓存已禁用），生产不依赖此暴露。
+    let configuration: URLSessionConfiguration
 
     init(configuration: URLSessionConfiguration = .default) {
         // URLSessionConfiguration 是引用类型：拷贝一份再设超时，避免原地改
         // 调用方/默认共享实例；拷贝失败（理论不可能）则退回原配置。
+        // BUG-28（2026-10-14）：OTA 内容（manifest + 产物）必须永远 fresh，
+        // 绝不能接受缓存响应——.default 的持久 URLCache 曾命中旧构建 manifest
+        // 致 CDHash 误报不符。故在拷贝上无条件禁用缓存（urlCache=nil +
+        // reloadIgnoringLocalCacheData）；fetch/download 两路径共用本配置，
+        // 一次净化同时覆盖。即使调用方显式传带缓存的配置也被强制覆盖。
         if let config = configuration.copy() as? URLSessionConfiguration {
             config.timeoutIntervalForRequest = 30
+            config.urlCache = nil
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
             self.configuration = config
         } else {
             self.configuration = configuration

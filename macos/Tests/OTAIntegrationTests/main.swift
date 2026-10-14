@@ -1,0 +1,335 @@
+// OTAIntegrationTests/main.swift —— OTA 链路可自动化部分的集成测试（任务 #70 第一层）。
+//
+// 锁定的契约（docs/35 §6.4 r0.4）：helper 子进程「等待 → 备份 → 替换 → relaunch
+// gate → result 握手」全流程，用**真实签名产物**（macos/build/Coffer.app，含
+// embedded.provisionprofile）做载荷——把 helper 契约绑定到真实 bundle 结构上。
+//
+// 为什么绕开 open(1)（BUG-29 后唯一真实启动路径）：open 的 LaunchServices 提交在
+// 沙盒 App 内是静默 no-op、继承沙盒风险只能真机定谳（BUG-29 核销判据）。CI 能做的
+// 是**直接 exec helper 可执行文件**测其契约。本 harness 编译 helper 测试构建（无
+// -D COFFER_UPDATER_PRODUCTION，锚读 env COFFER_UPDATER_TEST_ANCHOR）并直接 exec；
+// relaunch 用 COFFER_UPDATER_TEST_FAKE_RELAUNCH 桩隔离（真 open relaunch 归真机
+// 核销，docs/01 BUG-29 判据）。
+//
+// 现场隔离：全部临时目录，不走 /Applications、不碰用户真实密码库。
+//   dstApp   = 真实产物 ditto 副本（当前 App，低版本）
+//   newApp   = 真实产物另一副本：Info.plist 版本改写 99.99.99 + **重签保 DR** →
+//              ditto 打 zip → 解压模拟「下载→prepare」产物（newAppPath）
+//   backup/result/relaunch.log 均在临时目录；pid = 已退出进程（立即通过等待窗）
+//
+// 前置（缺失显式 SKIP，不算 fail）：签名产物存在 + Apple Development 签名身份存在
+// + 测试构建 helper 二进制存在（tools/run_ota_integration_tests.sh 编译注入）。
+//
+// 编译运行：tools/run_ota_integration_tests.sh
+
+import Foundation
+
+// MARK: - 断言与汇总
+
+var failures: [String] = []
+var passCount = 0
+var skipped = 0
+
+func check(_ tc: String, _ name: String, _ cond: Bool, _ detail: String = "") {
+    if cond {
+        passCount += 1
+        print("PASS  \(tc)  \(name)")
+    } else {
+        failures.append("\(tc) \(name) \(detail)")
+        print("FAIL  \(tc)  \(name)  \(detail)")
+    }
+}
+
+func skip(_ tc: String, _ name: String, _ reason: String) {
+    skipped += 1
+    print("SKIP  \(tc)  \(name)  \(reason)")
+}
+
+// MARK: - 子进程辅助（同步跑 + 收 stdout/stderr；非 0 不自动抛错——由断言判定）
+
+struct ProcResult {
+    let status: Int32
+    let stdout: String
+    let stderr: String
+}
+
+@discardableResult
+func runProcess(_ executable: String, args: [String],
+                env: [String: String] = [:]) throws -> ProcResult {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: executable)
+    p.arguments = args
+    var fullEnv = ProcessInfo.processInfo.environment
+    for (key, value) in env { fullEnv[key] = value }
+    p.environment = fullEnv
+    let out = Pipe()
+    let err = Pipe()
+    p.standardOutput = out
+    p.standardError = err
+    try p.run()
+    p.waitUntilExit()
+    let outData = out.fileHandleForReading.readDataToEndOfFile()
+    let errData = err.fileHandleForReading.readDataToEndOfFile()
+    return ProcResult(
+        status: p.terminationStatus,
+        stdout: String(data: outData, encoding: .utf8) ?? "",
+        stderr: String(data: errData, encoding: .utf8) ?? "")
+}
+
+// MARK: - 现场辅助
+
+/// 读 .app 的 CFBundleShortVersionString（nil = 不可读）。
+func appVersion(_ app: URL) -> String? {
+    let plist = app.appendingPathComponent("Contents/Info.plist").path
+    guard let r = try? runProcess("/usr/libexec/PlistBuddy",
+                                  args: ["-c", "Print :CFBundleShortVersionString", plist]),
+          r.status == 0 else { return nil }
+    return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Apple Development 签名身份 SHA-1 hash（重签新包保 DR 用；缺身份 → nil）。
+func signingIdentity() -> String? {
+    guard let r = try? runProcess("/usr/bin/security",
+                                  args: ["find-identity", "-v", "-p", "codesigning"]),
+          r.status == 0 else { return nil }
+    for line in r.stdout.split(separator: "\n") where line.contains("Apple Development") {
+        let parts = line.split(separator: " ")
+        if parts.count >= 2 { return String(parts[1]) }
+    }
+    return nil
+}
+
+/// 已退出进程的 pid（kill(pid,0) → ESRCH）——helper 等待窗立即通过（不空等 30s）。
+func deadPID() -> Int32 {
+    let s = Process()
+    s.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    s.arguments = ["0.05"]
+    try? s.run()
+    s.waitUntilExit()
+    return s.processIdentifier
+}
+
+/// 写 helper 安装配置 JSON（5 字段，契约 §6.4 r0.4）。
+func writeConfig(_ configPath: String, newApp: String, currentApp: String,
+                 backup: String, result: String, pid: Int32) throws {
+    let obj: [String: Any] = [
+        "newAppPath": newApp,
+        "currentAppPath": currentApp,
+        "backupPath": backup,
+        "resultFilePath": result,
+        "pid": pid,
+    ]
+    let data = try JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
+    try data.write(to: URL(fileURLWithPath: configPath))
+}
+
+/// 解析 helper result JSON；返回 (success, code, message) 三元组。
+func readResult(_ path: String) -> (Bool, Int, String)? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let success = obj["success"] as? Bool,
+          let code = obj["code"] as? Int,
+          let message = obj["message"] as? String else { return nil }
+    return (success, code, message)
+}
+
+// MARK: - 前置（SKIP 条件）
+
+let artifactPath = ProcessInfo.processInfo.environment["COFFER_UPDATE_ARTIFACT_PATH"] ?? ""
+let helperBin = ProcessInfo.processInfo.environment["COFFER_OTA_HELPER_BIN"] ?? ""
+
+func missingPrereq(_ tc: String, _ reason: String) -> Bool {
+    check(tc, "前置检查（\(reason)）", false, "前置缺失，本用例 SKIP")
+    skip(tc, "（前置缺失）", reason)
+    return true
+}
+
+// MARK: - TC-INT-01 成功路径：等待→备份→替换→relaunch gate→result 握手（真实产物）
+
+do {
+    guard !artifactPath.isEmpty, FileManager.default.fileExists(atPath: artifactPath) else {
+        _ = missingPrereq("TC-INT-01", "缺真实签名产物 macos/build/Coffer.app（先跑 build_macos_app.sh）")
+        failures.removeAll()  // 前置缺失按 SKIP 计，不算 fail
+        skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+    guard !helperBin.isEmpty, FileManager.default.fileExists(atPath: helperBin) else {
+        skip("TC-INT-01", "（前置缺失）", "缺测试构建 helper 二进制（run_ota_integration_tests.sh 编译注入）")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+    guard let identity = signingIdentity() else {
+        skip("TC-INT-01", "（前置缺失）", "缺 Apple Development 签名身份（载荷重签保 DR 依赖）")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+
+    let fm = FileManager.default
+    let tmpRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-int-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmpRoot) }
+
+    // ---- dstApp（当前 App：真实产物副本，低版本）----
+    let dstDir = tmpRoot.appendingPathComponent("dst")
+    try fm.createDirectory(at: dstDir, withIntermediateDirectories: true)
+    let dstApp = dstDir.appendingPathComponent("Coffer.app")
+    try runProcess("/usr/bin/ditto", args: [artifactPath, dstApp.path])
+    guard let originalVersion = appVersion(dstApp), !originalVersion.isEmpty else {
+        check("TC-INT-01", "dstApp 版本可读（前置 sanity）", false, "无法读取副本版本")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / \(failures.count) failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+
+    // ---- newApp：另一副本 + 版本改写 99.99.99 + 重签（保 DR/entitlements/profile）----
+    let newBuildDir = tmpRoot.appendingPathComponent("newbuild")
+    try fm.createDirectory(at: newBuildDir, withIntermediateDirectories: true)
+    let newBuildApp = newBuildDir.appendingPathComponent("Coffer.app")
+    try runProcess("/usr/bin/ditto", args: [artifactPath, newBuildApp.path])
+    let newBuildPlist = newBuildApp.appendingPathComponent("Contents/Info.plist").path
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleShortVersionString 99.99.99", newBuildPlist])
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleVersion 999999", newBuildPlist])
+    let resign = try runProcess("/usr/bin/codesign",
+                                args: ["--force", "--sign", identity,
+                                       "--preserve-metadata=entitlements,requirements,flags",
+                                       newBuildApp.path])
+    check("TC-INT-01", "newApp 版本改写后重签成功（保 DR，载荷合法性前提）",
+          resign.status == 0, "exit=\(resign.status) stderr=\(resign.stderr)")
+    let verifyResign = try runProcess("/usr/bin/codesign",
+                                      args: ["--verify", "--strict", newBuildApp.path])
+    check("TC-INT-01", "重签后 codesign --verify --strict 通过",
+          verifyResign.status == 0, verifyResign.stderr)
+
+    // 打 zip → 解压：模拟「下载 → prepare 解压」后的产物（newAppPath）
+    let zipPath = tmpRoot.appendingPathComponent("new.zip")
+    try runProcess("/usr/bin/ditto", args: ["-c", "-k", "--keepParent", newBuildApp.path, zipPath.path])
+    let stageDir = tmpRoot.appendingPathComponent("stage")
+    try fm.createDirectory(at: stageDir, withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: ["-x", "-k", zipPath.path, stageDir.path])
+    let newApp = stageDir.appendingPathComponent("Coffer.app")
+    check("TC-INT-01", "解压产物存在且版本 99.99.99",
+          fm.fileExists(atPath: newApp.path) && appVersion(newApp) == "99.99.99",
+          "version=\(appVersion(newApp) ?? "nil")")
+
+    // ---- 配置 + 跑 helper ----
+    let backupPath = tmpRoot.appendingPathComponent("backup/Coffer.app").path
+    let resultPath = tmpRoot.appendingPathComponent("result.json").path
+    let relaunchLog = tmpRoot.appendingPathComponent("relaunch.log").path
+    let configPath = tmpRoot.appendingPathComponent("config.json").path
+    try writeConfig(configPath, newApp: newApp.path, currentApp: dstApp.path,
+                    backup: backupPath, result: resultPath, pid: deadPID())
+
+    let helperEnv = [
+        "COFFER_UPDATER_TEST_ANCHOR": dstApp.path,
+        "COFFER_UPDATER_TEST_FAKE_RELAUNCH": relaunchLog,
+    ]
+    let helper = try runProcess(helperBin, args: ["--config", configPath], env: helperEnv)
+
+    // ---- 断言：退出 → 替换 → relaunch gate → result 握手全流程 ----
+    check("TC-INT-01", "helper exit 0（等待→备份→替换→relaunch→result 全流程）",
+          helper.status == 0,
+          "exit=\(helper.status) stderr=\(helper.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
+    if let result = readResult(resultPath) {
+        check("TC-INT-01", "result.json success=true", result.0, "\(result)")
+        check("TC-INT-01", "result.json code=0", result.1 == 0, "\(result)")
+    } else {
+        check("TC-INT-01", "result.json 可解析且字段齐全", false, "无法读取/解析 result")
+    }
+    check("TC-INT-01", "目标 dstApp 已被替换（版本=99.99.99）",
+          appVersion(dstApp) == "99.99.99", "actual=\(appVersion(dstApp) ?? "nil")")
+    let backupApp = URL(fileURLWithPath: backupPath)
+    let backupVersion = appVersion(backupApp)
+    check("TC-INT-01", "备份存在", fm.fileExists(atPath: backupPath))
+    check("TC-INT-01", "备份为旧版本（\(originalVersion)）", backupVersion == originalVersion,
+          "backup=\(backupVersion ?? "nil")")
+    if let logData = try? String(contentsOf: URL(fileURLWithPath: relaunchLog), encoding: .utf8) {
+        check("TC-INT-01", "relaunch gate 通过：fake 桩记录目标 dstApp（open 被隔离）",
+              logData.contains(dstApp.path), "log=\(logData.trimmingCharacters(in: .whitespacesAndNewlines))")
+    } else {
+        check("TC-INT-01", "relaunch gate 通过：fake 桩记录目标 dstApp（open 被隔离）",
+              false, "relaunch.log 缺失")
+    }
+}
+
+// MARK: - TC-INT-02 负面：真实产物改版本但**不重签**（签名封存破坏）→ 载荷 DR 拒装 exit 2
+
+// 证明 TC-INT-01 的重签是载荷合法性的必要前提：真实产物上 C-1 载荷门（静态验签
+// DR + profile）在集成面同样强制——改版本不重签的包绝不能过。
+do {
+    let fm = FileManager.default
+    guard FileManager.default.fileExists(atPath: artifactPath),
+          FileManager.default.fileExists(atPath: helperBin) else {
+        skip("TC-INT-02", "（前置缺失）", "签名产物或 helper 缺失（同 TC-INT-01 前置）")
+        failures.removeAll()
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+    let tmpRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-int-neg-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmpRoot) }
+
+    // 损坏载荷：真实产物副本 + 版本改写，**不重签**（签名封存失效）
+    let brokenDir = tmpRoot.appendingPathComponent("broken")
+    try fm.createDirectory(at: brokenDir, withIntermediateDirectories: true)
+    let brokenApp = brokenDir.appendingPathComponent("Coffer.app")
+    try runProcess("/usr/bin/ditto", args: [artifactPath, brokenApp.path])
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleShortVersionString 99.99.99",
+                          brokenApp.appendingPathComponent("Contents/Info.plist").path])
+
+    // 目标：真实产物另一副本（原版本）
+    let dst2Dir = tmpRoot.appendingPathComponent("dst2")
+    try fm.createDirectory(at: dst2Dir, withIntermediateDirectories: true)
+    let dst2App = dst2Dir.appendingPathComponent("Coffer.app")
+    try runProcess("/usr/bin/ditto", args: [artifactPath, dst2App.path])
+    let dst2Original = appVersion(dst2App) ?? ""
+
+    let backup2 = tmpRoot.appendingPathComponent("backup2/Coffer.app").path
+    let result2 = tmpRoot.appendingPathComponent("result2.json").path
+    let config2 = tmpRoot.appendingPathComponent("config2.json").path
+    try writeConfig(config2, newApp: brokenApp.path, currentApp: dst2App.path,
+                    backup: backup2, result: result2, pid: deadPID())
+
+    let helper2 = try runProcess(helperBin, args: ["--config", config2],
+                                 env: ["COFFER_UPDATER_TEST_ANCHOR": dst2App.path])
+    check("TC-INT-02", "未重签载荷（真实产物改版本）→ helper exit 2（载荷 DR 拒装）",
+          helper2.status == 2, "exit=\(helper2.status) stderr=\(helper2.stderr)")
+    if let result = readResult(result2) {
+        check("TC-INT-02", "result.json success=false", !result.0, "\(result)")
+        check("TC-INT-02", "result.json code=2", result.1 == 2, "\(result)")
+    } else {
+        check("TC-INT-02", "result.json 可解析且字段齐全", false, "无法读取/解析 result")
+    }
+    check("TC-INT-02", "拒装后目标未被改动（版本仍 \(dst2Original)）",
+          appVersion(dst2App) == dst2Original,
+          "actual=\(appVersion(dst2App) ?? "nil")")
+    check("TC-INT-02", "拒装后无备份产生（载荷门在任何修改前）",
+          !fm.fileExists(atPath: backup2))
+}
+
+// MARK: - 汇总
+
+print("--------------------------------------------------")
+print("结果：\(passCount) passed / \(failures.count) failed / \(skipped) skipped")
+if !failures.isEmpty {
+    failures.forEach { print("  FAILED: \($0)") }
+    exit(1)
+}
+print("ALL GREEN")

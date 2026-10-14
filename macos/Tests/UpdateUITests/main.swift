@@ -240,6 +240,29 @@ do {
     check("installDismissPlan downloaded → none", UpdateCopy.installDismissPlan(state: .downloaded) == .none)
 }
 
+// BUG-26 状态机一致性（TC-BUG26-回归）：对全部 UpdaterState case 断言不变式
+// 「installDismissPlan == .dismissThenTerminate ⟹ !blocksInteractiveDismiss」——
+// 若某状态计划 terminate 却又拦交互关闭，NSApp.terminate 的 quit 会被 SwiftUI 当
+// sheet 交互关闭尝试取消（BUG-26 根因）。互补断言：拦交互关闭的状态（checking /
+// downloading）绝不能同时计划 terminate。
+do {
+    let allStates: [UpdaterState] = [
+        .idle, .checking, .upToDate, .downloaded, .installing,
+        .downloading(0.5), .failed("OTA-E-2001"),
+        .updateAvailable(makeInfo(version: "99.99.99")),
+    ]
+    for state in allStates {
+        let plan = UpdateCopy.installDismissPlan(state: state)
+        let blocks = UpdateCopy.blocksInteractiveDismiss(state)
+        check("TC-BUG26-回归 一致性 \(String(describing: state))",
+              plan != .dismissThenTerminate || !blocks,
+              "plan=\(plan) blocks=\(blocks)（terminate 计划不可同时拦交互关闭）")
+    }
+    check("TC-BUG26-回归 互补：拦交互关闭（checking/downloading）不得计划 terminate",
+          UpdateCopy.installDismissPlan(state: .checking) != .dismissThenTerminate
+          && UpdateCopy.installDismissPlan(state: .downloading(0.5)) != .dismissThenTerminate)
+}
+
 // MARK: - 进度文案（TC-OTA-UI-08）
 
 do {

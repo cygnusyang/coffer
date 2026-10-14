@@ -2153,9 +2153,13 @@ check("TC-WIRE-01", "UpdaterManager() 便捷构造可用（生产接线编译级
 /// 下走通 OTANetworkSession 生产代码（不联网，payload 为本地字节）。
 final class MockURLProtocol: URLProtocol {
     static var payload = Data("ota-payload".utf8)
+    /// 请求计数（TC-OTA-CACHE-03 用：同一 session 两次 fetch 断言都打网络层、
+    /// 第二次不命中本地缓存——BUG-28 行为面锁死，防「配置净化但共享缓存复活」）。
+    static var requestCount = 0
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        Self.requestCount += 1
         guard let url = request.url else {
             client?.urlProtocol(self, didFailWithError: TestError(message: "mock 请求无 url"))
             return
@@ -2223,6 +2227,29 @@ do {
           "bytes=\(downloadedData.count)")
 } catch {
     check("TC-OTA-CACHE", "夹具异常", false, "\(error)")
+}
+
+// BUG-28 行为面收口（TC-OTA-CACHE-03）：**同一 session** 两次 fetchManifest，
+// 第二次必须重新打网络层（请求计数 2），且拿到的是改后的 fresh 数据——绝不命中
+// 本地缓存（urlCache=nil 配置面的行为锁；计数锁防「净化配置但缓存复活」回归）。
+do {
+    MockURLProtocol.requestCount = 0
+    MockURLProtocol.payload = Data("manifest-v1".utf8)
+    let manifestURL = URL(string: "https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json")!
+    let sameSession = OTANetworkSession(configuration: mockURLProtocolConfiguration())
+    let first = try await sameSession.fetchManifest(from: manifestURL)
+    check("TC-OTA-CACHE-03", "同一 session 第一次 fetch 走网络层（请求计数 1）",
+          MockURLProtocol.requestCount == 1 && first == Data("manifest-v1".utf8),
+          "count=\(MockURLProtocol.requestCount)")
+    MockURLProtocol.payload = Data("manifest-v2".utf8)
+    let second = try await sameSession.fetchManifest(from: manifestURL)
+    check("TC-OTA-CACHE-03", "同一 session 第二次 fetch 走网络层（请求计数 2）",
+          MockURLProtocol.requestCount == 2, "count=\(MockURLProtocol.requestCount)")
+    check("TC-OTA-CACHE-03", "第二次 fetch 返回 fresh 数据（未命中本地缓存）",
+          second == Data("manifest-v2".utf8),
+          "bytes=\(second.count)")
+} catch {
+    check("TC-OTA-CACHE-03", "夹具异常", false, "\(error)")
 }
 
 // MARK: - BUG-26 修复：installing 后程序化关 sheet + dismissing 放开 installing

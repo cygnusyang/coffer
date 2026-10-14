@@ -40,7 +40,13 @@ struct CofferMainApp: App {
                 // （2026-10-14 用户）：检查阶段静默——关于页不消费 updater state，
                 // 结果经 UpdateSheet 呈现（无新版本 → 「已是最新版本」；有新版本 →
                 // 下载进度）。设置页不放任何更新入口（用户裁定）。
-                .sheet(isPresented: $model.showAbout) {
+                // 「sheet 延迟呈现修正」（同轮）：双 .sheet 挂同一 RootView 不叠加，
+                // About 在屏时 UpdateSheet 被挡——checkForUpdates 先关 About，经
+                // onDismiss 回调（model.aboutSheetDidDismiss）再开 UpdateSheet
+                // （两旗标分处两个事务，防同事务双发丢呈现）。
+                .sheet(isPresented: $model.showAbout, onDismiss: {
+                    model.aboutSheetDidDismiss()
+                }) {
                     AboutUpdateView()
                         .environmentObject(model)
                 }

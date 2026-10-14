@@ -79,12 +79,17 @@ final class AppModel: ObservableObject {
     /// 区入口走 SettingsView 本地 @State sheet（设置窗源，F3 随窗口自关），
     /// 不占本状态。
     @Published var showVaultManagement = false
-    /// OTA 更新 sheet 触发（v2.7.0，docs/35 §2.6）：应用菜单「检查更新…」+
-    /// 关于对话框「检查更新…」按钮共用；设置页不放任何更新入口（用户裁定）。
+    /// OTA 更新 sheet 触发（v2.7.0，docs/35 §2.6）：关于页「检查更新…」按钮与
+    /// UpdateSheet 内部重试触发（应用菜单「检查更新…」同项于 BUG-24 复测裁定
+    /// 2026-10-14 移除）；设置页不放任何更新入口（用户裁定）。
     @Published var showUpdateSheet = false
     /// 「关于 Coffer」对话框 sheet 触发（应用菜单「关于 Coffer…」；自建关于
     /// 视图以容纳「检查更新…」按钮，见 AboutUpdateView）。
     @Published var showAbout = false
+    /// 「检查更新…」触发后、About sheet 尚未关闭前为 true，由 onDismiss 回调消费
+    /// （BUG-24 复测「sheet 延迟呈现修正」：About 在屏时等它真正关闭再开
+    /// UpdateSheet，见 checkForUpdates/aboutSheetDidDismiss）。
+    private var updateSheetPendingAfterAboutDismiss = false
     /// 「键盘快捷键」速查 sheet 触发（v2.9.1，GitLab issue #5）：帮助菜单
     /// 「键盘快捷键…」触发，CommandGroup 菜单不可达视图层 @State，与
     /// showImport/showAbout 提升同先例。帮助无密级，锁定/解锁态均可触发，
@@ -1459,10 +1464,37 @@ final class AppModel: ObservableObject {
     /// 或 RootView 注入 UpdateSheet 时）才实例化。
     private(set) lazy var updater = UpdaterManager()
 
-    /// 「检查更新…」统一入口（应用菜单 + 关于对话框共用）：显示 sheet + 主动检查。
-    /// 不做启动静默检查（§2.6 用户裁定：主动触发，零网络姿态）；正在检查/下载/
-    /// 安装中不重复触发（UpdateCopy.canStartCheck 纯函数判定）。
+    /// 「检查更新…」统一入口（关于页按钮触发；应用菜单同项入口已移除，BUG-24
+    /// 复测裁定）：先关关于 sheet——双 `.sheet` 挂同一 RootView，关于在屏时
+    /// UpdateSheet 不叠加（docs/01 BUG-24 根因），不关则结果被关于挡住、又回到
+    /// 「点了没反应」。About 在屏时经 onDismiss（aboutSheetDidDismiss）再开
+    /// UpdateSheet：每个事务只翻一个 sheet 旗标，规避同事务双 sheet 同发、第二个
+    /// 被 SwiftUI 丢弃。不做启动静默检查（§2.6 用户裁定：主动触发，零网络姿态）；
+    /// 正在检查/下载/安装中不重复触发（UpdateCopy.canStartCheck 纯函数判定）。
     func checkForUpdates() {
+        switch UpdateCopy.checkPresentationPlan(
+            canStartCheck: UpdateCopy.canStartCheck(updater.state),
+            aboutVisible: showAbout) {
+        case .presentAfterAboutDismiss:
+            updateSheetPendingAfterAboutDismiss = true
+            showAbout = false
+        case .presentNow:
+            showUpdateSheet = true
+            Task { await updater.check() }
+        case .revealByClosingAbout:
+            showAbout = false
+        case .none:
+            break
+        }
+    }
+
+    /// About sheet 关闭回调（CofferApp `.sheet(onDismiss:)`）：仅当 checkForUpdates
+    /// 请求过（pending 旗标置位）才开 UpdateSheet + 开始检查——用户普通「关闭」
+    /// About 不触发。showUpdateSheet = true 与 showAbout = false 分处两个事务，
+    /// 确保 UpdateSheet 在 About 真正消失后呈现。
+    func aboutSheetDidDismiss() {
+        guard updateSheetPendingAfterAboutDismiss else { return }
+        updateSheetPendingAfterAboutDismiss = false
         showUpdateSheet = true
         guard UpdateCopy.canStartCheck(updater.state) else { return }
         Task { await updater.check() }

@@ -223,6 +223,35 @@ enum UpdateCopy {
     /// UpdateSheet `.upToDate` 呈现文案：无新版本 → 告诉用户当前是最新版本
     /// （BUG-24 复测裁定：upToDate 呈现设计不动）。
     static let upToDateText = "已是最新版本"
+
+    // MARK: - 检查触发呈现计划（BUG-24 复测「sheet 延迟呈现修正」，2026-10-14）
+
+    /// 关于页触发「检查更新…」时 UpdateSheet 的呈现计划。双 `.sheet` 挂同一
+    /// RootView，关于在屏时 UpdateSheet 不叠加（docs/01 BUG-24 根因）——About
+    /// 在屏时须等它真正关闭（onDismiss）再呈现，绝不与关闭同事务同发（SwiftUI
+    /// 可能丢弃第二个 sheet 呈现）。纯决策（Foundation only），供 UpdateUITests
+    /// 断言 + AppModel.checkForUpdates 消费。
+    static func checkPresentationPlan(
+        canStartCheck: Bool,
+        aboutVisible: Bool
+    ) -> UpdateCheckPresentationPlan {
+        if canStartCheck {
+            return aboutVisible ? .presentAfterAboutDismiss : .presentNow
+        }
+        return aboutVisible ? .revealByClosingAbout : .none
+    }
+}
+
+/// 检查触发时 UpdateSheet 呈现决策（checkPresentationPlan 的返回值）。
+enum UpdateCheckPresentationPlan: Equatable {
+    /// 检查/下载/安装已在飞且 About 不在屏：无动作（UpdateSheet 已挂载或已关）。
+    case none
+    /// 检查/下载/安装已在飞但 About 在屏：只关 About，露出已挂载的 UpdateSheet。
+    case revealByClosingAbout
+    /// About 不在屏：直接开 UpdateSheet 并开始检查。
+    case presentNow
+    /// About 在屏：关 About，在 onDismiss 回调里再开 UpdateSheet + 开始检查。
+    case presentAfterAboutDismiss
 }
 
 /// UpdateSheet 各交互按钮的可用性快照（纯函数派生；Equatable 供测试断言）。

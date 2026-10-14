@@ -273,6 +273,26 @@ do {
           UpdateCopy.upToDateText == "已是最新版本")
 }
 
+// MARK: - 检查触发呈现计划（BUG-24 复测「sheet 延迟呈现修正」：先关 About 再开 UpdateSheet）
+
+// 诚实边界：本 harness 为纯逻辑（Foundation only），无法驱动 AppModel 的
+// showAbout/showUpdateSheet 实际翻转；断到最深的纯决策层 checkPresentationPlan
+//（AppModel.checkForUpdates/aboutSheetDidDismiss 消费）。真机呈现由用户核销。
+do {
+    check("checkPresentationPlan: 可检查 + About 在屏 → 先关再开（onDismiss 后呈现）",
+          UpdateCopy.checkPresentationPlan(canStartCheck: true, aboutVisible: true)
+            == .presentAfterAboutDismiss)
+    check("checkPresentationPlan: 可检查 + About 不在屏 → 直接开（presentNow）",
+          UpdateCopy.checkPresentationPlan(canStartCheck: true, aboutVisible: false)
+            == .presentNow)
+    check("checkPresentationPlan: 已在飞 + About 在屏 → 只关 About 露出已挂载 sheet",
+          UpdateCopy.checkPresentationPlan(canStartCheck: false, aboutVisible: true)
+            == .revealByClosingAbout)
+    check("checkPresentationPlan: 已在飞 + About 不在屏 → 无动作",
+          UpdateCopy.checkPresentationPlan(canStartCheck: false, aboutVisible: false)
+            == .none)
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

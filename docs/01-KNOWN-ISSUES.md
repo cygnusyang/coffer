@@ -1456,3 +1456,11 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 
 ### 复现与诊断
 `tools/run_update_ui_tests.sh` 新增 6 断言核销 `checkingFeedbackText` / `isChecking`（.checking→true，其余态→false）；`tools/run_update_tests.sh` TC-UPD-22 断言 check() 挂起时 `state == .checking`（HoldingFetcher 挂起，fetchCount>0 时判态）
+
+### 复测修正（2026-10-14 真机复测，用户裁定打回首版修复 → 上「修复路径」被本节取代）
+首版 spinner 形态经真机复测否决，三项裁定：
+1. 关于页检查阶段须**静默**——用户：「在关于的页面里面那个升级一闪现一下进度条 这是不对的」。`AboutUpdateView` 的 `@ObservedObject updater` 注入（CofferApp `model.updater`）与 in-button spinner/禁用逻辑一并回退，按钮恢复纯文案入口 `Button(UpdateCopy.checkButtonTitle)`（「检查更新…」）；`UpdateCopy.isChecking` 随之删除（无消费点）。
+2. **应用菜单「检查更新…」同项入口移除**，只保留关于页主入口——用户：「在顶上的coffer菜单中有『检查升级』，在『关于』中也有升级。需要保留在『关于』中的那个升级」。`CommandGroup(replacing: .appInfo)` 恢复仅「关于 Coffer…」；v2.7.0 §2.6 双入口裁定被本轮取代。
+3. `.upToDate`「已是最新版本」与 `.downloading` 进度条呈现**不动**——用户：「如果没有新版本，就告诉用户当前是最新版本。不用动现在的设计。如果当前有新版本，再进入进度条」。检查结果一律经 UpdateSheet 呈现（无新版本 → 「已是最新版本」；有新版本 → 下载进度）。
+
+复验（修复 commit 待 lead 集成）：`tools/run_update_tests.sh` 180/0/2（TC-UPD-22 `.checking` 状态机断言保留——此态由 check() 正确进入，缺陷在视图不消费）+ `tools/run_update_ui_tests.sh` 67/0（BUG-24 段 6→4 断言：isChecking 随死代码删除，改断言 `checkButtonTitle`（纯文案入口、无原位进行中反馈）+ `upToDateText`（结果经 sheet 呈现））+ build 完成 ✅（0 error）。**核销版本仍=下一版**。

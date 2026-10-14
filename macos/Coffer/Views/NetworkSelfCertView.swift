@@ -5,11 +5,16 @@
 // 终端自行执行；页面不替用户跑 codesign/lsof，避免 App 内出现进程/网络工具
 // 调用面）。
 //
-// 声明与事实一致（TC-NET-04）：
-//   - macos/Coffer/Coffer.entitlements 无任何 com.apple.security.network.*；
-//   - 产物 otool -L 无 Network.framework / CFNetwork 等网络框架（实测为空）；
-//   - tools/check_no_network.sh 断言依赖图零网络 crate（reqwest/hyper 等黑名单）；
-//   - 官方产物运行时 0 socket 由 macOS 真机验证（v0.4.0 出口判据②，TC-NET-03）。
+// 声明与事实一致（TC-NET-04，v2.10.3-T3 #89 对齐 OTA 豁免）：
+//   - macos/Coffer/Coffer.entitlements 唯一网络权限为 network.client
+//     （v2.7.0 OTA 更新豁免，docs/35 §2.2；仅访问白名单更新服务器，不发送
+//     密码库数据）；network.server 或其他 network.* 均为违规；
+//   - 产物 otool -L 无第三方网络库；系统框架 CFNetwork 仅被软件更新（OTA）
+//     模块经 URLSession 使用（实测：CFNetwork 在、Network.framework 不在）；
+//   - tools/check_no_network.sh 断言 Rust 核心依赖图零网络 crate
+//     （reqwest/hyper 等黑名单）；
+//   - 官方产物运行时 0 socket（常态）由 macOS 真机验证
+//     （v0.4.0 出口判据②，TC-NET-03）。
 //
 // v2.10.0-T5⑤（FRICT-17，AC-2.10.0-FR-5）：命令块加「复制」按钮（对齐
 // McpSettingsView 一键复制）——命令含 <Coffer.app 路径>/<pid> 占位符且为长
@@ -50,14 +55,16 @@ struct NetworkSelfCertView: View {
     private var declarationSection: some View {
         Section {
             Label {
-                Text("本 App 不含网络权限（零网络架构）")
+                Text("数据都在本机，不上传云端")
                     .font(.headline)
             } icon: {
                 Image(systemName: "network.slash")
                     .foregroundStyle(.green)
             }
-            Text("Coffer 完全离线运行：代码与依赖图均无网络能力，密码库只存在于本机，"
-                 + "不会向任何服务器发送数据。以下命令可自行验证，步骤可复现。")
+            Text("Coffer 的密码库与全部数据只保存在本机，不上传到任何云端。"
+                 + "Rust 核心与其依赖图零网络（可用 tools/check_no_network.sh 自证）；"
+                 + "应用层唯一联网例外是软件更新（OTA）——仅按白名单地址访问更新服务器，"
+                 + "不发送任何密码库数据。以下命令可自行验证，步骤可复现。")
         }
     }
 
@@ -67,10 +74,14 @@ struct NetworkSelfCertView: View {
         Section("静态自证（构建产物）") {
             stepRow(1, "检查沙盒权限声明：")
             commandText("codesign -d --entitlements - <Coffer.app 路径>")
-            stepRow(nil, "输出中不应出现任何 com.apple.security.network.* 键。")
+            stepRow(nil, "输出中最多允许出现一项网络权限：com.apple.security.network.client"
+                     + "（软件更新豁免）；不得出现 network.server 或其他任何 "
+                     + "com.apple.security.network.* 键。")
             stepRow(2, "检查动态链接的框架：")
             commandText("otool -L <Coffer.app>/Contents/MacOS/Coffer")
-            stepRow(nil, "输出中不应有 Network.framework / CFNetwork 等网络框架。")
+            stepRow(nil, "输出中不应链接第三方网络库；系统框架 CFNetwork 属预期——"
+                     + "仅被软件更新（OTA）模块经 URLSession 使用，不应出现独立的 "
+                     + "Network.framework。")
         }
     }
 
@@ -82,7 +93,7 @@ struct NetworkSelfCertView: View {
             commandText("pgrep -x Coffer")
             stepRow(2, "检查该进程的 TCP/UDP 连接（-a 限定只查该进程）：")
             commandText("lsof -nP -iTCP -iUDP -a -p <pid>")
-            stepRow(nil, "输出应为空（无任何网络连接）。")
+            stepRow(nil, "输出应为空，即无任何网络连接——软件更新（OTA）下载进行中除外。")
         }
     }
 

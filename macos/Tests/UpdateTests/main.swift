@@ -1008,29 +1008,38 @@ do {
     check("TC-UPD-04", "夹具异常", false, "\(error)")
 }
 
-// 网络失败（manifest 拉取层）→ upToDate（BUG-23：UI 呈现「没有新版本」，不泄露 NSError）
+// 网络失败（manifest 拉取层）→ failed（BUG-23 复测修正：短文案 + 错误码，不泄露 NSError）
 do {
     let manager = makeManager(
         fetcher: StubFetcher(.failure(TestError(message: "network down"))))
     await manager.check()
-    check("TC-UPD-05", "网络失败 → upToDate（BUG-23：呈现「没有新版本」，完整错误落 DiagLog）",
-          manager.state == .upToDate, "state=\(manager.state)")
+    check("TC-UPD-05", "网络失败 → failed 且文案为错误码短文案（BUG-23 复测修正）",
+          manager.state == .failed(UpdateCopy.checkNetworkFailureMessage()),
+          "state=\(manager.state)")
 }
 
-// BUG-23：URLError（cannotConnectToHost = -1004，ECONNREFUSED 同型）→ upToDate
+// BUG-23：URLError（cannotConnectToHost = -1004，ECONNREFUSED 同型）→ failed（错误码短文案，不泄露 NSError）
 do {
     let manager = makeManager(fetcher: StubFetcher(.failure(URLError(.cannotConnectToHost))))
     await manager.check()
-    check("TC-UPD-05", "URLError（连接拒绝 -1004）→ upToDate（BUG-23）",
-          manager.state == .upToDate, "state=\(manager.state)")
+    if case .failed(let msg) = manager.state {
+        check("TC-UPD-05", "URLError（连接拒绝 -1004）→ failed 且含错误码 OTA-E-2001",
+              msg.contains(UpdateCopy.checkNetworkErrorCode), "msg=\(msg)")
+        check("TC-UPD-05", "URLError → failed 且不泄露原始 NSError",
+              !msg.contains("NSURLErrorDomain") && !msg.contains("cannotConnectToHost"),
+              "msg=\(msg)")
+    } else {
+        check("TC-UPD-05", "URLError → failed（BUG-23 复测修正）", false, "state=\(manager.state)")
+    }
 }
 
-// BUG-23：OTAHTTPError（非 2xx）→ upToDate（同属网络层失败）
+// BUG-23：OTAHTTPError（非 2xx）→ failed（同属网络层失败，错误码短文案）
 do {
     let manager = makeManager(fetcher: StubFetcher(.failure(OTAHTTPError(statusCode: 503))))
     await manager.check()
-    check("TC-UPD-05", "HTTP 非 2xx → upToDate（BUG-23）",
-          manager.state == .upToDate, "state=\(manager.state)")
+    check("TC-UPD-05", "HTTP 非 2xx → failed 且文案为错误码短文案（BUG-23 复测修正）",
+          manager.state == .failed(UpdateCopy.checkNetworkFailureMessage()),
+          "state=\(manager.state)")
 }
 
 // 验签失败（signature 未随字段改）→ failed

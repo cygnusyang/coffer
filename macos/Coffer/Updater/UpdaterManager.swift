@@ -85,11 +85,13 @@ final class UpdaterManager: ObservableObject {
     @Published private(set) var state: UpdaterState = .idle
 
     /// 固定清单 URL（契约 6.1，恒一 URL，不依赖版本枚举）。
-    /// GitLab 迁移轮（2026-10-11）Pro trunk 切自托管 GitLab Release 永久链接
-    /// （permalink/latest，project id 95）；免费版仓仍走 GitHub releases。
+    /// 公开产物仓（2026-10-14）：原 coffer-pro（project 95）私有 → GitLab 对未鉴权
+    /// 请求掩蔽 404 → App 沙盒无 token 拉清单必 404，OTA 通道自迁 GitLab 起即断
+    /// （BUG-25）；切公开产物仓 coffer-ota（project 97，匿名 200 已验证）。同 host
+    /// 同端口，白名单/OTAEndpointPolicy 不受影响。免费版仓仍走 GitHub releases。
     /// `nonisolated`：类为 @MainActor，纯常量供非隔离上下文（init 默认参）引用。
     nonisolated static let defaultManifestURL = URL(
-        string: "https://gitlab.internal.invalid/api/v4/projects/95/releases/permalink/latest/downloads/ota/update-manifest.json")!
+        string: "https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json")!
 
     private let manifestURL: URL
     private let currentVersion: String
@@ -155,8 +157,9 @@ final class UpdaterManager: ObservableObject {
     }
 
     /// 检查更新：拉清单 → HTTPS+白名单 → canonical 验签 → 版本比较 → 状态迁移。
-    /// 网络失败（manifest 拉取层）→ 完整错误落 DiagLog + `.upToDate`（BUG-23：UI
-    /// 呈现「没有新版本」，不泄露 NSError 原文）；验签失败 / 不匹配 → `.failed`
+    /// 网络失败（manifest 拉取层）→ 完整错误落 DiagLog + `.failed`（BUG-23 复测
+    /// 修正：UI 短文案 + 错误码 OTA-E-2001，绝不带原始 NSError——不能静默归
+    /// 「已是最新版本」，失败要可重查）；验签失败 / 不匹配 → `.failed`
     /// （fail-closed，不静默）。
     func check() async {
         guard !isInFlight else { return }
@@ -169,14 +172,18 @@ final class UpdaterManager: ObservableObject {
             do {
                 data = try await fetcher.fetchManifest(from: manifestURL)
             } catch {
-                // BUG-23（用户裁定 2026-10-14）：更新检查网络失败 → 完整 NSError 经
-                // DiagLog 落 log（错误码 OTA-E-2001 + failing URL + domain/code + 底层
-                // 错误，UpdateCopy.checkNetworkFailureLogLine），UI 呈现「没有新版本」
-                // （.upToDate 同态），不向用户泄露错误原文。仅 manifest 拉取层（网络层
-                // 边界）错误走此分支；解析/验签/版本/纵深白名单等非网络错误仍在下方
-                // 外层 catch fail-closed（TC-UPD-06/07/08/09/10/18/20/21 覆盖）。
+                // BUG-23 复测修正（用户裁定 2026-10-14）：检查网络失败不能静默归
+                // 「已是最新版本」（fail-closed 掩蔽语义被复测推翻，用户原文：「如果
+                // 检查失败也归到最新版本，那这个时候是不对的。报错的时候我们还是
+                // 有问题的，但是要给出错误码，不用给出大段的错误信息。」）——置
+                // `.failed`，UI 呈现短文案 + 错误码 OTA-E-2001
+                // （UpdateCopy.checkNetworkFailureMessage），绝不带原始 NSError；
+                // 完整错误仍只进 DiagLog（checkNetworkFailureLogLine）。仅 manifest
+                // 拉取层（网络层边界）错误走此分支；解析/验签/版本/纵深白名单等
+                // 非网络错误仍在下方外层 catch fail-closed
+                // （TC-UPD-06/07/08/09/10/18/20/21 覆盖）。
                 DiagLog.append(UpdateCopy.checkNetworkFailureLogLine(error: error, url: manifestURL))
-                state = .upToDate
+                state = .failed(UpdateCopy.checkNetworkFailureMessage())
                 return
             }
             let manifest = try UpdateManifest.parse(data)

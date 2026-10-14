@@ -240,11 +240,16 @@ do {
           UpdateCopy.buildTimeText("   ") == "开发构建")
 }
 
-// MARK: - 诊断错误码（BUG-23：更新检查网络失败 → 错误码只在 DiagLog，UI 呈现「没有新版本」）
+// MARK: - 检查网络失败（BUG-23：UI 短文案 + 错误码，完整错误只进 DiagLog）
 
 do {
-    check("checkNetworkErrorCode: 更新检查网络失败诊断码 OTA-E-2001（只在 log）",
+    check("checkNetworkErrorCode: 更新检查网络失败错误码 OTA-E-2001",
           UpdateCopy.checkNetworkErrorCode == "OTA-E-2001")
+    let userMsg = UpdateCopy.checkNetworkFailureMessage()
+    check("checkNetworkFailureMessage: UI 短文案一句内 + 错误码可见（BUG-23 复测修正）",
+          userMsg == "检查更新失败（OTA-E-2001）")
+    check("checkNetworkFailureMessage: 绝不带原始 NSError（无 Domain/错误原文）",
+          !userMsg.contains("NSError") && !userMsg.contains("Domain"))
     let url = URL(string: "https://gitlab.internal.invalid/ota/update-manifest.json")!
     let connRefused = URLError(.cannotConnectToHost)
     let line = UpdateCopy.checkNetworkFailureLogLine(error: connRefused, url: url)

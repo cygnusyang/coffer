@@ -187,11 +187,19 @@ enum UpdateCopy {
         return raw
     }
 
-    // MARK: - 诊断错误码（BUG-23：更新检查网络失败 → 错误码只在 DiagLog，UI 呈现「没有新版本」）
+    // MARK: - 检查网络失败（BUG-23：UI 短文案 + 错误码，完整错误只进 DiagLog）
 
-    /// 更新检查网络失败诊断码（BUG-23，用户裁定 2026-10-14：UI 不泄露原始 NSError，
-    /// 记到 log + 提示「没有新版本」即可）。本码只在 DiagLog 出现，绝不呈现给用户。
+    /// 更新检查网络失败错误码（BUG-23，用户裁定 2026-10-14）：检查失败 UI 呈现
+    /// 短文案 + 本错误码（绝不带原始 NSError），完整错误记 DiagLog。
     static let checkNetworkErrorCode = "OTA-E-2001"
+
+    /// BUG-23 复测修正（用户裁定 2026-10-14）：UI 呈现的检查网络失败短文案——
+    /// 一句内 + 错误码可见，绝不带原始 NSError（「报错的时候我们还是有问题
+    /// 的，但是要给出错误码，不用给出大段的错误信息」）；完整错误仍只进 DiagLog
+    /// （checkNetworkFailureLogLine）。供 UpdateSheet failedContent 呈现 + 重试。
+    static func checkNetworkFailureMessage() -> String {
+        "检查更新失败（\(checkNetworkErrorCode)）"
+    }
 
     /// BUG-23：manifest 拉取层网络失败 → 落 DiagLog 的诊断行——含错误码、完整 NSError
     /// 原文、failing URL（URLError 自带优先，否则入参兜底）、domain+code、底层错误。

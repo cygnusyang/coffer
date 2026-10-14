@@ -263,6 +263,23 @@ do {
         check("TC-INT-01", "relaunch gate 通过：fake 桩记录目标 dstApp（open 被隔离）",
               false, "relaunch.log 缺失")
     }
+
+    // BUG-29 后续 A：helper 文件日志（/tmp/coffer-update.log）——argv 首行落盘
+    // 是现场「helper 没被拉起 vs 被拉起但 args 丢失 exit 4」的分诊关键（统一日志
+    // 曾整体失效，诊断只能靠文件落盘）。断言文件里含本场唯一 configPath 的
+    // 「coffer-update 启动 … argv=…」行。contains 语义 + 每场唯一路径：跨场并发
+    // append（多 helper 实例 O_APPEND 行写）时仍能定位本场，不依赖末行。
+    let fileLogPath = "/tmp/coffer-update.log"
+    if let logText = try? String(contentsOfFile: fileLogPath, encoding: .utf8) {
+        let argvLine = logText.split(separator: "\n").first {
+            $0.hasPrefix("coffer-update 启动") && $0.contains(configPath)
+        }
+        check("TC-INT-01", "helper 文件日志首行含本场 argv（--config <路径> 已送达）",
+              argvLine != nil, "log=\(fileLogPath)")
+    } else {
+        check("TC-INT-01", "helper 文件日志首行含本场 argv（--config <路径> 已送达）",
+              false, "无法读取 \(fileLogPath)")
+    }
 }
 
 // MARK: - TC-INT-02 负面：真实产物改版本但**不重签**（签名封存破坏）→ 载荷 DR 拒装 exit 2

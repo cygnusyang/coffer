@@ -33,6 +33,9 @@ struct OTAInstaller: Installing {
     let userDefaults: UserDefaults
     /// helper 启动器（默认 open(1)；测试注入记录器断言参数）。
     let launchHelper: HelperLauncher
+    /// 当前运行 App 路径提供者（BUG-29 后续 B 启动路径守卫）：生产默认 =
+    /// Bundle.main.bundleURL（正在运行的 App）；测试注入假值断言守卫行为。
+    let runningAppURLProvider: () -> URL
 
     /// 首启找回 result 文件的 UserDefaults key（被 relaunch 的 .app 消费，契约 6.4 r0.4 步骤 6）。
     static let pendingResultPathDefaultsKey = "ota_pending_result_path"
@@ -48,6 +51,8 @@ struct OTAInstaller: Installing {
         case appNotFound
         case configWriteFailed(String)
         case helperLaunchFailed(String)
+        /// BUG-29 后续 B：启动路径错位（运行中 App ≠ 安装目标 /Applications）。
+        case launchPathMismatch
 
         var errorDescription: String? {
             switch self {
@@ -59,6 +64,8 @@ struct OTAInstaller: Installing {
                 return "安装配置写入失败：\(detail)"
             case .helperLaunchFailed(let detail):
                 return "启动安装辅助进程失败：\(detail)"
+            case .launchPathMismatch:
+                return "当前运行的应用不是已安装版本（/Applications），请从「应用程序」文件夹中的 Coffer 执行更新。"
             }
         }
     }
@@ -84,6 +91,9 @@ struct OTAInstaller: Installing {
         backupDirectory: URL = FileManager.default.temporaryDirectory,
         pidProvider: @escaping () -> Int32 = { ProcessInfo.processInfo.processIdentifier },
         userDefaults: UserDefaults = .standard,
+        // runningAppURLProvider 必须在 launchHelper 之前：launchHelper 是最后一个
+        // 参数，既有调用点全部用尾随闭包绑定它（HelperLauncher），不得被打乱。
+        runningAppURLProvider: @escaping () -> URL = { Bundle.main.bundleURL },
         launchHelper: @escaping HelperLauncher = OTAInstaller.launchViaOpen
     ) {
         self.helperURL = helperURL
@@ -91,6 +101,7 @@ struct OTAInstaller: Installing {
         self.pidProvider = pidProvider
         self.userDefaults = userDefaults
         self.launchHelper = launchHelper
+        self.runningAppURLProvider = runningAppURLProvider
     }
 
     /// 解压下载的 zip 到临时目录，返回首个 `.app` URL。解压失败 / 无 .app
@@ -117,6 +128,16 @@ struct OTAInstaller: Installing {
     /// 回滚全归 helper）。launcher 抛错（helper 未装配等）→ 回滚 pending keys +
     /// best-effort 清已写配置残留（M-3），避免下次启动误弹「无法读取上次更新的结果」。
     func perform(info: UpdateInfo, downloadedAppURL: URL, currentAppURL: URL) async throws {
+        // BUG-29 后续 B：启动路径守卫（fail-fast 错位拦截）。config 的
+        // currentAppPath 硬编码 /Applications/Coffer.app（生产），而用户从 build
+        // 副本点升级时运行中 App（Bundle.main）在 build 路径——「替了 A 跑着 B」
+        // 错位，且正是用户 22:39 现场的双变量叠加（helperURL=build 路径 +
+        // /Applications 未替换）。入口拦死：运行中 App ≠ 安装目标 → 不写配置、
+        // 不启 helper，直接显式失败（可操作文案）。测试注入 provider 断言两分支。
+        guard runningAppURLProvider().path == currentAppURL.path else {
+            DiagLog.append("BUG-29B：启动路径错位拦截（running=\(runningAppURLProvider().path) target=\(currentAppURL.path)）")
+            throw InstallError.launchPathMismatch
+        }
         DiagLog.append("BUG-26 插桩：perform 进入（newApp=\(downloadedAppURL.lastPathComponent)）")
         let stamp = Int(Date().timeIntervalSince1970)
         let uuid = UUID().uuidString

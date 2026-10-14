@@ -1533,7 +1533,8 @@ do {
         helperURL: URL(fileURLWithPath: "/unused/helper"),
         backupDirectory: missingDir,
         pidProvider: { 4242 },
-        userDefaults: defaults) { _, _ in }
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { _, _ in }
     let manifest = try UpdateManifest.parse(
         try TestFixture.signedManifestData(fields: TestFixture.manifestFields()))
     let info = try UpdateInfo(manifest: manifest)
@@ -1557,7 +1558,8 @@ do {
     let info = try UpdateInfo(manifest: manifest)
     let installer = OTAInstaller(
         helperURL: URL(fileURLWithPath: "/unused/helper"),
-        userDefaults: UserDefaults(suiteName: "coffer-ota-inst8-\(UUID().uuidString)")!) { _, _ in
+        userDefaults: UserDefaults(suiteName: "coffer-ota-inst8-\(UUID().uuidString)")!,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { _, _ in
             throw OTAInstaller.InstallError.helperLaunchFailed("装配缺失")
         }
     do {
@@ -1580,7 +1582,8 @@ do {
     let info = try UpdateInfo(manifest: manifest)
     let installer = OTAInstaller(
         helperURL: URL(fileURLWithPath: "/unused/helper"),
-        userDefaults: UserDefaults(suiteName: "coffer-ota-inst9-\(UUID().uuidString)")!) { _, _ in
+        userDefaults: UserDefaults(suiteName: "coffer-ota-inst9-\(UUID().uuidString)")!,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { _, _ in
             throw TestError(message: "boom")
         }
     do {
@@ -1613,7 +1616,8 @@ do {
         helperURL: URL(fileURLWithPath: "/unused/helper"),
         backupDirectory: tempRoot,
         pidProvider: { 4242 },
-        userDefaults: defaults) { helper, args in
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { helper, args in
             launched = [helper.path] + args
             throw OTAInstaller.InstallError.helperLaunchFailed("装配缺失")
         }
@@ -1679,7 +1683,8 @@ do {
         helperURL: URL(fileURLWithPath: "/Applications/Coffer.app/Contents/Helpers/CofferUpdater.app"),
         backupDirectory: tempRoot,
         pidProvider: { 4242 },
-        userDefaults: defaults) { helper, args in
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { helper, args in
             launched = [helper.path] + args
         }
 
@@ -1724,6 +1729,92 @@ do {
     skip("TC-CFG-07", "真 LaunchServices 启动 helper（嵌套 bundle 装配后）", "真机核销")
 } catch {
     check("TC-CFG", "夹具异常", false, "\(error)")
+}
+
+// MARK: - TC-GUARD BUG-29 后续 B：启动路径守卫（运行中 App ≠ 安装目标 → fail-fast）
+
+// TC-GUARD-01：错位拦截——runningAppURLProvider（build 副本路径）≠ currentAppURL
+// （/Applications/Coffer.app）→ perform 抛 launchPathMismatch；launcher 不被调用；
+// 配置未写盘、pending keys 未写（fail-fast 在任何副作用之前，防「替了 A 跑着 B」）。
+do {
+    let fm = FileManager.default
+    let tempRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-guard-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tempRoot) }
+    let suiteName = "coffer-ota-guard-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    var launchedCount = 0
+    let installer = OTAInstaller(
+        helperURL: URL(fileURLWithPath: "/unused/helper"),
+        backupDirectory: tempRoot,
+        pidProvider: { 4242 },
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Users/x/build/Coffer.app") }) { _, _ in
+            launchedCount += 1
+        }
+    let manifest = try UpdateManifest.parse(
+        try TestFixture.signedManifestData(fields: TestFixture.manifestFields()))
+    let info = try UpdateInfo(manifest: manifest)
+    do {
+        try await installer.perform(
+            info: info,
+            downloadedAppURL: URL(fileURLWithPath: "/tmp/new.app"),
+            currentAppURL: URL(fileURLWithPath: "/Applications/Coffer.app"))
+        check("TC-GUARD-01", "运行副本 ≠ 安装目标 → 显式失败（launchPathMismatch）", false, "竟然没报错")
+    } catch OTAInstaller.InstallError.launchPathMismatch {
+        check("TC-GUARD-01", "运行副本 ≠ 安装目标 → launchPathMismatch", true)
+    } catch {
+        check("TC-GUARD-01", "运行副本 ≠ 安装目标 → launchPathMismatch", false, "错误类型 \(error)")
+    }
+    check("TC-GUARD-01", "错位拦截后 launchHelper 不被调用（不启 helper）",
+          launchedCount == 0, "launched=\(launchedCount)")
+    let leftovers = (try? fm.contentsOfDirectory(at: tempRoot, includingPropertiesForKeys: nil)) ?? []
+    check("TC-GUARD-01", "错位拦截后配置未写盘（fail-fast，无残留）",
+          leftovers.isEmpty, "残留 \(leftovers.map(\.lastPathComponent))")
+    check("TC-GUARD-01", "错位拦截后 pending keys 未写（无下次首启误消费）",
+          defaults.string(forKey: OTAInstaller.pendingResultPathDefaultsKey) == nil
+          && defaults.string(forKey: OTAInstaller.pendingBackupPathDefaultsKey) == nil
+          && defaults.string(forKey: OTAInstaller.pendingBackupDirDefaultsKey) == nil)
+} catch {
+    check("TC-GUARD-01", "夹具异常", false, "\(error)")
+}
+
+// TC-GUARD-02：路径一致（运行 App 就是安装目标）→ 守卫放行，launcher 被调用
+// （证明守卫不误伤合法路径——生产从 /Applications 启动的升级通道）。
+do {
+    let fm = FileManager.default
+    let tempRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-guard2-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tempRoot) }
+    let suiteName = "coffer-ota-guard2-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    var launched: [String] = []
+    let installer = OTAInstaller(
+        helperURL: URL(fileURLWithPath: "/unused/helper"),
+        backupDirectory: tempRoot,
+        pidProvider: { 4242 },
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { helper, args in
+            launched = [helper.path] + args
+        }
+    let manifest = try UpdateManifest.parse(
+        try TestFixture.signedManifestData(fields: TestFixture.manifestFields()))
+    let info = try UpdateInfo(manifest: manifest)
+    try await installer.perform(
+        info: info,
+        downloadedAppURL: URL(fileURLWithPath: "/tmp/new.app"),
+        currentAppURL: URL(fileURLWithPath: "/Applications/Coffer.app"))
+    check("TC-GUARD-02", "路径一致 → 守卫放行，launcher 被调用（--config <路径>）",
+          launched.count == 3 && launched[1] == "--config" && !launched[2].isEmpty,
+          "launched=\(launched)")
+} catch {
+    check("TC-GUARD-02", "夹具异常", false, "\(error)")
 }
 
 // MARK: - TC-CONSUME 首启消费安装结果（consumePendingInstallResult，幂等）
@@ -1939,7 +2030,8 @@ do {
             helperURL: URL(fileURLWithPath: "/unused/helper"),
             backupDirectory: tempRoot,
             pidProvider: { 4242 },
-            userDefaults: defaults) { _, _ in
+            userDefaults: defaults,
+            runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { _, _ in
                 throw OTAInstaller.InstallError.helperLaunchFailed("装配缺失")
             }
         let manifest = try UpdateManifest.parse(

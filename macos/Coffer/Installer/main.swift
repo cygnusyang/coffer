@@ -85,12 +85,41 @@ enum ExitCode {
     static let usageError: Int32 = 4
 }
 
-// MARK: - 日志（统一写 stderr，不落敏感信息）
+// MARK: - 日志（BUG-29 后续：双写 stderr + /tmp/coffer-update.log，现场第一诊断入口）
 
-/// 日志统一写 stderr。helper 无密码/密钥材料，但纪律照旧：只打印操作过程与路径。
+/// 文件日志路径。helper 是无沙盒短命进程，/tmp 可写；固定路径便于现场取证——
+/// 统一日志曾整体失效（连 last 5m 都 0 行），OTA 诊断只能靠文件落盘（BUG-29 后续）。
+private let fileLogPath = "/tmp/coffer-update.log"
+
+/// 文件日志轮转上限（字节）：超过则在下一次追加前截断重写，防长期膨胀。
+private let fileLogMaxBytes: off_t = 1_000_000
+
+/// 日志统一写 stderr + append 到 /tmp/coffer-update.log（O_APPEND 原子行写——
+/// 多实例并发追加单行不交错，供并行/重试场景取证）。helper 无密码/密钥材料，
+/// 但纪律照旧：只打印操作过程与路径。文件写入失败静默——文件日志是诊断增强，
+/// 绝不能因 /tmp 异常影响安装主流程。
 func log(_ message: String) {
-    if let data = (message + "\n").data(using: .utf8) {
+    let line = message + "\n"
+    if let data = line.data(using: .utf8) {
         FileHandle.standardError.write(data)
+    }
+    appendToFileLog(line)
+}
+
+/// append 一行到文件日志（open O_APPEND + 单次 write = 原子行写）。超过轮转
+/// 上限先截断到 0 再写当前行（当前行不丢）。失败静默（见 log 注释）。
+private func appendToFileLog(_ line: String) {
+    guard let data = line.data(using: .utf8) else { return }
+    let fd = open(fileLogPath, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+    guard fd >= 0 else { return }
+    defer { close(fd) }
+    var st = stat()
+    if fstat(fd, &st) == 0, st.st_size > fileLogMaxBytes {
+        ftruncate(fd, 0)
+    }
+    data.withUnsafeBytes { buf in
+        guard let base = buf.baseAddress else { return }
+        _ = write(fd, base, buf.count)
     }
 }
 
@@ -602,6 +631,12 @@ func backupAndReplace(config: InstallConfig) -> Int32? {
 
 /// 主流程，返回契约退出码（docs/35 §6.4）。
 func run(arguments: [String]) -> Int32 {
+    // 0. 入口第一行：argv 原文落盘（在 arg parse 之前！）。现场「helper 没被
+    //    拉起」vs「被拉起但 args 丢失 exit 4」据此一锤定音（BUG-29 后续——此前
+    //    现有证据无法区分）。此后各阶段 log 一行一条，/tmp/coffer-update.log 是
+    //    OTA 现场第一诊断入口。
+    log("coffer-update 启动 pid=\(getpid()) argv=\(arguments.map { "\"\($0)\"" }.joined(separator: " "))")
+
     // 1. 参数解析（只认 --config；缺参/未知参 → exit 4）
     guard let configPath = parseArguments(arguments) else {
         log(usageText)
@@ -673,4 +708,6 @@ func run(arguments: [String]) -> Int32 {
 }
 
 // 入口（main.swift 顶层代码，swiftc 直编，无需 -parse-as-library）
-exit(run(arguments: Array(CommandLine.arguments.dropFirst())))
+let exitCode = run(arguments: Array(CommandLine.arguments.dropFirst()))
+log("coffer-update 退出 exit=\(exitCode)")
+exit(exitCode)

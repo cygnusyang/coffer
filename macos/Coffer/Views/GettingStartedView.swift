@@ -60,7 +60,7 @@ struct GettingStartedView: View {
         section(
             title: "欢迎使用 Coffer",
             rows: [
-                "Coffer 是本地密码管理器：密码只存在本机，不连接云端、不做同步（软件更新 OTA 除外）。",
+                "Coffer 是本地密码管理器：密码只存在本机，不上传到云端、不做同步（软件更新 OTA 除外）。",
             ])
     }
 
@@ -99,7 +99,7 @@ struct GettingStartedView: View {
         section(
             title: "MCP / Agent 协作",
             rows: [
-                "让 AI / 自动化安全取用密码：在 设置 → MCP / Agent 协作 开启并注册命令行入口（CLI 与 MCP 均本机运行，零网络）。",
+                "让 AI / 自动化安全取用密码：在 设置 → MCP / Agent 协作 开启并注册命令行入口（CLI 与 MCP 均本机运行，数据不出本机）。",
             ])
     }
 

@@ -65,11 +65,11 @@ struct AboutUpdateView: View {
                     capabilityRow(
                         icon: "internaldrive",
                         title: "本地存储 · 零同步",
-                        detail: "密码只保存在本机，不连接云端、不与其他设备同步。")
+                        detail: "密码与全部数据只保存在本机，不上传到云端、不与其他设备同步。")
                     capabilityRow(
                         icon: "wifi.slash",
-                        title: "零网络架构",
-                        detail: "除软件更新（OTA）外，应用不做任何网络请求。")
+                        title: "本地服务 · 数据不出本机",
+                        detail: "本地大模型工具经 CLI / MCP 按需取密；仅软件更新（OTA）联网。")
                     capabilityRow(
                         icon: "touchid",
                         title: "Touch ID · 恢复码",

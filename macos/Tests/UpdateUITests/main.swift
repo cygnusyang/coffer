@@ -240,6 +240,26 @@ do {
           UpdateCopy.buildTimeText("   ") == "开发构建")
 }
 
+// MARK: - 诊断错误码（BUG-23：更新检查网络失败 → 错误码只在 DiagLog，UI 呈现「没有新版本」）
+
+do {
+    check("checkNetworkErrorCode: 更新检查网络失败诊断码 OTA-E-2001（只在 log）",
+          UpdateCopy.checkNetworkErrorCode == "OTA-E-2001")
+    let url = URL(string: "https://gitlab.internal.invalid/ota/update-manifest.json")!
+    let connRefused = URLError(.cannotConnectToHost)
+    let line = UpdateCopy.checkNetworkFailureLogLine(error: connRefused, url: url)
+    check("checkNetworkFailureLogLine: 诊断行含错误码", line.contains("OTA-E-2001"))
+    check("checkNetworkFailureLogLine: 诊断行含 failing URL（入参兜底）",
+          line.contains(url.absoluteString))
+    check("checkNetworkFailureLogLine: 诊断行含 domain+code（NSURLErrorDomain -1004）",
+          line.contains("NSURLErrorDomain") && line.contains("code=-1004"))
+    let generic = NSError(domain: "OTA-test", code: 42)
+    let genericLine = UpdateCopy.checkNetworkFailureLogLine(error: generic, url: url)
+    check("checkNetworkFailureLogLine: 非 URLError 时 URL 回退入参 + 域/码直出",
+          genericLine.contains(url.absoluteString)
+            && genericLine.contains("OTA-test") && genericLine.contains("code=42"))
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

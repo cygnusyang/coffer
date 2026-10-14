@@ -21,8 +21,13 @@ trap 'rm -rf "${OUT_DIR}"' EXIT
 UPDATER_DIR="${ROOT_DIR}/macos/Coffer/Updater"
 [[ -d "${UPDATER_DIR}" ]] || { echo "ERROR: 缺 ${UPDATER_DIR}" >&2; exit 1; }
 
+# UpdaterManager.check 依赖 Support/DiagLog.swift（BUG-23 网络失败落 log）与
+# Support/UpdateCopy.swift（错误码 + 诊断行格式器，UpdateCopy.checkNetworkFailureLogLine）。
 # shellcheck disable=SC2207
-SOURCES=( "${UPDATER_DIR}"/*.swift "${ROOT_DIR}/macos/Tests/UpdateTests/main.swift" )
+SOURCES=( "${UPDATER_DIR}"/*.swift
+          "${ROOT_DIR}/macos/Coffer/Support/DiagLog.swift"
+          "${ROOT_DIR}/macos/Coffer/Support/UpdateCopy.swift"
+          "${ROOT_DIR}/macos/Tests/UpdateTests/main.swift" )
 
 swiftc -O \
   -swift-version 5 \

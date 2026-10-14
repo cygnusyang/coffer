@@ -155,7 +155,9 @@ final class UpdaterManager: ObservableObject {
     }
 
     /// 检查更新：拉清单 → HTTPS+白名单 → canonical 验签 → 版本比较 → 状态迁移。
-    /// 网络失败 / 验签失败 / 不匹配 → `.failed`（fail-closed，不静默）。
+    /// 网络失败（manifest 拉取层）→ 完整错误落 DiagLog + `.upToDate`（BUG-23：UI
+    /// 呈现「没有新版本」，不泄露 NSError 原文）；验签失败 / 不匹配 → `.failed`
+    /// （fail-closed，不静默）。
     func check() async {
         guard !isInFlight else { return }
         // 新一轮检查作废旧下载产物（REV-01 暂存；正常路径 dismiss 已清，此处兜底）
@@ -163,7 +165,20 @@ final class UpdaterManager: ObservableObject {
         state = .checking
         do {
             try OTAEndpointPolicy.validate(manifestURL)
-            let data = try await fetcher.fetchManifest(from: manifestURL)
+            let data: Data
+            do {
+                data = try await fetcher.fetchManifest(from: manifestURL)
+            } catch {
+                // BUG-23（用户裁定 2026-10-14）：更新检查网络失败 → 完整 NSError 经
+                // DiagLog 落 log（错误码 OTA-E-2001 + failing URL + domain/code + 底层
+                // 错误，UpdateCopy.checkNetworkFailureLogLine），UI 呈现「没有新版本」
+                // （.upToDate 同态），不向用户泄露错误原文。仅 manifest 拉取层（网络层
+                // 边界）错误走此分支；解析/验签/版本/纵深白名单等非网络错误仍在下方
+                // 外层 catch fail-closed（TC-UPD-06/07/08/09/10/18/20/21 覆盖）。
+                DiagLog.append(UpdateCopy.checkNetworkFailureLogLine(error: error, url: manifestURL))
+                state = .upToDate
+                return
+            }
             let manifest = try UpdateManifest.parse(data)
             _ = try ManifestVerifier.verify(manifestJSONData: data, publicKeyBase64: publicKeyBase64)
             let info = try UpdateInfo(manifest: manifest)

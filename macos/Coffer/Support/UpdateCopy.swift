@@ -186,6 +186,28 @@ enum UpdateCopy {
         }
         return raw
     }
+
+    // MARK: - 诊断错误码（BUG-23：更新检查网络失败 → 错误码只在 DiagLog，UI 呈现「没有新版本」）
+
+    /// 更新检查网络失败诊断码（BUG-23，用户裁定 2026-10-14：UI 不泄露原始 NSError，
+    /// 记到 log + 提示「没有新版本」即可）。本码只在 DiagLog 出现，绝不呈现给用户。
+    static let checkNetworkErrorCode = "OTA-E-2001"
+
+    /// BUG-23：manifest 拉取层网络失败 → 落 DiagLog 的诊断行——含错误码、完整 NSError
+    /// 原文、failing URL（URLError 自带优先，否则入参兜底）、domain+code、底层错误。
+    /// 纯函数（Foundation only），供 UpdateUITests 断言；UpdaterManager.check 捕获
+    /// fetchManifest 抛错后调用 `DiagLog.append` 落盘。
+    static func checkNetworkFailureLogLine(error: Error, url: URL) -> String {
+        let ns = error as NSError
+        let failingURL = ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+            ?? url.absoluteString
+        let underlying = ns.userInfo[NSUnderlyingErrorKey].map { String(describing: $0) } ?? "—"
+        return "\(checkNetworkErrorCode) 更新检查网络失败（\(url.absoluteString)）："
+            + "\(String(describing: error))"
+            + " | failingURL=\(failingURL)"
+            + " | domain=\(ns.domain) code=\(ns.code)"
+            + " | underlying=\(underlying)"
+    }
 }
 
 /// UpdateSheet 各交互按钮的可用性快照（纯函数派生；Equatable 供测试断言）。

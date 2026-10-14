@@ -1008,16 +1008,29 @@ do {
     check("TC-UPD-04", "夹具异常", false, "\(error)")
 }
 
-// 网络失败 → failed（fail-closed）
+// 网络失败（manifest 拉取层）→ upToDate（BUG-23：UI 呈现「没有新版本」，不泄露 NSError）
 do {
     let manager = makeManager(
         fetcher: StubFetcher(.failure(TestError(message: "network down"))))
     await manager.check()
-    if case .failed(let msg) = manager.state {
-        check("TC-UPD-05", "网络失败 → failed（用户可见文案）", !msg.isEmpty)
-    } else {
-        check("TC-UPD-05", "网络失败 → failed（用户可见文案）", false, "state=\(manager.state)")
-    }
+    check("TC-UPD-05", "网络失败 → upToDate（BUG-23：呈现「没有新版本」，完整错误落 DiagLog）",
+          manager.state == .upToDate, "state=\(manager.state)")
+}
+
+// BUG-23：URLError（cannotConnectToHost = -1004，ECONNREFUSED 同型）→ upToDate
+do {
+    let manager = makeManager(fetcher: StubFetcher(.failure(URLError(.cannotConnectToHost))))
+    await manager.check()
+    check("TC-UPD-05", "URLError（连接拒绝 -1004）→ upToDate（BUG-23）",
+          manager.state == .upToDate, "state=\(manager.state)")
+}
+
+// BUG-23：OTAHTTPError（非 2xx）→ upToDate（同属网络层失败）
+do {
+    let manager = makeManager(fetcher: StubFetcher(.failure(OTAHTTPError(statusCode: 503))))
+    await manager.check()
+    check("TC-UPD-05", "HTTP 非 2xx → upToDate（BUG-23）",
+          manager.state == .upToDate, "state=\(manager.state)")
 }
 
 // 验签失败（signature 未随字段改）→ failed

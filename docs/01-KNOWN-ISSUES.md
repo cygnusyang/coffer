@@ -1429,3 +1429,30 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 
 ### 复现与诊断
 `tools/run_update_tests.sh` TC-UPD-05 注入 `URLError(.cannotConnectToHost)` / `OTAHTTPError(503)` → 修复前 `state=failed("更新失败：Error Domain=NSURLErrorDomain Code=-1004 …")`；修复后 `state == .upToDate` 且 `~/Library/Logs/Coffer-diag.log` 落 `OTA-E-2001` 行。`tools/run_update_ui_tests.sh` 新增 5 断言核销错误码 + 诊断行格式（failing URL/domain+code/非 URLError 兜底）
+
+---
+
+## BUG-24（🔴 当版修复，核销版本=下一版）：「检查更新…」点击后无即时反馈——网络慢/断时表现为「点了没反应」
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 测试轮真机实证（用户 2026-10-14，截图）：关于页点「检查更新…」后界面无任何变化，直到网络请求返回——网络慢/被断时表现为「点了没反应」
+**分级**：LOW / P2（纯反馈缺失，功能可达）/ 来源版本 v2.7.0 OTA 首版 / 发现版本 v2.10.1
+**状态**：🟢 已修复（0ef526f，fix(ota)；核销版本=下一版，版本归属未定）
+**核销记录**：修复 commit 0ef526f——AboutUpdateView 增 `@ObservedObject updater`（CofferApp 以 `model.updater` 注入，同 UpdateSheet 先例），`.checking` 时按钮禁用 + 原位 ProgressView + `UpdateCopy.checkingFeedbackText`（「正在检查更新…」，与 UpdateSheet 同态）；`UpdateCopy` 新增 `checkingFeedbackText`/`isChecking` 纯函数（单一事实源，UpdateSheet.checkingContent 同步改读）；其余 state 呈现路径不变。复验：`tools/run_update_tests.sh` 180/0/2（TC-UPD-22 补 `state == .checking` 断言——此态本正确进入，缺陷在视图不消费）+ `tools/run_update_ui_tests.sh` 69/0（新增 6 断言核销反馈文案 + isChecking）+ build 完成 ✅（0 error）。
+**证据**：用户截图（点击检查更新后界面无变化）；RED 复现：UpdateUITests 编译错（isChecking/checkingFeedbackText 缺失）+ AboutUpdateView 仅调 checkForUpdates 不消费 updater state（grep checking 零命中）
+
+### 现象（预期/实际 分行写）
+- **预期**：主动点「检查更新…」后应该马上就有回应（用户裁定原文：「这里主动点了检查更新后，应该马上就有回应。」）
+- **实际**：关于页点按钮后界面无任何变化（UpdateSheet 是否叠加呈现存疑，但关于 sheet 内无任何反馈），直到网络请求返回；网络慢/被断时表现为「点了没反应」
+
+### 根因（lead 已核）
+`UpdaterState` 已有 `.checking` 态（UpdaterManager.swift:67），但 AboutUpdateSection.swift 的按钮只调 `model.checkForUpdates()`，视图不消费 updater state（grep 'checking' 零命中）→ 点击到呈现之间无中间态反馈。`checkForUpdates()` 置 `showUpdateSheet = true`，但双 `.sheet` 挂同一 RootView，关于 sheet 在屏时更新 sheet 不即时呈现
+
+### 修复路径
+仅 AboutUpdateView 加即时反馈：
+1. `@ObservedObject updater`（CofferApp 注入 `model.updater`）+ `.checking` 时按钮禁用 + 原位「正在检查更新…」（ProgressView + 文案，对齐 UpdateSheet 同态）
+2. `.updateAvailable` / `.upToDate` / `.failed` 呈现路径不动
+3. 应用菜单同项入口行为不变——checkForUpdates 同源 + `canStartCheck`（AppModel）+ `isInFlight`（UpdaterManager）双层重入保护，菜单项不强制禁用
+
+### 复现与诊断
+`tools/run_update_ui_tests.sh` 新增 6 断言核销 `checkingFeedbackText` / `isChecking`（.checking→true，其余态→false）；`tools/run_update_tests.sh` TC-UPD-22 断言 check() 挂起时 `state == .checking`（HoldingFetcher 挂起，fetchCount>0 时判态）

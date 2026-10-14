@@ -1619,4 +1619,25 @@ CI 侧 profile 变量到期后重跑 pipeline → 构建静默成功但安装侧
 - helper 运行期诊断靠 result 文件 + `log show`（open 侧拿不到 helper stderr）
 
 ### 复现与诊断
-DiagLog 定位：`~/Library/Logs/Coffer-diag.log` 修复后正常链路应出现「BUG-29：launchViaOpen 进入 → 执行 open -n … → open(1) 提交成功（exit 0 无 stderr）」。若出现「open 启动失败（exit 非 0）：…」即 open(1) 自身被拦（沙盒）；若全链路后版本未变且 DiagLog 无 open 失败行，则为 XPC 分离启动被静默拦（对照旧症状）。
+DiagLog 定位：`~/Library/Logs/Coffer-diag.log` 修复后正常链路应出现「BUG-29：launchViaOpen 进入 → 执行 open -n … → open(1) 提交成功（exit 0 无 stderr）」。若出现「open 启动失败（exit 非 0）：…」即 open(1) 自身被拦（沙盒）；若全链路后版本未变且 DiagLog 无 open 失败行，则为 XPC 分离启动被静默拦（对照旧症状）。现场第一诊断入口已改为 /tmp/coffer-update.log（见下方「BUG-29 后续」判定表——统一日志曾整体失效，只能靠文件落盘）。
+
+### BUG-29 后续（2026-10-14，addb79c）：helper 文件日志 + 启动路径守卫
+
+lead 22:39 真机复测两轮仍失败：open(1) 三行插桩齐全但现场依旧（无 result、无备份目录、/Applications 仍 2.10.1），且用户两次都从 `macos/build/Coffer.app` 启动（helperURL=Bundle.main 实证 build 路径）——两变量叠加：**运行副本错位 + open(1) 结果未知**；本机统一日志整体失效（连 last 5m 都 0 行），诊断只能靠文件落盘。两项补充：
+
+**① helper 文件日志（/tmp/coffer-update.log，现场第一诊断入口）**
+- helper `log()` 双写：stderr + append `/tmp/coffer-update.log`（O_APPEND 单次 write = 原子行写，多实例并发不交错；>1MB 截断轮转；写失败静默不影响安装）
+- **入口第一行在 arg parse 之前落 argv 原文**：`coffer-update 启动 pid=<pid> argv="--config" "<路径>"`——「helper 没被拉起」vs「被拉起但 args 丢失 exit 4」据此一锤定音（此前无法区分：exit 4 不写 result）
+- 随后各阶段（config load / precheck / wait pid / backup / replace / relaunch / finish）一行一条，末尾 `coffer-update 退出 exit=<code>`
+- **判定表（复测看 /tmp/coffer-update.log）**：
+  - **a)** 首行有 argv + 全阶段行 + exit 0 → helper 契约 OK，问题在 open(1) 提交层（LaunchServices 未达 helper）
+  - **b)** 首行有 argv 但止于某阶段 → 定位到具体失败阶段（config load / precheck / wait / backup / replace / relaunch / finish）
+  - **c)** 无本次 argv 行 → helper 从未被拉起（open 提交失败，真机定谳，next = launchd agent / XPC service）
+
+**② 启动路径守卫（BUG-29B，fail-fast 错位拦截）**
+- `OTAInstaller.perform` 进入时校验运行中 App（`runningAppURLProvider()`，生产默认 `Bundle.main.bundleURL`）必须等于安装目标（`currentAppURL`，生产 = /Applications/Coffer.app）；不一致 → **不写配置、不启 helper**，抛 `InstallError.launchPathMismatch` → `state = .failed`
+- 文案：「当前运行的应用不是已安装版本（/Applications），请从「应用程序」文件夹中的 Coffer 执行更新。」
+- 理由：config 的 currentAppPath 硬编码 /Applications，用户从 build 副本点升级会「替了 A 跑着 B」（正是 22:39 现场双变量之一）；入口拦死，防错位继续污染现场
+- DiagLog 定位：错位拦截时出现 `BUG-29B：启动路径错位拦截（running=<build路径> target=/Applications/Coffer.app）` 且**不再**出现 launchViaOpen 三行
+
+**复测判据同步**（替换旧「看哪些文件」）：①DiagLog 应见 launchViaOpen 三行（从 /Applications 启动）或 BUG-29B 错位插桩（从 build 副本启动）②`/tmp/coffer-update.log` 按上面判定表 a/b/c 判定 ③`/Applications/Coffer.app` 版本变更 + result 文件 + App 自动重开。复测务必从 /Applications/Coffer.app 启动——从 build 副本启动会被守卫拦截（那是修复意图）。

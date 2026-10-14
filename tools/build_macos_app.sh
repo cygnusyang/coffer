@@ -45,14 +45,18 @@ die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$1"; }
 
 REBUILD_BINDINGS=0
+VERBOSE=0
 # App 恒为沙盒单渠道（Coffer.entitlements：App Sandbox + camera + user-selected + keychain-access-groups）
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rebuild-bindings) REBUILD_BINDINGS=1; shift ;;
-    *) die "未知参数: $1" ;;
+    --verbose|-v) VERBOSE=1; shift ;;
+    *) die "未知参数: $1（可用: --rebuild-bindings, --verbose/-v）" ;;
   esac
 done
+# --verbose：逐条回显实际执行的命令（stderr trace），便于排查构建过程
+[[ "${VERBOSE}" == "1" ]] && set -x
 
 # 签名段统一引用 ENTITLEMENTS_FILE（沙盒单渠道）。
 ENTITLEMENTS_FILE="${SRC_DIR}/Coffer.entitlements"

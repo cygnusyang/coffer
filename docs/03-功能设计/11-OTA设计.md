@@ -226,6 +226,8 @@
 `api.github.com`、`github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`（§2.2）。Updater 模块 URLSession delegate 强制校验 host ∈ 白名单 + 强制 HTTPS；非白名单一律拒绝。所有网络代码只在 Swift 侧（`tools/check_ota_whitelist.sh` 防漂移）。
 
 > **GitLab 迁移轮扩展注记（2026-10-11，Pro trunk）**：Pro trunk（coffer-pro，自托管 GitLab `gitlab.internal.invalid`）白名单增列 `gitlab.internal.invalid`（host 匹配剥端口），清单 URL 切 Release 永久链接 `/api/v4/projects/95/releases/permalink/latest/downloads/ota/update-manifest.json`。强制 HTTPS 不变，fail-closed 语义不变。免费版分支在本注记之前切出，白名单仍为 4 GitHub host（免费构建 OTA 走 GitHub releases，旧钥沿用）。
+>
+> **公开产物仓修正（2026-10-14，BUG-25）**：coffer-pro 为私有仓，GitLab 对未鉴权请求掩蔽 404 → App 沙盒无 token 拉清单必 404，OTA 通道自迁 GitLab 起即断（历史 v2.7.0 实证在 GitHub 公开仓时代，今天首次全链路测试才暴露）。清单 URL 改公开产物仓 coffer-ota（project 97）：`/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json`（同 host 同端口，白名单不变，匿名 200 已验证）。上节「fail-closed 语义不变」仍成立；检查失败呈现语义随 BUG-23 复测修正改为「错误码短文案」（不静默归「已是最新版本」），见 docs/01 BUG-23 条目。
 
 ### 6.3 Updater 公开接口（组 D 依赖，冻结）
 

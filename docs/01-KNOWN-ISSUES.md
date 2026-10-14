@@ -1430,6 +1430,14 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 ### 复现与诊断
 `tools/run_update_tests.sh` TC-UPD-05 注入 `URLError(.cannotConnectToHost)` / `OTAHTTPError(503)` → 修复前 `state=failed("更新失败：Error Domain=NSURLErrorDomain Code=-1004 …")`；修复后 `state == .upToDate` 且 `~/Library/Logs/Coffer-diag.log` 落 `OTA-E-2001` 行。`tools/run_update_ui_tests.sh` 新增 5 断言核销错误码 + 诊断行格式（failing URL/domain+code/非 URLError 兜底）
 
+### 复测修正（2026-10-14 用户裁定，语义翻转 → 上「修复路径」被本节取代）
+首版「网络失败 → `.upToDate`（呈现『没有新版本』）」经用户复测裁定推翻——用户原文：「如果检查失败也归到最新版本，那这个时候是不对的。报错的时候我们还是**有问题**的，但是要给出错误码，不用给出大段的错误信息。」
+- manifest 拉取失败不再静默归「已是最新版本」（fail-closed 掩蔽语义作废）→ 状态迁移 `.failed(UpdateCopy.checkNetworkFailureMessage())`——UI 短文案「检查更新失败（OTA-E-2001）」，一句内 + 错误码可见，**绝不带原始 NSError**；完整错误仍只进 DiagLog（`checkNetworkFailureLogLine` 不变，OTA-E-2001 诊断行格式未动）。
+- 呈现走 UpdateSheet 既有 `failedContent`（含「重试」按钮，天然满足失败后可重查）。
+- 白名单校验失败/验签失败/版本不符等非网络错误仍走原 fail-closed `.failed` 路径，语义不变。
+
+复验（修复 commit 3159c6b）：`tools/run_update_tests.sh` 181/0/2（TC-UPD-05 网络失败 3→4 断言：`.failed(UpdateCopy.checkNetworkFailureMessage())` 精确匹配 + URLError 案例含错误码/不泄露 `NSURLErrorDomain`）+ `tools/run_update_ui_tests.sh` 73/0（+2 核销 checkNetworkFailureMessage 短文案 + 不含 Domain）+ build 完成 ✅（0 error）。**核销版本仍=下一版**。另：本 BUG-23 的 manifest 拉取 404 掩蔽根因（私有仓）归 BUG-25 登记，通道修复=公开产物仓 97。
+
 ---
 
 ## BUG-24（🔴 当版修复，核销版本=下一版）：「检查更新…」点击后无即时反馈——网络慢/断时表现为「点了没反应」
@@ -1471,3 +1479,29 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 - About `.sheet` 挂 `onDismiss:` → `aboutSheetDidDismiss()`：pending 旗标消费后 `showUpdateSheet = true` + `Task { updater.check() }`——`showAbout=false` 与 `showUpdateSheet=true` **分处两个事务**，规避 SwiftUI 同事务双 sheet 同发、第二个被丢弃；普通「关闭」About（未点检查）不触发。
 
 复验（本轮）：`tools/run_update_tests.sh` 180/0/2 + `tools/run_update_ui_tests.sh` 71/0（新增 4 断言核销 `checkPresentationPlan` 四态决策——harness 为纯逻辑无法驱动 AppModel 实际 sheet 翻转，断到最深的纯决策层，真机呈现由用户核销）+ build 完成 ✅（0 error）。**核销版本仍=下一版**。
+
+---
+
+## BUG-25（🔴 当版修复，核销版本=下一版）：OTA 清单匿名不可达——私有仓 404 掩蔽，App 侧检查更新必 404（通道自迁 GitLab 起即断）
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 测试轮首次全链路测试（2026-10-14）——App「检查更新」拉清单必 404；历史 v2.7.0 OTA 首验在 GitHub 公开仓时代通过，未暴露
+**分级**：LOW / P1（不丢数据但 OTA 通道全断且被掩蔽——用户无从得知无法更新）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
+**状态**：🔴 当版修复（3159c6b，fix(ota) URL 切 97；核销版本=下一版，核销待真机全链路）
+**核销记录**：修复 = 公开产物仓 coffer-ota（project 97，匿名 200 已验证）+ App `defaultManifestURL` 切 `/api/v4/projects/97/...`（3159c6b；同 host 同端口，白名单不受影响）+ CI 双仓布局（lead 侧，.gitlab-ci.yml）。复验：`tools/run_update_tests.sh` 181/0/2 + `tools/run_update_ui_tests.sh` 73/0 + build 完成 ✅（0 error）；真机全链路核销待用户（检查更新 → 拉到清单 → 下载 → 验签 → 安装）。
+
+### 现象（预期/实际 分行写）
+- **预期**：App 沙盒匿名拉更新清单成功（App 无 token 设计，清单须匿名可达）
+- **实际**：coffer-pro（私有仓）对未鉴权请求掩蔽 404 → App 侧 `fetchManifest` 抛 404 → 首版 BUG-23 把它当网络失败呈现「已是最新版本」（通道断裂被掩蔽）
+
+### 根因（已实证）
+coffer-pro 为私有 GitLab 仓（project 95）；GitLab 对未鉴权请求返回 404（掩蔽存在性），App 沙盒无 token → 匿名拉 `projects/95/.../update-manifest.json` 必 404。白名单 host 校验不受影响（host 合法、404 是响应状态）。
+
+### 修复路径
+1. 新建公开产物仓 coffer-ota（cygnusyang/coffer-ota，public，已验证匿名 200）
+2. App 清单 URL 切 `/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json`（3159c6b）
+3. CI 侧发布产物到双仓 + 清单同步（lead 集成，.gitlab-ci.yml）
+4. 伴随 BUG-23 复测修正：404 等失败呈现「错误码短文案」而非「已是最新版本」，通道断裂不再被掩蔽（见 BUG-23 条目）
+
+### 复现与诊断
+GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97/...` → 200。真机 App「检查更新」拉清单失败（首版呈现「已是最新版本」= 掩蔽实证）。

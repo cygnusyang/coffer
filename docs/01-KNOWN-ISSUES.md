@@ -1464,3 +1464,10 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 3. `.upToDate`「已是最新版本」与 `.downloading` 进度条呈现**不动**——用户：「如果没有新版本，就告诉用户当前是最新版本。不用动现在的设计。如果当前有新版本，再进入进度条」。检查结果一律经 UpdateSheet 呈现（无新版本 → 「已是最新版本」；有新版本 → 下载进度）。
 
 复验（修复 commit 待 lead 集成）：`tools/run_update_tests.sh` 180/0/2（TC-UPD-22 `.checking` 状态机断言保留——此态由 check() 正确进入，缺陷在视图不消费）+ `tools/run_update_ui_tests.sh` 67/0（BUG-24 段 6→4 断言：isChecking 随死代码删除，改断言 `checkButtonTitle`（纯文案入口、无原位进行中反馈）+ `upToDateText`（结果经 sheet 呈现））+ build 完成 ✅（0 error）。**核销版本仍=下一版**。
+
+### sheet 延迟呈现修正（2026-10-14，补一轮；lead 核实 sheet 链路后追加）
+上轮修正仍留缺口：`checkForUpdates()` 只翻 `showUpdateSheet = true`，而 About 本身是 RootView 的 `.sheet`，UpdateSheet 是同视图链另一 `.sheet`——docs/01 根因「双 sheet 同 RootView 不即时呈现」依旧成立，About 在屏时 UpdateSheet 被挡，表现回到「点了没反应」。修正：
+- `checkForUpdates()`（AppModel）改为先关 About：`UpdateCopy.checkPresentationPlan(canStartCheck:aboutVisible:)` 纯决策（4 态：presentAfterAboutDismiss / presentNow / revealByClosingAbout / none）→ About 在屏则置 pending 旗标 + `showAbout = false`；不在屏则直接开。
+- About `.sheet` 挂 `onDismiss:` → `aboutSheetDidDismiss()`：pending 旗标消费后 `showUpdateSheet = true` + `Task { updater.check() }`——`showAbout=false` 与 `showUpdateSheet=true` **分处两个事务**，规避 SwiftUI 同事务双 sheet 同发、第二个被丢弃；普通「关闭」About（未点检查）不触发。
+
+复验（本轮）：`tools/run_update_tests.sh` 180/0/2 + `tools/run_update_ui_tests.sh` 71/0（新增 4 断言核销 `checkPresentationPlan` 四态决策——harness 为纯逻辑无法驱动 AppModel 实际 sheet 翻转，断到最深的纯决策层，真机呈现由用户核销）+ build 完成 ✅（0 error）。**核销版本仍=下一版**。

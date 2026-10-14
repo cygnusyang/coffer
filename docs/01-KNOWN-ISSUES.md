@@ -1588,3 +1588,35 @@ CI 侧 profile 变量到期后重跑 pipeline → 构建静默成功但安装侧
 
 ### 复现与诊断
 证据链见上（lead 实证）：Cache.db 旧条目 + 真包 CDHash 与服务器一致仍报 mismatch。DiagLog 定位：`~/Library/Logs/Coffer-diag.log` 出现「OTA 验签 CDHash 不符：expected=<旧> actual=<新>」即为缓存命中旧 manifest 的可视症状。
+
+## BUG-29（🔴 当版修复，核销版本=下一版）：NSWorkspace.openApplication 在 macOS 26 沙盒 App 内静默 no-op——helper 从未被拉起，App 退出但未替换
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 全链路真机测试（BUG-26/27/28 同轮——通道修复后二次全链路）
+**分级**：HIGH / P1（OTA 安装主路径断裂：App 侧正常退出，但 /Applications 未被替换、无 result 文件，用户重启后回到旧版且无任何错误呈现）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
+**状态**：🔴 当版修复（核销版本=下一版，真机全链路待发布后核销）
+**核销记录**：修复 = 生产主路径改 `/usr/bin/open -n <helper> --args <args>`（`OTAInstaller.launchViaOpen`，open(1) 同步跑、提交即返回；exit≠0 或 stderr 非空 → helperLaunchFailed 显式抛错）；删除 `launchViaLaunchServices`（NSWorkspace.openApplication），注释保留假成功实证防回归捡回。复验：`tools/run_update_tests.sh` 全绿（TC-INST-06 改走 launchViaOpen + 新增 TC-BUG29-01 openLaunchArgs 纯参数构造）+ `tools/run_update_ui_tests.sh` + build 完成。**真机核销判据**：全链路后 ①`/Applications/Coffer.app` 版本变更 ②result 文件 success=true ③App 自动重开（helper relaunch 生效）——三者齐备才算修复闭环（open(1) 继承沙盒、其 LaunchServices XPC 是否被拦只能真机定谳；被拦则 next = launchd 用户 agent / XPC service）。
+
+### 现象（预期/实际 分行写）
+- **预期**：perform 启动 helper 后 helper 执行备份/替换/relaunch，App 重启后版本变更
+- **实际**：lead 真机 21:19 全链路——App 正常退出（预期行为），但 /Applications/Coffer.app 未替换、无 result 文件；全系统统一日志 90 分钟**零** coffer-update 痕迹（helper 从未执行）。对照：17:59 手动 `/usr/bin/open -n <helper> --args --config <path>` 驱动同一 helper 成功写 result → helper 自身无问题，问题在 App 侧启动路径
+
+### 根因（已实证，lead 证据链）
+`OTAInstaller.launchViaLaunchServices`（NSWorkspace.openApplication + 回调）在 macOS 26 沙盒 App 内是**静默 no-op**：
+- 回调 `error == nil`（假成功）→ 启动器**认为**已提交，实际 helper 从未被拉起
+- openApplication 的提交走 LaunchServices XPC，沙盒 App 的 XPC 提交被拦（或异步回调从未触发）时**既不报错也不生效**，且回调式 API 无法 waitpid → 静默吞掉整条 helper 执行链
+- DiagLog 只有「openApplication 已提交（提交即返回，回调异步触发）」，无法区分「提交成功」与「假成功」→ 误判为 helper 侧问题，90 分钟日志排查空转
+
+### 修复路径
+1. 生产主路径改 `OTAInstaller.launchViaOpen`：`/usr/bin/open -n <helper> --args <args>`（同步 Process + waitUntilExit；open(1) 提交即返回不会挂）。**fail-closed**：helper bundle 缺失 / open exit≠0 / stderr 非空 → `helperLaunchFailed` 显式抛错（错误可诊断，不再假成功静默吞掉）
+2. **删除** `launchViaLaunchServices`（NSWorkspace.openApplication），注释保留 macOS 26 沙盒 App 假成功实证（防回归者再捡回去）
+3. `openLaunchArgs(helper:args:)` 纯函数构造 `-n <helper> --args <args>`（`-n` 开新实例防复用旧命令行；`--args` 后透传 helper argv）——测试断言参数构造
+4. 移除 `import AppKit`（NSWorkspace 是唯一 AppKit 使用点）
+
+### 诊断边界（如实登记，lead 知悉）
+- `open(1)` 只承接**自身**启动错误（沙盒拦 / 路径无效等，走其 stderr）；helper 进程的 stdout/stderr 经 LaunchServices 分离启动后归**统一日志**，**不**回到 open 的 stderr
+- 沙盒继承：open(1) 是沙盒 App 的子进程，继承沙盒 → 其 LaunchServices XPC 是否被拦**只能真机全链路复测定谳**；被拦则 next = launchd 用户 agent / XPC service（留给真机结果再裁定）
+- helper 运行期诊断靠 result 文件 + `log show`（open 侧拿不到 helper stderr）
+
+### 复现与诊断
+DiagLog 定位：`~/Library/Logs/Coffer-diag.log` 修复后正常链路应出现「BUG-29：launchViaOpen 进入 → 执行 open -n … → open(1) 提交成功（exit 0 无 stderr）」。若出现「open 启动失败（exit 非 0）：…」即 open(1) 自身被拦（沙盒）；若全链路后版本未变且 DiagLog 无 open 失败行，则为 XPC 分离启动被静默拦（对照旧症状）。

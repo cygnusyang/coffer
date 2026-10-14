@@ -1562,3 +1562,29 @@ GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97
 
 ### 复现与诊断
 CI 侧 profile 变量到期后重跑 pipeline → 构建静默成功但安装侧拒绝（本轮实证）。脚本级验证：对过期 profile 跑新检查 → die + 明确提示；对本机有效 profile（至 2026-10-19）→ 通过。
+
+## BUG-28（🔴 当版修复，核销版本=v2.10.2）：OTA manifest 被 URLCache 命中旧缓存 → CDHash 误报不符——OTA 网络层必须永远 fresh
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 全链路真机测试（BUG-26/BUG-27 同轮——通道修复后二次全链路）
+**分级**：HIGH / P1（OTA 验签误报：expected CDHash 来自缓存旧 manifest → 真包 CDHash「不符」被拒装；用户无法更新且被误导为清单异常）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
+**状态**：🔴 当版修复（核销版本=v2.10.2，真机全链路待发布后核销）
+**核销记录**：修复 = `OTANetworkSession` 无缓存配置（urlCache=nil + requestCachePolicy=.reloadIgnoringLocalCacheData）+ `SecCodeVerifier.cdHashMismatch` 落 expected/actual 两 hex DiagLog。复验：`tools/run_update_tests.sh` 189/0/2（+TC-OTA-CACHE-01/02 共 8 断言）+ `tools/run_update_ui_tests.sh` 73/0 + build 完成 ✅（0 error）。核销版本=v2.10.2。
+
+### 现象（预期/实际 分行写）
+- **预期**：每次检查更新拉取最新 manifest，expected CDHash 与服务器清单一致
+- **实际**：用户 20:41/20:47 复测——实际下载的 zip 与解压产物 CDHash 均为 1d446297…（与服务器**新** manifest 一致），但验签报 `cdHashMismatch` → App 侧 expected CDHash 来自**缓存旧 manifest**
+
+### 根因（已实证，lead 证据链）
+`OTANetworkLayer.swift` OTANetworkSession 默认 `.default` URLSessionConfiguration → 共享**持久 URLCache**：
+- manifest 走 `dataTask` → 被 URLCache 命中旧条目：容器 Cache.db 存在 `projects/97/packages/generic/coffer/99.99.99/update-manifest.json`，缓存于今日 17:48:01（第一次 OTA 测试的旧构建 manifest）
+- 产物 zip 走 `downloadTask` → 不入 URLCache，拿到的是新包
+→ 新旧 manifest 混用：expected CDHash 来自旧清单，与下载的新包不符 → 误报。
+
+### 修复路径
+1. `OTANetworkSession.init` 在拷贝配置上**无条件**禁用缓存：`urlCache = nil` + `requestCachePolicy = .reloadIgnoringLocalCacheData`；fetch（manifest）/download（产物）两路径共用同一 `configuration` 建 session，一次净化全覆盖——即使调用方显式传带缓存的配置也被强制覆盖
+2. 顺带：`SecCodeVerifier.verifyApp` cdHashMismatch 抛错前把 expected/actual 两个 hex 写一行 DiagLog（均为公开签名信息，不含敏感数据）——下次这类问题 30 秒定位
+3. UpdateTests 补 TC-OTA-CACHE-01（默认 / 显式 .default / 带缓存自定义三种构造输入均断言 urlCache=nil + policy）+ TC-OTA-CACHE-02（MockURLProtocol 注入，fetch/download 两路径走通生产代码并返回 fresh 数据）
+
+### 复现与诊断
+证据链见上（lead 实证）：Cache.db 旧条目 + 真包 CDHash 与服务器一致仍报 mismatch。DiagLog 定位：`~/Library/Logs/Coffer-diag.log` 出现「OTA 验签 CDHash 不符：expected=<旧> actual=<新>」即为缓存命中旧 manifest 的可视症状。

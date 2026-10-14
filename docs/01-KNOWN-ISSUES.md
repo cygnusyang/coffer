@@ -1641,3 +1641,37 @@ lead 22:39 真机复测两轮仍失败：open(1) 三行插桩齐全但现场依�
 - DiagLog 定位：错位拦截时出现 `BUG-29B：启动路径错位拦截（running=<build路径> target=/Applications/Coffer.app）` 且**不再**出现 launchViaOpen 三行
 
 **复测判据同步**（替换旧「看哪些文件」）：①DiagLog 应见 launchViaOpen 三行（从 /Applications 启动）或 BUG-29B 错位插桩（从 build 副本启动）②`/tmp/coffer-update.log` 按上面判定表 a/b/c 判定 ③`/Applications/Coffer.app` 版本变更 + result 文件 + App 自动重开。复测务必从 /Applications/Coffer.app 启动——从 build 副本启动会被守卫拦截（那是修复意图）。
+
+## BUG-30（🔴 当版修复，核销版本=下一版）：open(1) 经沙盒 App 发起时 `--args` 被 LaunchServices 剥掉——helper argv 为空走 exit 4 用法路径
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 全链路真机测试第三轮（用户 23:27 从 /Applications/Coffer.app 正确启动，BUG-29 后续 A/B 修复后复测）
+**分级**：HIGH / P1（OTA 安装主路径断裂：helper 被拉起但参数未达，配置读不到、无法执行替换）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
+**状态**：🔴 当版修复（核销版本=下一版，真机全链路待发布后核销）
+**核销记录**：修复 = **三层冗余取参**（helper 端 + App 端同 commit，见「修复路径」）。复验：`tools/run_update_tests.sh` 217/0/2（+TC-BUG30-01~08）+ `tools/run_ota_integration_tests.sh` 26/0/0（+TC-INT-03 固定路径场景）+ `tools/run_update_ui_tests.sh` 91/0 + build exit 0。**真机核销判据**：全链路后 ①`/tmp/coffer-update.log` 首行 argv 为空但紧接着出现「取参来源：env/固定路径」（任一路径源命中）②`/Applications/Coffer.app` 版本变更 + result 文件 success=true ③App 自动重开——三者齐备才算修复闭环。
+
+### 现象（预期/实际 分行写）
+- **预期**：perform 启动 helper，helper 读到 config 执行备份/替换/relaunch
+- **实际**：/tmp/coffer-update.log（清空基线后仅此一场）首行 `coffer-update 启动 pid=65506 argv=` ← **argv 为空**（--config 未送达）；随后打印用法文本（exit 4 用法路径）；DiagLog 侧 `open -n … --args --config <path>` 提交成功 exit 0。对照：17:59 终端手动 open --args 成功送达 → **沙盒调用方 open 只拉起不传参，参数在 LaunchServices 交接处被剥**（helper 是同一二进制，自身无问题）
+
+### 根因（已实证，lead 证据链）
+`open(1)` 经**沙盒 App** 发起时，LaunchServices 交接把 `--args` 之后的参数剥离（进程被拉起但 argv 为空）；非沙盒调用方（终端）手动 open 同一 helper 参数送达正常。argv 为空 → helper `parseArguments` 返回 nil → exit 4 用法路径（exit 4 不写 result、未做任何修改）。现场 `/tmp/coffer-update.log` 首行 argv 落盘语义（BUG-29 后续 A）在此一锤定音：是「被拉起但 args 丢失」而非「helper 没被拉起」。
+
+### 修复路径（三层冗余取参，helper 端 + App 端同 commit）
+helper 取参优先级 **env → 固定路径 → argv**，`resolveConfigPath` 统一入口，log() 记录命中来源；三源皆无才 exit 4：
+1. **env**：App 侧 `OTAInstaller.launchViaOpen` 把 config 路径经 `COFFER_UPDATER_CONFIG=<configPath>` 注入 open 进程 environment（`configEnvironment(from args:)` 纯函数构造，open 传播自身 env 给被拉起进程——非沙盒 spike 已证；沙盒下是否生效待真机复测，列为第一优先）
+2. **固定路径兜底（核心，零传播假设）**：App 侧 `perform` 除 uuid config 外，再写一份固定名 `coffer-ota-pending-config.json` 到容器 tmp（写前先删旧防串场）；helper 无沙盒，可经 `getpwuid(getuid())` 确定性推导同一路径 `$HOME/Library/Containers/top.cygnusyang.coffer/Data/tmp/`（**不读 HOME env**——沙盒 App 的 HOME 指向容器 Data，读它会把路径算到双层容器目录）——不依赖任何参数/env 传递
+3. **argv**：保留 `--config`（非沙盒调试/终端手动 open 路径仍工作）
+
+契约不变：固定 config 的 resultFilePath 仍指 uuid result（App 首启经 UserDefaults 找回 result 消费，`consumePendingInstallResult`/M-C/isResultShape 守卫不受影响）；helper 只把固定 config 当入口。helper 消费固定 config 后 best-effort 删除（一次性临时产物不留陈）。
+
+### 顺手修（Spotlight，同 commit）
+容器 tmp 的 `coffer-ota-*` 解压残留会以**独立 Coffer.app 形态被 Spotlight 索引**（用户「搜到好几个 Coffer」困扰）。best-effort 清理三处：①helper 替换成功后移除已清空的解压目录（newAppPath 父目录，**仅空目录才删**，绝不递归删有内容目录）②App 侧 install 失败路径（perform catch + BUG-29B 错位拦截 throw 前）清理 `coffer-ota-*` 前缀解压目录 ③`clearPendingState` 一并清固定 config。
+
+### 测试（门禁，全绿只增不减）
+- `run_update_tests.sh`：TC-BUG30-01/02 env 注入构造（configEnvironment 纯函数断言）+ TC-BUG30-03~05 perform 写固定 config（内容同源 + resultFilePath 契约不变）+ TC-BUG30-06~08 失败回滚清固定 config（防串场）
+- `run_ota_integration_tests.sh`：TC-INT-03 固定路径场景——写 config 到固定名后 **exec helper 不带 argv**（模拟沙盒 open 剥 --args 的最坏场景），断言成功消费全流程 + 文件日志记录「取参来源：固定路径」+ helper 消费后删除固定 config；TC-INT-01/02 增加取参隔离（置空 COFFER_UPDATER_CONFIG + 清固定 config）确保确定性走 argv 源
+- `run_update_ui_tests.sh` 91/0 + 全量 build exit 0
+
+### 复测判据（真机核销，看哪些文件）
+①`/tmp/coffer-update.log` 首行 `argv=` 为空属**预期**（BUG-30 场景），关键看紧随的「取参来源：env COFFER_UPDATER_CONFIG=…」或「取参来源：固定路径 …」行——任一路径源命中即取参成功；三源皆无仍会打印用法文本 exit 4 ②DiagLog 应有 `BUG-30：env 注入 COFFER_UPDATER_CONFIG` + `BUG-30：固定 config 已写` 行 ③`/Applications/Coffer.app` 版本变更 + result 文件 success=true + App 自动重开。若首行 argv 为空且无任何「取参来源」行 → 三源全部断裂（固定 config 写失败 + env 未传播），按 DiagLog 的固定 config 写失败插桩排查。

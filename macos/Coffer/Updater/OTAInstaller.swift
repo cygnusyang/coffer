@@ -44,6 +44,15 @@ struct OTAInstaller: Installing {
     /// 备份目录（backupDirectory.path）的 UserDefaults key（C-1 守卫：消费删备份前
     /// 校验 backup 路径在该目录前缀内，防同用户进程改 prefs 指向任意文件造成误删）。
     static let pendingBackupDirDefaultsKey = "ota_pending_backup_dir"
+    /// BUG-30 固定名 pending config 文件名（三层冗余取参的固定路径兜底核心）：
+    /// App 写容器 tmp 固定名；helper 无沙盒经 getpwuid 推导同一路径读取（零传播
+    /// 假设——不依赖 open 的 --args/env 传递，见 perform 与 Installer/main.swift）。
+    static let pendingConfigFixedName = "coffer-ota-pending-config.json"
+    /// 固定名 pending config URL（沙盒 App 的 FileManager.temporaryDirectory =
+    /// 容器 tmp，与 helper 端 getpwuid 推导路径一致）。
+    static var pendingConfigFixedURL: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(pendingConfigFixedName)
+    }
 
     /// 安装显式错误（fail-closed：任何一步失败即呈现 failed）。
     enum InstallError: Error, LocalizedError {
@@ -136,6 +145,10 @@ struct OTAInstaller: Installing {
         // 不启 helper，直接显式失败（可操作文案）。测试注入 provider 断言两分支。
         guard runningAppURLProvider().path == currentAppURL.path else {
             DiagLog.append("BUG-29B：启动路径错位拦截（running=\(runningAppURLProvider().path) target=\(currentAppURL.path)）")
+            // BUG-30 顺手修（Spotlight）：错位拦截同样留下未消费的解压产物，一并
+            // best-effort 清理（coffer-ota-* 前缀守卫内，见 cleanupFailedProduct
+            // ExtractionDir——测试任意夹具路径不被触碰）。
+            Self.cleanupFailedProductExtractionDir(of: downloadedAppURL)
             throw InstallError.launchPathMismatch
         }
         DiagLog.append("BUG-26 插桩：perform 进入（newApp=\(downloadedAppURL.lastPathComponent)）")
@@ -159,6 +172,21 @@ struct OTAInstaller: Installing {
             DiagLog.append("BUG-26 插桩：写配置失败 → configWriteFailed（\(error)）")
             throw InstallError.configWriteFailed("\(error)")
         }
+        // BUG-30：三层冗余取参的固定路径兜底——除 uuid config 外，再写一份固定名
+        // coffer-ota-pending-config.json 到容器 tmp。helper 无沙盒，可经 getpwuid
+        // 推导同一路径读取，零传播假设（沙盒 App 的 open(1) 会把 --args 剥掉、
+        // env 传播未证，argv/env 都不可靠时必须有一条确定性路径）。写前先删旧
+        // （防串场：上一场残留若未被消费/清理，会先于本场被 helper 读到）。固定
+        // config 的 resultFilePath 仍指 uuid result——App 消费契约（首启经
+        // UserDefaults 找回 result）完全不变，helper 只把固定 config 当入口。
+        // 写失败不阻塞主流程（argv/env 仍可送达），仅 DiagLog 留痕。
+        try? FileManager.default.removeItem(at: Self.pendingConfigFixedURL)
+        do {
+            try Self.encodeConfig(config).write(to: Self.pendingConfigFixedURL, options: .atomic)
+            DiagLog.append("BUG-30：固定 config 已写 \(Self.pendingConfigFixedURL.lastPathComponent)")
+        } catch {
+            DiagLog.append("BUG-30：固定 config 写失败（\(error)），回退 argv/env 取参")
+        }
         // result/backup/backupDir 路径持久化：被 relaunch 的 .app 首启据此找回并
         // 消费（契约 r0.4 步骤 6）；backupDir 供 C-1 守卫（删备份前校验前缀）。
         userDefaults.set(resultFilePath, forKey: Self.pendingResultPathDefaultsKey)
@@ -172,24 +200,39 @@ struct OTAInstaller: Installing {
         } catch let error as InstallError {
             Self.clearPendingState(userDefaults: userDefaults, configURL: configURL,
                                    resultFilePath: resultFilePath)
+            Self.cleanupFailedProductExtractionDir(of: downloadedAppURL)
             DiagLog.append("BUG-26 插桩：launchHelper 抛 InstallError → 回滚 pending，\(error)")
             throw error
         } catch {
             Self.clearPendingState(userDefaults: userDefaults, configURL: configURL,
                                    resultFilePath: resultFilePath)
+            Self.cleanupFailedProductExtractionDir(of: downloadedAppURL)
             DiagLog.append("BUG-26 插桩：launchHelper 抛未知错误 → 回滚 pending，\(error)")
             throw InstallError.helperLaunchFailed("\(error)")
         }
     }
 
+    /// BUG-30 顺手修（Spotlight）：install 失败路径 best-effort 清理解压目录。
+    /// 失败时 helper 未运行 / 未替换，解压产物（coffer-ota-<uuid>/Coffer.app）是无
+    /// 用残留——容器 tmp 里完整 .app 会被 Spotlight 索引成独立 Coffer.app（用户
+    /// 困扰）。安全边界：父目录名必须匹配 App 自建的 `coffer-ota-*` 前缀才删（
+    /// prepare 产出；测试夹具的任意路径一律不动，绝不误删非本场目录）；失败静默。
+    static func cleanupFailedProductExtractionDir(of downloadedAppURL: URL) {
+        let dir = downloadedAppURL.deletingLastPathComponent()
+        guard dir.lastPathComponent.hasPrefix("coffer-ota-") else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     /// launch 失败后的 pending 状态回滚（M-3）：清除三个 pending keys + best-effort
-    /// 删已写配置/result 残留，保证下次启动 consume 为 no-op（不误报）。
+    /// 删已写配置/result/固定 config 残留，保证下次启动 consume 为 no-op（不误报）。
     static func clearPendingState(userDefaults: UserDefaults, configURL: URL, resultFilePath: String) {
         userDefaults.removeObject(forKey: Self.pendingResultPathDefaultsKey)
         userDefaults.removeObject(forKey: Self.pendingBackupPathDefaultsKey)
         userDefaults.removeObject(forKey: Self.pendingBackupDirDefaultsKey)
         try? FileManager.default.removeItem(at: configURL)
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: resultFilePath))
+        // BUG-30 顺手修：一并清固定名 pending config（防串场 + 容器 tmp 不积陈）。
+        try? FileManager.default.removeItem(at: Self.pendingConfigFixedURL)
     }
 
     /// 配置 JSON（sortedKeys 确定性序列化，字段与契约 6.4 一一对应）。
@@ -212,6 +255,17 @@ struct OTAInstaller: Installing {
     /// 断言参数构造。
     static func openLaunchArgs(helper: URL, args: [String]) -> [String] {
         ["-n", helper.path, "--args"] + args
+    }
+
+    /// BUG-30：从 launcher args 提取 config 路径注入环境（三层冗余取参第一源）。
+    /// open(1) 传播自身 env 给被拉起的 helper——非沙盒 spike 已证；沙盒下未证，
+    /// 与固定路径兜底并列，argv 被 LS 剥掉后仍有一条传递通道。返回
+    /// `[COFFER_UPDATER_CONFIG: <configPath>]`；args 无 `--config` → nil。纯函数
+    /// 供测试断言（TC-BUG30）。
+    static func configEnvironment(from args: [String]) -> [String: String]? {
+        guard let index = args.firstIndex(of: "--config"),
+              args.indices.contains(index + 1) else { return nil }
+        return ["COFFER_UPDATER_CONFIG": args[index + 1]]
     }
 
     /// 生产启动器（BUG-29 修复，2026-10-14）：主路径 = `/usr/bin/open -n <helper>
@@ -244,6 +298,16 @@ struct OTAInstaller: Installing {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         process.arguments = openArgs
+        // BUG-30：三层冗余取参第一源——把 config 路径经 env 注入 open 进程，由其
+        // 传播给被拉起的 helper（open 传播自身 env；沙盒下是否生效待真机复测，
+        // 与固定路径兜底双保险）。仅当 args 含 --config 时注入（构造失败静默降级
+        // 到其余两源，不影响主流程）。
+        if let configEnv = configEnvironment(from: args) {
+            var env = ProcessInfo.processInfo.environment
+            for (key, value) in configEnv { env[key] = value }
+            process.environment = env
+            DiagLog.append("BUG-30：env 注入 COFFER_UPDATER_CONFIG（open 子进程传播）")
+        }
         let stderr = Pipe()
         process.standardError = stderr
         try process.run()

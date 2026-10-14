@@ -1731,6 +1731,129 @@ do {
     check("TC-CFG", "夹具异常", false, "\(error)")
 }
 
+// MARK: - TC-BUG30 三层冗余取参（env 注入构造 + App 侧固定 config 写 + 回滚清理）
+
+// BUG-30 定谳（真机现场）：沙盒 App 经 open(1) 发起 helper 时 --args 被 LaunchServices
+// 剥掉（argv 空 + exit 4）；修复 = env → 固定路径 → argv 三层冗余取参。App 侧三件事：
+// ① launchViaOpen 把 config 路径经 env COFFER_UPDATER_CONFIG 注入 open 进程
+// ② perform 额外写固定名 coffer-ota-pending-config.json 到容器 tmp（helper 经
+//    getpwuid 推导同一路径读取，零传播假设）
+// ③ 失败回滚（clearPendingState）一并清固定 config。resultFilePath 仍指 uuid result
+//    （App 首启消费契约不变）。
+
+do {
+    let fm = FileManager.default
+
+    // ① env 注入构造（纯函数断言：args 含 --config 时产出 COFFER_UPDATER_CONFIG；
+    //    缺 --config → nil，绝不注入空/错误键）
+    check("TC-BUG30-01", "configEnvironment 从 launcher args 提取 COFFER_UPDATER_CONFIG",
+          OTAInstaller.configEnvironment(from: ["--config", "/tmp/cfg.json"])
+              == ["COFFER_UPDATER_CONFIG": "/tmp/cfg.json"],
+          "got=\(OTAInstaller.configEnvironment(from: ["--config", "/tmp/cfg.json"]) ?? [:])")
+    check("TC-BUG30-02", "configEnvironment 无 --config → nil（不注入错误 env）",
+          OTAInstaller.configEnvironment(from: []) == nil
+          && OTAInstaller.configEnvironment(from: ["--foo"]) == nil)
+
+    // ② perform 写固定名 pending config 到容器 tmp（helper 端推导同一路径）。
+    //    固定 config 内容与 uuid config 一致（5 字段），resultFilePath 仍指
+    //    uuid result（App 消费契约不变）。
+    let tempRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-bug30-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tempRoot) }
+    // 清理本场 perform 写的固定 config（测试进程临时目录，非沙盒容器 tmp）。
+    defer { try? fm.removeItem(at: OTAInstaller.pendingConfigFixedURL) }
+    let suiteName = "coffer-ota-bug30-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    var launchedArgs: [String] = []
+    let installer = OTAInstaller(
+        helperURL: URL(fileURLWithPath: "/Applications/Coffer.app/Contents/Helpers/CofferUpdater.app"),
+        backupDirectory: tempRoot,
+        pidProvider: { 4242 },
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { _, args in
+            launchedArgs = args
+        }
+    let manifest = try UpdateManifest.parse(
+        try TestFixture.signedManifestData(fields: TestFixture.manifestFields()))
+    let info = try UpdateInfo(manifest: manifest)
+    try await installer.perform(
+        info: info,
+        downloadedAppURL: URL(fileURLWithPath: "/tmp/coffer-ota-x/Coffer.app"),
+        currentAppURL: URL(fileURLWithPath: "/Applications/Coffer.app"))
+
+    check("TC-BUG30-03", "perform 额外写固定名 pending config（容器 tmp 兜底入口）",
+          fm.fileExists(atPath: OTAInstaller.pendingConfigFixedURL.path),
+          "path=\(OTAInstaller.pendingConfigFixedURL.path)")
+    if fm.fileExists(atPath: OTAInstaller.pendingConfigFixedURL.path) {
+        let fixedDict = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: OTAInstaller.pendingConfigFixedURL)) as! [String: Any]
+        let uuidDict = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: URL(fileURLWithPath: launchedArgs[1]))) as! [String: Any]
+        check("TC-BUG30-04", "固定 config 与 uuid config 内容一致（5 字段同源）",
+              fixedDict.count == 5
+              && fixedDict["newAppPath"] as? String == uuidDict["newAppPath"] as? String
+              && fixedDict["currentAppPath"] as? String == uuidDict["currentAppPath"] as? String
+              && fixedDict["backupPath"] as? String == uuidDict["backupPath"] as? String
+              && fixedDict["resultFilePath"] as? String == uuidDict["resultFilePath"] as? String
+              && (fixedDict["pid"] as? NSNumber)?.int32Value == 4242)
+        check("TC-BUG30-05", "固定 config 的 resultFilePath 仍指 uuid result（消费契约不变）",
+              (fixedDict["resultFilePath"] as? String)?.hasPrefix(tempRoot.path + "/coffer-ota-result-") == true
+              && (fixedDict["resultFilePath"] as? String)?.hasSuffix(".json") == true
+              && (fixedDict["resultFilePath"] as? String) != OTAInstaller.pendingConfigFixedURL.path)
+    }
+} catch {
+    check("TC-BUG30", "夹具异常", false, "\(error)")
+}
+
+// ③ 失败回滚（M-3）同时清固定名 pending config：launcher 抛错 → perform 回滚
+// pending keys + 删 uuid config + 删固定 config（防串场 + 容器 tmp 不积陈）。
+do {
+    let fm = FileManager.default
+    let tempRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-bug30b-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tempRoot) }
+    defer { try? fm.removeItem(at: OTAInstaller.pendingConfigFixedURL) }
+    let suiteName = "coffer-ota-bug30b-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    // 预置一个「残留」固定 config（模拟上一场未消费），perform 写本场时先删旧再写新
+    try Data("stale".utf8).write(to: OTAInstaller.pendingConfigFixedURL)
+    let installer = OTAInstaller(
+        helperURL: URL(fileURLWithPath: "/unused/helper"),
+        backupDirectory: tempRoot,
+        pidProvider: { 4242 },
+        userDefaults: defaults,
+        runningAppURLProvider: { URL(fileURLWithPath: "/Applications/Coffer.app") }) { _, _ in
+            throw OTAInstaller.InstallError.helperLaunchFailed("stub 抛错")
+        }
+    let manifest = try UpdateManifest.parse(
+        try TestFixture.signedManifestData(fields: TestFixture.manifestFields()))
+    let info = try UpdateInfo(manifest: manifest)
+    do {
+        try await installer.perform(
+            info: info,
+            downloadedAppURL: URL(fileURLWithPath: "/tmp/coffer-ota-y/Coffer.app"),
+            currentAppURL: URL(fileURLWithPath: "/Applications/Coffer.app"))
+        check("TC-BUG30-06", "launcher 抛错 → perform 显式失败", false, "竟然没报错")
+    } catch {
+        check("TC-BUG30-06", "launcher 抛错 → perform 显式失败", true)
+    }
+    check("TC-BUG30-07", "launcher 抛错 → 固定 config 残留被清（防串场）",
+          !fm.fileExists(atPath: OTAInstaller.pendingConfigFixedURL.path))
+    check("TC-BUG30-08", "launcher 抛错 → pending keys 全清（M-3 回滚）",
+          defaults.string(forKey: OTAInstaller.pendingResultPathDefaultsKey) == nil
+          && defaults.string(forKey: OTAInstaller.pendingBackupPathDefaultsKey) == nil
+          && defaults.string(forKey: OTAInstaller.pendingBackupDirDefaultsKey) == nil)
+} catch {
+    check("TC-BUG30", "夹具异常", false, "\(error)")
+}
+
 // MARK: - TC-GUARD BUG-29 后续 B：启动路径守卫（运行中 App ≠ 安装目标 → fail-fast）
 
 // TC-GUARD-01：错位拦截——runningAppURLProvider（build 副本路径）≠ currentAppURL

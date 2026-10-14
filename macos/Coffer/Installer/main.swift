@@ -54,6 +54,33 @@ private let waitTimeout: TimeInterval = 30
 /// 轮询间隔（秒）。
 private let pollInterval: TimeInterval = 0.5
 
+// MARK: - BUG-30 固定路径取参兜底（App 侧容器 tmp 固定名 config）
+
+/// 沙盒 App 的容器 bundle id（固定路径取参推导用；与 App 侧
+/// FileManager.default.temporaryDirectory 解析到的容器 tmp 同一目录）。
+private let containerBundleID = "top.cygnusyang.coffer"
+
+/// 固定名 pending config 文件名（App 写容器 tmp 固定名；helper 推导同一路径读取）。
+private let fixedConfigFileName = "coffer-ota-pending-config.json"
+
+/// 真实用户家目录（getpwuid 用户数据库，**不**读 HOME 环境变量——open 传播调用方
+/// env，沙盒 App 的 HOME 指向容器 Data，读它会把固定路径算到错误的双层容器目录）。
+/// 失败回退 NSHomeDirectory()（best-effort）。
+func realUserHomeDirectory() -> String {
+    if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
+        return String(cString: dir)
+    }
+    return NSHomeDirectory()
+}
+
+/// 固定路径兜底 config 的确定性路径：$HOME/Library/Containers/<bundle>/Data/tmp/
+/// coffer-ota-pending-config.json。零传播假设——helper 无沙盒，仅凭用户数据库推导，
+/// 不依赖任何参数/env 传递（BUG-30 三层冗余取参的第二源）。
+func fixedConfigPath() -> String {
+    realUserHomeDirectory()
+        + "/Library/Containers/\(containerBundleID)/Data/tmp/\(fixedConfigFileName)"
+}
+
 // MARK: - 安全锚定（C-1：硬锚 currentAppPath + 载荷 DR）
 
 #if COFFER_UPDATER_PRODUCTION
@@ -138,6 +165,11 @@ struct InstallConfig: Codable {
 let usageText = """
 用法:
   CofferUpdater.app --config <JSON 配置文件路径>
+
+取参（BUG-30 三层冗余，优先级由高到低）:
+  env COFFER_UPDATER_CONFIG=<路径>   App 侧 Process 注入（open 传播 env）
+  固定路径 <容器tmp>/coffer-ota-pending-config.json
+  argv --config <路径>                非沙盒调试/终端手动路径
 
 配置文件字段（JSON）:
   newAppPath      新下载的 .app 包路径（须为 Coffer.app、验签 + profile 未过期）
@@ -298,6 +330,41 @@ func parseArguments(_ arguments: [String]) -> String? {
         }
     }
     return configPath
+}
+
+// MARK: - 取参（BUG-30 三层冗余：env → 固定路径 → argv）
+
+/// 三层冗余取参，返回命中的 config 路径；三源皆无 → nil（调用方 exit 4）。
+/// 背景（BUG-30 定谳，真机现场实证）：沙盒 App 经 `open(1)` 发起 helper 时，`--args`
+/// 参数在 LaunchServices 交接处被剥掉（/tmp/coffer-update.log 首行 `argv=` 为空 +
+/// exit 4 用法路径；对照：非沙盒终端手动 open 送达正常）。修复 = 三源冗余，优先级：
+///   1. env  COFFER_UPDATER_CONFIG=<path>（App 侧 Process 设 environment 注入；
+///            open(1) 传播自身 env 给被拉起进程——非沙盒 spike 已证；沙盒下未证，
+///            列为第一优先）
+///   2. 固定路径 <容器tmp>/coffer-ota-pending-config.json（App 写容器 tmp 固定名，
+///            helper 无沙盒可经 getpwuid 推导同一路径——零传播假设，兜底核心）
+///   3. argv --config（保留，非沙盒调试/终端手动 open 路径仍工作）
+/// log() 记录命中哪一来源，现场据此分诊（env 是否传播 / 固定路径是否写成功）。
+func resolveConfigPath(arguments: [String]) -> String? {
+    // 1. env
+    let fromEnv = ProcessInfo.processInfo.environment["COFFER_UPDATER_CONFIG"] ?? ""
+    if !fromEnv.isEmpty {
+        log("取参来源：env COFFER_UPDATER_CONFIG=\(fromEnv)")
+        return fromEnv
+    }
+    // 2. 固定路径（容器 tmp）
+    let fixed = fixedConfigPath()
+    if FileManager.default.fileExists(atPath: fixed) {
+        log("取参来源：固定路径 \(fixed)")
+        return fixed
+    }
+    // 3. argv --config
+    if let fromArgs = parseArguments(arguments) {
+        log("取参来源：argv --config \(fromArgs)")
+        return fromArgs
+    }
+    log("取参失败：env / 固定路径 / argv 三源皆无（BUG-30 场景：沙盒 open 剥 argv 且 env 未传播 / 固定 config 未落盘）")
+    return nil
 }
 
 // MARK: - 进程等待
@@ -626,7 +693,22 @@ func backupAndReplace(config: InstallConfig) -> Int32? {
         return finish(config, success: false, code: ExitCode.replaceFailed, message: "更新安装失败：替换失败，已尝试恢复原版本。")
     }
     log("替换完成: \(config.currentAppPath)")
+    // BUG-30 顺手修（Spotlight）：替换成功后解压目录已空（新包被 move 走），
+    // best-effort 移除——容器 tmp 残留的 coffer-ota-* 含 .app 目录会被 Spotlight
+    // 索引成独立 Coffer.app（用户困扰）。只在目录为空时移除，绝不递归删有内容的目录。
+    cleanupExtractionDir(of: config.newAppPath)
     return nil
+}
+
+/// BUG-30 顺手修：替换成功后 best-effort 移除已清空的解压目录（newAppPath 父目录）。
+/// 安全边界：仅当目录存在且内容为空才删——新包 move 走后必空；目录还有内容（替换失败
+/// 回滚残留 / 测试夹具其它文件）一律不动，绝不误删。删除失败静默（best-effort 纪律）。
+func cleanupExtractionDir(of newPackagePath: String) {
+    let parent = URL(fileURLWithPath: newPackagePath).deletingLastPathComponent().path
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: parent),
+          (try? fm.contentsOfDirectory(atPath: parent))?.isEmpty == true else { return }
+    try? fm.removeItem(atPath: parent)
 }
 
 /// 主流程，返回契约退出码（docs/35 §6.4）。
@@ -637,8 +719,9 @@ func run(arguments: [String]) -> Int32 {
     //    OTA 现场第一诊断入口。
     log("coffer-update 启动 pid=\(getpid()) argv=\(arguments.map { "\"\($0)\"" }.joined(separator: " "))")
 
-    // 1. 参数解析（只认 --config；缺参/未知参 → exit 4）
-    guard let configPath = parseArguments(arguments) else {
+    // 1. 三层冗余取参（BUG-30：env → 固定路径 → argv；resolveConfigPath 内 log
+    //    记录命中来源；三源皆无 → exit 4）
+    guard let configPath = resolveConfigPath(arguments: arguments) else {
         log(usageText)
         return ExitCode.usageError
     }
@@ -648,6 +731,12 @@ func run(arguments: [String]) -> Int32 {
     switch loadConfig(from: configPath) {
     case .success(let loaded):
         config = loaded
+        // BUG-30 顺手修：固定名 pending config 是 App 一次性临时产物，helper 一旦
+        // 消费即无留存价值——best-effort 删掉（防下下场误读/容器 tmp 积陈；App 侧
+        // 下次写前也会先删旧，双保险）。删除失败静默，不影响安装主流程。
+        if configPath == fixedConfigPath() {
+            try? FileManager.default.removeItem(atPath: configPath)
+        }
     case .failure(let error):
         if case .message(let message) = error {
             log("配置加载失败（\(configPath)）: \(message)")

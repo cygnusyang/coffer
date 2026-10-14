@@ -23,6 +23,7 @@
 // 编译运行：tools/run_ota_integration_tests.sh
 
 import Foundation
+import Darwin
 
 // MARK: - 断言与汇总
 
@@ -133,6 +134,31 @@ func readResult(_ path: String) -> (Bool, Int, String)? {
     return (success, code, message)
 }
 
+// MARK: - BUG-30 固定路径兜底（helper 端推导同一路径）
+
+/// 真实用户家目录（getpwuid 用户数据库，与 helper 端 realUserHomeDirectory 同源——
+/// 不读 HOME env，沙盒 App 的 HOME 指向容器 Data，读它会把路径算到双层容器目录）。
+func realUserHome() -> String {
+    if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
+        return String(cString: dir)
+    }
+    return NSHomeDirectory()
+}
+
+/// helper 固定路径兜底 config 的确定性路径（与 Installer/main.swift fixedConfigPath
+/// 同源）：$HOME/Library/Containers/top.cygnusyang.coffer/Data/tmp/
+/// coffer-ota-pending-config.json。零传播假设——不依赖任何参数/env 传递。
+func fixedConfigPath() -> String {
+    realUserHome()
+        + "/Library/Containers/top.cygnusyang.coffer/Data/tmp/coffer-ota-pending-config.json"
+}
+
+/// best-effort 移除固定路径 config（测试隔离：清掉可能残留的真实 App/前场固定 config，
+/// 让 TC-INT-01/02 的 argv 取参路径确定性地生效；只删这一个固定文件，绝不碰其它）。
+func removeFixedConfigIfPresent() {
+    try? FileManager.default.removeItem(atPath: fixedConfigPath())
+}
+
 // MARK: - 前置（SKIP 条件）
 
 let artifactPath = ProcessInfo.processInfo.environment["COFFER_UPDATE_ARTIFACT_PATH"] ?? ""
@@ -236,7 +262,11 @@ do {
     let helperEnv = [
         "COFFER_UPDATER_TEST_ANCHOR": dstApp.path,
         "COFFER_UPDATER_TEST_FAKE_RELAUNCH": relaunchLog,
+        // BUG-30 取参隔离：置空 kill 掉环境里可能残留的 COFFER_UPDATER_CONFIG +
+        // 清固定路径 config → 本场确定性走 argv 源（TC-INT-03 专测固定路径源）。
+        "COFFER_UPDATER_CONFIG": "",
     ]
+    removeFixedConfigIfPresent()
     let helper = try runProcess(helperBin, args: ["--config", configPath], env: helperEnv)
 
     // ---- 断言：退出 → 替换 → relaunch gate → result 握手全流程 ----
@@ -324,8 +354,11 @@ do {
     try writeConfig(config2, newApp: brokenApp.path, currentApp: dst2App.path,
                     backup: backup2, result: result2, pid: deadPID())
 
+    removeFixedConfigIfPresent()
     let helper2 = try runProcess(helperBin, args: ["--config", config2],
-                                 env: ["COFFER_UPDATER_TEST_ANCHOR": dst2App.path])
+                                 env: ["COFFER_UPDATER_TEST_ANCHOR": dst2App.path,
+                                       // BUG-30 取参隔离（同 TC-INT-01）：确定性走 argv 源
+                                       "COFFER_UPDATER_CONFIG": ""])
     check("TC-INT-02", "未重签载荷（真实产物改版本）→ helper exit 2（载荷 DR 拒装）",
           helper2.status == 2, "exit=\(helper2.status) stderr=\(helper2.stderr)")
     if let result = readResult(result2) {
@@ -339,6 +372,142 @@ do {
           "actual=\(appVersion(dst2App) ?? "nil")")
     check("TC-INT-02", "拒装后无备份产生（载荷门在任何修改前）",
           !fm.fileExists(atPath: backup2))
+}
+
+// MARK: - TC-INT-03 BUG-30 固定路径取参兜底（写固定名 config → exec helper 不带 argv）
+
+// BUG-30 定谳（真机现场）：沙盒 App 经 open(1) 发起 helper 时 --args 被 LaunchServices
+// 剥掉（argv 空 + exit 4）。修复 = 三层冗余取参：env → 固定路径 → argv。本用例验证
+// 中间层（零传播假设的兜底核心）：把 config 写固定名
+// coffer-ota-pending-config.json 到容器 tmp（helper 经 getpwuid 推导同一路径），
+// **不带 argv**（模拟 --args 被剥掉的最坏场景）exec helper → 必须成功消费完整替换
+// 流程。同时断言：log 记录「取参来源：固定路径」+ helper 消费后删除固定 config
+// （顺手修：一次性临时产物不留陈）。
+do {
+    let fm = FileManager.default
+    guard FileManager.default.fileExists(atPath: artifactPath),
+          FileManager.default.fileExists(atPath: helperBin) else {
+        skip("TC-INT-03", "（前置缺失）", "签名产物或 helper 缺失（同 TC-INT-01 前置）")
+        failures.removeAll()
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+    guard let identity = signingIdentity() else {
+        skip("TC-INT-03", "（前置缺失）", "缺 Apple Development 签名身份（载荷重签保 DR 依赖）")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / 0 failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+
+    let tmpRoot = fm.temporaryDirectory
+        .appendingPathComponent("coffer-ota-int-fixed-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmpRoot) }
+
+    // ---- dstApp（当前 App：真实产物副本）----
+    let dstApp = tmpRoot.appendingPathComponent("dst/Coffer.app")
+    try fm.createDirectory(at: dstApp.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: [artifactPath, dstApp.path])
+    guard let originalVersion = appVersion(dstApp), !originalVersion.isEmpty else {
+        check("TC-INT-03", "dstApp 版本可读（前置 sanity）", false, "无法读取副本版本")
+        failures = []; skipped = 1
+        print("--------------------------------------------------")
+        print("结果：\(passCount) passed / \(failures.count) failed / \(skipped) skipped")
+        print("ALL GREEN")
+        exit(0)
+    }
+
+    // ---- newApp：版本改写 99.99.99 + 重签保 DR（同 TC-INT-01）----
+    let newBuildApp = tmpRoot.appendingPathComponent("newbuild/Coffer.app")
+    try fm.createDirectory(at: newBuildApp.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: [artifactPath, newBuildApp.path])
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleShortVersionString 99.99.99",
+                          newBuildApp.appendingPathComponent("Contents/Info.plist").path])
+    try runProcess("/usr/libexec/PlistBuddy",
+                   args: ["-c", "Set :CFBundleVersion 999999",
+                          newBuildApp.appendingPathComponent("Contents/Info.plist").path])
+    let resign = try runProcess("/usr/bin/codesign",
+                                args: ["--force", "--sign", identity,
+                                       "--preserve-metadata=entitlements,requirements,flags",
+                                       newBuildApp.path])
+    check("TC-INT-03", "newApp 重签成功（保 DR，载荷合法性前提）",
+          resign.status == 0, "exit=\(resign.status) stderr=\(resign.stderr)")
+    let zipPath = tmpRoot.appendingPathComponent("new.zip")
+    try runProcess("/usr/bin/ditto", args: ["-c", "-k", "--keepParent", newBuildApp.path, zipPath.path])
+    let stageDir = tmpRoot.appendingPathComponent("stage")
+    try fm.createDirectory(at: stageDir, withIntermediateDirectories: true)
+    try runProcess("/usr/bin/ditto", args: ["-x", "-k", zipPath.path, stageDir.path])
+    let newApp = stageDir.appendingPathComponent("Coffer.app")
+    check("TC-INT-03", "解压产物版本 99.99.99",
+          fm.fileExists(atPath: newApp.path) && appVersion(newApp) == "99.99.99",
+          "version=\(appVersion(newApp) ?? "nil")")
+
+    // ---- 写固定路径 config（容器 tmp，helper 无沙盒可读）+ exec helper 不带 argv ----
+    let fixedPath = fixedConfigPath()
+    let fixedDir = URL(fileURLWithPath: fixedPath).deletingLastPathComponent()
+    try fm.createDirectory(at: fixedDir, withIntermediateDirectories: true)
+    defer {
+        // 只清本场固定 config 文件；tmp 目录若因我们创建而空，一并 best-effort 移除。
+        try? fm.removeItem(atPath: fixedPath)
+        if (try? fm.contentsOfDirectory(atPath: fixedDir.path))?.isEmpty == true {
+            try? fm.removeItem(at: fixedDir)
+        }
+    }
+    let backupPath = tmpRoot.appendingPathComponent("backup/Coffer.app").path
+    let resultPath = tmpRoot.appendingPathComponent("result-fixed.json").path
+    let relaunchLog = tmpRoot.appendingPathComponent("relaunch-fixed.log").path
+    try writeConfig(fixedPath, newApp: newApp.path, currentApp: dstApp.path,
+                    backup: backupPath, result: resultPath, pid: deadPID())
+
+    // 不带 argv（模拟沙盒 open 剥 --args 的最坏场景）；env COFFER_UPDATER_CONFIG
+    // 置空杀外部残留 → 本场必然走固定路径源。
+    let helper3 = try runProcess(helperBin, args: [],
+                                 env: ["COFFER_UPDATER_TEST_ANCHOR": dstApp.path,
+                                       "COFFER_UPDATER_TEST_FAKE_RELAUNCH": relaunchLog,
+                                       "COFFER_UPDATER_CONFIG": ""])
+
+    check("TC-INT-03", "不带 argv exec helper → 固定路径兜底取参，全流程 exit 0",
+          helper3.status == 0,
+          "exit=\(helper3.status) stderr=\(helper3.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
+    if let result = readResult(resultPath) {
+        check("TC-INT-03", "result.json success=true（固定路径 config 的 resultFilePath 生效）",
+              result.0, "\(result)")
+        check("TC-INT-03", "result.json code=0", result.1 == 0, "\(result)")
+    } else {
+        check("TC-INT-03", "result.json 可解析且字段齐全", false, "无法读取/解析 result")
+    }
+    check("TC-INT-03", "目标 dstApp 已被替换（版本=99.99.99）",
+          appVersion(dstApp) == "99.99.99", "actual=\(appVersion(dstApp) ?? "nil")")
+    let backupFixed = URL(fileURLWithPath: backupPath)
+    check("TC-INT-03", "备份为旧版本（\(originalVersion)）",
+          fm.fileExists(atPath: backupPath) && appVersion(backupFixed) == originalVersion,
+          "backup=\(appVersion(backupFixed) ?? "nil")")
+    if let logData = try? String(contentsOf: URL(fileURLWithPath: relaunchLog), encoding: .utf8) {
+        check("TC-INT-03", "relaunch gate 通过：fake 桩记录目标 dstApp",
+              logData.contains(dstApp.path), "log=\(logData.trimmingCharacters(in: .whitespacesAndNewlines))")
+    } else {
+        check("TC-INT-03", "relaunch gate 通过：fake 桩记录目标 dstApp", false, "relaunch.log 缺失")
+    }
+
+    // 取参来源留痕（文件日志首行 argv 语义 + 本场来源行）：含「取参来源：固定路径」
+    // 且路径为本场 fixedPath（唯一串，跨场并发 append 仍可定位本场）。
+    let fileLogPath = "/tmp/coffer-update.log"
+    if let logText = try? String(contentsOfFile: fileLogPath, encoding: .utf8) {
+        let sourceLine = logText.split(separator: "\n").first { $0.contains("取参来源：固定路径") && $0.contains(fixedPath) }
+        check("TC-INT-03", "文件日志记录取参来源 = 固定路径（三层冗余优先级生效）",
+              sourceLine != nil, "log=\(fileLogPath)")
+    } else {
+        check("TC-INT-03", "文件日志记录取参来源 = 固定路径（三层冗余优先级生效）",
+              false, "无法读取 \(fileLogPath)")
+    }
+    // 顺手修：helper 消费后删除固定 config（一次性临时产物不留陈）。
+    check("TC-INT-03", "helper 消费后删除固定 config（顺手修：不留陈）",
+          !fm.fileExists(atPath: fixedPath))
 }
 
 // MARK: - 汇总

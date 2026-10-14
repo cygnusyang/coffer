@@ -1400,3 +1400,32 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 **根因锚点**：core/cf-exporter/src/backup.rs:122+276（temp_sibling_path）、pux.rs:140+591（同型复制实现）
 **处置**：cf-exporter 新增共享落定 helper：①先试同目录兄弟临时 + rename（CLI 非沙盒保持原子落定不变）；②create/rename 得权限类错误（EPERM=1/EACCES=13）→ 回退容器 tmp 建临时 → 写完 File::create(out_path)（保存面板已授权）+ 复制 + fsync → verify → 清理；权限类判定 `raw_os_error() ∈ {1, 13}`，其余错误原样上抛。TDD。
 **核销记录**：v2.9.2 修复 commit 56bc5dc——cf-exporter 新增共享落定 helper `atomic_out::write_via_temp`（双策略，实现+注释与处置裁定一致），backup.rs/pux.rs 接线、孪生 temp_sibling_path 收敛（BUG-12 纪律）、pux write_zip 补 sync_all 对齐 backup（reviewer LOW）；新增 7 测试。dev-reviewer Approve（0 CRITICAL/0 HIGH；MEDIUM-1 注释失实已改如实、LOW 全修或登记）。门禁：workspace 1383/0（基线 1376 只增不减）+ clippy -D warnings 零告警。**接受限制**：回退策略（沙盒内）为非原子退化——write_fn 失败不触碰目标，但复制中途失败（如目标盘满）可能留半截目标；沙盒只授予所选文件本身，无原子替换可解，不视为回归。真机导出冒烟（加密备份 + 1PUX + CSV）待用户。
+
+---
+
+## BUG-23（🔴 当版修复，核销版本=下一版）：更新检查网络失败 UI 泄露原始 NSError——检查更新时服务器不可达弹整段 Error Domain=NSURLErrorDomain Code=-1004 …
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 真机实证（用户 2026-10-14）；GitLab DDNS 漂移 → App 侧 ECONNREFUSED → NSURLError -1004，「检查更新」弹窗把整段 NSError description 怼给用户
+**分级**：LOW / P2（纯呈现问题，无功能/数据影响）/ 来源版本 v2.7.0 OTA 首版（check() 全错误一律 `userMessage` 直出）/ 发现版本 v2.10.1
+**状态**：🟢 已修复（b6cb2da，fix(ota)；核销版本=下一版，版本归属未定）
+**核销记录**：修复 commit b6cb2da——`UpdaterManager.check` manifest 拉取层（网络边界）失败 → 完整 NSError 经 DiagLog 落 log（错误码 OTA-E-2001 + failing URL + domain/code + 底层错误），状态迁移 `.upToDate`（UI「已是最新版本」= 与检查完成无更新同态）；`UpdateCopy` 新增 `checkNetworkErrorCode`/`checkNetworkFailureLogLine` 纯函数；仅网络层错误走此分支，解析/验签/版本/纵深白名单仍 fail-closed `.failed`（TC-UPD-06/07/08/09/10/18/20/21 断言不变）。复验：`tools/run_update_tests.sh` 179/0/2（TC-UPD-05 改写 + URLError -1004/HTTP 503 注入，修复前 state=failed(原始 NSError) 实证泄露）+ `tools/run_update_ui_tests.sh` 63/0（新增 5 断言核销错误码/诊断行）+ build 完成 ✅（0 error）。下载/验签/安装阶段错误呈现不在本任务范围（后续轮统一）。
+**证据**：用户弹窗原文 `更新失败：Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server." …`；RED 实证 state=failed("更新失败：Error Domain=NSURLErrorDomain Code=-1004 …")；DiagLog 实证三行 `OTA-E-2001`（含 -1004 full NSError + failingURL + domain/code）
+
+### 现象（预期/实际 分行写）
+- **预期**：检查更新时网络不可达 → UI 不显示技术性 NSError；完整错误记 log，提示「没有新版本」即可（用户裁定原文：「给用户的 UI 不应该有这个提示，记到 log 中。组出一个错误码，然后提示没有新版本 就可以了。」）
+- **实际**：弹窗标题「更新失败」+ 正文整段 NSError description（含 domain/code/内部 UserInfo），用户无法据此操作
+
+### 根因（已实证）
+`UpdaterManager.check()`（macos/Coffer/Updater/UpdaterManager.swift）do/catch 单一捕获：`fetchManifest` 网络层抛错（URLError / OTAHTTPError）与解析/验签/版本错误经同一 `userMessage` 直出 `.failed(String)` 呈现——UI 层无法区分「服务器不可达」与「清单被篡改」，只能把原始错误原文展示给用户
+
+### 修复路径
+仅更新检查阶段的网络层失败（manifest 拉取边界）改呈现：
+1. 网络失败 → 完整 NSError 经 DiagLog 落 log（错误码 **OTA-E-2001** + failing URL + domain/code + 底层错误，`UpdateCopy.checkNetworkFailureLogLine` 纯函数）
+2. 分配诊断码 OTA-E-2001（更新检查网络失败；只在 log，绝不呈现）
+3. UI 呈现 `.upToDate`（「已是最新版本」），不弹错误态
+4. 下载/验签/安装阶段错误呈现不改（后续轮统一，避免一处裁定扫全脸）
+解析/验签/版本/纵深白名单等非网络错误保持 fail-closed `.failed`
+
+### 复现与诊断
+`tools/run_update_tests.sh` TC-UPD-05 注入 `URLError(.cannotConnectToHost)` / `OTAHTTPError(503)` → 修复前 `state=failed("更新失败：Error Domain=NSURLErrorDomain Code=-1004 …")`；修复后 `state == .upToDate` 且 `~/Library/Logs/Coffer-diag.log` 落 `OTA-E-2001` 行。`tools/run_update_ui_tests.sh` 新增 5 断言核销错误码 + 诊断行格式（failing URL/domain+code/非 URLError 兜底）

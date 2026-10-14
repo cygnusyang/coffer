@@ -1505,3 +1505,60 @@ coffer-pro 为私有 GitLab 仓（project 95）；GitLab 对未鉴权请求返�
 
 ### 复现与诊断
 GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97/...` → 200。真机 App「检查更新」拉清单失败（首版呈现「已是最新版本」= 掩蔽实证）。
+
+## BUG-26（🔴 当版修复，核销版本=下一版）：安装流程卡死「正在安装…」——perform 返回后 helper 从未拉起，App 不退出
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 全链路真机测试（BUG-25 通道修复后首次全链路：下载/验签/解压通过，卡在安装）
+**分级**：HIGH / P1（安装流程挂起：App 停在「正在安装…」不退出、更新不落地，用户无路径前进）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
+**状态**：🔴 当版修复（插桩定位中；本轮 fix = 四处 DiagLog 插桩，核销版本=下一版）
+**核销记录**：插桩 fix（AppModel.installUpdate / UpdaterManager.install / OTAInstaller.perform / launchViaLaunchServices 回调四处补 DiagLog）已提交；复验 `tools/run_update_tests.sh` 181/0/2 + `tools/run_update_ui_tests.sh` 73/0 + build 完成 ✅（0 error）。**真机复现 + DiagLog 尾部归因由 lead 执行**——插桩后的首次安装触发即得卡点定位。
+
+### 现象（预期/实际 分行写）
+- **预期**：点「立即安装」→ `installUpdate` 置 .installing → helper 备份/替换/relaunch → 本进程 ~0.5s 后退出
+- **实际**：进度停在「正在安装…」永不前进，App 进程存活、不退出；helper（CofferUpdater.app）从未拉起（无对应进程）；备份/替换/relaunch 均未发生
+
+### 根因（证据链，lead 真机采样实证，卡点待插桩后归因）
+安装窗口内证据链（时间线）：
+1. 下载/解压/验签成功（17:48:05）
+2. config 写入成功（17:48:09）
+3. **UserDefaults 三个 pending key 已写、未被清除** → `perform()` 走到了 launchHelper 且**未抛错**（若 launcher 抛错会走 clearPendingState 回滚）
+4. 进程存活至 17:54（采样时刻）；样本**无任何 Swift 并发线程在跑** → 主线程 Task 挂起在某个不恢复的 suspend 点（有挂起的 async 任务但无线程在跑）
+5. 样本无 `NSApp.terminate` frame → 未走到 `asyncAfter(0.5) → NSApp.terminate`
+6. helper 从未启动
+
+→ 卡点范围收窄为：**perform 返回之后 → asyncAfter(0.5)→terminate 之间**，即 `await updater.install()` 未恢复或恢复后 `await installer.perform(...)` 的 suspend 未回归。openApplication 回调（error 内容）当前被吞（`guard error != nil else { return }`），是无观测盲区。
+
+### 修复路径（本轮 = 插桩定位）
+四处补 DiagLog（步骤进入/退出 + openApplication 回调 error 内容，文案不涉敏感数据）：
+1. `AppModel.installUpdate`——Task 进入 / `updater.install` 返回后 state / asyncAfter 调度 / 回调执行
+2. `UpdaterManager.install`——进入 state / 置 .installing / `installer.perform` 返回 / catch
+3. `OTAInstaller.perform`——进入 / 写配置 / pending key 落盘 / launchHelper 返回 / 各 catch
+4. `OTAInstaller.launchViaLaunchServices`——进入 / helper 缺失 / openApplication 提交 / **回调 error 内容**（原吞错点）
+插桩后的真机复现由 lead 执行，DiagLog 尾部定位卡点后归因修复（插桩行可能保留为常驻诊断或随修复收敛，届时定）。
+
+### 复现与诊断
+真机重放安装触发（lead 复现）→ 读 `~/Library/Logs/Coffer-diag.log` 尾部定位断点（四段哪段缺 = 卡在哪）。测试侧：UpdateTests/UpdateUITests 均为纯逻辑/无 AppModel 驱动，本轮插桩不改行为，门禁绿即编译级验证。
+
+## BUG-27（🔴 当版修复，核销版本=下一版）：CI 签名 provisioning profile 过期——helper 正确拒绝（fail-closed 生效），但发布通道被免费账号 7 天周期击穿
+
+**登记日期**：2026-10-14
+**发现环境**：v2.10.1 OTA 全链路真机测试（与 BUG-26 同轮）——CI 侧签名 profile 过期
+**分级**：HIGH / P1（发布通道阻断：免费账号 profile 7 天有效，过期后 CI 产物签名用过期 profile，安装侧校验拒绝；好的一面 = helper fail-closed 生效，未出现静默接受坏签名）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
+**状态**：🔴 当版修复（检查逻辑待 commit；CI profile 变量已刷新）
+**核销记录**：修复 = `tools/build_macos_app.sh` 签名步加 profile 有效性检查（`security cms -D -i` 解析 ExpirationDate，过期或 <48h 剩余即 die）；CI profile 变量已刷新（2026-10-14）；复验（脚本级校验 + build 完成）见提交。核销版本=下一版。
+
+### 现象（预期/实际 分行写）
+- **预期**：CI 产物签名用有效 profile，安装侧校验通过
+- **实际**：CI 签名用的 provisioning profile 已过期 → 真机安装时 helper 静态校验拒绝（fail-closed，不静默接受）→ 用户看到安装失败，且 CI 侧无提前告警（直到真机才暴露）
+
+### 根因（已实证）
+免费账号 provisioning profile 有效期为 7 天（cycle 由账号类型决定，非证书 1 年）；CI 侧签名 profile 以变量形式存储，未随周期刷新而过期（本机构建侧 profile 当时有效至 2026-10-19，CI 变量陈旧）。构建脚本仅在「文件存在」层面校验 profile，不校验有效性 → 过期 profile 静默进入签名。
+
+### 修复路径
+1. `tools/build_macos_app.sh` 签名步（PROFILE 落定后，Step 3.5 定位处）加有效性检查：`security cms -D -i <profile>` 解析 `ExpirationDate`；**过期或剩余 <48h 即 die**（免费账号 7 天周期，48h 余量覆盖周末刷新窗口），带明确提示（重跑 `make_provisioning_profile.sh` 刷新）
+2. CI profile 变量刷新（lead 侧已执行，2026-10-14）
+3. 防线关系：build 脚本 fail-fast 是「过期 profile 进不了签名」的第一道闸；helper 静态校验是第二道（fail-closed，本次已实证生效）
+
+### 复现与诊断
+CI 侧 profile 变量到期后重跑 pipeline → 构建静默成功但安装侧拒绝（本轮实证）。脚本级验证：对过期 profile 跑新检查 → die + 明确提示；对本机有效 profile（至 2026-10-19）→ 通过。

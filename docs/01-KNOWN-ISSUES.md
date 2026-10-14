@@ -1506,39 +1506,39 @@ coffer-pro 为私有 GitLab 仓（project 95）；GitLab 对未鉴权请求返�
 ### 复现与诊断
 GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97/...` → 200。真机 App「检查更新」拉清单失败（首版呈现「已是最新版本」= 掩蔽实证）。
 
-## BUG-26（🔴 当版修复，核销版本=下一版）：安装流程卡死「正在安装…」——perform 返回后 helper 从未拉起，App 不退出
+## BUG-26（🔴 当版修复，核销版本=下一版）：安装流程卡死「正在安装…」——interactiveDismissDisabled 把 NSApp.terminate 的 quit 当 sheet 交互关闭取消
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 全链路真机测试（BUG-25 通道修复后首次全链路：下载/验签/解压通过，卡在安装）
 **分级**：HIGH / P1（安装流程挂起：App 停在「正在安装…」不退出、更新不落地，用户无路径前进）/ 来源版本 v2.7.0（OTA 首版）/ 发现版本 v2.10.1
-**状态**：🔴 当版修复（插桩定位中；本轮 fix = 四处 DiagLog 插桩，核销版本=下一版）
-**核销记录**：插桩 fix（AppModel.installUpdate / UpdaterManager.install / OTAInstaller.perform / launchViaLaunchServices 回调四处补 DiagLog）已提交；复验 `tools/run_update_tests.sh` 181/0/2 + `tools/run_update_ui_tests.sh` 73/0 + build 完成 ✅（0 error）。**真机复现 + DiagLog 尾部归因由 lead 执行**——插桩后的首次安装触发即得卡点定位。
+**状态**：🔴 当版修复（核销版本=下一版，真机核销判据见下）
+**核销记录**：根因定谳（真机复现 + 插桩 + quit 实验三重实证）+ 修复 commit（程序化关 sheet + dismissing 收窄）已提交；复验 `tools/run_update_tests.sh` 200/0/2（+TC-BUG26-01/02 共 11 断言）+ `tools/run_update_ui_tests.sh` 82/0（+9 断言）+ build 完成 ✅（0 error）。核销版本=下一版（真机判据 1-4 待用户核销）。
 
 ### 现象（预期/实际 分行写）
 - **预期**：点「立即安装」→ `installUpdate` 置 .installing → helper 备份/替换/relaunch → 本进程 ~0.5s 后退出
 - **实际**：进度停在「正在安装…」永不前进，App 进程存活、不退出；helper（CofferUpdater.app）从未拉起（无对应进程）；备份/替换/relaunch 均未发生
 
-### 根因（证据链，lead 真机采样实证，卡点待插桩后归因）
-安装窗口内证据链（时间线）：
-1. 下载/解压/验签成功（17:48:05）
-2. config 写入成功（17:48:09）
-3. **UserDefaults 三个 pending key 已写、未被清除** → `perform()` 走到了 launchHelper 且**未抛错**（若 launcher 抛错会走 clearPendingState 回滚）
-4. 进程存活至 17:54（采样时刻）；样本**无任何 Swift 并发线程在跑** → 主线程 Task 挂起在某个不恢复的 suspend 点（有挂起的 async 任务但无线程在跑）
-5. 样本无 `NSApp.terminate` frame → 未走到 `asyncAfter(0.5) → NSApp.terminate`
-6. helper 从未启动
+### 根因（已定谳，lead 真机三重实证）
+1. **插桩全链走完**：install → perform → openApplication error=nil → asyncAfter 回调执行 → `NSApp.terminate` 被调用——但进程活着，主线程回到空闲事件循环（sample 17227 无 terminate 帧）。（插桩排除「perform 返回后 await 未回归」推断——perform 与 asyncAfter 全走完，卡点在 terminate 生效。）
+2. **quit AppleEvent 实验**：对活体实例发 quit → 返回 -128「用户已取消」→ 退出被 App 内部主动取消
+3. 全仓无 `applicationShouldTerminate`（唯一 terminate 相关 = ShouldTerminateAfterLastWindowClosed=false）
+→ **实施者**：`Views/UpdateSheet.swift` 的 `.interactiveDismissDisabled(UpdateCopy.isBusy(state))`——`.installing` 态 busy=true，SwiftUI 把 `NSApp.terminate` 的 quit 请求视为 sheet 的**交互式关闭尝试**并取消整个终止流程（AppKit 返回 userCanceledErr）。旁证：此前卡死实例 63220 对 osascript quit 同样无响应（同一机制）。helper（waitTimeout=30s，`Installer/main.swift:52`）等不到本 App pid 退出 → 超时 exit 3 不写 result，是**下游后果**非独立 bug。
 
-→ 卡点范围收窄为：**perform 返回之后 → asyncAfter(0.5)→terminate 之间**，即 `await updater.install()` 未恢复或恢复后 `await installer.perform(...)` 的 suspend 未回归。openApplication 回调（error 内容）当前被吞（`guard error != nil else { return }`），是无观测盲区。
+### 修复路径（定谳后）
+1. **程序化关 sheet**（AppModel.installUpdate）：install() 返回 `.installing` 后、terminate 前 `showUpdateSheet = false`——程序化 dismiss（绑定值变化）不受 interactiveDismissDisabled 拦截；沿用 0.5s 延迟窗口后 terminate
+2. **dismissing 范围收窄**（UpdateSheet.swift）：`.interactiveDismissDisabled(UpdateCopy.blocksInteractiveDismiss(state))`——只 checking/downloading 拦交互关闭（防中途打断状态机）；**.installing 放开**（此时 App 即将退出，拦无意义且有害）
+3. **复盘同型雷**（已清，留档不改）：RootView.swift:27 无条件 interactiveDismissDisabled = 首启引导 sheet，无「稍后 terminate」，且 set 分支已有程序化关闭兜底——非雷；StatusItemController.swift:150 状态栏退出 = 用户主动 quit，非「busy + 稍后 terminate」组合，且 dismissing 收窄后 installing 态 quit 被放行（无害，App 本就即将退出）——均不需改
+4. 四处 DiagLog 插桩保留为常驻诊断（不再归为临时插桩）
 
-### 修复路径（本轮 = 插桩定位）
-四处补 DiagLog（步骤进入/退出 + openApplication 回调 error 内容，文案不涉敏感数据）：
-1. `AppModel.installUpdate`——Task 进入 / `updater.install` 返回后 state / asyncAfter 调度 / 回调执行
-2. `UpdaterManager.install`——进入 state / 置 .installing / `installer.perform` 返回 / catch
-3. `OTAInstaller.perform`——进入 / 写配置 / pending key 落盘 / launchHelper 返回 / 各 catch
-4. `OTAInstaller.launchViaLaunchServices`——进入 / helper 缺失 / openApplication 提交 / **回调 error 内容**（原吞错点）
-插桩后的真机复现由 lead 执行，DiagLog 尾部定位卡点后归因修复（插桩行可能保留为常驻诊断或随修复收敛，届时定）。
+### 真机核销判据（UI 层 terminate 行为，随下一版发布核销）
+1. 触发完整更新（检查 → 下载 → 验签 → 安装）→ App 在「正在安装…」后 ~0.5s 内退出，不复现卡死
+2. 安装中（.installing）Esc / 点击外部可关闭 sheet（不拦），且 App 仍按计划退出
+3. checking / downloading 态交互关闭仍被拦截（状态机不被中途打断）
+4. helper 在 App 退出后完成备份/替换/relaunch，新版本启动消费 result，全链路闭环
 
 ### 复现与诊断
-真机重放安装触发（lead 复现）→ 读 `~/Library/Logs/Coffer-diag.log` 尾部定位断点（四段哪段缺 = 卡在哪）。测试侧：UpdateTests/UpdateUITests 均为纯逻辑/无 AppModel 驱动，本轮插桩不改行为，门禁绿即编译级验证。
+- 复现：安装触发即卡死（旧版）。新版 `~/Library/Logs/Coffer-diag.log` 尾部应见「程序化关闭更新 sheet（showUpdateSheet=false）」+「asyncAfter 回调执行 → NSApp.terminate」，其后进程正常退出（无 quit 被取消迹象）
+- 判据：见「真机核销判据」1-4
 
 ## BUG-27（🔴 当版修复，核销版本=下一版）：CI 签名 provisioning profile 过期——helper 正确拒绝（fail-closed 生效），但发布通道被免费账号 7 天周期击穿
 

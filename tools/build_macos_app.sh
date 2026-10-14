@@ -183,6 +183,19 @@ PROFILE="${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile"
 if [[ ! -f "${PROFILE}" ]]; then
   die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
 fi
+# BUG-27（2026-10-14）：免费账号 profile 7 天有效，此前仅校验「文件存在」，
+# 过期 profile 静默进签名（CI 变量陈旧即中招，真机 helper fail-closed 拒绝才
+# 暴露）。此处解析 ExpirationDate（UTC）：过期或剩余 <48h 即 fail-fast 拒绝——
+# 48h 余量覆盖周末刷新窗口。含 coffer CLI 与 App 两处嵌入（同一 PROFILE）。
+PROFILE_EXPIRY="$(security cms -D -i "${PROFILE}" 2>/dev/null \
+  | plutil -extract ExpirationDate raw -o - - 2>/dev/null || true)"
+if [[ -z "${PROFILE_EXPIRY}" ]]; then
+  die "无法解析 provisioning profile 过期时间（${PROFILE}）：请确认是有效 profile（security cms -D -i 可解），或重跑 ./tools/make_provisioning_profile.sh。"
+fi
+PROFILE_REMAIN_S=$(( $(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "${PROFILE_EXPIRY}" +%s) - $(date -u +%s) ))
+if [[ ${PROFILE_REMAIN_S} -lt 172800 ]]; then
+  die "provisioning profile 将于 ${PROFILE_EXPIRY}（UTC）过期，剩余 $((PROFILE_REMAIN_S/3600))h < 48h：请重跑 ./tools/make_provisioning_profile.sh 刷新（免费账号 7 天周期，过期 profile 进签名会导致安装侧校验失败）。"
+fi
 
 COFFER_REL="${CORE_TARGET}/release/coffer"
 step "    cargo build --release -p cf-mcp --bin coffer"

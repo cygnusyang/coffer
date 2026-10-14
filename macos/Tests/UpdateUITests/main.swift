@@ -216,6 +216,30 @@ do {
     check("isBusy upToDate → false", !UpdateCopy.isBusy(.upToDate))
 }
 
+// MARK: - BUG-26 修复（TC-OTA-UI-07b）：dismissing 收窄（installing 放开）+ installDismissPlan
+
+// .interactiveDismissDisabled 语义收窄：checking/downloading 拦；**.installing
+// 放开**——否则 SwiftUI 把 NSApp.terminate 的 quit 当 sheet 交互关闭尝试并取消
+// 终止（AppKit userCanceledErr，BUG-26 真机三重实证）。
+do {
+    check("blocksInteractiveDismiss checking → true", UpdateCopy.blocksInteractiveDismiss(.checking))
+    check("blocksInteractiveDismiss downloading → true", UpdateCopy.blocksInteractiveDismiss(.downloading(0.5)))
+    check("blocksInteractiveDismiss installing → false（KEY：放 terminate）",
+          !UpdateCopy.blocksInteractiveDismiss(.installing))
+    check("blocksInteractiveDismiss idle → false", !UpdateCopy.blocksInteractiveDismiss(.idle))
+    check("blocksInteractiveDismiss upToDate → false", !UpdateCopy.blocksInteractiveDismiss(.upToDate))
+    check("blocksInteractiveDismiss failed → false", !UpdateCopy.blocksInteractiveDismiss(.failed("x")))
+}
+
+// installDismissPlan：install() 返回后 .installing → 先关 sheet 再 terminate；
+// 其余（含 .failed）→ 留在前台呈现错误。
+do {
+    check("installDismissPlan installing → dismissThenTerminate",
+          UpdateCopy.installDismissPlan(state: .installing) == .dismissThenTerminate)
+    check("installDismissPlan failed → none", UpdateCopy.installDismissPlan(state: .failed("x")) == .none)
+    check("installDismissPlan downloaded → none", UpdateCopy.installDismissPlan(state: .downloaded) == .none)
+}
+
 // MARK: - 进度文案（TC-OTA-UI-08）
 
 do {

@@ -35,9 +35,14 @@ struct UpdateSheet: View {
         }
         .frame(width: 440)
         .padding()
-        // checking/installing 禁一切：同时禁 ESC/点击外部关闭，防中途打断状态机
-        // （依赖 check()/install() 内置硬超时，超时后回到 failed，不会永久卡死）。
-        .interactiveDismissDisabled(UpdateCopy.isBusy(state))
+        // BUG-26 修复（2026-10-14 真机三重实证）：.interactiveDismissDisabled 曾
+        // 在 .installing（isBusy=true）拦交互关闭——SwiftUI 把 installUpdate 随后
+        // 的 NSApp.terminate 当作 sheet 交互关闭尝试并取消整个终止流程（AppKit
+        // userCanceledErr，App 卡「正在安装…」永不退出）。故 dismissing 语义收窄
+        // 为 blocksInteractiveDismiss（checking/downloading 拦；.installing 放开，
+        // 此时 App 即将退出，拦无意义且有害）。checking/downloading 的关闭拦截
+        // 依赖 check()/download() 内置硬超时，超时后回到 failed，不会永久卡死。
+        .interactiveDismissDisabled(UpdateCopy.blocksInteractiveDismiss(state))
         .alert("安装更新", isPresented: $showInstallConfirm) {
             Button("安装", role: .destructive) {
                 model.installUpdate()

@@ -112,6 +112,35 @@ enum UpdateCopy {
         }
     }
 
+    /// sheet 交互式关闭是否应被禁止（.interactiveDismissDisabled）：
+    /// checking/downloading 拦（防中途打断状态机，§2.6）；**.installing 放开**——
+    /// App 即将经 NSApp.terminate 退出，此时 SwiftUI 会把 quit 请求当作 sheet 的
+    /// 交互式关闭尝试并取消整个终止流程（AppKit userCanceledErr，BUG-26 真机
+    /// 三重实证），installing 拦交互关闭无意义且有害。
+    static func blocksInteractiveDismiss(_ state: UpdaterState) -> Bool {
+        switch state {
+        case .checking, .downloading: return true
+        default: return false
+        }
+    }
+
+    /// install() 返回后的收尾计划（BUG-26）：.installing（helper 已请求拉起、本
+    /// 进程即将退出）→ 程序化关闭更新 sheet 后 0.5s 终止；其余状态（.failed 等）
+    /// → 留在前台呈现错误，不动 sheet 不终止。AppModel.installUpdate 据此刻画
+    /// 行为；纯函数供测试断言「先关 sheet、再 terminate」的时序决策。
+    enum InstallDismissPlan {
+        /// 关更新 sheet（程序化 dismiss 不受 interactiveDismissDisabled 拦截）→
+        /// asyncAfter(updaterTerminateDelay) → NSApp.terminate。
+        case dismissThenTerminate
+        /// 非 .installing：留在前台呈现错误。
+        case none
+    }
+
+    static func installDismissPlan(state: UpdaterState) -> InstallDismissPlan {
+        if case .installing = state { return .dismissThenTerminate }
+        return .none
+    }
+
     /// 该 state 下是否可发起一次新的检查（checking/downloading/installing 中禁止
     /// 重复触发；其余状态允许手动复查）。
     static func canStartCheck(_ state: UpdaterState) -> Bool {

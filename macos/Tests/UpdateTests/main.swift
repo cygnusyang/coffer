@@ -2211,6 +2211,41 @@ do {
     check("TC-OTA-CACHE", "夹具异常", false, "\(error)")
 }
 
+// MARK: - BUG-26 修复：installing 后程序化关 sheet + dismissing 放开 installing
+
+// installDismissPlan：AppModel.installUpdate 据此刻画「install 返回后」行为——
+// .installing → 先关更新 sheet 再 terminate；其余（含 .failed）→ 留在前台。
+do {
+    check("TC-BUG26-01", "installDismissPlan(.installing)=dismissThenTerminate",
+          UpdateCopy.installDismissPlan(state: .installing) == .dismissThenTerminate)
+    check("TC-BUG26-01", "installDismissPlan(.failed)=none（留在前台呈现错误）",
+          UpdateCopy.installDismissPlan(state: .failed("OTA-E-2001")) == .none)
+    check("TC-BUG26-01", "installDismissPlan(.idle)=none（不关不终止）",
+          UpdateCopy.installDismissPlan(state: .idle) == .none)
+    check("TC-BUG26-01", "installDismissPlan(.downloaded)=none（未到安装中）",
+          UpdateCopy.installDismissPlan(state: .downloaded) == .none)
+}
+
+// blocksInteractiveDismiss：checking/downloading 拦交互关闭；**.installing 放开**
+// ——否则 SwiftUI 把 NSApp.terminate 的 quit 当 sheet 交互关闭尝试并取消终止
+// （BUG-26 根因，真机三重实证）。
+do {
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.checking)=true（防中断检查）",
+          UpdateCopy.blocksInteractiveDismiss(.checking))
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.downloading)=true（防中断下载）",
+          UpdateCopy.blocksInteractiveDismiss(.downloading(0.5)))
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.installing)=false（KEY：不拦，放 terminate）",
+          !UpdateCopy.blocksInteractiveDismiss(.installing))
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.idle)=false",
+          !UpdateCopy.blocksInteractiveDismiss(.idle))
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.downloaded)=false",
+          !UpdateCopy.blocksInteractiveDismiss(.downloaded))
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.upToDate)=false",
+          !UpdateCopy.blocksInteractiveDismiss(.upToDate))
+    check("TC-BUG26-02", "blocksInteractiveDismiss(.failed)=false",
+          !UpdateCopy.blocksInteractiveDismiss(.failed("OTA-E-2001")))
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

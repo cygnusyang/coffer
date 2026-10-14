@@ -1514,10 +1514,19 @@ final class AppModel: ObservableObject {
         Task {
             await updater.install()
             DiagLog.append("BUG-26 插桩：updater.install 返回，state=\(String(describing: updater.state))")
-            guard updater.state == .installing else {
+            guard UpdateCopy.installDismissPlan(state: updater.state) == .dismissThenTerminate else {
                 DiagLog.append("BUG-26 插桩：install 未到 .installing，不退出（留在前台呈现错误）")
                 return
             }
+            // BUG-26 根因修复：先程序化关掉更新 sheet 再 terminate。.installing 下
+            // UpdateSheet 的 interactiveDismissDisabled 曾把 NSApp.terminate 的 quit
+            // 当作 sheet 交互关闭尝试并取消整个终止（AppKit userCanceledErr，真机
+            // 三重实证）；程序化 dismiss（showUpdateSheet=false，绑定值变化）不受
+            // interactiveDismissDisabled 拦截。UpdateSheet 侧 dismissing 也已放开
+            // （UpdateCopy.blocksInteractiveDismiss 不含 .installing），此处属双保险
+            // + 呈现收尾（先关 sheet，再留 0.5s 窗口后退出）。
+            showUpdateSheet = false
+            DiagLog.append("BUG-26 插桩：install 返回 .installing，程序化关闭更新 sheet（showUpdateSheet=false）")
             DiagLog.append("BUG-26 插桩：调度 asyncAfter(\(Self.updaterTerminateDelay)s) → NSApp.terminate")
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.updaterTerminateDelay) {
                 DiagLog.append("BUG-26 插桩：asyncAfter 回调执行 → NSApp.terminate")

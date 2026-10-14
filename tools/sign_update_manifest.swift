@@ -18,12 +18,16 @@
 //                              必填
 //   MF_SECURITY_CRITICAL       可选，"true"/"false"，默认 "false"
 //   MF_NOTES                   可选发布说明；空串则省略该字段
+//   MF_SHA256                  可选（v2.10.3 T1），zip 产物的 SHA256（64 位 hex）；
+//                              缺省/空串则不写入字段（旧行为，向后兼容），非空必须
+//                              为 64 位 hex 小写
 //
 // ⚠️ 私钥只经环境变量传入，本工具不打印、不回显、不落盘私钥；stdout 仅输出最终
 // 清单，stderr 仅输出错误诊断。
 //
 // 边界校验（fail fast）：cdHash 必须为 40 位 hex（kSecCodeInfoUnique = 20 字节，
-// 与 extract_cdhash.sh 契约一致）；downloadUrl 必须为 https://；必填字段非空。
+// 与 extract_cdhash.sh 契约一致）；sha256（若提供）必须为 64 位 hex；downloadUrl
+// 必须为 https://；必填字段非空。
 // 校验失败即 fail()（stderr 一句原因 + 非零退出，无堆栈噪音），不静默降级——
 // 错误值会直接导致 OTA 验签失败。
 import Foundation
@@ -83,6 +87,13 @@ var fields: [String: Any] = [
 ]
 if let notes = env["MF_NOTES"], !notes.isEmpty {
     fields["notes"] = notes
+}
+// v2.10.3 T1：zip SHA256 可选（缺省/空串不写入，向后兼容旧清单；非空须 64 位 hex）。
+if let sha256 = env["MF_SHA256"], !sha256.isEmpty {
+    guard sha256.count == 64, sha256.allSatisfy({ $0.isHexDigit }) else {
+        fail("MF_SHA256 必须为 64 位 hex（收到 \(sha256.count) 字符）")
+    }
+    fields["sha256"] = sha256.lowercased()
 }
 
 // --- canonical JSON（docs/35 §6.1 契约：双侧同实现，App 验签须用同一序列化）---

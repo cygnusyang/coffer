@@ -8,12 +8,14 @@
 # 三道检查，任一失败即告警（明确错误信息 + 非零退出码）：
 #   ① permalink 清单可达：跟随重定向后必须最终 200（302→200），JSON 可解析、
 #      必需字段齐全（schemaVersion/appId/version/minimumVersion/buildTime/
-#      downloadUrl/cdHash/securityCritical/signature）、cdHash 为 40 位 hex。
+#      downloadUrl/cdHash/securityCritical/signature/**sha256**，sha256 自 v2.10.3
+#      T1 起为必含项）、cdHash 为 40 位 hex、**sha256 为 64 位 hex 小写**。
 #   ② zip Range 探测：manifest.downloadUrl 前 64 字节必须 206/200 且 PK\x03\x04
 #      魔数（zip 可读）。
 #   ③ manifest 签名可验：canonical JSON 契约 + Ed25519（verify_update_manifest.
 #      swift），公钥从 App 源码 ManifestVerifier.swift 的 cofferUpdatePublicKeyBase64
 #      自动提取——单源，密钥轮换只改一处而另一处未跟 → 验签失败 → 探针告警。
+#      （sha256 字段存在性/格式亦在 verify helper 内复核，双保险。）
 #
 # 另：manifest.version 若落在占位区间（≥99.x，如 v99.99.99 冒烟/测试 release）则
 # 打 WARNING（不硬失败）——通道健康但「最新版」指向非生产版本，生产 App 点检查会
@@ -92,17 +94,22 @@ except Exception as e:
     die("JSONERR " + str(e), 1)
 if not isinstance(d, dict):
     die("NOT_DICT: 响应非 JSON 对象（字段校验需 dict）", 5)
-req = ["schemaVersion","appId","version","minimumVersion","buildTime","downloadUrl","cdHash","securityCritical","signature"]
+req = ["schemaVersion","appId","version","minimumVersion","buildTime","downloadUrl","cdHash","securityCritical","signature","sha256"]
 missing = [k for k in req if k not in d or d[k] in (None, "")]
 if missing:
     die("MISSING " + ",".join(missing), 2)
 cd = d["cdHash"]
 if len(cd) != 40 or not all(c in "0123456789abcdefABCDEF" for c in cd):
     die("CDHASH_INVALID " + cd, 3)
+sha = d["sha256"]
+# T1（v2.10.3）：sha256 必含（新清单必须有）+ 64 位 hex 小写（App 比对期望值为小写，
+# 大写会误拒合法包；探针作发布侧防漂移门禁）
+if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha):
+    die("SHA256_INVALID " + sha, 6)
 if not str(d["downloadUrl"]).startswith("https://"):
     die("URL_NOT_HTTPS", 4)
 major = int(d["version"].split(".")[0]) if d["version"].split(".")[0].isdigit() else 0
-print("OK version=%s appId=%s cdHash=%s" % (d["version"], d["appId"], cd))
+print("OK version=%s appId=%s cdHash=%s sha256=%s" % (d["version"], d["appId"], cd, sha))
 print("DOWNLOAD_URL=%s" % d["downloadUrl"])
 print("PLACEHOLDER=%s" % ("yes" if major >= 99 else "no"))
 PYEOF
@@ -113,7 +120,7 @@ PYEOF
     else
         PY_OUT="$(cat "$CHECK_OUT")"
         DOWNLOAD_URL="$(echo "$PY_OUT" | sed -n 's/^DOWNLOAD_URL=//p')"
-        note "① OK: 清单字段齐全（version=$(echo "$PY_OUT" | sed -n 's/^OK version=\([^ ]*\).*/\1/p'), appId=$(echo "$PY_OUT" | sed -n 's/.*appId=\([^ ]*\).*/\1/p')）"
+        note "① OK: 清单字段齐全（version=$(echo "$PY_OUT" | sed -n 's/^OK version=\([^ ]*\).*/\1/p'), appId=$(echo "$PY_OUT" | sed -n 's/.*appId=\([^ ]*\).*/\1/p'), sha256=$(echo "$PY_OUT" | sed -n 's/.*sha256=\([^ ]*\).*/\1/p')）"
         if echo "$PY_OUT" | grep -q '^PLACEHOLDER=yes'; then
             if [ "${OTA_PROBE_STRICT_VERSION:-0}" = "1" ]; then
                 note "ERROR ①: manifest.version >= 99.x（疑似冒烟/占位 release），且 OTA_PROBE_STRICT_VERSION=1 → 硬失败"

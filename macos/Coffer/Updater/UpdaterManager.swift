@@ -14,6 +14,8 @@ struct UpdateInfo: Equatable {
     let minimumVersion: String
     let downloadUrl: URL
     let cdHash: String
+    /// 下载 zip 的 SHA256（v2.10.3 T1，可选；nil/空串 = 跳过校验，向后兼容旧清单）。
+    let sha256: String?
     let buildTime: Date
     let securityCritical: Bool
     let notes: String?
@@ -31,6 +33,7 @@ struct UpdateInfo: Equatable {
         self.minimumVersion = manifest.minimumVersion
         self.downloadUrl = url
         self.cdHash = manifest.cdHash
+        self.sha256 = manifest.sha256
         self.buildTime = date
         self.securityCritical = manifest.securityCritical
         self.notes = manifest.notes
@@ -207,6 +210,15 @@ final class UpdaterManager: ObservableObject {
             state = .downloading(0)
             let archive = try await downloader.download(from: info.downloadUrl) { progress in
                 self.state = .downloading(progress)
+            }
+            // T1（v2.10.3，docs/01 下载完整性加固）：下载落盘后、解压前校验 zip SHA256
+            // ——清单 sha256 存在且非空即强制比对，不匹配 fail-closed 拒装；缺省/空串
+            // 跳过（向后兼容 v2.10.2 旧清单）。流式算哈希（UpdateChecksum，不整包读内存）。
+            if let expected = info.sha256, !expected.isEmpty {
+                let actual = try UpdateChecksum.sha256Hex(of: archive)
+                guard actual == expected else {
+                    throw UpdateChecksumError.mismatch
+                }
             }
             let extractedApp = try await installer.prepare(downloadedArchive: archive)
             try verifier.verifyApp(at: extractedApp, expectedCdHash: info.cdHash)

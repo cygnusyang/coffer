@@ -4,7 +4,8 @@
 # 输入（环境变量，语义见 sign_update_manifest.swift）：
 #   UPDATE_SIGNING_KEY_BASE64   必填，Ed25519 私钥原始种子（32 字节）base64（CI secret）
 #   MF_VERSION / MF_MINIMUM_VERSION / MF_BUILD_TIME / MF_DOWNLOAD_URL / MF_CDHASH  必填
-#   MF_SECURITY_CRITICAL / MF_NOTES  可选
+#   MF_SECURITY_CRITICAL / MF_NOTES / MF_SHA256  可选（MF_SHA256 = zip 的 SHA256
+#     64 位 hex，v2.10.3 T1 下载完整性；缺省/空串不写入字段，向后兼容）
 # 输出：完整 update-manifest.json（含 signature）写到 stdout；诊断走 stderr。
 #
 # ⚠️ 私钥纪律：只经环境变量传入（CI secret UPDATE_SIGNING_KEY_BASE64），本脚本与

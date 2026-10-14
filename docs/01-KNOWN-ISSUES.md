@@ -1698,8 +1698,8 @@ helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agen
 2. **relaunch stderr 诊断加固**：launchViaOpen 捕获 open 的 stderr 并入错误信息——本次 open exit 1 无错误文本，现场无法一眼定位；下次据此区分 Gatekeeper 拒启 vs 其它启动故障。
 3. **App 侧不动**：沙盒 App 剥自己下载文件的 quarantine 受限，helper 代劳是正解。
 
-### 增强备注（登记不实现，下版评估）
-**清单加 zip SHA256 前置校验**：manifest 增加 downloadUrl 对应 zip 的 SHA256，App 下载后解压前先校验——防下载损坏/传输篡改（与剥隔离正交，属下载完整性加固，文档化留待下版）。
+### 增强落地（v2.10.3，T1 下载完整性加固）
+**清单加 zip SHA256 前置校验（已实现）**：manifest 增加 downloadUrl 对应 zip 的 SHA256（可选字段，64 位 hex 小写；缺省/空串跳过校验，向后兼容旧清单），App 下载落盘后、解压前对 zip 字节流式算 SHA256 强制比对，不匹配 fail-closed 拒装（文案「下载包完整性校验失败（SHA256 不匹配），已拒绝安装。」）——防下载损坏/传输篡改（与剥隔离正交，属下载完整性加固）。实现：`UpdateManifest.sha256`（可选）+ `UpdateChecksum`（CryptoKit 流式）+ `UpdaterManager.download()` 校验点 + `sign_update_manifest`/CI 的 `MF_SHA256` + 探针 `sha256` 必含与 64hex 校验 + docs/35 §6.1 schema 行。commit 由 lead 补（工作树待集成）。
 
 ### 测试（门禁，全绿只增不减）
 - `run_ota_integration_tests.sh`：TC-INT-04 带 quarantine 载荷全流程——newApp 副本打 quarantine（xattr -w 测试值 `0286;00000000;Coffer;`，spike 实证普通用户可写）→ exec helper → 断言替换成功 + relaunch gate 通过 + 替换后目标无 quarantine + 文件日志含「已剥除隔离标记」；TC-INT-01/02/03 不回归
@@ -1724,5 +1724,5 @@ helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agen
 | BUG-30 | f56b4b5 | TC-BUG30-01~08 + 真机「取参来源：固定路径」命中 |
 | BUG-31 | b8f20ef | TC-INT-04 十二项 + 真机剥隔离命中（本次判据①）|
 
-门禁基线：cargo 1409/0/10 + UpdateTests 217/0/2 + UpdateUITests 91/0 + OTA 集成 38/0/0。
-顺延：#89 自证页「完全离线」措辞张力（v2.10.3 候选）；增强：manifest 加 zip SHA256 前置校验（登记未实现）。
+门禁基线：cargo 1409/0/10 + UpdateTests 227/0/2（T1 新增 TC-SHA-01/02 + TC-CKSM-01~05，自 217 增至 227）+ UpdateUITests 91/0 + OTA 集成 38/0/0。
+顺延：#89 自证页「完全离线」措辞张力（v2.10.3 候选）。~~增强：manifest 加 zip SHA256 前置校验（登记未实现）~~ → 已随 v2.10.3 T1 落地，见上节。

@@ -13,8 +13,10 @@
 //                      ManifestVerifier.swift 的 cofferUpdatePublicKeyBase64 必须
 //                      一致（run_ota_probe.sh 从 App 源码自动提取并传入，杜绝双源
 //                      漂移——密钥轮换只改一处，另一处未跟即验签失败 → 探针告警）。
+// v2.10.3 T1（探针强化）：新清单必须含 sha256 字段且为 64 位 hex 小写（下载完整性
+// 前置校验的声明源）；缺字段/格式非法 → 退出码 1（与验签失败同门禁，防发布侧漏传）。
 // 退出码：0 = 验签通过（stdout 一行 VERIFY=VALID）；1 = 验签失败 / 清单损坏 /
-//   canonical 重建失败；2 = 用法错误 / 解析错误。
+//   sha256 缺字段或格式非法 / canonical 重建失败；2 = 用法错误 / 解析错误。
 import Foundation
 import CryptoKit
 
@@ -41,6 +43,15 @@ guard let sigB64 = obj["signature"] as? String, !sigB64.isEmpty,
 guard let pubData = Data(base64Encoded: pubB64), pubData.count == 32,
       let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: pubData) else {
     fail(2, "公钥 base64 解码失败或非 32 字节 Ed25519 公钥")
+}
+
+// T1（v2.10.3）：新清单必须含 sha256（下载 zip 完整性声明源），且 64 位 hex 小写。
+guard let sha256 = obj["sha256"] as? String, !sha256.isEmpty else {
+    fail(1, "清单缺少 sha256 字段（v2.10.3 T1 起新清单必须含下载 zip 的 SHA256）")
+}
+guard sha256.count == 64, sha256.allSatisfy({ $0.isHexDigit }),
+      sha256.lowercased() == sha256 else {
+    fail(1, "清单 sha256 字段格式非法：须 64 位 hex 小写（收到 \(sha256.count) 字符）")
 }
 
 // canonical 重建（契约：去除 signature 字段后重新序列化）。

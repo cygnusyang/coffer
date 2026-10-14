@@ -127,6 +127,9 @@ release:
         macos/build/Coffer.app/Contents/Info.plist 2>/dev/null || true)"
       [ -n "$VERSION" ] || VERSION="${CI_COMMIT_TAG#v}"
       echo "OTA version=$VERSION"
+      # T1（v2.10.3）：zip 产物 SHA256（下载完整性前置校验的声明源；签名写入清单）
+      ZIP_SHA256="$(shasum -a 256 "macos/build/Coffer-${TAG}.zip" | awk '{print $1}')"
+      echo "产物 SHA256=$ZIP_SHA256"
       # generic package 上传 URL（同一 URL 即资产下载 URL，对 job token/任意已授权 GET 开放）
       PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coffer/${VERSION}"
       # OTA 匿名可达面（BUG-25）：清单 downloadUrl 指向公开仓 97 的 zip——
@@ -140,6 +143,7 @@ release:
       MF_BUILD_TIME="$BUILD_TIME" \
       MF_DOWNLOAD_URL="$DOWNLOAD_URL" \
       MF_CDHASH="$CDHASH" \
+      MF_SHA256="$ZIP_SHA256" \
       MF_SECURITY_CRITICAL="$OTA_SECURITY_CRITICAL" \
       ./tools/sign_update_manifest.sh > macos/build/update-manifest.json
       cat macos/build/update-manifest.json

@@ -2,6 +2,10 @@
 //
 // 解析（Codable）+ 显式校验（schemaVersion / appId / 必需字段），全部失败
 // 路径显式报错（拒装）。signature 为必需字段（验签在 ManifestVerifier）。
+// sha256 为可选字段（v2.10.3 T1，docs/01 下载完整性加固）：存在且非空即须与
+// 下载 zip 字节一致（校验在 UpdaterManager.download，见 UpdateChecksum.swift）；
+// 缺省或空串跳过（向后兼容 v2.10.2 旧清单）。字段随 canonical JSON 一并被签名
+// 覆盖（去 signature 后的完整 dict）。
 
 import Foundation
 
@@ -22,7 +26,11 @@ struct UpdateManifest: Codable, Equatable {
     let cdHash: String
     let securityCritical: Bool
     let notes: String?
-    /// base64 Ed25519 签名（canonical(前 9 字段 JSON)，契约 6.1）。
+    /// 下载 zip 的 SHA256（v2.10.3 T1，可选：缺省/空串跳过校验，向后兼容旧清单；
+    /// 存在且非空时下载后解压前强制比对，不匹配拒装——见 UpdateChecksum.swift）。
+    /// 随 canonical JSON 被签名覆盖（去 signature 后的完整 dict，契约 6.1）。
+    let sha256: String?
+    /// base64 Ed25519 签名（canonical(除 signature 外全字段 JSON)，契约 6.1）。
     let signature: String
 
     /// 清单解析与合法性显式错误（fail-closed：任何不满足即拒装）。

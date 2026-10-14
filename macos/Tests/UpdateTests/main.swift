@@ -21,7 +21,9 @@
 //   - M-3：launcher 抛错 → pending keys + 已写配置回滚，下次 consume no-op；
 //   - C-1：consume 删备份前校验 backupDir 前缀（防 prefs 被改指向任意文件误删）；
 //   - LOW：host 白名单大小写不敏感（对齐 UpdateCopy 口径）；
-//   - 便捷构造 UpdaterManager() 生产接线（编译级验证）。
+//   - 便捷构造 UpdaterManager() 生产接线（编译级验证）；
+//   - T1（v2.10.3）sha256 下载完整性：可选字段解析（有/无/空串）+ canonical 覆盖
+//     （篡改拒验）+ UpdateChecksum 已知向量 + download() 匹配放行/不匹配拒装/缺省跳过。
 //
 // 注：HoldingFetcher/Downloader 的计数放在 continuation body 内——`await
 // withCheckedThrowingContinuation` 本身是异步调用，await 前自增会让自旋方在
@@ -67,7 +69,9 @@ enum TestFixture {
         "https://github.com/cygnusyang/coffer/releases/download/v2.7.0/Coffer-v2.7.0.zip"
     static let sampleCdHash = "1e5f59c34a30849287d969095a91feb33b940606"
 
-    /// 清单 9 个被签名字段的 dict（契约 6.1；signature 由签名时再补）。
+    /// 清单被签名字段的 dict（契约 6.1；signature 由签名时再补）。
+    /// sha256 可选（v2.10.3 起，T1）：传非空即写入字段；nil 则省略（旧清单形态，
+    /// 向后兼容——无字段仍可解析验签）。
     static func manifestFields(
         schemaVersion: Int = UpdateManifest.currentSchemaVersion,
         appId: String = UpdateManifest.expectedAppId,
@@ -77,7 +81,8 @@ enum TestFixture {
         downloadUrl: String = validDownloadUrl,
         cdHash: String = sampleCdHash,
         securityCritical: Bool = false,
-        notes: String? = "发布说明"
+        notes: String? = "发布说明",
+        sha256: String? = nil
     ) -> [String: Any] {
         var fields: [String: Any] = [
             "schemaVersion": schemaVersion,
@@ -92,7 +97,28 @@ enum TestFixture {
         if let notes {
             fields["notes"] = notes
         }
+        if let sha256 {
+            fields["sha256"] = sha256
+        }
         return fields
+    }
+
+    /// 写一个临时文件返回 URL（SHA256 校验测试用；名字带 UUID 防并发测试串扰）。
+    static func makeTempFile(_ content: Data, name: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("coffer-t1-\(name)-\(UUID().uuidString).bin")
+        try content.write(to: url)
+        return url
+    }
+
+    /// 已知向量：SHA256("hello world")（CryptoKit 独立验算落定的常量，防算法/实现
+    /// 双双漂移——测试期望值不与被测实现共用计算路径）。
+    static let knownHelloWorldSha256 =
+        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+
+    /// 用 CryptoKit 直接算 Data 的 SHA256 hex（匹配/不匹配测试的期望值）。
+    static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// canonical(9 字段) → Ed25519 签名 → 组装完整清单 JSON 字节。
@@ -469,6 +495,130 @@ do {
     }
 } catch {
     check("TC-MAN", "夹具异常", false, "\(error)")
+}
+
+// MARK: - TC-SHA sha256 可选字段（v2.10.3 T1：存在即校验；缺省/空串跳过，向后兼容）
+
+do {
+    // 有字段：解析成功且字段正确
+    let sha = TestFixture.sha256Hex(Data("hello world".utf8))
+    let withData = try TestFixture.signedManifestData(
+        fields: TestFixture.manifestFields(sha256: sha))
+    let m1 = try UpdateManifest.parse(withData)
+    check("TC-SHA-01", "sha256 字段存在 → 解析成功且值正确", m1.sha256 == sha,
+          "got \(String(describing: m1.sha256))")
+
+    // 无字段（v2.10.2 旧清单形态）→ sha256 == nil，向后兼容仍可解析验签
+    let noData = try TestFixture.signedManifestData(fields: TestFixture.manifestFields(sha256: nil))
+    let m2 = try UpdateManifest.parse(noData)
+    check("TC-SHA-01", "无 sha256 字段（旧清单）→ 解析成功 sha256 == nil", m2.sha256 == nil)
+
+    // 空串 → 解析成功且 sha256 == ""（语义 = 跳过校验，见 TC-CKSM-04）
+    let emptyData = try TestFixture.signedManifestData(
+        fields: TestFixture.manifestFields(sha256: ""))
+    let m3 = try UpdateManifest.parse(emptyData)
+    check("TC-SHA-01", "sha256 空串 → 解析成功 sha256 == 空串", m3.sha256 == "")
+
+    // 有字段的清单 canonical 验签仍通过（sha256 进入被签名内容，契约 6.1）
+    check("TC-SHA-02", "含 sha256 字段完整清单 verify 通过（注入测试公钥）",
+          try ManifestVerifier.verify(manifestJSONData: withData,
+                                      publicKeyBase64: TestFixture.publicKeyBase64))
+
+    // 篡改 sha256（改值未重签）→ 验签拒绝（防未签名注入）
+    do {
+        var tampered = TestFixture.manifestFields(sha256: sha)
+        tampered["sha256"] = String(repeating: "0", count: 64)
+        let originalSig = (try JSONSerialization.jsonObject(with: withData) as! [String: Any])["signature"] as! String
+        let tamperedManifest = try TestFixture.manifestData(fields: tampered, signature: originalSig)
+        _ = try ManifestVerifier.verify(manifestJSONData: tamperedManifest,
+                                        publicKeyBase64: TestFixture.publicKeyBase64)
+        check("TC-SHA-02", "篡改 sha256（signature 未随改）→ 验签拒绝", false, "竟然通过")
+    } catch {
+        check("TC-SHA-02", "篡改 sha256（signature 未随改）→ 验签拒绝", true)
+    }
+} catch {
+    check("TC-SHA", "夹具异常", false, "\(error)")
+}
+
+// MARK: - TC-CKSM 下载包 SHA256 校验（下载后、解压前；匹配放行 / 不匹配拒装 / 缺省跳过）
+
+do {
+    // ① 已知向量：UpdateChecksum 流式计算与预置常量一致（独立于被测实现的期望值）
+    let helloURL = try TestFixture.makeTempFile(Data("hello world".utf8), name: "hello")
+    check("TC-CKSM-01", "sha256Hex 已知向量一致（hello world）",
+          try UpdateChecksum.sha256Hex(of: helloURL) == TestFixture.knownHelloWorldSha256,
+          "got \(try UpdateChecksum.sha256Hex(of: helloURL))")
+
+    // ② 匹配 → download() 全链走到 .downloaded（prepare + verifier 均未抛）
+    do {
+        let payload = Data("payload-A-\(UUID().uuidString)".utf8)
+        let zipURL = try TestFixture.makeTempFile(payload, name: "match")
+        let sha = TestFixture.sha256Hex(payload)
+        let data = try TestFixture.signedManifestData(
+            fields: TestFixture.manifestFields(sha256: sha))
+        let manager = makeManager(
+            currentVersion: "2.6.0",
+            fetcher: StubFetcher(.success(data)),
+            downloader: StubDownloader(.success(zipURL)),
+            installer: StubInstaller(.success(())))
+        await manager.check()
+        await manager.download()
+        check("TC-CKSM-02", "sha256 匹配 → .downloaded", manager.state == .downloaded,
+              "state=\(manager.state)")
+    }
+
+    // ③ 不匹配 → .failed 且文案为固定拒装文案（fail-closed）
+    do {
+        let goodPayload = Data("payload-B-\(UUID().uuidString)".utf8)
+        let zipURL = try TestFixture.makeTempFile(goodPayload, name: "mismatch")
+        // 清单声明的是另一份内容的 hash → 不匹配
+        let sha = TestFixture.sha256Hex(Data("declared-other-content".utf8))
+        let data = try TestFixture.signedManifestData(
+            fields: TestFixture.manifestFields(sha256: sha))
+        let manager = makeManager(
+            currentVersion: "2.6.0",
+            fetcher: StubFetcher(.success(data)),
+            downloader: StubDownloader(.success(zipURL)),
+            installer: StubInstaller(.success(())))
+        await manager.check()
+        await manager.download()
+        check("TC-CKSM-03", "sha256 不匹配 → .failed（拒装）",
+              manager.state == .failed(UpdateChecksumError.mismatch.errorDescription!),
+              "state=\(manager.state)")
+    }
+
+    // ④ 缺省（sha256 == nil）→ 跳过校验：即使落盘文件不存在也不触发读取失败，
+    //    全链照常走到 .downloaded（证明校验确被跳过而非只对匹配放行）
+    do {
+        let noShaData = try TestFixture.signedManifestData(
+            fields: TestFixture.manifestFields(sha256: nil))
+        let manager = makeManager(
+            currentVersion: "2.6.0",
+            fetcher: StubFetcher(.success(noShaData)),
+            downloader: StubDownloader(.success(URL(fileURLWithPath: "/tmp/definitely-not-exists.zip"))),
+            installer: StubInstaller(.success(())))
+        await manager.check()
+        await manager.download()
+        check("TC-CKSM-04", "无 sha256 字段 → 跳过校验（不存在的文件也不报错）→ .downloaded",
+              manager.state == .downloaded, "state=\(manager.state)")
+    }
+
+    // ⑤ 空串 → 同样跳过校验（向后兼容空值语义）
+    do {
+        let emptyShaData = try TestFixture.signedManifestData(
+            fields: TestFixture.manifestFields(sha256: ""))
+        let manager = makeManager(
+            currentVersion: "2.6.0",
+            fetcher: StubFetcher(.success(emptyShaData)),
+            downloader: StubDownloader(.success(URL(fileURLWithPath: "/tmp/definitely-not-exists.zip"))),
+            installer: StubInstaller(.success(())))
+        await manager.check()
+        await manager.download()
+        check("TC-CKSM-05", "sha256 空串 → 跳过校验 → .downloaded",
+              manager.state == .downloaded, "state=\(manager.state)")
+    }
+} catch {
+    check("TC-CKSM", "夹具异常", false, "\(error)")
 }
 
 // MARK: - TC-CANON canonical JSON 字节确定性

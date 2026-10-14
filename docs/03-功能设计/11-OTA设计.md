@@ -202,6 +202,7 @@
   "cdHash": "<hex kSecCodeInfoUnique of Coffer.app>",
   "securityCritical": false,
   "notes": "可选发布说明",
+  "sha256": "<hex sha256 of the zip, 64 hex lowercase, v2.10.3+>",
   "signature": "<base64 Ed25519 signature>"
 }
 ```
@@ -217,9 +218,10 @@
 | `cdHash` | hex string | 产物 `kSecCodeInfoUnique`（验签次锚） |
 | `securityCritical` | bool | true = 安全补丁 → 警告 + 显著提示（不阻断，§2.6 裁定） |
 | `notes` | string? | 可选发布说明（UI 展示） |
-| `signature` | base64 string | Ed25519( canonical(前 9 字段 JSON) )，见 6.2 |
+| `sha256` | hex string? | **可选（v2.10.3 起，docs/01 下载完整性加固 T1）**：下载 zip 的 SHA256（64 位 hex 小写）；存在且非空时 App 下载落盘后、解压前强制比对，不匹配拒装（fail-closed）；缺省/空串跳过校验（向后兼容 v2.10.2 旧清单） |
+| `signature` | base64 string | Ed25519( canonical(除 signature 外全字段 JSON) )，见 6.2 |
 
-**canonical JSON 约定（双侧同实现，契约关键）**：用 CryptoKit `Curve25519.Signing` 签名/验签；被签名内容 = 去除 `signature` 字段后的 JSON，序列化方式双侧一致：`JSONSerialization` + `.sortedKeys` + `.withoutEscapingSlashes`（无缩进）。签名侧（CI 工具）与验签侧（App）都用同一个 Swift 函数保证字节一致。**实证**：swiftc 直编 CryptoKit Ed25519 sign+verify 通过（2026-10-10，无 SPM）。
+**canonical JSON 约定（双侧同实现，契约关键）**：用 CryptoKit `Curve25519.Signing` 签名/验签；被签名内容 = 去除 `signature` 字段后的 JSON，序列化方式双侧一致：`JSONSerialization` + `.sortedKeys` + `.withoutEscapingSlashes`（无缩进）。签名侧（CI 工具）与验签侧（App）都用同一个 Swift 函数保证字节一致。**实证**：swiftc 直编 CryptoKit Ed25519 sign+verify 通过（2026-10-10，无 SPM）。**新增字段（如 v2.10.3 的 `sha256`）随去 signature 后的完整 dict 自动被签名覆盖**——App 验签侧无需逐字段特判。
 
 ### 6.2 白名单端点（应用层硬编码 4 host）
 

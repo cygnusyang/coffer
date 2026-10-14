@@ -29,7 +29,7 @@
 # 97 上传/建 Release 用专用 project access token（CI 变量 OTA_RELEASE_TOKEN，
 # masked+protected，仅 97 权限，与 RELEASE_TOKEN 分离）。
 
-stages: [gate, release]
+stages: [gate, release, probe]
 
 variables:
   CARGO_TERM_COLOR: always
@@ -223,3 +223,25 @@ release:
     - security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" || true
     - security default-keychain -s "$HOME/Library/Keychains/login.keychain-db" || true
     - '[ -f "$CI_PROJECT_DIR/build.keychain-db" ] && security delete-keychain "$CI_PROJECT_DIR/build.keychain-db" || true'
+
+# OTA 通道定时探针（Task #71，2026-10-14）：匿名只读健康检查，抓 DDNS 漂移 /
+# GitLab 配置漂移等环境故障（BUG-25 类），不依赖用户点「检查更新」才发现。
+# 三道检查任一失败 → 非零退出 → job 失败 = schedule/手动触发的告警信号：
+#   ① permalink 清单可达（302→200 + JSON 字段齐全）② zip Range 探测（PK 魔数）
+#   ③ manifest Ed25519 验签（公钥取自 ManifestVerifier.swift 单源，防密钥轮换漂移）。
+# 无任何 secret（匿名只读），STRICT_VERSION 默认 0（99.99.99 冒烟测试期间仅
+# WARNING 不转红；待复测通过清理该测试 release 后，如需更严可设 1）。
+ota_probe:
+  stage: probe
+  tags: [macos]
+  variables:
+    GIT_STRATEGY: fetch
+    GIT_DEPTH: "1"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'   # 定时流水线：自动探
+    - if: '$CI_COMMIT_TAG'                        # tag 流水线不创建（release 已有产物核查）
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'  # 默认分支：手动触发通道
+      when: manual
+  script:
+    - ./tools/run_ota_probe.sh

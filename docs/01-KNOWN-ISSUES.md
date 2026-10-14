@@ -1405,7 +1405,7 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 
 ---
 
-## BUG-23（🔴 当版修复，核销版本=下一版）：更新检查网络失败 UI 泄露原始 NSError——检查更新时服务器不可达弹整段 Error Domain=NSURLErrorDomain Code=-1004 …
+## BUG-23（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：更新检查网络失败 UI 泄露原始 NSError——检查更新时服务器不可达弹整段 Error Domain=NSURLErrorDomain Code=-1004 …
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 真机实证（用户 2026-10-14）；GitLab DDNS 漂移 → App 侧 ECONNREFUSED → NSURLError -1004，「检查更新」弹窗把整段 NSError description 怼给用户
@@ -1442,7 +1442,7 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 
 ---
 
-## BUG-24（🔴 当版修复，核销版本=下一版）：「检查更新…」点击后无即时反馈——网络慢/断时表现为「点了没反应」
+## BUG-24（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：「检查更新…」点击后无即时反馈——网络慢/断时表现为「点了没反应」
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 测试轮真机实证（用户 2026-10-14，截图）：关于页点「检查更新…」后界面无任何变化，直到网络请求返回——网络慢/被断时表现为「点了没反应」
@@ -1484,7 +1484,7 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 
 ---
 
-## BUG-25（🔴 当版修复，核销版本=下一版）：OTA 清单匿名不可达——私有仓 404 掩蔽，App 侧检查更新必 404（通道自迁 GitLab 起即断）
+## BUG-25（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：OTA 清单匿名不可达——私有仓 404 掩蔽，App 侧检查更新必 404（通道自迁 GitLab 起即断）
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 测试轮首次全链路测试（2026-10-14）——App「检查更新」拉清单必 404；历史 v2.7.0 OTA 首验在 GitHub 公开仓时代通过，未暴露
@@ -1508,7 +1508,7 @@ coffer-pro 为私有 GitLab 仓（project 95）；GitLab 对未鉴权请求返�
 ### 复现与诊断
 GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97/...` → 200。真机 App「检查更新」拉清单失败（首版呈现「已是最新版本」= 掩蔽实证）。
 
-## BUG-26（🔴 当版修复，核销版本=下一版）：安装流程卡死「正在安装…」——interactiveDismissDisabled 把 NSApp.terminate 的 quit 当 sheet 交互关闭取消
+## BUG-26（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：安装流程卡死「正在安装…」——interactiveDismissDisabled 把 NSApp.terminate 的 quit 当 sheet 交互关闭取消
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 全链路真机测试（BUG-25 通道修复后首次全链路：下载/验签/解压通过，卡在安装）
@@ -1542,7 +1542,7 @@ GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97
 - 复现：安装触发即卡死（旧版）。新版 `~/Library/Logs/Coffer-diag.log` 尾部应见「程序化关闭更新 sheet（showUpdateSheet=false）」+「asyncAfter 回调执行 → NSApp.terminate」，其后进程正常退出（无 quit 被取消迹象）
 - 判据：见「真机核销判据」1-4
 
-## BUG-27（🔴 当版修复，核销版本=下一版）：CI 签名 provisioning profile 过期——helper 正确拒绝（fail-closed 生效），但发布通道被免费账号 7 天周期击穿
+## BUG-27（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：CI 签名 provisioning profile 过期——helper 正确拒绝（fail-closed 生效），但发布通道被免费账号 7 天周期击穿
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 全链路真机测试（与 BUG-26 同轮）——CI 侧签名 profile 过期
@@ -1565,7 +1565,7 @@ GitLab 匿名 curl `projects/95/.../update-manifest.json` → 404；`projects/97
 ### 复现与诊断
 CI 侧 profile 变量到期后重跑 pipeline → 构建静默成功但安装侧拒绝（本轮实证）。脚本级验证：对过期 profile 跑新检查 → die + 明确提示；对本机有效 profile（至 2026-10-19）→ 通过。
 
-## BUG-28（🔴 当版修复，核销版本=v2.10.2）：OTA manifest 被 URLCache 命中旧缓存 → CDHash 误报不符——OTA 网络层必须永远 fresh
+## BUG-28（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：OTA manifest 被 URLCache 命中旧缓存 → CDHash 误报不符——OTA 网络层必须永远 fresh
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 全链路真机测试（BUG-26/BUG-27 同轮——通道修复后二次全链路）
@@ -1591,7 +1591,7 @@ CI 侧 profile 变量到期后重跑 pipeline → 构建静默成功但安装侧
 ### 复现与诊断
 证据链见上（lead 实证）：Cache.db 旧条目 + 真包 CDHash 与服务器一致仍报 mismatch。DiagLog 定位：`~/Library/Logs/Coffer-diag.log` 出现「OTA 验签 CDHash 不符：expected=<旧> actual=<新>」即为缓存命中旧 manifest 的可视症状。
 
-## BUG-29（🔴 当版修复，核销版本=下一版）：NSWorkspace.openApplication 在 macOS 26 沙盒 App 内静默 no-op——helper 从未被拉起，App 退出但未替换
+## BUG-29（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：NSWorkspace.openApplication 在 macOS 26 沙盒 App 内静默 no-op——helper 从未被拉起，App 退出但未替换
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 全链路真机测试（BUG-26/27/28 同轮——通道修复后二次全链路）
@@ -1644,7 +1644,7 @@ lead 22:39 真机复测两轮仍失败：open(1) 三行插桩齐全但现场依�
 
 **复测判据同步**（替换旧「看哪些文件」）：①DiagLog 应见 launchViaOpen 三行（从 /Applications 启动）或 BUG-29B 错位插桩（从 build 副本启动）②`/tmp/coffer-update.log` 按上面判定表 a/b/c 判定 ③`/Applications/Coffer.app` 版本变更 + result 文件 + App 自动重开。复测务必从 /Applications/Coffer.app 启动——从 build 副本启动会被守卫拦截（那是修复意图）。
 
-## BUG-30（🔴 当版修复，核销版本=下一版）：open(1) 经沙盒 App 发起时 `--args` 被 LaunchServices 剥掉——helper argv 为空走 exit 4 用法路径
+## BUG-30（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：open(1) 经沙盒 App 发起时 `--args` 被 LaunchServices 剥掉——helper argv 为空走 exit 4 用法路径
 
 **登记日期**：2026-10-14
 **发现环境**：v2.10.1 OTA 全链路真机测试第三轮（用户 23:27 从 /Applications/Coffer.app 正确启动，BUG-29 后续 A/B 修复后复测）
@@ -1678,7 +1678,7 @@ helper 取参优先级 **env → 固定路径 → argv**，`resolveConfigPath` �
 ### 复测判据（真机核销，看哪些文件）
 ①`/tmp/coffer-update.log` 首行 `argv=` 为空属**预期**（BUG-30 场景），关键看紧随的「取参来源：env COFFER_UPDATER_CONFIG=…」或「取参来源：固定路径 …」行——任一路径源命中即取参成功；三源皆无仍会打印用法文本 exit 4 ②DiagLog 应有 `BUG-30：env 注入 COFFER_UPDATER_CONFIG` + `BUG-30：固定 config 已写` 行 ③`/Applications/Coffer.app` 版本变更 + result 文件 success=true + App 自动重开。若首行 argv 为空且无任何「取参来源」行 → 三源全部断裂（固定 config 写失败 + env 未传播），按 DiagLog 的固定 config 写失败插桩排查。
 
-## BUG-31（🔴 当版修复，核销版本=下一版）：沙盒 App 下载产物带 quarantine → Gatekeeper 拒启开发证书新 App → helper relaunch open exit 1 回滚
+## BUG-31（✅ 已核销 v2.10.2：真机全链路 2026-10-15）：沙盒 App 下载产物带 quarantine → Gatekeeper 拒启开发证书新 App → helper relaunch open exit 1 回滚
 
 **登记日期**：2026-10-15
 **发现环境**：OTA 全链路真机测试第四次复测（用户从 /Applications/Coffer.app 正确启动，BUG-30 三层冗余取参修复后复测——**BUG-30 修复被真机验证成功**，helper 日志「取参来源：固定路径」命中兜底）
@@ -1707,3 +1707,22 @@ helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agen
 
 ### 复测判据（第五次真机核销，看哪些文件）
 ①`/tmp/coffer-update.log` 应有「已剥除隔离标记（com.apple.quarantine，递归）: <newAppPath>」行（证明剥隔离步骤真实执行）②若 relaunch 仍失败，错误信息应含 open 的 stderr 文本（本次为空的对照点），据此定位 Gatekeeper 拒启 vs 其它 ③`/Applications/Coffer.app` 版本变更 + result 文件 success=true + App 自动重开。三者齐备才算修复闭环。
+
+### OTA 修复轮核销记录（BUG-23~31，2026-10-15）
+
+**核销版本 v2.10.2；核销判据 = 第五次真机全链路复测闭环（2026-10-15 凌晨实证）**：2.10.1 → 检查更新 → 发现 99.99.99 → 下载 → 验签 → 替换 → **helper 日志「已剥除隔离标记（com.apple.quarantine，递归）」** → relaunch 成功自动重开 99.99.99，`/tmp/coffer-update.log` exit=0，result success=true——BUG-31 条目复测判据 ①②③ 全部满足。
+
+| 编号 | 修复 commit | 核销测试 |
+|---|---|---|
+| BUG-23 | 3159c6b | run_update_tests.sh TC-UPD-05（181/0/2 基线）|
+| BUG-24 | 293a44c+e192e10 | run_update_tests.sh TC-UPD-22 + run_update_ui_tests.sh |
+| BUG-25 | 5bbe33f | run_ota_probe.sh ①②③ + App 侧检查更新真机可达 |
+| BUG-26 | 1a45da7 | BUG-26 插桩 DiagLog + 真机 terminate 链 |
+| BUG-27 | 4c18cdc | build 脚本 fail-fast 门控（v2.10.2 起生效）|
+| BUG-28 | 5f17c91 | TC-BUG28-CACHE-03（UpdateTests）|
+| BUG-29 | 52c9bce+addb79c | /tmp/coffer-update.log 判定表 + 启动路径守卫 GUARD-01/02 |
+| BUG-30 | f56b4b5 | TC-BUG30-01~08 + 真机「取参来源：固定路径」命中 |
+| BUG-31 | b8f20ef | TC-INT-04 十二项 + 真机剥隔离命中（本次判据①）|
+
+门禁基线：cargo 1409/0/10 + UpdateTests 217/0/2 + UpdateUITests 91/0 + OTA 集成 38/0/0。
+顺延：#89 自证页「完全离线」措辞张力（v2.10.3 候选）；增强：manifest 加 zip SHA256 前置校验（登记未实现）。

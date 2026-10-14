@@ -81,6 +81,34 @@ fn wait_for_socket(path: &Path, timeout: Duration) -> bool {
     false
 }
 
+/// 等 accept-ready：轮询 connect 直到成功（有界退避），而非只等 socket 文件出现。
+///
+/// 服务端 `UnixListener::bind` 先以 `bind` 系统调用建 socket 文件、随后 `listen`——
+/// 两系统调用非原子，并行负载下子进程可能在两者间被抢占，客户端于窗口内 connect
+/// 即 ECONNREFUSED（GAP-05 基线 flaky：uds_non_spawner_peer_rejected）。connect
+/// 成功即证明 listen 已就绪。**只重试 ECONNREFUSED**（该窗口内唯一瞬时错误）；其余
+/// 错误（如 ENOENT——服务端已退出、或路径异常）立即 panic 暴露真实缺陷，不吞掉等
+/// 超时。与 src/uds.rs 单元测试区 `connect_with_retry` 不同：集成侧路径每用例唯一、
+/// 无陈旧 socket 重绑场景，无需对其它错误重试。返回 None = 超时仍未就绪。
+fn connect_accept_ready(path: &Path, timeout: Duration) -> Option<UnixStream> {
+    let deadline = SystemTime::now() + timeout;
+    loop {
+        match UnixStream::connect(path) {
+            Ok(conn) => return Some(conn),
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                if SystemTime::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => panic!(
+                "connect {} failed with non-transient error: {e}",
+                path.display()
+            ),
+        }
+    }
+}
+
 /// 轮询直到 socket 文件权限收敛到期望（`bind` 先以 umask 默认建文件、服务端
 /// 随后 set_permissions 0600——存在短暂窗口，须等收敛而非只等文件出现）。
 fn wait_for_socket_mode(path: &Path, expected: u32, timeout: Duration) -> bool {
@@ -143,7 +171,8 @@ fn uds_full_handshake_and_tools_roundtrip() {
         "socket 文件须在超时内收敛到 0600"
     );
 
-    let mut conn = UnixStream::connect(&path).expect("client must connect");
+    let mut conn = connect_accept_ready(&path, Duration::from_secs(10))
+        .expect("client must connect (accept-ready)");
     send_line(
         &mut conn,
         &format!(
@@ -213,7 +242,8 @@ fn uds_wrong_challenge_rejected() {
     let mut child = spawn_uds(&path);
     assert!(wait_for_socket(&path, Duration::from_secs(10)));
 
-    let mut conn = UnixStream::connect(&path).expect("client must connect");
+    let mut conn = connect_accept_ready(&path, Duration::from_secs(10))
+        .expect("client must connect (accept-ready)");
     send_line(
         &mut conn,
         &format!(
@@ -264,7 +294,8 @@ fn uds_non_spawner_peer_rejected() {
         .expect("spawn coffer with --uds");
     assert!(wait_for_socket(&path, Duration::from_secs(10)));
 
-    let mut conn = UnixStream::connect(&path).expect("client must connect");
+    let mut conn = connect_accept_ready(&path, Duration::from_secs(10))
+        .expect("client must connect (accept-ready)");
     send_line(
         &mut conn,
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
@@ -340,7 +371,8 @@ fn uds_idle_read_timeout_disconnects() {
     assert!(wait_for_socket(&path, Duration::from_secs(10)));
 
     // 连接保持打开但不发数据——idle 超时触发点（drop 会触发 EOF 干净退出，非本判据）。
-    let conn = UnixStream::connect(&path).expect("client must connect");
+    let conn = connect_accept_ready(&path, Duration::from_secs(10))
+        .expect("client must connect (accept-ready)");
 
     // 有界等待进程自行退出（~10s idle 窗）；旧实现挂起在此转红。
     let deadline = SystemTime::now() + Duration::from_secs(20);

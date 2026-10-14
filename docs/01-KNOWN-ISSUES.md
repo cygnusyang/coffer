@@ -954,7 +954,7 @@ accept 后的读循环无超时窗；`set_read_timeout`（SO_RCVTIMEO）未设�
 
 ---
 
-## B-1（🟡 设计期登记）：item 模型新增 `origin_bindings` 字段的格式兼容——D-3 存储冻结后改格式须迁移
+## B-1（🟡 设计期登记，废弃）：item 模型新增 `origin_bindings` 字段的格式兼容——D-3 存储冻结后改格式须迁移
 
 **登记日期**：2026-10-07（v2.3.0 设计期，docs/archive/01-v2.3.0设计-浏览器扩展.md §10 风险 4「G-F 登记」）
 **发现环境**：docs/archive/01-v2.3.0设计-浏览器扩展.md §10 风险登记；docs/archive/02-v2.3.0不可逆决策工作稿.md D-3（origin 三型冻结，🔴 不可逆存储格式类）
@@ -985,7 +985,7 @@ G-A 实施时按 additive + `#[serde(default)]` 加字段（对齐 docs/03-功�
 
 ---
 
-## B-2（🟡 已接受残余）：扩展侧配对 PSK 存于 chrome.storage 的窃取面——PSK 单独不足以冒充
+## B-2（🟡 已接受残余，废弃）：扩展侧配对 PSK 存于 chrome.storage 的窃取面——PSK 单独不足以冒充
 
 **登记日期**：2026-10-07（v2.3.0 设计期，docs/archive/01-v2.3.0设计-浏览器扩展.md §10 风险 8「文档声明」）
 **发现环境**：docs/archive/01-v2.3.0设计-浏览器扩展.md §10 风险登记 8（T-7）
@@ -1043,7 +1043,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ---
 
-## M-2（🟡 顺延登记）：BrokerIdentity::derive 派生域调整受冻结 KAT 帧约束——改域须重冻结跨语言断言，成本高于 MEDIUM 收益
+## M-2（🟡 顺延登记，废弃）：BrokerIdentity::derive 派生域调整受冻结 KAT 帧约束——改域须重冻结跨语言断言，成本高于 MEDIUM 收益
 
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 G-R 安全审查（reviewer-browser 首轮，评审面 G-A..G-E 全部改动）MEDIUM 项 M-2
@@ -1071,7 +1071,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ---
 
-## M-4（🟡 顺延登记）：origin 绑定手势/TTL/持久化属 merge-time 集成——绑定键含 action 触及 D-3 冻结语义不重开
+## M-4（🟡 顺延登记，废弃）：origin 绑定手势/TTL/持久化属 merge-time 集成——绑定键含 action 触及 D-3 冻结语义不重开
 
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 G-R 安全审查 MEDIUM 项 M-4（手势确认 + 绑定 TTL + 持久化归 G-D/G-T merge-time）
@@ -1099,7 +1099,7 @@ chrome.storage 非安全存储面；PSK 属扩展持有边界（传输层材料�
 
 ---
 
-## M-6（🟡 顺延登记）：Swift spawn 写 stdin 非 throwing `write(payload)`——broker 早退时 EPIPE 触发 NSFileHandleOperationException → App 崩溃
+## M-6（🟡 顺延登记，废弃）：Swift spawn 写 stdin 非 throwing `write(payload)`——broker 早退时 EPIPE 触发 NSFileHandleOperationException → App 崩溃
 
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 集成轮 G-R 复审（da237da 5 文件独立验证）MEDIUM-1
@@ -1127,7 +1127,7 @@ Foundation `FileHandle.write` 对 EPIPE 抛 Objective-C 异常而非 Swift error
 
 ---
 
-## M-7（🟡 已接受残余）：Swift zeroize COW 脆弱性——只零化序列化副本，源串/中间拷贝不零化（best-effort 纵深）
+## M-7（🟡 已接受残余，废弃）：Swift zeroize COW 脆弱性——只零化序列化副本，源串/中间拷贝不零化（best-effort 纵深）
 
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 集成轮 G-R 复审（da237da）MEDIUM-2
@@ -1155,7 +1155,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
-## LOW-2（🟡 merge-time 核验项）：well-known UDS 两端取径须一致——Swift userHomeDirectory(getpwuid) vs Rust $HOME
+## LOW-2（🟡 merge-time 核验项，废弃）：well-known UDS 两端取径须一致——Swift userHomeDirectory(getpwuid) vs Rust $HOME
 
 **登记日期**：2026-10-08
 **发现环境**：v2.3.0 集成轮 G-R 复审 LOW L-3

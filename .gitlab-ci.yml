@@ -18,11 +18,23 @@
 #   https://gitlab.internal.invalid/api/v4/projects/<ID>/releases/permalink/latest/downloads/ota/update-manifest.json
 # 注意：Pro 构建的 OTA host 白名单须加入 gitlab.internal.invalid（docs/35 §6.2 +
 # tools/check_ota_whitelist.sh + ManifestVerifier 源码常量，迁移轮代码改动）。
+#
+# OTA 双仓布局（BUG-25，2026-10-14）：coffer-pro（95）为私有项目，GitLab 对
+# 未鉴权请求掩蔽 404——App 沙盒无 token，拉 95 的清单必然 404 且被 BUG-23 的
+# fail-closed 语义掩蔽成「已是最新版本」。裁定：新建公开产物仓 coffer-ota
+# （project 97，无源码），CI 发版时把 zip + update-manifest.json 加传 97 并在
+# 97 建 Release（permalink/latest 在 97 上解析）；清单 downloadUrl 指向 97 的
+# zip（manifest 是含 downloadUrl 的整体签名，改指向必须在 CI 重签）。
+# 95 的 Release 页三资产保持不变（dmg 手动安装 + zip/manifest 存档）。
+# 97 上传/建 Release 用专用 project access token（CI 变量 OTA_RELEASE_TOKEN，
+# masked+protected，仅 97 权限，与 RELEASE_TOKEN 分离）。
 
 stages: [gate, release]
 
 variables:
   CARGO_TERM_COLOR: always
+  # OTA 公开产物仓（BUG-25，2026-10-14）：coffer-ota project id（无源码，仅产物）
+  OTA_PROJECT_ID: "97"
   # OTA 发版级参数（docs/35 §6.1）：OTA_MINIMUM_VERSION 只增不减，发版前人工复核
   OTA_MINIMUM_VERSION: "2.5.0"
   OTA_SECURITY_CRITICAL: "false"
@@ -117,7 +129,10 @@ release:
       echo "OTA version=$VERSION"
       # generic package 上传 URL（同一 URL 即资产下载 URL，对 job token/任意已授权 GET 开放）
       PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coffer/${VERSION}"
-      DOWNLOAD_URL="${PKG_URL}/Coffer-${TAG}.zip"
+      # OTA 匿名可达面（BUG-25）：清单 downloadUrl 指向公开仓 97 的 zip——
+      # manifest 是含 downloadUrl 的整体签名，必须在此用 97 的 URL 重签
+      OTA_PKG_URL="${CI_API_V4_URL}/projects/${OTA_PROJECT_ID}/packages/generic/coffer/${VERSION}"
+      DOWNLOAD_URL="${OTA_PKG_URL}/Coffer-${TAG}.zip"
       BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
       UPDATE_SIGNING_KEY_BASE64="$UPDATE_SIGNING_KEY_BASE64" \
       MF_VERSION="$VERSION" \
@@ -172,8 +187,36 @@ release:
       curl -sf --header "$AUTH" --header "Content-Type: application/json" \
         -X POST --data @/tmp/release.json \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
-      echo "GitLab Release ${TAG} 已创建"
-      echo "OTA 永久链接: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/permalink/latest/downloads/ota/update-manifest.json"
+      echo "GitLab Release ${TAG} 已创建（project ${CI_PROJECT_ID}）"
+
+      # ---- OTA 匿名可达面（BUG-25）：zip + manifest 加传公开仓 97 并建 Release ----
+      # 清单 downloadUrl 已指 97（上方重签）；97 无本仓 git tag，Release 用 ref=main 创建。
+      # OTA_RELEASE_TOKEN = 97 专用 project access token（masked+protected）。
+      [ -n "${OTA_RELEASE_TOKEN:-}" ] || { echo "缺少 OTA_RELEASE_TOKEN"; exit 1; }
+      OTA_AUTH="PRIVATE-TOKEN: ${OTA_RELEASE_TOKEN}"
+      curl -sf --retry 3 --retry-delay 5 --retry-all-errors --header "$OTA_AUTH" \
+        --upload-file "macos/build/Coffer-${TAG}.zip" "${OTA_PKG_URL}/Coffer-${TAG}.zip"
+      curl -sf --retry 3 --retry-delay 5 --retry-all-errors --header "$OTA_AUTH" \
+        --upload-file "macos/build/update-manifest.json" "${OTA_PKG_URL}/update-manifest.json"
+      cat > /tmp/ota-release.json <<JSON
+      {
+        "tag_name": "${TAG}",
+        "ref": "main",
+        "name": "${TAG}",
+        "description": "Coffer OTA 更新产物（由 coffer-pro CI 自动发布；安装包请从 Coffer 应用内 OTA 或官方渠道获取）",
+        "assets": {
+          "links": [
+            {"name": "Coffer-${TAG}.zip (OTA)", "url": "${OTA_PKG_URL}/Coffer-${TAG}.zip", "direct_asset_path": "/downloads/Coffer-${TAG}.zip"},
+            {"name": "update-manifest.json (OTA 清单)", "url": "${OTA_PKG_URL}/update-manifest.json", "direct_asset_path": "/ota/update-manifest.json"}
+          ]
+        }
+      }
+      JSON
+      curl -sf --header "$OTA_AUTH" --header "Content-Type: application/json" \
+        -X POST --data @/tmp/ota-release.json \
+        "${CI_API_V4_URL}/projects/${OTA_PROJECT_ID}/releases"
+      echo "OTA Release ${TAG} 已创建（project ${OTA_PROJECT_ID}，公开）"
+      echo "OTA 永久链接: ${CI_API_V4_URL}/projects/${OTA_PROJECT_ID}/releases/permalink/latest/downloads/ota/update-manifest.json"
 
   after_script:
     # 清理临时 keychain（构建机是常驻 Mac，不留搜索路径污染）

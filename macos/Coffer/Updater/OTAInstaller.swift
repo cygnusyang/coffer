@@ -8,7 +8,6 @@
 // 装配为 Contents/Helpers/CofferUpdater.app。
 
 import Foundation
-import AppKit
 
 /// 安装机制协议（注入点：测试用 stub；生产用 `OTAInstaller`）。
 protocol Installing {
@@ -19,7 +18,7 @@ protocol Installing {
     func perform(info: UpdateInfo, downloadedAppURL: URL, currentAppURL: URL) async throws
 }
 
-/// helper 启动器（注入点：测试记录并断言启动参数；生产 = LaunchServices）。
+/// helper 启动器（注入点：测试记录并断言启动参数；生产 = open(1) launchViaOpen）。
 typealias HelperLauncher = (URL, [String]) throws -> Void
 
 /// 真实安装机制（解压 / 写配置 / LaunchServices 启动 helper）。
@@ -32,7 +31,7 @@ struct OTAInstaller: Installing {
     let pidProvider: () -> Int32
     /// UserDefaults 域（持久化 result 文件路径供被 relaunch 的 .app 首启找回；测试注入独立 suite）。
     let userDefaults: UserDefaults
-    /// helper 启动器（默认 LaunchServices；测试注入记录器断言参数）。
+    /// helper 启动器（默认 open(1)；测试注入记录器断言参数）。
     let launchHelper: HelperLauncher
 
     /// 首启找回 result 文件的 UserDefaults key（被 relaunch 的 .app 消费，契约 6.4 r0.4 步骤 6）。
@@ -85,7 +84,7 @@ struct OTAInstaller: Installing {
         backupDirectory: URL = FileManager.default.temporaryDirectory,
         pidProvider: @escaping () -> Int32 = { ProcessInfo.processInfo.processIdentifier },
         userDefaults: UserDefaults = .standard,
-        launchHelper: @escaping HelperLauncher = OTAInstaller.launchViaLaunchServices
+        launchHelper: @escaping HelperLauncher = OTAInstaller.launchViaOpen
     ) {
         self.helperURL = helperURL
         self.backupDirectory = backupDirectory
@@ -186,34 +185,62 @@ struct OTAInstaller: Installing {
         return try encoder.encode(result)
     }
 
-    /// 生产启动器：NSWorkspace.openApplication（LaunchServices，launchd 按 helper
-    /// 自身 entitlements 加载，不继承 App 沙盒，契约 r0.4）。回调式 API：提交即
-    /// 返回（不阻塞——open 无法 waitpid）。同步可判失败只有 helper bundle 缺失
-    /// （组 B 未装配）→ 立即 fail-closed；提交失败在回调里兜底 `/usr/bin/open -n
-    /// <helper> --args ...`（装配/真机验证基线），彻底失败由下次启动消费 result
-    /// 文件缺失呈现（契约 r0.4 步骤 6，fail-closed）。真机核销项。
-    static func launchViaLaunchServices(helper: URL, args: [String]) throws {
-        DiagLog.append("BUG-26 插桩：launchViaLaunchServices 进入（helper=\(helper.lastPathComponent)）")
-        guard FileManager.default.fileExists(atPath: helper.path) else {
-            DiagLog.append("BUG-26 插桩：helper bundle 缺失 → helperLaunchFailed")
-            throw InstallError.helperLaunchFailed("未找到安装辅助程序 \(helper.lastPathComponent)")
-        }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.arguments = args
-        configuration.activates = false
-        NSWorkspace.shared.openApplication(at: helper, configuration: configuration) { _, error in
-            DiagLog.append("BUG-26 插桩：openApplication 回调触发，error=\(String(describing: error))")
-            guard error != nil else { return }
-            DiagLog.append("BUG-26 插桩：openApplication 报错 → 兜底 open -n（error=\(String(describing: error))）")
-            // 兜底：open -n（App 可能即将退出，回调未必来得及执行；失败终态交给
-            // result 文件消费兜底，见函数注释）。
-            try? runProcess("/usr/bin/open", args: ["-n", helper.path, "--args"] + args)
-        }
-        DiagLog.append("BUG-26 插桩：openApplication 已提交（提交即返回，回调异步触发）")
+    /// open(1) 启动参数构造（BUG-29）：`-n <helper> --args <args>`。`-n` 开新
+    /// 实例（防复用已有同名实例的旧命令行）；`--args` 之后全部透传给 helper 的
+    /// argv（helper 入口解析 `--config`，见 Installer/main.swift）。纯函数供测试
+    /// 断言参数构造。
+    static func openLaunchArgs(helper: URL, args: [String]) -> [String] {
+        ["-n", helper.path, "--args"] + args
     }
 
-    /// 同步跑子进程（解压 / 打 zip / open 兜底），非 0 退出抛错（子进程 stderr 并入
-    /// 错误，不吞错误也不让原始 stderr 污染调用方输出）。
+    /// 生产启动器（BUG-29 修复，2026-10-14）：主路径 = `/usr/bin/open -n <helper>
+    /// --args <args>`（同步跑，open(1) 提交即返回不 waitpid）。退出码非 0 或
+    /// stderr 有内容 → helperLaunchFailed 显式抛错（fail-closed，可诊断）。
+    ///
+    /// 原 NSWorkspace.openApplication 路径在 macOS 26 沙盒 App 内被实证为**静默
+    /// no-op**：回调 error=nil 假成功、helper 从未被拉起（lead 真机 21:19 全链路：
+    /// App 正常退出但 /Applications 未替换、无 result 文件、全系统统一日志 90 分钟
+    /// 零 coffer-update 痕迹；对照 17:59 手动 `/usr/bin/open -n <helper> --args`
+    /// 驱动同 helper 成功并写 result）。故**删除** openApplication 路径并禁止回归
+    /// 捡回——本注释即防回归记录。
+    ///
+    /// 风险如实：open(1) 是沙盒 App 的子进程，继承沙盒——其 LaunchServices XPC
+    /// 是否被沙盒拦只能真机全链路复测定谳（lead 2026-10-14：被拦则 next =
+    /// launchd 用户 agent / XPC service，留给真机结果再裁定）。
+    ///
+    /// 诊断边界：open(1) 只承接**自身的**启动错误（沙盒拦 / 路径无效等，走其
+    /// stderr）；helper 进程的 stdout/stderr 经 LaunchServices 分离启动后归统一
+    /// 日志（**不**回到 open 的 stderr），helper 运行期诊断靠 result 文件 /
+    /// `log show`。
+    static func launchViaOpen(helper: URL, args: [String]) throws {
+        DiagLog.append("BUG-29：launchViaOpen 进入（helper=\(helper.lastPathComponent)）")
+        guard FileManager.default.fileExists(atPath: helper.path) else {
+            DiagLog.append("BUG-29：helper bundle 缺失 → helperLaunchFailed")
+            throw InstallError.helperLaunchFailed("未找到安装辅助程序 \(helper.lastPathComponent)")
+        }
+        let openArgs = openLaunchArgs(helper: helper, args: args)
+        DiagLog.append("BUG-29：执行 open \(openArgs.joined(separator: " "))")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = openArgs
+        let stderr = Pipe()
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let status = process.terminationStatus
+        guard status == 0 && detail.isEmpty else {
+            let suffix = detail.isEmpty ? "（无 stderr 输出）" : "：\(detail)"
+            DiagLog.append("BUG-29：open 启动失败（exit \(status)）\(suffix)")
+            throw InstallError.helperLaunchFailed("open 启动安装辅助程序失败（exit \(status)）\(suffix)")
+        }
+        DiagLog.append("BUG-29：open(1) 提交成功（exit 0 无 stderr；helper 已交 LaunchServices，进程归属 launchd）")
+    }
+
+    /// 同步跑子进程（解压 / 打 zip），非 0 退出抛错（子进程 stderr 并入错误，不吞
+    /// 错误也不让原始 stderr 污染调用方输出）。launchViaOpen 不复用本函数——open
+    /// 成功契约 = exit 0 **且** stderr 空，需同时读两者，runProcess 不满足。
     static func runProcess(_ executable: String, args: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)

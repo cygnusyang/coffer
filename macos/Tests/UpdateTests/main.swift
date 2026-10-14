@@ -1492,10 +1492,10 @@ do {
     check("TC-INST2", "夹具异常", false, "\(error)")
 }
 
-// helper 未装配（路径不存在）→ 同步可判失败 helperLaunchFailed（真函数 launchViaLaunchServices）
+// helper 未装配（路径不存在）→ 同步可判失败 helperLaunchFailed（真函数 launchViaOpen）
 do {
     do {
-        try OTAInstaller.launchViaLaunchServices(
+        try OTAInstaller.launchViaOpen(
             helper: URL(fileURLWithPath: "/nonexistent/CofferUpdater.app"),
             args: ["--config", "/tmp/x.json"])
         check("TC-INST-06", "helper 未装配（路径不存在）→ helperLaunchFailed（同步可判失败）", false, "竟然没报错")
@@ -1505,6 +1505,20 @@ do {
         check("TC-INST-06", "helper 未装配（路径不存在）→ helperLaunchFailed（同步可判失败）", false, "错误类型 \(error)")
     }
 }
+
+// BUG-29：openLaunchArgs 纯函数参数构造（-n <helper> --args <args> 透传）
+do {
+    let helper = URL(fileURLWithPath: "/Applications/Coffer.app/Contents/Helpers/CofferUpdater.app")
+    let args = OTAInstaller.openLaunchArgs(helper: helper, args: ["--config", "/var/folders/x/coffer-ota-config.json"])
+    let expected = ["-n", "/Applications/Coffer.app/Contents/Helpers/CofferUpdater.app",
+                    "--args", "--config", "/var/folders/x/coffer-ota-config.json"]
+    check("TC-BUG29-01", "openLaunchArgs 构造 -n <helper> --args <args>", args == expected, "实际 \(args)")
+}
+
+// 注：launchViaOpen 成功路径（exit 0 且 stderr 空）不在单测断言——真机契约
+// 留 docs/01 BUG-29 真机核销判据（lead 明确：open(1) 是否被沙盒拦只能真机全链路
+// 复测定谳）。CI 断言失败路径（TC-INST-06 未装配）与纯参数构造（TC-BUG29-01），
+// 均确定性可复现；不引入 open(1) 对非 bundle 二进制的环境相关行为。
 
 // 配置写盘失败（backupDirectory 父目录不存在）→ configWriteFailed（fail-closed）
 do {

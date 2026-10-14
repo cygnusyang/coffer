@@ -1510,10 +1510,17 @@ final class AppModel: ObservableObject {
     /// 不得在提交前退出。仅安装进行中（.installing）才退出——install() 失败
     /// （.failed）要留在前台呈现错误。
     func installUpdate() {
+        DiagLog.append("BUG-26 插桩：installUpdate 进入（调度 Task → updater.install）")
         Task {
             await updater.install()
-            guard updater.state == .installing else { return }
+            DiagLog.append("BUG-26 插桩：updater.install 返回，state=\(String(describing: updater.state))")
+            guard updater.state == .installing else {
+                DiagLog.append("BUG-26 插桩：install 未到 .installing，不退出（留在前台呈现错误）")
+                return
+            }
+            DiagLog.append("BUG-26 插桩：调度 asyncAfter(\(Self.updaterTerminateDelay)s) → NSApp.terminate")
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.updaterTerminateDelay) {
+                DiagLog.append("BUG-26 插桩：asyncAfter 回调执行 → NSApp.terminate")
                 NSApp.terminate(nil)
             }
         }

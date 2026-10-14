@@ -118,6 +118,7 @@ struct OTAInstaller: Installing {
     /// 回滚全归 helper）。launcher 抛错（helper 未装配等）→ 回滚 pending keys +
     /// best-effort 清已写配置残留（M-3），避免下次启动误弹「无法读取上次更新的结果」。
     func perform(info: UpdateInfo, downloadedAppURL: URL, currentAppURL: URL) async throws {
+        DiagLog.append("BUG-26 插桩：perform 进入（newApp=\(downloadedAppURL.lastPathComponent)）")
         let stamp = Int(Date().timeIntervalSince1970)
         let uuid = UUID().uuidString
         let backupPath = backupDirectory.appendingPathComponent("Coffer-\(stamp).app").path
@@ -131,9 +132,11 @@ struct OTAInstaller: Installing {
             backupPath: backupPath,
             resultFilePath: resultFilePath,
             pid: pidProvider())
+        DiagLog.append("BUG-26 插桩：perform 写配置 \(configURL.lastPathComponent)")
         do {
             try Self.encodeConfig(config).write(to: configURL, options: .atomic)
         } catch {
+            DiagLog.append("BUG-26 插桩：写配置失败 → configWriteFailed（\(error)）")
             throw InstallError.configWriteFailed("\(error)")
         }
         // result/backup/backupDir 路径持久化：被 relaunch 的 .app 首启据此找回并
@@ -141,15 +144,20 @@ struct OTAInstaller: Installing {
         userDefaults.set(resultFilePath, forKey: Self.pendingResultPathDefaultsKey)
         userDefaults.set(backupPath, forKey: Self.pendingBackupPathDefaultsKey)
         userDefaults.set(backupDirectory.path, forKey: Self.pendingBackupDirDefaultsKey)
+        DiagLog.append("BUG-26 插桩：三个 pending key 已写（result 形状 \((resultFilePath as NSString).lastPathComponent)）")
         do {
+            DiagLog.append("BUG-26 插桩：调 launchHelper（\(helperURL.lastPathComponent)）")
             try launchHelper(helperURL, ["--config", configURL.path])
+            DiagLog.append("BUG-26 插桩：launchHelper 同步返回（未抛错，pending 保留）")
         } catch let error as InstallError {
             Self.clearPendingState(userDefaults: userDefaults, configURL: configURL,
                                    resultFilePath: resultFilePath)
+            DiagLog.append("BUG-26 插桩：launchHelper 抛 InstallError → 回滚 pending，\(error)")
             throw error
         } catch {
             Self.clearPendingState(userDefaults: userDefaults, configURL: configURL,
                                    resultFilePath: resultFilePath)
+            DiagLog.append("BUG-26 插桩：launchHelper 抛未知错误 → 回滚 pending，\(error)")
             throw InstallError.helperLaunchFailed("\(error)")
         }
     }
@@ -185,18 +193,23 @@ struct OTAInstaller: Installing {
     /// <helper> --args ...`（装配/真机验证基线），彻底失败由下次启动消费 result
     /// 文件缺失呈现（契约 r0.4 步骤 6，fail-closed）。真机核销项。
     static func launchViaLaunchServices(helper: URL, args: [String]) throws {
+        DiagLog.append("BUG-26 插桩：launchViaLaunchServices 进入（helper=\(helper.lastPathComponent)）")
         guard FileManager.default.fileExists(atPath: helper.path) else {
+            DiagLog.append("BUG-26 插桩：helper bundle 缺失 → helperLaunchFailed")
             throw InstallError.helperLaunchFailed("未找到安装辅助程序 \(helper.lastPathComponent)")
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = args
         configuration.activates = false
         NSWorkspace.shared.openApplication(at: helper, configuration: configuration) { _, error in
+            DiagLog.append("BUG-26 插桩：openApplication 回调触发，error=\(String(describing: error))")
             guard error != nil else { return }
+            DiagLog.append("BUG-26 插桩：openApplication 报错 → 兜底 open -n（error=\(String(describing: error))）")
             // 兜底：open -n（App 可能即将退出，回调未必来得及执行；失败终态交给
             // result 文件消费兜底，见函数注释）。
             try? runProcess("/usr/bin/open", args: ["-n", helper.path, "--args"] + args)
         }
+        DiagLog.append("BUG-26 插桩：openApplication 已提交（提交即返回，回调异步触发）")
     }
 
     /// 同步跑子进程（解压 / 打 zip / open 兜底），非 0 退出抛错（子进程 stderr 并入

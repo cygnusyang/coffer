@@ -224,18 +224,26 @@ final class UpdaterManager: ObservableObject {
     /// REV-01 后 UI 唯一入口为 .downloaded 态确认弹窗；为兼容既有调用/测试
     /// 路径（.updateAvailable 起点），起点为 .updateAvailable 时先补 download()。
     func install() async {
+        DiagLog.append("BUG-26 插桩：install 进入，state=\(String(describing: state))")
         if case .updateAvailable = state {
+            DiagLog.append("BUG-26 插桩：起点 .updateAvailable → 补 download()")
             await download()
         }
-        guard case .downloaded = state, let product = pendingProduct else { return }
+        guard case .downloaded = state, let product = pendingProduct else {
+            DiagLog.append("BUG-26 插桩：未到 .downloaded / 无 pendingProduct，install 直接返回（state=\(String(describing: state))）")
+            return
+        }
         do {
             state = .installing
+            DiagLog.append("BUG-26 插桩：置 .installing，调用 installer.perform（写配置+UserDefaults+LaunchServices）")
             try await installer.perform(
                 info: product.info, downloadedAppURL: product.appURL, currentAppURL: currentAppURL)
             // 成功路径：helper 完成替换并 relaunch，本进程即将退出；保持 .installing。
+            DiagLog.append("BUG-26 插桩：installer.perform 返回（未抛错），保持 .installing 等待退出")
         } catch {
             pendingProduct = nil
             state = .failed(Self.userMessage(from: error))
+            DiagLog.append("BUG-26 插桩：installer.perform 抛错 → .failed（\(Self.userMessage(from: error))）")
         }
     }
 

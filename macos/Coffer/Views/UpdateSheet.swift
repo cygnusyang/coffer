@@ -112,7 +112,7 @@ struct UpdateSheet: View {
     private var checkingContent: some View {
         HStack(spacing: 12) {
             ProgressView()
-            Text("正在检查更新…")
+            Text(UpdateCopy.checkingFeedbackText)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)

@@ -1274,6 +1274,10 @@ do {
         try? await Task.sleep(nanoseconds: 1_000_000)
         waits += 1
     }
+    // BUG-24：挂起在 fetch 时 state 应为 .checking——视图据此呈现「正在检查更新…」
+    // 即时反馈（按钮禁用 + 原位进度），这是「点击检查更新立即有回应」的状态源。
+    check("TC-UPD-22", "check() 挂起时进入 .checking 态（BUG-24 即时反馈依据）",
+          manager.state == .checking, "state=\(manager.state)")
     await manager.check()   // .checking 中 → guard 拦截
     let countDuring = fetcher.fetchCount
     fetcher.resumeAll()

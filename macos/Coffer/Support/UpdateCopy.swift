@@ -208,6 +208,19 @@ enum UpdateCopy {
             + " | domain=\(ns.domain) code=\(ns.code)"
             + " | underlying=\(underlying)"
     }
+
+    // MARK: - 检查更新进行中反馈（BUG-24：点击「检查更新…」须立即有回应）
+
+    /// `.checking` 时按钮原位的进行中文案（对齐 UpdateSheet.checkingContent 同态；
+    /// AboutUpdateView 与 UpdateSheet 共用同一事实源）。
+    static let checkingFeedbackText = "正在检查更新…"
+
+    /// 是否检查进行中（视图据此禁用「检查更新…」按钮 + 呈现原位进行中反馈；
+    /// 其余 state 呈现路径不变）。
+    static func isChecking(_ state: UpdaterState) -> Bool {
+        if case .checking = state { return true }
+        return false
+    }
 }
 
 /// UpdateSheet 各交互按钮的可用性快照（纯函数派生；Equatable 供测试断言）。

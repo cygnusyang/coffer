@@ -260,6 +260,19 @@ do {
             && genericLine.contains("OTA-test") && genericLine.contains("code=42"))
 }
 
+// MARK: - 检查更新进行中反馈（BUG-24：点击「检查更新…」须立即有回应）
+
+do {
+    check("checkingFeedbackText: 进行中文案存在（.checking 按钮原位反馈）",
+          UpdateCopy.checkingFeedbackText == "正在检查更新…")
+    check("isChecking: .checking → true", UpdateCopy.isChecking(.checking))
+    check("isChecking: .idle → false", !UpdateCopy.isChecking(.idle))
+    check("isChecking: .upToDate → false", !UpdateCopy.isChecking(.upToDate))
+    check("isChecking: .failed → false", !UpdateCopy.isChecking(.failed("x")))
+    check("isChecking: .updateAvailable → false",
+          !UpdateCopy.isChecking(.updateAvailable(makeInfo(version: "2.7.0"))))
+}
+
 // MARK: - 汇总
 
 print("--------------------------------------------------")

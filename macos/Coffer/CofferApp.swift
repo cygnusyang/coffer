@@ -39,7 +39,9 @@ struct CofferMainApp: App {
                 // 更新 sheet 从关于对话框按钮触达时叠加在关于 sheet 之上。
                 // 设置页不放任何更新入口（用户裁定）。
                 .sheet(isPresented: $model.showAbout) {
-                    AboutUpdateView()
+                    // BUG-24：注入 model.updater（@ObservedObject）——关于页「检查更新…」
+                    // 按钮需消费 updater.state 呈现 .checking 即时反馈（同 UpdateSheet 注入先例）。
+                    AboutUpdateView(updater: model.updater)
                         .environmentObject(model)
                 }
                 .sheet(isPresented: $model.showUpdateSheet) {

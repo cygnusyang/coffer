@@ -68,6 +68,11 @@ final class AppModel: ObservableObject {
     /// 双渠道同源触发。自 MainView 本地 @State 提升到 AppModel @Published，
     /// 与 showImport/showImportPux/showImportBitwarden 同纪律）。
     @Published var showImportOpvault = false
+    /// 放置区导入 sheet（v2.11.0，docs/03 §21a §3.1）：三处入口（MainView 工具栏
+    /// 导入菜单 + 空态菜单 + DataCommands「数据」菜单）同源触发；sheet 挂载是
+    /// G6 的职责（MainView `.sheet(isPresented:)`），本属性只作跨视图触发开关，
+    /// 与 showImport/showImportOpvault 提升同先例。
+    @Published var showImportDropzone = false
     /// 导出 sheet（备份 + CSV，工具栏 + 菜单 ⌘E + 备份横幅「立即备份」）。
     @Published var showExport = false
     /// 库切换器 sheet（v0.4 FR-1.2，MB-1：MainView 工具栏切换器触发，
@@ -111,6 +116,45 @@ final class AppModel: ObservableObject {
     /// sheet 关闭时 sheet(item:) 绑定自动置 nil。lock() 内清 nil（防锁定后
     /// 残留 sheet，与 selectedItemID/currentDetails 同组纪律）。
     @Published var pendingNewCategory: FfiItemCategory?
+
+    // MARK: 放置区导入授权（v2.11.0，docs/03 §21a §3.1/§3.2；D-18.4 广播单源）
+
+    /// 放置区授权目录（**单一真相**，docs/03 §21a §3.2 / DESIGN.md D-18.4）：
+    /// `nil` = 未授权。写侧只由向导 S0（`DropzoneBookmarkStore.save` 单点）经
+    /// `setDropzoneBookmark` 更新；删侧只由设置页「移除授权」经
+    /// `removeDropzoneAuthorization` 置 nil 广播——向导（打开中）与设置页
+    /// 同源同步回 `.notAuthorized`。启动时从 store 装载（含跨重启持久性，
+    /// §5.1 实证第 5 步）。本属性是 D-18.4「状态广播可达」的枢纽：任一出现面
+    /// 移除/失效都经此属性下发。
+    @Published var dropzoneBookmark: DropzoneBookmark? = DropzoneBookmarkStore.shared.load()
+
+    /// 放置区授权三态（docs/03 §21a §3.1 / DESIGN.md D-18.2）：由
+    /// `dropzoneBookmark` 派生——nil → `.notAuthorized`；非 nil 且
+    /// `validate` 通过 → `.authorized`；非 nil 但校验失败（目录移动/删除/
+    /// 权限变更/系统清理）→ `.stale`（D-18.3 失效非静默）。派生而非独立
+    /// @Published：bookmark 变化即经 objectWillChange 广播，多出现面
+    /// （向导 + 设置页 DropzoneAuthStatusView）同源同步，无旁路分支。
+    var dropzoneAuthStatus: DropzoneAuthStatus {
+        guard let bookmark = dropzoneBookmark else { return .notAuthorized }
+        return DropzoneBookmarkStore.shared.validate(bookmark)
+            ? .authorized(bookmark)
+            : .stale(bookmark)
+    }
+
+    /// 落盘放置区授权（D-18.4 唯一写点接线）：向导 S0 经 `save` 成功后回调，
+    /// 更新单一真相并广播（设置页 DropzoneAuthStatusView 同源切到 .authorized）。
+    /// - Parameter bookmark: `DropzoneBookmarkStore.save` 返回的持久化凭据。
+    func setDropzoneBookmark(_ bookmark: DropzoneBookmark) {
+        dropzoneBookmark = bookmark
+    }
+
+    /// 移除放置区授权（D-18.4 唯一删点 + 广播）：设置页「移除授权」调用——
+    /// 清除 store 持久化 bookmark，置 nil 广播；向导（打开中）与设置页同步回
+    /// `.notAuthorized`。只删授权凭据，目录与文件不动（D-1.3 非破坏性）。
+    func removeDropzoneAuthorization() {
+        DropzoneBookmarkStore.shared.remove()
+        dropzoneBookmark = nil
+    }
 
     /// 解锁失败暴力退避（FR-12.5，T-J）门禁截止时刻；nil = 无倒计时。
     ///

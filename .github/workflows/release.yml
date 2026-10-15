@@ -8,7 +8,8 @@
 # 前置（一次性，见 tools/export_ci_secrets.sh 导出命令）：
 #   secrets.APPLE_CERT_P12_BASE64          —— 证书+私钥 p12 的 base64
 #   secrets.APPLE_CERT_PASSWORD            —— p12 导出密码
-#   secrets.APPLE_PROVISIONING_PROFILE_BASE64 —— macos/build/app.coffer.Coffer.provisionprofile 的 base64
+#   secrets.APPLE_PROVISIONING_PROFILE_BASE64 —— macos/build/top.cygnusyang.coffer.provisionprofile 的 base64
+#                                            （323a6d8 改名后 build_macos_app.sh 期望 top 文件名；旧 app.coffer.Coffer 名已废）
 #   secrets.UPDATE_SIGNING_KEY_BASE64      —— OTA 更新清单 Ed25519 私钥（32 字节种子 base64）；
 #                                            生成指导见 tools/sign_update_manifest.sh 头部注释
 #                                            （v2.7.0，docs/35 §2.3 用户裁定更新密钥放 CI secrets）。
@@ -134,8 +135,8 @@ jobs:
         run: |
           mkdir -p macos/build
           echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode \
-            > macos/build/app.coffer.Coffer.provisionprofile
-          [ -s macos/build/app.coffer.Coffer.provisionprofile ] || \
+            > macos/build/top.cygnusyang.coffer.provisionprofile
+          [ -s macos/build/top.cygnusyang.coffer.provisionprofile ] || \
             { echo "::error::profile base64 解码后为空"; exit 1; }
 
       - name: 构建签名产物（--rebuild-bindings 强制重生成绑定）

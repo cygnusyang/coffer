@@ -10,10 +10,17 @@
 	     托管条目无 ACL（docs/29 §5.1）+ 同组签名 → 静默读 MCP key，无弹窗。
 	     本 entitlement 属受限权限，须配合 provisioning profile
 	     （tools/make_provisioning_profile.sh 生成）；缺 profile 覆盖时
-	     AMFI 在 spawn 门直接 SIGKILL（D-6 spike 实证，/tmp/spike-escrow/log.md）。 -->
+	     AMFI 在 spawn 门直接 SIGKILL（D-6 spike 实证，/tmp/spike-escrow/log.md）。
+	     access group 双组（2026-10-15 BUG 修复，改名过渡态）：
+	     escrow 读路径常量（cf-mcp escrow.rs ESCROW_ACCESS_GROUP）仍冻结为旧组
+	     A6DS985SJJ.app.coffer.Coffer（改名前的 bundle id），且既有 MCP 托管
+	     条目也创建在该组下；改名 323a6d8 后本列表只留新组 top.cygnusyang.coffer，
+	     导致新拉起的 CLI 无权读旧组条目 → -34018 fail-closed。修复为双组共存，
+	     覆盖条目实际所在组；ADP 后 revert 回 app.coffer.Coffer 时本列表无需再动。 -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>A6DS985SJJ.top.cygnusyang.coffer</string>
+		<string>A6DS985SJJ.app.coffer.Coffer</string>
 	</array>
 </dict>
 </plist>

@@ -1,9 +1,14 @@
 // DropzoneImportView.swift —— 放置区导入向导（v2.11.0，docs/21 §4/§5 G4）。
 //
-// 复用共享壳 ImportWizardShell（M-1 Option A，docs/21 §2 裁定）：S0-S5 状态机
-// 全在 content 闭包内自持；`precheckError` Binding 传 nil（壳 alert 不触发，
-// 预检失败走就地错误态 S2-E，docs/21 §4.3-③）；`ImportWizardShell.swift`
-// 零改动（docs/14 P3 硬约束）。
+// v2.11.0 W1a（docs/19 §3.1 L1 抽取）起降为薄壳：S0-S5 状态机 + 跨组件回落
+// 逻辑 + 派生计数全部搬到 DropzoneImportModel（macos/Coffer/Dropzone/
+// DropzoneImportModel.swift），本文件只保留视图修饰（ImportWizardShell 壳 /
+// 系统面板闭包 / ViewBuilder 渲染面）与绑定转发。通用模式见 model 文件头
+// 注释（docs/19 §3.4 ①②③⑤）。
+//
+// 复用共享壳 ImportWizardShell（M-1 Option A，docs/21 §2 裁定）：`precheckError`
+// Binding 传 nil（壳 alert 不触发，预检失败走就地错误态 S2-E，docs/21 §4.3-③）；
+// `ImportWizardShell.swift` 零改动（docs/14 P3 硬约束）。
 //
 // 流程（docs/21 §4.2）：S0 授权（security-scoped bookmark 持久化，授权即同意
 // 裁定②）→ S1 已授权·等待（DispatchSource 监视 + 补扫，仅向导打开期间，裁定⑤）
@@ -17,26 +22,14 @@
 // 密码明文不跨 FFI；错误文案经 ErrorPresenter 单源（D-12.3），不回显文件内容
 // 只回显文件名/行数；零网络。
 //
-// 监视生命周期：watcher 在 S1 启动（进入即补扫），onDisappear / onChange(phase)
-// 防御性停表防泄漏（docs/21a §2.2 结构性 fail-closed 双保险）；App 回前台补扫
-// 经本视图观察 didBecomeActiveNotification（W-5，自我托管不依赖 G6 转发）。
+// 生命周期：监视在 model 内管理（startWatching/onDisappear/onChange(phase)/
+// onChange(bookmark)/didBecomeActive 逻辑均为 model 方法，docs/19 §3.4 ⑤——
+// 视图只作 SwiftUI 观察转发）。@EnvironmentObject（AppModel）在 onAppear 经
+// importModel.attach(context:) 接线（视图 init 读不到环境对象）。
 
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
-
-/// 放置区目录内一个 CSV 候选（S1/S1.5 用）：URL + 元数据指纹态。
-private struct DropzoneCandidate: Identifiable {
-    let url: URL
-    /// 元数据指纹（名+大小+mtime）；无法读取为 nil。
-    let fingerprint: String?
-    /// 是否命中「已导入过」指纹。
-    let isImported: Bool
-    /// 是否命中「已忽略」指纹。
-    let isIgnored: Bool
-
-    var id: URL { url }
-}
 
 struct DropzoneImportView: View {
     @EnvironmentObject
@@ -45,50 +38,14 @@ struct DropzoneImportView: View {
     @Environment(\.dismiss)
     private var dismiss
 
-    // MARK: - 状态机（S0-S5，docs/21 §4.2 转移表）
-
-    enum Step {
-        /// S0 未授权（首次 / 已失效）：DropzoneAuthStatusView 呈现 .notAuthorized / .stale。
-        case unauthorized
-        /// S0-E 授权失败（bookmark 写失败/面板异常）：重试回 S0。
-        case authFailed(String)
-        /// S1 已授权 · 等待新导出（监视中）。
-        case waiting
-        /// S1.5 文件选择（≥2 候选 或 含已导入过）。
-        case pickFile
-        /// S2 预检中。
-        case prechecking(URL)
-        /// S2-E 预检失败（就地错误态，D-7.3）：重试 / 忽略双出口。
-        case precheckFailed(URL, String)
-        /// S3 预览·去重。
-        case preview(FfiDropzonePrecheck, path: String)
-        /// S4 导入中（单事务，关闭禁用）。skippedDuplicates = 本次跳过重复数（S5 展示）。
-        case importing(path: String, skippedDuplicates: UInt32)
-        /// S5 结果页。
-        case done(FfiCsvImportResult, path: String, skippedDuplicates: UInt32)
-        /// S5-E 导入失败（all-or-nothing 零落库）：回等待 S1。
-        case importFailed(path: String, error: String)
-    }
-
-    @State private var step: Step = .unauthorized
-    /// 目录监视器（@State 引用：跨 body 重建稳定；onDisappear/onChange 停表）。
-    @State private var watcher = DropzoneDirectoryWatcher()
-    /// S1.5 候选（非忽略、可触发）。
-    @State private var candidates: [DropzoneCandidate] = []
-    /// S1.5 当前选中文件。
-    @State private var selectedCandidate: URL?
-    /// S1 目录内全部候选（含忽略，供「已忽略」区）。
-    @State private var directoryCandidates: [DropzoneCandidate] = []
-    /// S3 将导入行号集合（D-8.4 即时统计反馈的唯一真相源；默认 = New ∪ Conflict）。
-    @State private var includedLineNos: Set<UInt32> = []
-    /// S1 副态 caption（回前台但文件未落盘，W-5 / D-7.5 不打断）。
-    @State private var waitingHint: String?
-
-    /// 导入执行中（壳「关闭」禁用，防丢结果页）。
-    private var isImporting: Bool {
-        if case .importing = step { return true }
-        return false
-    }
+    /// S0-S5 状态机 model（docs/19 §3.1 L1 抽取）：生产装配点装配服务，
+    /// context 由 onAppear 经 attach 接线。
+    @StateObject
+    private var importModel = DropzoneImportModel(
+        watcher: DropzoneDirectoryWatcher(),
+        bookmarkStore: .shared,
+        fingerprintStore: .shared
+    )
 
     /// 格式配置（docs/21 §4.5 线框 + docs/14 P3 §3；S4/S5 文案逐字对齐 CSV，
     /// ImportView.swift:49,55）。语义死字段逐个注 N/A 及缘由（C-2）。
@@ -120,13 +77,13 @@ struct DropzoneImportView: View {
     var body: some View {
         ImportWizardShell(
             config: Self.importFormatConfig,
-            isImporting: isImporting,
+            isImporting: importModel.isImporting,
             onClose: { dismiss() },
             // C-1：precheckError Binding 传 nil——壳 alert 不呈现，错误态闭包内自持。
             precheckError: .constant(nil),
             onPrecheckErrorDismiss: {}
         ) {
-            switch step {
+            switch importModel.step {
             case .unauthorized:
                 authorizationBody()
             case .authFailed(let error):
@@ -158,130 +115,29 @@ struct DropzoneImportView: View {
                 importFailedBody(path, error)
             }
         }
-        .onAppear(perform: onAppear)
+        .onAppear {
+            // @EnvironmentObject 不可在视图 init 读，onAppear 接线（docs/19 §3.4 ⑤）。
+            importModel.attach(context: model)
+            importModel.onAppear()
+        }
         // 锁定 = 监视停摆（fail-closed，裁定③）：phase 离开 .unlocked 即停表
-        // （结构性拆树之外的双保险，docs/21a §2.2）。
+        // （结构性拆树之外的双保险，docs/21a §2.2）——逻辑在 model.handlePhaseChange。
         .onChange(of: model.phase) {
-            if model.phase != .unlocked { watcher.stop() }
+            importModel.handlePhaseChange()
         }
         // 授权广播同步（D-18.4 状态广播可达 + docs/21 §5 A-5/RT-09）：设置页
-        // 「移除授权」置 nil → 停表（watcher.stop 配对释放安全作用域）+ 回落
-        // S0，防止在已撤销目录上继续监视 / 点「导入 N 条」；S0 重授权（换目录）
-        // 时 status 仍 .authorized，不受扰。注意 onChange 仅在 bookmark 值变化时
-        // 触发——目录不可达但 bookmark 值未变的 stale 场景由 rescanAndEvaluate
-        // 的 validate 判定回落（S1 补扫），不由此 onChange 覆盖（IT-12 走查 2026-10-16）。
+        // 「移除授权」置 nil → model.handleBookmarkChange 停表 + 回落 S0。
         .onChange(of: model.dropzoneBookmark) {
-            switch model.dropzoneAuthStatus {
-            case .authorized:
-                break
-            case .notAuthorized, .stale:
-                watcher.stop()
-                step = .unauthorized
-            }
+            importModel.handleBookmarkChange()
         }
         .onDisappear {
-            watcher.stop()
+            importModel.onDisappear()
         }
         // 回前台补扫（W-5）：用户切去 Passwords.app 导出后切回，检测到即自动
-        // 进预检；未落盘则保持 S1 + 轻提示（D-7.5 不打断不弹窗）。
+        // 进预检；未落盘则保持 S1 + 轻提示（D-7.5 不打断不弹窗）——逻辑在
+        // model.handleDidBecomeActive。
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            guard model.phase == .unlocked else { return }
-            if case .waiting = step { rescanAndEvaluate(foreground: true) }
-        }
-    }
-
-    // MARK: - 生命周期
-
-    /// 进入向导：按授权三态落地。已授权 → S1 并开始监视（进入即补扫）；
-    /// 未授权/已失效 → S0（授权即同意，裁定②；失效非静默，D-18.3）。
-    private func onAppear() {
-        switch model.dropzoneAuthStatus {
-        case .authorized:
-            step = .waiting
-            startWatching()
-        case .notAuthorized, .stale:
-            step = .unauthorized
-        }
-    }
-
-    /// 启动目录监视（仅 S1 已授权态）。进入即补扫一次（docs/21a §2.2 补扫时机①）。
-    /// start 失败（授权失效/无法打开）→ 就地 S0-E，不静默（D-18.3）。
-    private func startWatching() {
-        guard case .authorized(let bookmark) = model.dropzoneAuthStatus else { return }
-        do {
-            try watcher.start(watching: bookmark.url) { [self] in
-                // vnode 事件在后台队列触发；跳主队列再判状态（不打断 S1.5/S3/S4）。
-                Task { @MainActor in
-                    self.handleWatchEvent()
-                }
-            }
-            handleWatchEvent()
-        } catch {
-            step = .authFailed(errorText(error))
-        }
-    }
-
-    /// vnode 事件回调：仅 S1（等待）态响应自动流转；S1.5/S3 不打断当前选择、
-    /// S4/S5 入队不打断（W-4，回 S1 后补扫兜底）。
-    private func handleWatchEvent() {
-        guard model.phase == .unlocked else { return }
-        guard case .waiting = step else { return }
-        rescanAndEvaluate(foreground: false)
-    }
-
-    /// 补扫 + 指纹过滤 → W-3 判多/判已导入过 → S2 / S1.5 / S1。
-    /// `foreground` = 回前台触发的补扫（W-5）：无候选时设轻提示 caption。
-    private func rescanAndEvaluate(foreground: Bool) {
-        guard model.phase == .unlocked else { return }
-        switch model.dropzoneAuthStatus {
-        case .authorized(let bookmark):
-            // 失效检测（A-3 / D-18.3）：目录不可达 → 就地 .stale（回 S0 重新授权）。
-            guard DropzoneBookmarkStore.shared.validate(bookmark) else {
-                step = .unauthorized
-                return
-            }
-            let all = dropzoneCandidates()
-            directoryCandidates = all
-            let fresh = all.filter { !$0.isIgnored }
-            if fresh.isEmpty {
-                if foreground { waitingHint = "还没看到新导出——请完成 Passwords.app 的保存" }
-                step = .waiting
-                return
-            }
-            waitingHint = nil
-            if fresh.count >= 2 || fresh.contains(where: { $0.isImported }) {
-                candidates = fresh
-                selectedCandidate = defaultSelection(fresh)
-                step = .pickFile
-            } else if let only = fresh.first {
-                startPrecheck(only.url)
-            }
-        case .notAuthorized, .stale:
-            step = .unauthorized
-        }
-    }
-
-    /// 默认选中 = 最新修改时间且未「已导入过」；全为已导入过则无默认（预检禁用）。
-    private func defaultSelection(_ candidates: [DropzoneCandidate]) -> URL? {
-        let fresh = candidates.filter { !$0.isImported }
-        let pool = fresh.isEmpty ? candidates : fresh
-        return pool.max { mtime($0.url) < mtime($1.url) }?.url
-    }
-
-    private func mtime(_ url: URL) -> Date {
-        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            ?? .distantPast
-    }
-
-    /// 枚举目录内全部 CSV 候选并附指纹态（名+大小+mtime，S-4 仅元数据）。
-    private func dropzoneCandidates() -> [DropzoneCandidate] {
-        let store = DropzoneFingerprintStore.shared
-        return watcher.rescan().map { url in
-            let fp = store.fingerprint(for: url)
-            return DropzoneCandidate(url: url,
-                                     fingerprint: fp,
-                                     isImported: fp.map(store.isImported) ?? false,
-                                     isIgnored: fp.map(store.isIgnored) ?? false)
+            importModel.handleDidBecomeActive()
         }
     }
 
@@ -320,8 +176,8 @@ struct DropzoneImportView: View {
     }
 
     /// 闭包自开 NSOpenPanel 选目录（canChooseDirectories，目录多选禁，A-1）→
-    /// 写 bookmark（唯一写点，DropzoneBookmarkStore.save）→ 授权即同意（裁定②，
-    /// 无二次确认弹窗，A-2）→ 直接进 S1 并开始监视。
+    /// 授权落地交给 model.authorize（唯一写点 save + 广播 + 进 S1 开始监视）。
+    /// 授权即同意（裁定②，无二次确认弹窗，A-2）。
     private func pickAndAuthorize() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -331,14 +187,7 @@ struct DropzoneImportView: View {
         // 授权范围声明在面板 message 重申（D-18.1）。
         panel.message = "Coffer 将获得对所选目录的只读访问，用于自动检测新的密码导出 CSV。仅本地读取、零网络、可随时在『系统设置 › 隐私与安全性 › 文件与文件夹』或本应用内撤销授权。"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let bookmark = try DropzoneBookmarkStore.shared.save(url)
-            model.setDropzoneBookmark(bookmark)
-            step = .waiting
-            startWatching()
-        } catch {
-            step = .authFailed(errorText(error))
-        }
+        importModel.authorize(url: url)
     }
 
     /// S0-E 授权失败（就地错误态，重试回 S0）。
@@ -349,7 +198,7 @@ struct DropzoneImportView: View {
                 .foregroundStyle(.orange)
             Text("无法设置放置区授权").font(.headline)
             Text(error).font(.callout).foregroundStyle(.secondary)
-            Button("重试") { step = .unauthorized }
+            Button("重试") { importModel.step = .unauthorized }
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -362,7 +211,7 @@ struct DropzoneImportView: View {
         VStack(alignment: .leading, spacing: 14) {
             directoryLine
             guideCard
-            DropzoneWatchStatusBadge(directoryName: authorizedDirectoryName, hint: waitingHint)
+            DropzoneWatchStatusBadge(directoryName: authorizedDirectoryName, hint: importModel.waitingHint)
             ignoredSection
             Spacer()
             Text("监视仅在向导打开期间进行；关闭后再打开会自动补扫新文件。")
@@ -380,7 +229,7 @@ struct DropzoneImportView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
-            Button("重新授权…") { step = .unauthorized }
+            Button("重新授权…") { importModel.step = .unauthorized }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
@@ -427,7 +276,7 @@ struct DropzoneImportView: View {
     private func openPasswordsApp() {
         let url = URL(fileURLWithPath: "/System/Applications/Passwords.app")
         guard NSWorkspace.shared.open(url) else {
-            waitingHint = "无法打开 macOS 密码 App，请在访达中手动打开。"
+            importModel.waitingHint = "无法打开 macOS 密码 App，请在访达中手动打开。"
             return
         }
     }
@@ -449,7 +298,7 @@ struct DropzoneImportView: View {
 
     /// 已忽略区（W-6）：被忽略文件行 + [取消忽略] 清指纹恢复可检测。
     private var ignoredSection: some View {
-        let ignored = directoryCandidates.filter { $0.isIgnored }
+        let ignored = importModel.directoryCandidates.filter { $0.isIgnored }
         guard !ignored.isEmpty else { return AnyView(EmptyView()) }
         return AnyView(
             VStack(alignment: .leading, spacing: 4) {
@@ -465,9 +314,8 @@ struct DropzoneImportView: View {
                         Spacer()
                         Button("取消忽略") {
                             if let fp = candidate.fingerprint {
-                                DropzoneFingerprintStore.shared.removeIgnored(fp)
+                                importModel.unignore(fp)
                             }
-                            rescanAndEvaluate(foreground: false)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -484,12 +332,12 @@ struct DropzoneImportView: View {
             Text("放置区检测到导出文件，选择一个：").font(.headline)
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(candidates) { candidate in
+                    ForEach(importModel.candidates) { candidate in
                         candidateRow(candidate)
                     }
                 }
             }
-            if selectedIsImported {
+            if importModel.selectedIsImported {
                 // 已导入过但用户仍选 → 放行提示（docs/21 §4.3-②，用户可刻意重导）。
                 Text("此文件与上次导入一致，继续将全部作为新增。")
                     .font(.caption)
@@ -500,10 +348,10 @@ struct DropzoneImportView: View {
                     .buttonStyle(.bordered)
                 Spacer()
                 Button("预检所选") {
-                    if let url = selectedCandidate { startPrecheck(url) }
+                    if let url = importModel.selectedCandidate { importModel.startPrecheck(url) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedCandidate == nil)
+                .disabled(importModel.selectedCandidate == nil)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -512,15 +360,15 @@ struct DropzoneImportView: View {
     /// 候选行：单选 + 文件名 + 大小/时间 + 「新」/「已导入过」徽标。
     private func candidateRow(_ candidate: DropzoneCandidate) -> some View {
         Button {
-            selectedCandidate = candidate.url
+            importModel.selectedCandidate = candidate.url
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: selectedCandidate == candidate.url ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selectedCandidate == candidate.url ? Color.accentColor : Color.secondary)
+                Image(systemName: importModel.selectedCandidate == candidate.url ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(importModel.selectedCandidate == candidate.url ? Color.accentColor : Color.secondary)
                 Text(candidate.url.lastPathComponent)
                     .font(.callout)
                     .lineLimit(1)
-                Text(fileMeta(candidate.url))
+                Text(importModel.fileMeta(candidate.url))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -533,7 +381,7 @@ struct DropzoneImportView: View {
             .padding(6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selectedCandidate == candidate.url ? Color.accentColor.opacity(0.12) : Color.clear)
+                    .fill(importModel.selectedCandidate == candidate.url ? Color.accentColor.opacity(0.12) : Color.clear)
             )
             .contentShape(Rectangle())
         }
@@ -550,51 +398,13 @@ struct DropzoneImportView: View {
             .foregroundStyle(color)
     }
 
-    private var selectedIsImported: Bool {
-        guard let sel = selectedCandidate else { return false }
-        return candidates.first { $0.url == sel }?.isImported ?? false
-    }
-
-    /// 文件大小 · 相对修改时间（S1.5 行元数据，非敏感）。
-    private func fileMeta(_ url: URL) -> String {
-        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-              let size = values.fileSize else { return "" }
-        let sizeText = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
-        guard let date = values.contentModificationDate else { return sizeText }
-        return "\(sizeText) · \(relativeTime(date))"
-    }
-
-    private func relativeTime(_ date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "刚刚" }
-        if seconds < 3600 { return "\(seconds / 60) 分钟前" }
-        if seconds < 86_400 { return "\(seconds / 3600) 小时前" }
-        if Calendar.current.isDateInYesterday(date) { return "昨天" }
-        return "\(seconds / 86_400) 天前"
-    }
-
     /// 忽略所选（W-6）：落「已忽略指纹」（名+大小+mtime），该文件不再自动触发。
     private func ignoreSelected() {
-        guard let sel = selectedCandidate else { return }
-        ignoreFile(sel)
+        guard let sel = importModel.selectedCandidate else { return }
+        importModel.ignoreFile(sel)
     }
 
     // MARK: - S2 预检
-
-    /// 选定文件 → session.precheckDropzone（core 去重分类，P-4；只读同步调用）。
-    private func startPrecheck(_ url: URL) {
-        step = .prechecking(url)
-        let path = url.path
-        do {
-            let report = try sessionCall { try $0.precheckDropzone(path: path) }
-            // 默认 include = New ∪ Conflict（安全默认跳过重复，docs/21 §4.4）。
-            includedLineNos = Set(report.rows.filter { $0.category != .duplicate }.map(\.lineNo))
-            step = .preview(report, path: path)
-        } catch {
-            // S2-E 就地错误态：错误文案经 ErrorPresenter（D-12.3），不回显文件内容。
-            step = .precheckFailed(url, errorText(error))
-        }
-    }
 
     private func precheckingBody(_ url: URL) -> some View {
         VStack(spacing: 12) {
@@ -614,23 +424,14 @@ struct DropzoneImportView: View {
             Text(error).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             ImportScaffold.pathLine(url.path)
             HStack {
-                Button("重新预检") { startPrecheck(url) }
+                Button("重新预检") { importModel.startPrecheck(url) }
                     .buttonStyle(.bordered)
                 Spacer()
-                Button("忽略此文件（不再提示）") { ignoreFile(url) }
+                Button("忽略此文件（不再提示）") { importModel.ignoreFile(url) }
                     .buttonStyle(.borderedProminent)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// 忽略文件（W-6）：落忽略指纹后回 S1，该文件同/跨会话不再自动触发预检。
-    private func ignoreFile(_ url: URL) {
-        if let fp = DropzoneFingerprintStore.shared.fingerprint(for: url) {
-            DropzoneFingerprintStore.shared.markIgnored(fp)
-        }
-        step = .waiting
-        rescanAndEvaluate(foreground: false)
     }
 
     // MARK: - S3 预览·去重
@@ -643,12 +444,12 @@ struct DropzoneImportView: View {
                 Spacer()
             }
             // statLabel 三连（C-5 复用 ImportScaffold.statLabel）。计数由
-            // includedLineNos 派生（D-8.4 切换即时更新，对齐「导入 N 条」按钮：
-            // 三连和恒等于 N）。
+            // importModel.includedLineNos 派生（D-8.4 切换即时更新，对齐「导入 N 条」
+            // 按钮：三连和恒等于 N）。
             HStack(spacing: 24) {
-                ImportScaffold.statLabel("新增", includedCount(in: report, of: .new))
-                ImportScaffold.statLabel("重复", includedCount(in: report, of: .duplicate))
-                ImportScaffold.statLabel("冲突", includedCount(in: report, of: .conflict))
+                ImportScaffold.statLabel("新增", importModel.includedCount(in: report, of: .new))
+                ImportScaffold.statLabel("重复", importModel.includedCount(in: report, of: .duplicate))
+                ImportScaffold.statLabel("冲突", importModel.includedCount(in: report, of: .conflict))
             }
             .font(.callout)
 
@@ -658,10 +459,10 @@ struct DropzoneImportView: View {
                     .font(.callout)
                 Spacer()
             } else {
-                if !duplicates(in: report).isEmpty {
+                if !importModel.duplicates(in: report).isEmpty {
                     duplicateSectionHeader(report)
                 }
-                if !conflicts(in: report).isEmpty {
+                if !importModel.conflicts(in: report).isEmpty {
                     Text("冲突条目（\(report.conflictCount)）——用户名或网址不同，请确认")
                         .font(.callout)
                 }
@@ -679,12 +480,12 @@ struct DropzoneImportView: View {
             }
 
             HStack {
-                Button("返回") { backToWaiting() }
+                Button("返回") { importModel.backToWaiting() }
                     .buttonStyle(.bordered)
                 Spacer()
-                Button("导入 \(includedLineNos.count) 条") { doImport(report: report, path: path) }
+                Button("导入 \(importModel.includedLineNos.count) 条") { importModel.doImport(report: report, path: path) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(includedLineNos.isEmpty)
+                    .disabled(importModel.includedLineNos.isEmpty)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -697,10 +498,10 @@ struct DropzoneImportView: View {
                 Text("重复条目（\(report.duplicateCount)）").font(.callout)
                 Spacer()
                 Menu {
-                    Button("跳过（默认）") { excludeAllDuplicates(in: report) }
-                    Button("全部导入（新建不覆盖）") { includeAllDuplicates(in: report) }
+                    Button("跳过（默认）") { importModel.excludeAllDuplicates(in: report) }
+                    Button("全部导入（新建不覆盖）") { importModel.includeAllDuplicates(in: report) }
                 } label: {
-                    Label(allDuplicatesIncluded(in: report) ? "全部导入" : "跳过", systemImage: "chevron.down")
+                    Label(importModel.allDuplicatesIncluded(in: report) ? "全部导入" : "跳过", systemImage: "chevron.down")
                 }
                 .controlSize(.small)
             }
@@ -714,9 +515,9 @@ struct DropzoneImportView: View {
     /// 预览行：分类徽章 + 标题/用户名/URL（中截断）+ 选择态文本标记（D-13.4
     /// 不依赖颜色）+ 行内切换（D-8.4 状态可见可逆）。
     private func previewRow(_ row: FfiDropzoneRow) -> some View {
-        let included = includedLineNos.contains(row.lineNo)
+        let included = importModel.includedLineNos.contains(row.lineNo)
         return Button {
-            toggle(row)
+            importModel.toggle(row)
         } label: {
             HStack(spacing: 8) {
                 DedupCategoryBadge(category: row.category)
@@ -757,97 +558,10 @@ struct DropzoneImportView: View {
         }
         .buttonStyle(.plain)
         // D-8.4 VO：徽章 label 含当前态 + 动作（「重复，点按改为导入」）。
-        .accessibilityLabel(previewRowLabel(row))
+        .accessibilityLabel(importModel.previewRowLabel(row))
     }
 
-    private func previewRowLabel(_ row: FfiDropzoneRow) -> String {
-        let action = includedLineNos.contains(row.lineNo) ? "点按改为跳过" : "点按改为导入"
-        return "\(categoryName(row.category))，\(row.title)，\(action)"
-    }
-
-    private func categoryName(_ category: FfiDedupCategory) -> String {
-        switch category {
-        case .new: return "新增"
-        case .duplicate: return "重复"
-        case .conflict: return "冲突"
-        }
-    }
-
-    private func toggle(_ row: FfiDropzoneRow) {
-        if includedLineNos.contains(row.lineNo) {
-            includedLineNos.remove(row.lineNo)
-        } else {
-            includedLineNos.insert(row.lineNo)
-        }
-    }
-
-    private func duplicates(in report: FfiDropzonePrecheck) -> [FfiDropzoneRow] {
-        report.rows.filter { $0.category == .duplicate }
-    }
-
-    private func conflicts(in report: FfiDropzonePrecheck) -> [FfiDropzoneRow] {
-        report.rows.filter { $0.category == .conflict }
-    }
-
-    private func allDuplicatesIncluded(in report: FfiDropzonePrecheck) -> Bool {
-        let dupes = duplicates(in: report)
-        return !dupes.isEmpty && dupes.allSatisfy { includedLineNos.contains($0.lineNo) }
-    }
-
-    private func includeAllDuplicates(in report: FfiDropzonePrecheck) {
-        for row in duplicates(in: report) { includedLineNos.insert(row.lineNo) }
-    }
-
-    private func excludeAllDuplicates(in report: FfiDropzonePrecheck) {
-        for row in duplicates(in: report) { includedLineNos.remove(row.lineNo) }
-    }
-
-    /// S3 三连统计由 includedLineNos 派生（D-8.4 即时更新）：各分类当前被选中
-    /// （将导入）的行数；三分类和恒等于「导入 N 条」N。
-    private func includedCount(in report: FfiDropzonePrecheck, of category: FfiDedupCategory) -> Int {
-        report.rows.reduce(into: 0) { count, row in
-            if row.category == category && includedLineNos.contains(row.lineNo) { count += 1 }
-        }
-    }
-
-    // MARK: - S4 导入
-
-    /// import_dropzone 单事务 all-or-nothing（P-4）：按 includeLineNos 选择集导入，
-    /// 失败零落库 + 就地错误回 S1（S5-E）。导入中暂停响应监视事件（W-4 入队不打断）。
-    private func doImport(report: FfiDropzonePrecheck, path: String) {
-        let skipped: UInt32 = UInt32(
-            report.rows.filter { $0.category == .duplicate && !includedLineNos.contains($0.lineNo) }.count
-        )
-        step = .importing(path: path, skippedDuplicates: skipped)
-        let session = model.session
-        let include = Array(includedLineNos)
-        Task.detached(priority: .userInitiated) {
-            do {
-                let result = try session?.importDropzone(path: path, includeLineNos: include)
-                await MainActor.run {
-                    if let result {
-                        markImported(path: path)
-                        step = .done(result, path: path, skippedDuplicates: skipped)
-                        model.reloadItems()
-                    } else {
-                        step = .importFailed(path: path, error: "会话不存在。")
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    step = .importFailed(path: path, error: ErrorPresenter.text(error))
-                }
-            }
-        }
-    }
-
-    /// 导入成功后落「已导入过」指纹（S5 前；后续补扫判该文件为已导入过，W-3）。
-    private func markImported(path: String) {
-        let url = URL(fileURLWithPath: path)
-        if let fp = DropzoneFingerprintStore.shared.fingerprint(for: url) {
-            DropzoneFingerprintStore.shared.markImported(fp)
-        }
-    }
+    // MARK: - S4 导入 / S5 结果页
 
     /// S5-E 导入失败（all-or-nothing 零落库）：就地错误 + 回等待 S1。
     private func importFailedBody(_ path: String, _ error: String) -> some View {
@@ -858,13 +572,11 @@ struct DropzoneImportView: View {
             Text("导入失败").font(.headline)
             Text(error).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             ImportScaffold.pathLine(path)
-            Button("返回等待") { backToWaiting() }
+            Button("返回等待") { importModel.backToWaiting() }
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    // MARK: - S5 结果页
 
     /// 结果页特有区：删源警示（D-6 只提示不代办，绝无删除按钮）+ 跳过重复统计 +
     /// 逃生口 + 返回等待。
@@ -885,37 +597,10 @@ struct DropzoneImportView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Button("返回等待") { backToWaiting() }
+            Button("返回等待") { importModel.backToWaiting() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 回等待 S1（S5 返回等待 / S5-E / S3 返回共用）：复位后补扫。
-    private func backToWaiting() {
-        step = .waiting
-        rescanAndEvaluate(foreground: false)
-    }
-
-    // MARK: - 辅助
-
-    /// FFI 错误一律走 ErrorPresenter 单源（D-12.3：code 本地化 + 4001/4002/6xxx
-    /// 特殊码规范化，且 FfiError.errorDescription 是 String(reflecting:) 调试
-    /// 表示，不可直出）；本地错误类型（DropzoneBookmarkError/DropzoneWatchError）
-    /// 已实现 errorDescription，直出可操作文案。
-    private func errorText(_ error: Error) -> String {
-        if error is FfiError { return ErrorPresenter.text(error) }
-        if let localized = error as? LocalizedError, let message = localized.errorDescription {
-            return message
-        }
-        return ErrorPresenter.text(error)
-    }
-
-    private func sessionCall<R>(_ action: (VaultSession) throws -> R) throws -> R {
-        guard let session = model.session else {
-            throw FfiError.Coffer(code: 1001, message: "会话不存在")
-        }
-        return try action(session)
     }
 }

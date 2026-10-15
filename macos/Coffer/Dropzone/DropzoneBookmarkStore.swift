@@ -68,8 +68,10 @@ final class DropzoneBookmarkStore {
         self.defaults = defaults
     }
 
-    /// 读授权（nil = 未授权）。bookmark 无法解析（数据损坏）按未授权处理；
-    /// 失效的确定路径由 validate() 判定——目录删除/改名/权限变更通常仍可解析。
+    /// 读授权（nil = 未授权）。bookmark 无法解析（数据损坏、**目录已删除**——
+    /// resolvingBookmarkData 抛 Cocoa Code=4，探针实证见 docs/18 §9）按未授权处理；
+    /// 改名/权限变更通常仍可解析，失效由 validate() 判定（会话内 .stale，
+    /// 跨重启删目录呈 .notAuthorized——lead 终态口径 docs/18 §9 2026-10-16）。
     func load() -> DropzoneBookmark? {
         lock.lock()
         defer { lock.unlock() }

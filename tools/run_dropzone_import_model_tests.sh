@@ -36,17 +36,20 @@ trap 'rm -rf "${OUT_DIR}" "${WORK_DIR}"' EXIT
 MODEL_SRC="${ROOT_DIR}/macos/Coffer/Dropzone/DropzoneImportModel.swift"
 CTX_SRC="${ROOT_DIR}/macos/Coffer/Dropzone/DropzoneImportContext.swift"
 WATCH_SRC="${ROOT_DIR}/macos/Coffer/Dropzone/DirectoryWatching.swift"
+# AppPhase（w1a/lead 已按 tester 报告迁出 AppModel.swift 至独立轻量文件，纯 Foundation）；
+# DropzoneImportContext 协议引用之，harness 编译须含本文件。
+APP_PHASE_SRC="${ROOT_DIR}/macos/Coffer/AppPhase.swift"
 
 # model 依赖的 ErrorPresenter 链（真实实现，非 shim）：ErrorPresenter + 其四
 # 依赖均为 Foundation/Security/LocalAuthentication-only，可 standalone 编译。
-# AppPhase 目前仍在 AppModel.swift（AppKit+SwiftUI 重依赖，不可 standalone）——
-# 契约依赖缺口：L1 harness 编译须 AppPhase 迁至轻量文件（报 lead/w1a 裁定）。
 ERROR_PRESENTER_SRC="${ROOT_DIR}/macos/Coffer/Support/ErrorPresenter.swift"
 ERROR_DEPS=(
   "${ROOT_DIR}/macos/Coffer/Support/TouchIDError.swift"
   "${ROOT_DIR}/macos/Coffer/Support/UpdatePassword.swift"
   "${ROOT_DIR}/macos/Coffer/Support/LicenseError.swift"
   "${ROOT_DIR}/macos/Coffer/Platform/BiometricKeychain.swift"
+  "${ROOT_DIR}/macos/Coffer/Support/DiagLog.swift"
+  "${ROOT_DIR}/macos/Coffer/Support/TouchIDAuthFailure.swift"
 )
 
 swiftc -O \
@@ -54,7 +57,7 @@ swiftc -O \
   -target "${ARCH}-apple-macos14.0" \
   -import-objc-header "${ROOT_DIR}/macos/Coffer/CoreBindings/cf_ffiFFI.h" \
   "${ROOT_DIR}/macos/Coffer/CoreBindings/cf_ffi.swift" \
-  "${MODEL_SRC}" "${CTX_SRC}" "${WATCH_SRC}" \
+  "${MODEL_SRC}" "${CTX_SRC}" "${WATCH_SRC}" "${APP_PHASE_SRC}" \
   "${ROOT_DIR}/macos/Coffer/Dropzone/DropzoneFingerprintStore.swift" \
   "${ROOT_DIR}/macos/Coffer/Dropzone/DropzoneBookmarkStore.swift" \
   "${ROOT_DIR}/macos/Coffer/Dropzone/DropzoneDirectoryWatcher.swift" \

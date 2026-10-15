@@ -369,8 +369,11 @@ func runTests() {
     // 全新=Beta=new、Title 命中但 Username 不同=conflict（FfiDedupCategory 语义）。
     let csv21a = makeDropzoneDir(workDir, name: "dropzone-it21", rows:
         "Alpha,https://a.example,a,PLACEHOLDER-PW-0001,,\n")
+    // 表头=行 1、数据行自 line_no 2 起（dropzone_import.rs:352 同款）：用预检真实
+    // 行号而非硬编码（先前探针同类缺陷已自纠）。
+    let pre21a = try! session.precheckDropzone(path: csv21a.appendingPathComponent("Passwords.csv").path)
     _ = try! session.importDropzone(path: csv21a.appendingPathComponent("Passwords.csv").path,
-                                    includeLineNos: [1])
+                                    includeLineNos: pre21a.rows.map(\.lineNo))
     let csv21b = makeDropzoneDir(workDir, name: "dropzone-it21b", rows:
         "Alpha,https://a.example,a,PLACEHOLDER-PW-0001,,     \n"
         + "Beta,https://b.example,b,PLACEHOLDER-PW-0002,,    \n"

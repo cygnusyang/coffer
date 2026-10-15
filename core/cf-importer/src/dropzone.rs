@@ -254,10 +254,12 @@ fn analyze_parsed(
             ));
         }
         if signals.bad_totp {
+            // M-3 脱敏（dev-reviewer 2026-10-16）：`bad_totp_reason` 可能回显原始
+            // otpauth URI / 参数片段（如「period 参数无效：{v}」），TOTP secret 同属
+            // 凭据（R2 精神同等适用）——warnings 只留脱敏摘要 + 行号，不含原值。
             analysis.warnings.push(format!(
-                "第 {} 行：One-time password 无法解析（{}），原始值已并入备注，该行仍导入",
-                row.line_no,
-                signals.bad_totp_reason.as_deref().unwrap_or("原因未知")
+                "第 {} 行：One-time password 无法解析，原始值已并入备注，该行仍导入",
+                row.line_no
             ));
         }
         for col in signals.invalid_bool_columns {
@@ -634,6 +636,9 @@ mod tests {
     }
 
     /// 既有警告语义复用：缺 Title 兜底、坏 otpauth 并入备注、行仍有效
+    ///
+    /// M-3（dev-reviewer 2026-10-16 归因=生产行为按审查修正）：otpauth 解析失败
+    /// 的 warnings 已脱敏——只留摘要 + 行号，不得携带原始 otpauth/secret 片段。
     #[test]
     fn 既有警告语义复用() {
         let st = store();
@@ -645,8 +650,40 @@ mod tests {
         let analysis = analyze_dropzone(f.path(), &st).unwrap();
         assert!(analysis.warnings.iter().any(|w| w.contains("缺失 Title")));
         assert!(analysis.warnings.iter().any(|w| w.contains("One-time password 无法解析")));
+        assert!(
+            analysis.warnings.iter().all(|w| !w.contains("BAD!!") && !w.contains("secret=")),
+            "warnings 不得含原始 otpauth/secret 片段（M-3 脱敏）：{warnings:?}",
+            warnings = analysis.warnings
+        );
         assert_eq!(analysis.valid_rows, 1);
         assert_eq!(analysis.rows[0].title, "（无标题）");
+    }
+
+    /// M-3 脱敏：otpauth 解析失败 warnings 不得携带原始 URI/参数片段
+    /// （TOTP secret 同属凭据，R2 精神同等适用）
+    #[test]
+    fn otpauth解析失败warnings脱敏() {
+        let st = store();
+        // period 参数非法 → 原 parse_otpauth 错误会回显「period 参数无效：{v}」原值
+        // （mapping.rs C-4 红线不动），dropzone 侧 warnings 必须只留脱敏摘要
+        let csv = concat!(
+            "Title,Website,Username,Password,One-time password\n",
+            "X,https://x.example,u1,pw,",
+            "otpauth://totp/X:u1?secret=JBSWY3DPEHPK3PXP&period=abcSECRETMARKER\n",
+        );
+        let f = write_csv(csv);
+        let analysis = analyze_dropzone(f.path(), &st).unwrap();
+        let warn = analysis
+            .warnings
+            .iter()
+            .find(|w| w.contains("无法解析"))
+            .expect("须有 OTP 解析失败告警");
+        assert!(warn.contains("第 2 行"), "脱敏摘要须带行号：{warn}");
+        assert!(
+            !warn.contains("abcSECRETMARKER") && !warn.contains("otpauth://") && !warn.contains("secret"),
+            "warnings 不得含原始 URI/参数/secret 片段：{warn}"
+        );
+        assert_eq!(analysis.valid_rows, 1, "解析失败不丢行，值并入备注");
     }
 
     /// 未识别列进报告（不静默丢弃，值并入备注）

@@ -66,6 +66,7 @@ use cf_store::{ItemRow, ItemStore, Repos};
 
 pub mod bitwarden;
 pub mod csv;
+pub mod dropzone;
 pub mod opvault;
 pub mod precheck;
 pub mod pux;
@@ -76,6 +77,10 @@ pub use bitwarden::{
     BwPrecheckReport,
 };
 pub use csv::mapping::{ImportModel, OtpauthData};
+pub use dropzone::{
+    analyze_dropzone, import_dropzone, normalize_dedup_url, DedupCategory, DropzoneAnalysis,
+    DropzoneRow,
+};
 pub use opvault::{
     import_opvault, precheck_opvault, OpvaultImportResult, OpvaultItemModel, OpvaultPrecheckReport,
 };

@@ -3,8 +3,9 @@
 //
 // AppModel 是 @MainActor + SwiftUI 重依赖，不可 standalone 实例化（docs/18
 // §4.x 已实证）；DropzoneImportModel 以本协议收窄依赖面（phase /
-// dropzoneAuthStatus / session / 写回 / 刷新），AppModel 在下方 extension 里
-// conform（AppModel.swift 零改动），测试用内存 stub 替换。
+// dropzoneAuthStatus / session / 写回 / 刷新），AppModel 在 AppModel.swift 末尾
+// extension 里 conform（v2.11.0 W1a 追加，随 AppPhase 迁移一起落位——协议文件
+// 须保持 standalone 可编译，生产 conform 不放本文件），测试用内存 stub 替换。
 //
 // 通用模式（docs/19 §3.4 ②）：AppModel 面收窄为协议（extension conform，
 // 测试内存 stub）——DropzoneBookmarkTests/main.swift:68-74 契约镜像先例的
@@ -12,7 +13,8 @@
 
 import Foundation
 
-/// model 需要的 AppModel 窄面（AppModel 在 extension 里 conform；测试用内存 stub）。
+/// model 需要的 AppModel 窄面（AppModel 在 AppModel.swift 末尾 extension 里
+/// conform；测试用内存 stub）。
 ///
 /// `@MainActor`：AppModel 全体成员均为主 actor 隔离，协议标 @MainActor 使
 /// conform 无隔离交叉（否则 Swift 5 出 conformance-isolation 警告、Swift 6 为错误）；
@@ -31,7 +33,3 @@ protocol DropzoneImportContext: AnyObject {
     /// 导入成功后刷新条目列表。
     func reloadItems()
 }
-
-// MARK: - 生产 conform（AppModel.swift 零改动）
-
-extension AppModel: DropzoneImportContext {}

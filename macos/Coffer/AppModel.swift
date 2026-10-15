@@ -14,20 +14,6 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// 应用阶段状态机。
-enum AppPhase: Equatable {
-    /// 启动中：枚举工作目录里的库。
-    case booting
-    /// 工作目录没有库：进入建库流程。
-    case noVault
-    /// 已有库但处于锁定态。
-    case locked
-    /// 已解锁，进入条目管理。
-    case unlocked
-    /// 不可恢复的启动失败（列出原因，引导用户检查环境）。
-    case fatal(String)
-}
-
 @MainActor
 final class AppModel: ObservableObject {
     // MARK: - Published 状态
@@ -1602,3 +1588,13 @@ final class AppModel: ObservableObject {
         try? factory.strengthEstimate(candidate: candidate)
     }
 }
+
+// MARK: - DropzoneImportContext conform（v2.11.0 W1a 追加）
+
+// 放置区导入 model（DropzoneImportModel）需要的 AppModel 窄面（docs/19 §3.2 五成员：
+// phase / dropzoneAuthStatus / session / setDropzoneBookmark / reloadItems）。
+// 原随 W1a 放在 DropzoneImportContext.swift 内，v2.11.0 AppPhase 迁移时移到本文件
+// 末尾——协议文件须保持 standalone 可编译（L1 harness 编译协议但不编译本类，
+// docs/19 §3.3「不可 standalone 实例化」），生产 conform 归位到被 conform 类型
+// 所在文件（对齐 ItemStore.swift 对 AppModel 的 extension 先例）。
+extension AppModel: DropzoneImportContext {}

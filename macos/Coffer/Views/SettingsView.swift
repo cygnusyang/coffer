@@ -5,16 +5,18 @@
 //   ① 通用：自动锁定超时（原 MainView 工具栏 autoLockMenu 迁入）
 //   ② 剪贴板：自动清除档位（T06 / FR-14.2）
 //   ③ 备份提醒：提醒间隔档位（FR-8.5；评估逻辑 T-G 接入）
-//   ④ 生成器：生成器默认参数（FR-14.3，T08：GeneratorSettingsView）
-//   ⑤ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
+//   ④ 导入：放置区授权（v2.11.0，docs/21 §4.5：DropzoneAuthStatusView 三态
+//     轻量行 + 「移除授权」，E-3 应用级授权 D-18.4/18.5）
+//   ⑤ 生成器：生成器默认参数（FR-14.3，T08：GeneratorSettingsView）
+//   ⑥ 安全：Touch ID 三态节（原样迁入 TouchIDSettingsSection）
 //     + 「修改主密码…」入口（sheet：ChangePasswordView，FR-1.8 / TC-UI-11，T-D）
 //     + 「恢复码」设置区（RecoveryCodeSettingsSection，FR-17.2）
-//   ⑥ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
-//   ⑦ 诊断与隐私：「诊断信息…」（FR-14.4，T08：DiagnosticsView）
+//   ⑦ 数据：「从备份恢复…」（T-H：RestoreBackupView）「审计日志…」（T-I：AuditLogView，FR-12.6）
+//   ⑧ 诊断与隐私：「诊断信息…」（FR-14.4，T08：DiagnosticsView）
 //     + 「网络能力自证…」（FR-14.5，T08：NetworkSelfCertView）
-//   ⑧ 许可：「许可…」（FR-15.7：LicenseSettingsView，许可状态 / 激活入口 /
+//   ⑨ 许可：「许可…」（FR-15.7：LicenseSettingsView，许可状态 / 激活入口 /
 //      机器指纹；自包含不触 AppModel，docs/03 §14）
-//   ⑨ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
+//   ⑩ MCP / Agent 协作：MCP 入口（docs/20 §6：开关 / provider / vault /
 //      复制注册命令 / 状态行；独立 McpSettingsSection，不触 AppModel）
 //   关闭钮（v2.4.1 终版）：设置改独立窗口（CofferApp Window scene，id
 //   "settings"），左上角红绿灯（系统设置样式）关闭——窗口标题栏自带红绿灯，
@@ -57,6 +59,7 @@ struct SettingsView: View {
                 generalSection
                 clipboardSection
                 backupReminderSection
+                importSection
                 generatorSection
                 securitySection
                 dataSection
@@ -184,7 +187,32 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ④ 生成器（FR-14.3，T08）
+    // MARK: - ④ 导入（v2.11.0，docs/21 §4.5 设置页节 + DESIGN.md D-18.2/18.4/18.5）
+
+    /// 放置区授权节：DropzoneAuthStatusView 三态轻量行（compact 行内压缩，
+    /// 应用级语义「此授权作用于 Coffer 应用全局」注记，E-3/D-18.5）。
+    /// 「移除授权」= D-18.4 唯一删点（调 `model.removeDropzoneAuthorization()`
+    /// 清除 bookmark + 广播，向导打开中同步回 .notAuthorized）；失效态由组件
+    /// 内呈「重新授权…」回向导 S0（D-18.3 失效非静默）。
+    private var importSection: some View {
+        Section {
+            DropzoneAuthStatusView(
+                status: model.dropzoneAuthStatus,
+                setButtonLabel: "设置放置区…",
+                onSet: { model.showImportDropzone = true },
+                secondaryLabel: "移除授权",
+                onSecondary: { model.removeDropzoneAuthorization() },
+                scopeNote: "此授权作用于 Coffer 应用全局",
+                compact: true
+            )
+        } header: {
+            Text("导入")
+        } footer: {
+            Text("放置区用于自动检测 macOS「密码」App 导出的 CSV；授权只读、可随时撤销。")
+        }
+    }
+
+    // MARK: - ⑤ 生成器（FR-14.3，T08）
 
     /// 生成器默认参数入口（FR-14.3）：编辑存档默认值，供生成器面板首次
     /// 打开预填（TC-GEN-01）；另存为默认经 AppModel 校验落盘（TC-GEN-03）。
@@ -203,7 +231,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑤ 安全（Touch ID 原样迁入 + 改密入口占位）
+    // MARK: - ⑥ 安全（Touch ID 原样迁入 + 改密入口占位）
 
     @ViewBuilder
     private var securitySection: some View {
@@ -240,7 +268,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑥ 数据（T-H 恢复备份 / T-I 审计日志）
+    // MARK: - ⑦ 数据（T-H 恢复备份 / T-I 审计日志）
 
     private var dataSection: some View {
         Section("数据") {
@@ -272,7 +300,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑦ 诊断与隐私（FR-14.4 诊断信息 / FR-14.5 网络自证，T08）
+    // MARK: - ⑧ 诊断与隐私（FR-14.4 诊断信息 / FR-14.5 网络自证，T08）
 
     /// 诊断信息 + 网络能力自证入口（T08）：前者消费 diagnostic_summary FFI
     /// 白名单字段（TC-DIAG）；后者为零网络架构静态说明页（TC-NET）。
@@ -296,7 +324,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑧ 许可（FR-15.7，docs/03 §14）
+    // MARK: - ⑨ 许可（FR-15.7，docs/03 §14）
 
     /// 独立的 LicenseSettingsView（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
     /// 许可域与密码库会话无关，docs/03 §14.9）。
@@ -315,7 +343,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - ⑨ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
+    // MARK: - ⑩ MCP / Agent 协作（docs/20 §6，对齐 1Password 设置内 Developer 区）
 
     /// 独立的 McpSettingsSection（自包含、不触 AppModel，v0.4 §6.1 切片纪律；
     /// 主 App 不宿主 MCP 服务器，docs/20 §6.2）。

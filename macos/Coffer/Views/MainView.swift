@@ -168,8 +168,12 @@ struct MainView: View {
                 .disabled(model.phase != .unlocked
                           || model.pendingBioOffer || model.pendingRecoveryOffer)
                 // 导入入口菜单（v0.3.0-T05 FR-7.1；v0.5.0 PK3 增 Bitwarden 源；
-                // v0.7.0-T06 增 OPVault）：四格式并列
+                // v0.7.0-T06 增 OPVault；v2.11.0 增放置区置顶第 1 项，⚠4）：
+                // 放置区入口与空态菜单/数据菜单同源触发（E-1），锁定态禁用
+                // （1001 门禁，D-10.3），无快捷键（E-2，⌘I 已被 CSV 占用）
                 Menu {
+                    Button("从 macOS 密码 App…") { model.showImportDropzone = true }
+                        .disabled(model.phase != .unlocked)
                     Button("CSV…") { model.showImport = true }
                     Button("1Password (.1pux)…") { model.showImportPux = true }
                     Button("Bitwarden (.json)…") { model.showImportBitwarden = true }
@@ -205,6 +209,12 @@ struct MainView: View {
         }
         .sheet(isPresented: $model.showImportOpvault) {
             OpvaultImportView()
+                .environmentObject(model)
+        }
+        // 放置区导入 sheet（v2.11.0，docs/21a §3.1）：三处入口同源触发
+        // model.showImportDropzone；与既有 showImport 族同挂载模式。
+        .sheet(isPresented: $model.showImportDropzone) {
+            DropzoneImportView()
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.showExport) {
@@ -315,10 +325,11 @@ struct ActiveItemList: View {
 
     /// 真·全库空（sidebarFilter == .all 且无搜索词）空态：图标 + 「暂无
     /// 条目」+ 两条主路径按钮。「新建第一个条目」置 `.login`（与 ⌘N 同
-    /// 默认类别，docs/14 P7 §3.1）；「导入已有密码…」为四格式 Menu，与
-    /// 工具栏「导入」菜单同源同标签（issue #2 裁定：从 1Password 等来的
-    /// 用户点按钮须直接选格式，不得落进 CSV 向导错向）。筛选空 / 搜索态
-    /// 分别走 filterEmptyPrompt / noMatchPrompt，不重复此双按钮（H-1）。
+    /// 默认类别，docs/14 P7 §3.1）；「导入已有密码…」为 Menu，与工具栏
+    /// 「导入」菜单同源同标签（issue #2 裁定：从 1Password 等来的用户点
+    /// 按钮须直接选格式，不得落进 CSV 向导错向），放置区入口置顶第 1 项
+    /// （v2.11.0 ⚠4，E-1 同源触发）。筛选空 / 搜索态分别走
+    /// filterEmptyPrompt / noMatchPrompt，不重复此双按钮（H-1）。
     private var emptyVaultPrompt: some View {
         VStack(spacing: 12) {
             Image(systemName: "tray")
@@ -331,6 +342,8 @@ struct ActiveItemList: View {
                 }
                 .buttonStyle(.borderedProminent)
                 Menu {
+                    Button("从 macOS 密码 App…") { model.showImportDropzone = true }
+                        .disabled(model.phase != .unlocked)
                     Button("CSV…") { model.showImport = true }
                     Button("1Password (.1pux)…") { model.showImportPux = true }
                     Button("Bitwarden (.json)…") { model.showImportBitwarden = true }

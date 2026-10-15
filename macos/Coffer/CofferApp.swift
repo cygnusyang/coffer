@@ -160,6 +160,8 @@ struct CofferMainApp: App {
 /// v2.4.1：设置改独立窗口（对齐 macOS 系统设置红绿灯），经
 /// @Environment(\.openWindow) 触发，不再走 showSettings。model 直接以值传入
 /// （commands 闭包无法用 @EnvironmentObject，随 CofferMainApp 捕获同源实例）。
+/// v2.11.0：放置区入口置顶第 1 项（⚠4），与工具栏/空态菜单同源触发
+/// model.showImportDropzone，无快捷键（E-2）。
 private struct DataCommands: Commands {
     @Environment(\.openWindow)
     private var openWindow
@@ -168,6 +170,8 @@ private struct DataCommands: Commands {
 
     var body: some Commands {
         CommandMenu("数据") {
+            Button("从 macOS 密码 App…") { model.showImportDropzone = true }
+                .disabled(model.phase != .unlocked)
             Button("导入 CSV…") { model.showImport = true }
                 .keyboardShortcut("i", modifiers: .command)
                 .disabled(model.phase != .unlocked)

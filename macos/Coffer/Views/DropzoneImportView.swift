@@ -164,6 +164,20 @@ struct DropzoneImportView: View {
         .onChange(of: model.phase) {
             if model.phase != .unlocked { watcher.stop() }
         }
+        // 授权广播同步（D-18.4 状态广播可达 + docs/21 §5 A-5/RT-09）：设置页
+        // 「移除授权」置 nil → 停表（watcher.stop 配对释放安全作用域）+ 回落
+        // S0，防止在已撤销目录上继续监视 / 点「导入 N 条」；S0 重授权（换目录）
+        // 时 status 仍 .authorized，不受扰。stale 经 dropzoneAuthStatus 派生
+        // 覆盖（bookmark 值未变但目录不可达时同样回落）。
+        .onChange(of: model.dropzoneBookmark) {
+            switch model.dropzoneAuthStatus {
+            case .authorized:
+                break
+            case .notAuthorized, .stale:
+                watcher.stop()
+                step = .unauthorized
+            }
+        }
         .onDisappear {
             watcher.stop()
         }
@@ -627,11 +641,13 @@ struct DropzoneImportView: View {
                 ImportScaffold.pathLine(path)
                 Spacer()
             }
-            // statLabel 三连（C-5 复用 ImportScaffold.statLabel）。
+            // statLabel 三连（C-5 复用 ImportScaffold.statLabel）。计数由
+            // includedLineNos 派生（D-8.4 切换即时更新，对齐「导入 N 条」按钮：
+            // 三连和恒等于 N）。
             HStack(spacing: 24) {
-                ImportScaffold.statLabel("新增", report.newCount)
-                ImportScaffold.statLabel("重复", report.duplicateCount)
-                ImportScaffold.statLabel("冲突", report.conflictCount)
+                ImportScaffold.statLabel("新增", includedCount(in: report, of: .new))
+                ImportScaffold.statLabel("重复", includedCount(in: report, of: .duplicate))
+                ImportScaffold.statLabel("冲突", includedCount(in: report, of: .conflict))
             }
             .font(.callout)
 
@@ -783,6 +799,14 @@ struct DropzoneImportView: View {
 
     private func excludeAllDuplicates(in report: FfiDropzonePrecheck) {
         for row in duplicates(in: report) { includedLineNos.remove(row.lineNo) }
+    }
+
+    /// S3 三连统计由 includedLineNos 派生（D-8.4 即时更新）：各分类当前被选中
+    /// （将导入）的行数；三分类和恒等于「导入 N 条」N。
+    private func includedCount(in report: FfiDropzonePrecheck, of category: FfiDedupCategory) -> Int {
+        report.rows.reduce(into: 0) { count, row in
+            if row.category == category && includedLineNos.contains(row.lineNo) { count += 1 }
+        }
     }
 
     // MARK: - S4 导入

@@ -2,7 +2,7 @@
 
 **数据不出本机的密码管理器**：密码、密钥、凭据只存在本地，不上传到云端（仅软件更新 OTA 联网；可审计验证，NFR-SEC-07）。同时提供本机 MCP 服务，让 Claude Code、Codex 等本地大模型工具按需取密——数据同样不出本机。
 
-- 仓库：<https://github.com/cygnusyang/coffer> · 许可证：MIT
+- 仓库：<https://github.com/cygnusyang/coffer> · 许可证：AGPL-3.0
 
 ## 快速开始
 
@@ -143,4 +143,4 @@ cd core && cargo test --workspace --no-fail-fast
 
 ## 许可证
 
-[MIT](LICENSE)。Copyright (c) 2026 Coffer contributors。
+[AGPL-3.0](LICENSE)（GNU Affero General Public License v3.0）。Copyright (c) 2026 Coffer contributors。

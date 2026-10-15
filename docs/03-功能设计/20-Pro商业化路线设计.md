@@ -1,0 +1,144 @@
+# 20. Pro 商业化三路线设计（v2.10.0-A1，r0.1.1）
+
+> 任务：A1 架构——Pro 商业化三路线方案设计（含推荐与冲突面分析）。
+> 承接：v0.6.0 FR-15 离线激活模块（docs/01 概要 §10 + 详细 §14）、R1 调研报告（`/tmp/coffer-monetize-research.md`，2026-10-15 到齐，5 项关键事实并入 §8）、免费/Pro 双仓模型（FEATURES.md）。
+> 性质：**不可逆商业决策——仅设计不实现，用户裁定前冻结**。本文输出决策与冲突面，不写实现代码。
+> 锚点纪律：全部以「文件 + 函数/节」为锚。
+
+## §0 结论（先读这节）
+
+1. **现状**：v0.6.0 离线序列号激活**全链路已实现并交付**（Ed25519 本地验签 / 机器指纹 / 7 天试用 / Keychain 凭证 / 只读门禁 6002/6003 / 许可页；cf-license + cf-issuer + cf-keychain + cf-assemble 四 crate 私有仓 + 公开仓零私有内容，Q-19 方案 A）。**但从未作为付费产品对外**——当前发布（v2.10.x）全是 `OFFICIAL_LICENSE=0` 的免费版（PermitAll，无激活模块）。
+2. **三路线**：A=纯离线序列号（复用现成激活）；B=Mac App Store 付费买断（Apple 管鉴权与收款）；C=混合（MAS 为主渠道 + Developer ID 直发离线激活）。
+3. **机器绑定**：B/C 的 MAS 侧由 Apple ID 授权**天然消解**（无指纹、无 N=3 台账；但换机冷启/退款拉取 entitlement 需联网，离线时该渠道无法确认付费——判定确定性弱于 Developer ID 侧离线序列号，§4）；A/C 的 Developer ID 侧保留 Q-17b 的签发侧 N=3 + 人工台账。机器指纹绑定能力已实证（docs/01 §14.2 指纹入签，非「可共享序列号」档位）。
+4. **零网络冲突面**：A 零冲突（现成）；B 的**最大冲突 = MAS 明文禁止自有更新器（Guideline 2.4.5(vii) 原文）→ 现有 OTA（v2.7+ 整套）必须在 MAS build 禁用**，且 2.4.5(vi) 明文禁止序列号/许可屏/自有 copy protection → MAS build 无激活模块是审核硬性要求（§4）；C 把冲突按渠道分割——Developer ID 渠道保持零网络 + OTA 完整。
+5. **推荐 = C 的分阶段落地**：**P1 先走 A**（激活模块已交付、App 零改动，最快变现验证需求）→ **P2 叠加 B（MAS 作为 C 的渠道，不单独替代 A）**；P0 前置 = **ADP 购买**（一切公开 notarized 分发的硬前提，当前免费账号只够临时 profile）。不建议单独 B（作废 OTA 投资 + 弃置已验证离线激活 + 商业化押 Apple 单审核渠道）。
+6. **开放问题 8 项**（§7）供用户裁定；R1 已到齐（§8 闭合，5 项关键事实并入），但未提供定价市场样本——Q-2/Q-3 保持开放并注明「需用户自定/后续补市场样本」，不编造（§7/§8）。
+
+## §1 现状盘点（v0.6.0 离线激活：已有什么 / 缺什么）
+
+### 1.1 已有什么（FR-15 全链路，2026-10-04 v0.6.0 交付，真机激活链路用户验收）
+
+| 能力 | 落点（文件 + 节锚） |
+|---|---|
+| 序列号格式：Ed25519 离线验签，90B（26B 载荷 + 64B sig），Base32-Crockford 144 字符 | docs/01 §14.1（`03-详细设计.md` §14.1） |
+| 机器指纹：IOPlatformUUID → SHA-256 前 16B，哈希不可逆，**入签**（序列号载荷含指纹、验签比对本机） | docs/01 §14.2 |
+| 一码多机：签发侧 N 枚签发（N=3 默认，人工台账） | docs/01 §14.2.1（Q-17b） |
+| 7 天试用 + 防回拨时钟（max(now,last_run_ts)） | docs/01 §14.3（Q-17a 首启计时） |
+| Keychain 双记录（trial/activation，ThisDeviceOnly） | docs/01 §14.4 |
+| 只读门禁：LicenseGate 端口 + LicensedOp 五组 + PermitAllGate，写路径统一收口 | core/cf-domain/src/license.rs（LicensedOp / LicenseGate）；docs/01 §14.6 / 概要 §10.3 |
+| 错误码 6001 不可区分 / 6002·6003 拆分 / 6004 | core/cf-domain/src/error.rs；macos/Coffer/Support/LicenseError.swift |
+| 闭源 FFI：LicenseService（machine_fingerprint / license_status / activate） | docs/01 §14.9；macos/Coffer/Support/OfficialLicenseService.swift（#if OFFICIAL_LICENSE） |
+| Swift 协议抽象 + 装配点：LicenseServicing / PermitAllLicenseService / LicenseAssembly | macos/Coffer/Support/LicenseServicing.swift |
+| 许可信息页 | macos/Coffer/Views/LicenseSettingsView.swift |
+| 构建隔离：私有仓 + 官方装配 crate（Q-19 方案 A） | tools/build_macos_app.sh（OFFICIAL_LICENSE=1 + bootstrap_official_license.sh）；docs/01 概要 §10.5 |
+
+### 1.2 缺什么（商业化缺口）
+
+1. **零收款渠道**：激活模块做了，但没有任何售卖/收款机制——当前对外发布 = 免费版（`OFFICIAL_LICENSE=0`，PermitAll），官方序列号 build 未作为付费产品分发过。
+2. **无面向用户的签发服务**：cf-issuer 存在（私有仓）但走手工台账；无「订单 → 用户提交指纹 → 签发 → 交付」的自动化流水线（App 侧天然离线，签发必须在 App 外完成）。
+3. **ADP 未购**：任何公开 notarized 分发（Developer ID / MAS）的硬前提。当前免费账号只能临时 profile + OTA quarantine 剥离兜底（BUG-30 先例）——**不构成正式商业分发条件**。
+4. **Pro 付费功能面过薄**：现仅「环境容器写面」是 Pro 专属（FEATURES.md 归属矩阵）；规划中 Pro 项（多库 / Passkey 完整版 / Agent 凭据域）未落地。拿什么卖需要裁定（§7 Q-7）。
+5. **无定价市场数据**：R1 已到齐但未含竞品定价样本（§8），定价与收款渠道选型保持开放（Q-2/Q-3，需用户自定/后续补市场样本）。
+6. **机器绑定自助化**：换机/超台数靠人工台账（Q-17b 已定），量大后是运营成本与体验摩擦。
+7. **MAS 渠道完全未做**：`--channel appstore` 沙盒单渠道脚本存在，但无 StoreKit receipt 校验、无上架物料、无导出合规填报。
+
+## §2 三路线定义与总览对比
+
+| 维度 | A 纯离线序列号 | B Mac App Store 买断 | C 混合（MAS 主 + Developer ID 直发） |
+|---|---|---|---|
+| 鉴权主体 | 自营签发（Ed25519 本地验签） | Apple（App Store receipt / StoreKit 2 entitlement） | 双轨：MAS=Apple；Developer ID=自营 |
+| 机器绑定 | 指纹绑定单机，签发侧 N=3 + 台账（Q-17b） | Apple ID 级授权，**天然消解**（无指纹无台账） | MAS 侧消解；Developer ID 侧保留 |
+| 收款/税务 | 自接第三方收款（Lemon Squeezy / Paddle 等） | Apple 代收（抽成 15~30%，小企业计划 15%） | 双轨 |
+| 更新通道 | 现有 OTA（v2.7+ 整套，零冲突） | **禁自更新，只能 App Store 更新**（2.4.5(vii) 明文，OTA 作废） | Developer ID=OTA；MAS=App Store |
+| 零网络冲突面 | **零冲突**（现成，X-12 满足） | 运行时零遥测保持；首购需联网；OTA 冲突 | 按渠道分割（Developer ID 侧零冲突） |
+| 依赖前提 | ADP（notarization）+ 第三方收款 + 签发自动化 | ADP 付费 + MAS 上架（加密导出合规 / 安全 API 答辩）+ StoreKit 2 + TestFlight | ADP + 双渠道构建矩阵 ×2 + 双更新通道 |
+| App 侧工程量 | **≈ 0**（激活已交付；最多许可页/购买入口文案） | 中-大：StoreKitGate 替换/并存离线 gate、MAS build 去 OTA、序列号 UI 在 MAS build 隐藏、沙盒/合规复查 | 最大（A+B），但复用 A 离线基础设施 |
+| 运营/支持 | 人工台账 + 换机支持（随销量线性增长） | 换机/退款 Apple 自理，运营最轻 | 双轨支持最重 |
+| 风险 | 盗版（X-13 接受）；无商店曝光；信任门槛；序列号泄露 | Apple 审核拒绝风险（密码管理器安全 API 高敏）；30% 抽成；单渠道依赖 Apple；与免费版授权差异需澄清 | 双渠道特性/版本漂移；双更新通道运维；授权模型双轨的文案/支持复杂性 |
+
+## §3 路线 A：纯离线序列号
+
+**定义**：把 v0.6.0 已交付的序列号激活直接作为付费产品卖出。App 侧零改动；售卖在 App 外完成——用户付款 → 提交机器指纹 → 签发方（cf-issuer，私有仓）按指纹签发 → 交付（`激活序列号` 粘贴 / `.cofferlicense` 文件导入）。**机器指纹绑定已实证**：docs/01 §14.2 指纹入签 + 验签比对，本方案属业界 node-locked 档位而非「可共享序列号」（R1 §2.1 的「未证实」项已消解，§8）。
+
+- **与零网络冲突面**：**零冲突**。激活为纯离线本地验签（X-12 已满足）；收款/签发全部在 App 外，App 不新增任何网络代码。这是当前架构的天然延伸。
+- **依赖前提**：① ADP（Developer ID notarization——正式对外分发的硬前提，当前免费账号不满足）；② 第三方收款（Lemon Squeezy / Paddle / Stripe——跨境收款 + 税务自动处理，建议选前者，对中国开发者收款友好）；③ 签发流水线自动化（订单 webhook → 指纹校验 → cf-issuer 签发 → 交付；可选先手工）；④ 支持台账（换机/超台数，Q-17b）。
+- **工程量**：App 侧 ≈ 0（激活链路已交付、用户真机验收）。新增全在运营侧：storefront 搭建、签发自动化脚本、购买/激活引导文案（许可页可加「购买」入口跳外部商店页，纯 URL 不触网络纪律）。
+- **风险**：人工台账扩展性差（量上来是运营瓶颈）；零商店曝光/发现度低；无平台信任背书；盗版与序列号共享（X-13 接受，官方渠道约束）；指纹导出→人工签发的用户摩擦（两步交互）。
+
+## §4 路线 B：Mac App Store 付费买断
+
+**定义**：Pro 上架 MAS，一次性买断价。Apple 负责收款、退款、发现、与授权。机器绑定问题：**由 Apple ID 级授权天然消解**——同一 Apple ID 登录的多台 Mac 均可使用，Apple 管理台数；无指纹、无 N=3、无台账。**边界（R1 实证）**：换机冷启离线无本地缓存时判定为未付费；退款经 revocationDate / Transaction.updates 异步反映，离线只能下次拉取发现——该渠道的「判定确定性」弱于 Developer ID 侧离线序列号（本地恒可判），属接受项。
+
+- **与零网络冲突面**（本路线最需要裁剪）：
+  1. **OTA 自更新被禁（最大冲突，Guideline 2.4.5(vii) 明文）**：「must use the Mac App Store to distribute updates; other update mechanisms are not allowed」——现有 OTA 整套（v2.7+：探针 / update-manifest / EdDSA 验签 / SHA256 / GitHub releases 通道）在 MAS build 必须禁用/移除——**已投入的 OTA 资产在该渠道作废**。
+  2. 首购需联网（App 商店购物，预期内；运行时零遥测的隐私承诺不受影响）。产品「零网络使用」指运行态不电话回传，非「永不联网」——须在商店文案诚实声明。
+  3. receipt 校验（R1 离线性实证）：StoreKit 2 JWS 的 x5c 头内嵌完整证书链，**本地可完全离线验签**（WWDC21 / Choosing a receipt validation technique 原文）；但**拉取** entitlement（`Transaction.currentEntitlements` / `AppTransaction.shared`）需联网（离线抛 NSURLErrorDomain -1009，本地仅缓存已上线交易）——换机冷启离线判定为未付费；付费/免费判定标准 = `originalAppVersion`（Field 19）。设计为**本地判定优先、不可判定退只读**（对齐既有 6003 语义），不引入强制联网；无本地缓存的全新设备要求一次联网激活（诚实声明）。
+- **依赖前提**：ADP 付费（$99/年）+ MAS 上架（含：加密/导出合规填报〔ECCN/自研加密声明〕、安全敏感 API 的 Review 答辩〔钥匙串 / 自研密码学〕）+ StoreKit 2 + TestFlight + 沙盒渠道（`--channel appstore` 既有，需复查 entitlements）。**MAS 明文禁止自有授权机制（Guideline 2.4.5(vi)：「may not present a license screen at launch, require license keys, or implement their own copy protection」，DTS 论坛对 Serial/Activation Key 均答被拒）**——MAS build 必须去掉序列号入口与许可屏（对 B 是净简化，对 A 资产是弃置）。
+- **工程量**：中-大。新增 StoreKitGate（实现 LicenseGate 端口，receipt/entitlement → 允许/拒绝，语义对齐 6002/6003）；MAS build 去 OTA + 隐藏序列号 UI；沙盒/entitlement 复查；导出合规物料；CI 增 MAS 构建/签名/上传（transporter）。门禁矩阵复用（TC-GATE 结构性保证不变，只换 gate 实现）。
+- **风险**：30% 抽成（小企业计划 15%）；**App Review 对密码管理器的高敏审查**（安全 API、自研加密、钥匙串访问理由——有驳回/延宕风险）；单渠道依赖 Apple（审核时效、政策变动、商店下架风险）；与免费版（公开仓 GitHub OTA）并存的授权/价格差异需在商店页与文档澄清（AGPL 核心 + 付费二进制的开诚布公）。
+
+## §5 路线 C：混合（MAS 主 + Developer ID 直发离线激活）
+
+**定义**：双渠道并售——**MAS build**（付费买断，Apple 授权，StoreKitGate）触达发现面 + **Developer ID build**（既有离线序列号激活，A 全套）服务零网络偏好 / 企业 / 自更新用户。两条渠道各自的授权模型、更新通道、构建开关。
+
+- **与零网络冲突面**：**按渠道分割**。Developer ID 渠道 = 路线 A 的零冲突（离线激活 + OTA 完整保留）；MAS 渠道 = 路线 B 的冲突面（OTA 禁、首购联网、本地 receipt）。产品「零网络」核心卖点在 Developer ID 渠道完整兑现。**排除第三方联网授权服务**：Paddle / Lemon Squeezy 的 License API 必须联网且业界惯例=运行期周期联网 + 客户端宽限缓存（R1 §2.2）——与零网络卖点冲突，C 的 Developer ID 渠道维持自签 Ed25519 离线授权（收款服务与授权服务分离：收款可用 LS/Paddle，授权不用其 License API）。
+- **依赖前提**：ADP + 双渠道构建矩阵（`OFFICIAL_LICENSE=1` 且 `--channel developer-id` 的离线 gate build / `--channel appstore` 的 StoreKitGate build，绑定生成双 namespace 已支持）+ 双更新通道（OTA / App Store）+ 两套商店文案。
+- **工程量**：最大（A + B 相加），但**复用 A 全部离线资产**（激活、签发、OTA），B 侧为增量。
+- **风险**：双渠道特性/版本漂移（每次发布 ×2）；双更新通道运维；授权模型双轨（Apple ID vs 机器指纹）的产品文案与支持成本；免费/Pro/双渠道三线的归属矩阵维护（FEATURES.md 纪律延续）。**双渠道构建面不可合并**：两套 bundle ID + 两套签名/entitlement 配置（MAS=Sandbox + Apple Distribution；Developer ID=hardened runtime + notarization）无法合并、升级路径分裂（R1 §1.4）——在本仓免费账号换名先例（top.cygnusyang.coffer）下签名与 entitlement 配置管理须更谨慎，P2 立项时单列「双渠道构建矩阵」任务。
+
+## §6 推荐与分阶段
+
+### 6.1 推荐结论
+
+**采用 C 的分阶段落地：先 A（立即变现，零 App 代码），ADP 到位后叠加 MAS（B 作为 C 的一个渠道，不单独替代 A）。**
+
+依据：
+1. **A 的边际成本最低且已交付**：激活模块 v0.6.0 全链路用户真机验收过，App 侧零改动即可开卖——先收款验证需求与定价，最符合「无数据先测市场」的轻路径。
+2. **B 单独采用代价最高**：作废 OTA 整套投资 + 弃置已验证离线激活 + 把商业化押 Apple 单审核渠道（对密码管理器审核风险不小）+ 30% 抽成。B 的价值（发现度 / 机器绑定消解 / 运营轻）应在 A 已跑通后作为**增量渠道**获取，而非替代。
+3. **C 让零网络承诺可兑现**：Developer ID 渠道是产品「零网络密码管理器」定位的承载体（离线激活 + OTA 自更新），MAS 渠道只是触达面——两个定位各自成立，互不污染。
+4. **机器绑定痛点分层**：A 阶段以 Q-17b N=3 + 人工台账起步（销量小时可撑）；C 的 MAS 渠道自动消解该痛点，为增长期兜底（MAS 侧离线判定边界为接受项，§4）。
+
+### 6.2 分阶段
+
+| 阶段 | 内容 | 阻塞项 |
+|---|---|---|
+| **P0 前置** | ADP 购买（Developer ID 证书 + notarization；MAS 分发资格） | 用户出资决策 |
+| **P1（路线 A）** | storefront 收款（Lemon Squeezy / Paddle，仅收款不做授权服务）→ 签发流水线自动化（webhook + cf-issuer）→ 支持台账 SOP；App 侧零改动（可选：许可页加外部购买入口） | 收款渠道选型 + 定价自定（R1 未给市场样本） |
+| **P2（C 的 MAS 侧）** | StoreKitGate + MAS build（去 OTA、去序列号 UI/许可屏）+ 导出合规 + TestFlight 上架；与 P1 双渠道并行运营 | ADP + App Review + **双渠道构建矩阵立项**（两套 bundle ID+签名配置不可合并，R1 §1.4） |
+| **P3** | Pro 功能加厚（多库 / Passkey 完整版 / Agent 凭据域落地 FEATURES 归属）支撑付费面；定价按用户自定/后续市场样本校准 | 产品路线裁定 |
+
+## §7 开放问题清单（用户裁定，8 项）
+
+| # | 问题 | 影响 | 建议默认 |
+|---|---|---|---|
+| Q-1 | **ADP 何时购买**（P0 硬阻塞：Developer ID notarization + MAS 资格） | 一切正式分发的启动条件 | 尽早 |
+| Q-2 | **定价 + N 值**（Q-17b N=3 维持？买断价区间？） | 商业条款；R1 未提供定价市场样本 | N=3 维持，定价需用户自定/后续补市场样本 |
+| Q-3 | **收款渠道**（Lemon Squeezy / Paddle / Stripe / 手工） | 跨境税务 / 到账 / 体验；R1 未提供支付渠道对比数据 | Lemon Squeezy（中国开发者友好）；注意 LS/Paddle 的 License API 是联网授权，收款与授权须分离（§5） |
+| Q-4 | **MAS 是否接受**「该渠道禁自更新（OTA 作废）」+ 15~30% 抽成 | B/C 的 MAS 侧取舍 | 接受（作为增量渠道） |
+| Q-5 | **授权模型双轨**（Apple ID vs 机器指纹）的产品一致性与支持口径 | C 的支持复杂度 | 分渠道文案各自诚实声明 |
+| Q-6 | **AGPL 核心 + 商业闭源层 + 付费分发**的法律核查（免费仓需保证「同源码可免费获得」声明与 AGPL 义务） | 合规 | 发版前出核查结论 |
+| Q-7 | **Pro 付费功能面是否够卖**（现仅环境容器写面；多库/Passkey/Agent 域为规划） | 是否先扩 Pro 再收费 | P3 前须裁定功能面 |
+| Q-8 | **R1 调研报告**（已完成闭合，§8） | 定价市场数据仍缺 | 已闭合；定价样本后续按需补供 |
+
+## §8 R1 调研报告缺口登记（已闭合，2026-10-15 r0.1.1）
+
+R1 已到齐：`/tmp/coffer-monetize-research.md`（dev-researcher，2026-10-15，139 行，含来源；结论先行 8 事实 + 约束对照 + 风险清单）。并入本版 5 项关键事实：
+
+1. **MAS 明文禁令升级（审核条款原文实证，非推断）**：2.4.5(vi) 禁止「launch 许可屏 / license key / 自有 copy protection」（DTS 论坛对 Serial/Activation Key 均答被拒）→ B 路线去激活模块为硬性要求；2.4.5(vii) 禁止自有更新器 → OTA 在 MAS build 作废（§0.4 / §2 / §4）。
+2. **StoreKit 2 离线性边界**：JWS x5c 内嵌完整证书链可完全离线验签（WWDC21 / Choosing a receipt validation technique 原文）；但拉取 entitlement（currentEntitlements / AppTransaction.shared）需联网，冷启动换机离线判定未付费（NSURLErrorDomain -1009）→ B 路线「绑定天然消解」补边界：离线判定弱于 Developer ID 离线序列号（§4）；付费/免费判定标准 = originalAppVersion（Field 19）。
+3. **联网授权服务与零网络冲突（R1 §2.2）**：Paddle / Lemon Squeezy 的 License API 必须联网，业界惯例=运行期周期联网 + 客户端宽限缓存（Lactuca ~30 天 / TontonTools 0-14 天）→ C 路线明确排除第三方联网授权服务，Developer ID 侧维持自签 Ed25519（收款与授权服务分离，§5）。
+4. **双渠道构建面不可合并（R1 §1.4）**：两套 bundle ID + 两套签名/entitlement 配置（MAS=Sandbox+Apple Distribution；Developer ID=hardened runtime+notarization）无法合并、升级路径分裂 → 补入 C 路线 P2 风险与 P2 阻塞项（§5 / §6.2）。
+5. **业界离线授权成熟度（R1 §2.1）**：py-rizmi / AuthForge / Cryptolens / LicenseSeat node-locked 均实证「Ed25519/RSA + 机器指纹 + 本地验签」为标准模式，与 Coffer 现状吻合；HWID 选型教训（避免 MAC 地址等易变标识）Coffer 用 IOPlatformUUID 已符合。
+
+**R1 未证实项消解**：R1 风险清单「cf-license 是否已做 HWID 机器绑定 = 未证实」由仓内底档划掉——docs/01 §14.2 明确机器指纹（IOPlatformUUID → SHA-256 前 16B）**入签**、验签时比对本机指纹（签发侧 N=3 台账，Q-17b）→ 机器绑定能力实证成立，本方案属 node-locked 档位而非「可共享序列号」。
+
+**定价数据缺口保持（不编造）**：R1 未提供竞品定价 / 支付渠道对比市场样本 → Q-2/Q-3 保持开放，注明「需用户自定/后续补市场样本」（§7）。
+
+**架构结论不变**：R1 佐证（而非推翻）C 分阶段推荐——Developer ID + 离线序列号 + OTA 与现有架构最吻合，MAS 为增量渠道。
+
+## 修订记录
+
+| 版本 | 日期 | 变更 |
+|---|---|---|
+| r0.1 | 2026-10-15 | dev-architect 初稿：三路线对比 + 冲突面 + 依赖/工程量/风险 + 推荐（C 分阶段：先 A 后叠加 MAS）+ 8 开放问题 + R1 缺口登记 |
+| r0.1.1 | 2026-10-15 | dev-architect 修订：R1 到齐，§8 缺口闭合（5 项关键事实：2.4.5(vi)/(vii) 明文禁令、StoreKit 2 离线验签/联网拉取边界、联网授权服务冲突、双渠道不可合并、业界离线授权成熟度）；HWID 机器绑定由 docs/01 §14.2 实证划掉 R1 未证实行；Q-2/Q-3 注明需用户自定/后续补市场样本；双渠道 bundle ID+签名不可合并补入 C 路线 P2 风险；继续冻结不实现 |

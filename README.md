@@ -35,21 +35,103 @@ open macos/build/Coffer.app     # 建议拖入 /Applications
 
 ### 与 AI 工具协同（MCP）
 
-```bash
-# 构建 CLI
-cd core && cargo build --release -p cf-mcp
-# 产物：core/target/release/coffer
+先在 App「设置 → MCP / Agent 协作」启用「MCP 解锁托管」（需输入主密码确认）：解锁密钥存入本机钥匙串，之后 CLI 可**免密码**启动，注册命令无需写入密码。
 
-# 注册到 Claude Code
+```bash
+# 注册到 Claude Code（免密，推荐；前置 = 设置 → MCP / Agent 协作 → 启用「MCP 解锁托管」）
 claude mcp add coffer \
   -e COFFER_VAULT_DIR=/path/to/vault \
-  -e COFFER_VAULT_PASSWORD=... \
-  -- coffer mcp --provider coffer
+  -- "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer" mcp --provider coffer
 ```
 
-注册后 Agent 可调用 4 个工具：`list_secret_names` / `list_secrets` / `run_with_secret` / `get_secret_metadata`。
+> 未启用托管时，可追加 `-e COFFER_VAULT_PASSWORD=...` 用环境变量兜底——但密码会**明文写入** Claude Code 配置文件，建议优先启用托管。
 
-### 测试
+注册后 Agent 可调用 4 个工具：`list_secret_names` / `list_secrets` / `run_with_secret` / `get_secret_metadata`。MCP 保持只读（无写工具）：密码值只经 `run_with_secret` 注入子进程环境变量，不进入 Agent 模型上下文。
+
+coffer 必须从 App 内路径运行（见下节「构建与路径」）。
+
+## 命令行（CLI）使用
+
+CLI 与 App 一同分发，面向需要脚本化的写操作：更新条目密码、写入环境容器。MCP 读面见上节「与 AI 工具协同」。
+
+### 构建与路径
+
+CLI 随 App 分发，**必须从 App 内路径运行**——拷贝到别处单独运行会被系统终止（签名校验绑定 App 包）。假设 App 装在 `/Applications`：
+
+```bash
+alias coffer="/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer"
+```
+
+源码构建（开发 / CI；此形态**读不到钥匙串托管**，解锁只能走环境变量兜底）：
+
+```bash
+cd core && cargo build --release -p cf-mcp    # 产物：core/target/release/coffer
+```
+
+### 解锁凭据
+
+- `COFFER_VAULT_DIR`（**必填**）：密码库目录路径。
+- 取密顺序：**MCP 解锁托管（钥匙串，推荐）→ `COFFER_VAULT_PASSWORD` 兜底 → 都无则退出 1**；环境变量不覆盖托管，仅未启用托管时兜底。
+- 托管在 App「设置 → MCP / Agent 协作」启用；换主密码不影响托管（吊销 = 在设置页关闭托管开关）。
+- 密码 / 敏感值只走 stdin（终端隐藏或管道），不落命令行、进程列表或日志。
+
+### 子命令一览
+
+| 子命令 | 用途 | 版本 |
+| --- | --- | --- |
+| `mcp` | 启动 MCP 服务器（只读，见上节） | v2.0.0+ |
+| `set-password` | 更新条目密码（可选 `--user` 用户名一对写） | v2.5.0+（`--user` v2.5.2+） |
+| `set-env` | 写入环境容器（**Pro 专属**） | v2.8.0+ |
+
+<!-- 免费分叉维护注记：set-env 为 Pro 专属（coffer-store + pro 双 feature 门控），免费仓库的 README 分叉须移除所有 set-env 相关内容：写环境容器小节、子命令表对应行、开头简介中「写入环境容器」、退出码表 0/3 两行的 set-env 表述 -->
+
+### 更新密码 —— `coffer set-password`
+
+```bash
+coffer set-password "GitHub"                          # 密码从终端隐藏输入
+coffer set-password "GitHub" --user cygnusyang        # 用户名 + 密码一对写
+coffer set-password --id <条目UUID>                   # 按 UUID 定位（名称歧义时）
+coffer set-password --force "GitHub"                  # 绕过强度门禁（慎用）
+```
+
+- 密码只走 stdin（终端隐藏或管道读一行），不进命令行 / 进程列表 / 日志；用户名可走命令行。
+- 强度不达标默认拒绝（`--force` 绕过）；成功自动追加历史，App 内可回滚。
+- 成功提示：`已更新 GitHub（cygnusyang） · 旧版本可在 App 历史中回滚`。
+
+### 写环境容器 —— `coffer set-env`（Pro 专属）
+
+```bash
+coffer set-env --scope my-app API_KEY=xxx LOG_LEVEL=debug   # 内联写入（非敏感值）
+coffer set-env --scope my-app GITHUB_TOKEN                   # 裸变量名 → 值从终端隐藏输入
+coffer set-env --scope my-app --unset OLD_KEY                # 删除变量（幂等）
+coffer set-env --id <容器UUID> NAME=VALUE                    # 按 UUID 定位
+```
+
+- 环境容器是带 `coffer:environment` 标签的安全笔记条目；首次写入自动创建容器。
+- 内联可一次写多个 `NAME=VALUE`（值可含 `=`）；**至多一个裸变量名**（其值从 stdin 读取）。
+- `NAME=`（等号后空）为置空串，不是删除；删除用 `--unset`。
+- 值不落 stdout / 日志（成功消息只列变量名与容器名）。
+
+### 环境变量（用户相关）
+
+| 变量 | 用途 | 必填 |
+| --- | --- | --- |
+| `COFFER_VAULT_DIR` | 密码库目录路径 | 是 |
+| `COFFER_VAULT_PASSWORD` | 兜底解锁密码（仅未启用托管时） | 否 |
+
+### 退出码
+
+`set-password` / `set-env` 共用：
+
+| 码 | 语义 |
+| --- | --- |
+| 0 | 成功（set-env 首次写入自动建容器） |
+| 1 | 解锁失败 fail-closed（托管不可用或托管解锁失败，不回落 env） |
+| 2 | 目标未命中 / 歧义 / 非目标类型 |
+| 3 | set-password 强度不足；set-env 保留槽位不适用 |
+| 4 | 参数 / 用法错误 |
+
+## 测试
 
 ```bash
 cd core && cargo test --workspace --no-fail-fast

@@ -167,8 +167,9 @@ struct DropzoneImportView: View {
         // 授权广播同步（D-18.4 状态广播可达 + docs/21 §5 A-5/RT-09）：设置页
         // 「移除授权」置 nil → 停表（watcher.stop 配对释放安全作用域）+ 回落
         // S0，防止在已撤销目录上继续监视 / 点「导入 N 条」；S0 重授权（换目录）
-        // 时 status 仍 .authorized，不受扰。stale 经 dropzoneAuthStatus 派生
-        // 覆盖（bookmark 值未变但目录不可达时同样回落）。
+        // 时 status 仍 .authorized，不受扰。注意 onChange 仅在 bookmark 值变化时
+        // 触发——目录不可达但 bookmark 值未变的 stale 场景由 rescanAndEvaluate
+        // 的 validate 判定回落（S1 补扫），不由此 onChange 覆盖（IT-12 走查 2026-10-16）。
         .onChange(of: model.dropzoneBookmark) {
             switch model.dropzoneAuthStatus {
             case .authorized:

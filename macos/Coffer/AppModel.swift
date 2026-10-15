@@ -513,6 +513,14 @@ final class AppModel: ObservableObject {
 
     // MARK: - 路径
 
+    /// L3 AX 黑盒库隔离 seam（docs/19 §5.3，lead 批准 2026-10-16）：非空时
+    /// 把 baseDir 重定向到该绝对路径，隔离真实库——dev build 与已装 App 共享
+    /// 同一沙盒容器同一真实库，不隔离必触 R2 红线（见 init）。
+    /// 用法：`defaults write top.cygnusyang.coffer coffer.testBaseDir <绝对路径>`
+    /// 后重启 App；`defaults delete top.cygnusyang.coffer coffer.testBaseDir`
+    /// 恢复（nil / 空串 = 现状，零行为变化）。
+    nonisolated static let debugTestBaseDirKey = "coffer.testBaseDir"
+
     /// 库工作目录（沙盒内 Documents/Coffer）。
     let baseDir: URL
 
@@ -535,7 +543,17 @@ final class AppModel: ObservableObject {
 
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents")
-        self.baseDir = documents.appendingPathComponent("Coffer", isDirectory: true)
+        let defaultBaseDir = documents.appendingPathComponent("Coffer", isDirectory: true)
+        // L3 AX 黑盒库隔离 seam（docs/19 §5.3）：`coffer.testBaseDir` 非空 →
+        // 用其绝对路径作工作目录（隔离真实库，L3 驱动不触 R2 红线）；nil /
+        // 空串 → 现状沙盒 Documents/Coffer，零行为变化。用法 / 风险见
+        // debugTestBaseDirKey 注释。
+        let configuredBaseDir = UserDefaults.standard.string(forKey: Self.debugTestBaseDirKey)
+        if let testBaseDir = configuredBaseDir, !testBaseDir.isEmpty {
+            self.baseDir = URL(fileURLWithPath: testBaseDir, isDirectory: true)
+        } else {
+            self.baseDir = defaultBaseDir
+        }
     }
 
     /// 启动入口（RootView.onAppear 调用）：建目录 + 枚举已有库 + 启动自动锁定监视。

@@ -813,6 +813,34 @@ impl VaultSession {
         session_call(AssertUnwindSafe(|| self.inner.import_csv(Path::new(&path)))).map(Into::into)
     }
 
+    /// 放置区 CSV 预检（FR-16/P-4，docs/21a §1.4）：去重分类 + `is_empty_vault`。
+    ///
+    /// **需解锁态**（与 `precheck_csv` 不同——本预检读库去重，锁定态 → 码 1001，
+    /// docs/21a §1.5）。报告含三档计数与逐行元数据，**不含密码字段**（R2）。
+    pub fn precheck_dropzone(&self, path: String) -> Result<FfiDropzonePrecheck, FfiError> {
+        session_call(AssertUnwindSafe(|| self.inner.precheck_dropzone(Path::new(&path)))).map(
+            Into::into,
+        )
+    }
+
+    /// 放置区 CSV 导入（docs/21a §1.4）：选择集单事务 all-or-nothing。
+    ///
+    /// `include_line_nos` 为「将导入行」的文件行号集合（正向，U-1 冻结，源自
+    /// `precheck_dropzone` 报告的 `rows[*].line_no`）；文件在预检与导入之间被
+    /// 改动（行号 drift）→ fail-closed，零写入。锁定态 → 码 1001；许可拒绝态
+    /// → 6002/6003（ImportRestore 组，docs/03 §14.6）。
+    pub fn import_dropzone(
+        &self,
+        path: String,
+        include_line_nos: Vec<u32>,
+    ) -> Result<FfiCsvImportResult, FfiError> {
+        session_call(AssertUnwindSafe(|| {
+            self.inner
+                .import_dropzone(Path::new(&path), &include_line_nos)
+        }))
+        .map(Into::into)
+    }
+
     /// 1PUX 预检（FR-7.4~7.7）：纯文件只读，可反复调用。
     ///
     /// **无解锁门禁**（锁定态可预检）——与 CSV 预检同语义：预检不接触
@@ -2305,6 +2333,71 @@ mod tests {
         assert!(
             session.backoff_remaining_secs() > 0,
             "第 4 次失败应触发 2s 门禁，剩余秒数必须 > 0"
+        );
+    }
+
+    // ------------------------------------- 放置区导入（docs/21a §1.4，FFI 面）
+
+    /// 放置区预检 / 导入跨 FFI 全链路：空库 flag → 分类报告 → 选择集导入 →
+    /// 重预检翻转（新库 is_empty_vault=true；导入后 false、已导入行 Duplicate）。
+    #[test]
+    fn 放置区预检导入跨ffi_空库flag与分类() {
+        let base = temp_base("dz_ffi");
+        let brief = setup_vault(&base, "放置区库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+        session.unlock(STRONG_PASSWORD.to_owned()).unwrap();
+
+        let csv = base.join("dz.csv");
+        std::fs::write(
+            &csv,
+            "Title,Username,Password\nGitHub,octocat,pw\nExample,alice,pw\n",
+        )
+        .unwrap();
+        let csv_str = csv.to_string_lossy().into_owned();
+
+        // 预检：空库 → is_empty_vault=true；分类与计数透传 FFI 面
+        let pre = session.precheck_dropzone(csv_str.clone()).unwrap();
+        assert!(pre.is_empty_vault, "空库必须 is_empty_vault=true");
+        assert_eq!(pre.valid_rows, 2);
+        assert_eq!(pre.new_count, 2);
+        assert_eq!(pre.rows.len(), 2);
+        assert_eq!(pre.rows[0].line_no, 2);
+        assert_eq!(pre.rows[0].title, "GitHub");
+        assert_eq!(pre.rows[0].category, FfiDedupCategory::New);
+
+        // 导入第 2 行（行号 2）→ 1 条落库
+        let result = session.import_dropzone(csv_str.clone(), vec![2]).unwrap();
+        assert_eq!(result.imported_rows, 1);
+
+        // 重预检：is_empty_vault 翻转、已导入行 Duplicate、其余仍 New
+        let pre2 = session.precheck_dropzone(csv_str).unwrap();
+        assert!(!pre2.is_empty_vault, "导入后库非空");
+        assert_eq!(pre2.rows[0].category, FfiDedupCategory::Duplicate);
+        assert_eq!(pre2.rows[1].category, FfiDedupCategory::New);
+    }
+
+    /// 放置区预检 / 导入：锁定态门禁跨 FFI → 1001（门禁在 Rust 侧强制）。
+    #[test]
+    fn 放置区预检导入_锁定态跨ffi1001() {
+        let base = temp_base("dz_ffi_locked");
+        let brief = setup_vault(&base, "放置区库");
+        let app = app();
+        let session = app
+            .open_vault(base.to_string_lossy().into_owned(), brief.uuid.to_string())
+            .unwrap();
+
+        let missing = base.join("no-such.csv").to_string_lossy().into_owned();
+        assert_eq!(
+            session.precheck_dropzone(missing.clone()).unwrap_err().code(),
+            1001,
+            "预检须读库做去重分类，锁定态必须 1001"
+        );
+        assert_eq!(
+            session.import_dropzone(missing, vec![2]).unwrap_err().code(),
+            1001
         );
     }
 }

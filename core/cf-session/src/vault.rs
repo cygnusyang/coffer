@@ -85,6 +85,19 @@ pub(crate) struct UnlockedState {
     pub(crate) store: cf_store::ItemStore,
 }
 
+/// 放置区预检结果（docs/21a §1.4）：去重分类报告 + 库空标志。
+///
+/// `is_empty_vault` 由 session 层以 `meta.item_count == 0` 派生
+/// （docs/21a §1.5 lead 裁定：核心侧 DropzoneAnalysis 无此字段，
+/// 库空判定收口在本层，Swift 不自判）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DropzonePrecheck {
+    /// 去重分类报告（`cf_importer::DropzoneAnalysis`，不含密码字段）。
+    pub analysis: cf_importer::DropzoneAnalysis,
+    /// 预检时库是否为空。
+    pub is_empty_vault: bool,
+}
+
 /// 解锁会话：库生命周期与数据访问的门面。
 ///
 /// 通过 [`crate::open_vault`] 构造（锁定态），[`VaultSession::unlock`]
@@ -955,6 +968,57 @@ impl VaultSession {
         cf_importer::import_opvault(path, &password, &mut state.store, vault_dir)
     }
 
+    /// 放置区 CSV 预检（docs/21a §1.4，P-4 裁定）：去重分类 + 行元数据报告。
+    ///
+    /// 薄委托 [`cf_importer::analyze_dropzone`]——与 [`VaultSession::import_csv`]
+    /// 同落点理由：去重分类需读库既有三元组（DEK / SubKeys 不跨 FFI）。
+    /// **需解锁态**（与 CSV 预检不同——本预检读库，锁定态 → 1001）。
+    ///
+    /// 返回 [`DropzonePrecheck`]：`is_empty_vault` 由本层以 `meta.item_count`
+    /// 派生（docs/21a §1.5 lead 裁定，空库 flag 落 `FfiDropzonePrecheck` 字段，
+    /// Swift 不自判库空）；报告**不含密码**（R2，密码明文只在 core 内存，
+    /// docs/21a §1.2）。
+    ///
+    /// # 错误
+    ///
+    /// 锁定态 → 1001；文件不存在 / 不可读 → 2001；格式与上限问题 →
+    /// 2001 / 2002（与 CSV 预检同语义，docs/03 §12）。
+    pub fn precheck_dropzone(&self, path: &Path) -> SessionResult<DropzonePrecheck> {
+        let guard = self.unlocked()?;
+        let state = guard.as_ref().ok_or(CfError::VaultLocked)?;
+        let analysis = cf_importer::analyze_dropzone(path, &state.store)?;
+        let is_empty_vault = state.store.repos().meta.item_count()? == 0;
+        Ok(DropzonePrecheck {
+            analysis,
+            is_empty_vault,
+        })
+    }
+
+    /// 放置区 CSV 导入（docs/21a §1.4）：选择集（include 行号）单事务导入。
+    ///
+    /// 薄委托 [`cf_importer::import_dropzone`]——与 [`VaultSession::import_csv`]
+    /// 同落点理由：导入编排归 cf-session，cf-ffi 由此获得导入能力而不必接触
+    /// `ItemStore` 内部（DEK / SubKeys 依旧不跨 FFI）。
+    ///
+    /// `include_line_nos` 为「将导入行」的文件行号集合（正向，U-1 冻结）；
+    /// 文件在预检与导入之间被改动（行号 drift）→ `ImportFailed`
+    /// fail-closed，零写入。
+    ///
+    /// # 错误
+    ///
+    /// 锁定态 → 1001；许可拒绝态 → 6002/6003（ImportRestore 组，
+    /// docs/03 §14.6；TC-GATE-04）；解析 / 映射 / 写入失败 → 2001 / 2002
+    /// （docs/03 §12）。
+    pub fn import_dropzone(
+        &self,
+        path: &Path,
+        include_line_nos: &[u32],
+    ) -> SessionResult<cf_importer::CsvImportResult> {
+        let mut guard = self.write_guard(LicensedOp::ImportRestore)?;
+        let state = guard.as_mut().ok_or(CfError::VaultLocked)?;
+        cf_importer::import_dropzone(path, include_line_nos, &mut state.store)
+    }
+
     // ------------------------------------------------------- 账户安全
 
     /// 修改主密码（FR-1.8，docs/09 §3.2 D-2：只重封装 header 的 DEK，
@@ -1439,10 +1503,13 @@ fn vault_info(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::VaultSession;
     use super::DEFAULT_CLIPBOARD_CLEAR_SECS;
     use crate::unlock::{create_vault_with_kdf, open_vault};
     use cf_crypto::kdf::KdfParams;
+    use cf_domain::CfError;
 
     /// 测试用快速 KDF 档位（8 MiB / t=1 / p=1，约几十毫秒）。
     pub(crate) fn fast_kdf() -> KdfParams {
@@ -2364,5 +2431,80 @@ mod tests {
         // 拦截（bio 重置不清退避），先拨过门禁再断言新密码有效。
         clock.advance(Duration::from_secs(remaining + 1));
         assert!(session.unlock(RESET_TO_PASSWORD).is_ok());
+    }
+
+    // ------------------------------------------------ 放置区导入（docs/21a §1.4）
+
+    /// 放置区预检：锁定态门禁 → 1001（镜像 import_csv 锁定门禁，只读也需解锁）
+    #[test]
+    fn 放置区预检_锁定态1001() {
+        let base = crate::tests_support::temp_dir("dz_precheck_locked");
+        let brief = create_vault_with_kdf(&base, "测试库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        let err = session.precheck_dropzone(Path::new("/nonexistent.csv")).unwrap_err();
+        assert_eq!(err.code(), 1001, "预检须读库做去重分类，锁定态必须 1001");
+    }
+
+    /// 放置区预检：空库 flag 派生（meta.item_count == 0 → true）与分类透传
+    #[test]
+    fn 放置区预检_空库flag与分类() {
+        let base = crate::tests_support::temp_dir("dz_precheck");
+        let brief = create_vault_with_kdf(&base, "测试库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        let csv = base.join("dz.csv");
+        std::fs::write(
+            &csv,
+            "Title,Username,Password\nGitHub,octocat,pw\nExample,alice,pw\n",
+        )
+        .unwrap();
+
+        let pre = session.precheck_dropzone(&csv).unwrap();
+        assert!(pre.is_empty_vault, "空库必须 is_empty_vault=true");
+        assert_eq!(pre.analysis.valid_rows, 2);
+        assert_eq!(pre.analysis.total_rows, 2);
+        assert_eq!(pre.analysis.new_count, 2);
+        assert_eq!(pre.analysis.rows[0].category, cf_importer::DedupCategory::New);
+
+        // 导入一行后重预检：is_empty_vault 翻转为 false，已导入行分类为 Duplicate
+        let result = session.import_dropzone(&csv, &[2]).unwrap();
+        assert_eq!(result.imported_rows, 1);
+        let pre2 = session.precheck_dropzone(&csv).unwrap();
+        assert!(!pre2.is_empty_vault, "导入后库非空");
+        assert_eq!(pre2.analysis.rows[0].category, cf_importer::DedupCategory::Duplicate);
+        assert_eq!(pre2.analysis.rows[1].category, cf_importer::DedupCategory::New);
+    }
+
+    /// 放置区导入：锁定态门禁 → 1001（ImportRestore 写用例，同 import_csv）
+    #[test]
+    fn 放置区导入_锁定态1001() {
+        let base = crate::tests_support::temp_dir("dz_import_locked");
+        let brief = create_vault_with_kdf(&base, "测试库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+
+        let err = session.import_dropzone(Path::new("/nonexistent.csv"), &[2]).unwrap_err();
+        assert_eq!(err.code(), 1001, "锁定态必须 1001");
+    }
+
+    /// 放置区导入：行号 drift fail-closed 透传（include 行号在重解析后缺失
+    /// → ImportFailed，零写入）——cf-importer 契约语义经 session 层透传
+    #[test]
+    fn 放置区导入_行号drift透传() {
+        let base = crate::tests_support::temp_dir("dz_drift");
+        let brief = create_vault_with_kdf(&base, "测试库", STRONG_PASSWORD, fast_kdf()).unwrap();
+        let session = open_vault(&base.join(brief.uuid.to_string())).unwrap();
+        session.unlock(STRONG_PASSWORD).unwrap();
+
+        let csv = base.join("dz.csv");
+        std::fs::write(&csv, "Title,Username\nGitHub,octocat\n").unwrap();
+
+        let err = session.import_dropzone(&csv, &[2, 99]).unwrap_err();
+        assert!(
+            matches!(err, CfError::ImportFailed(ref m) if m.contains("重新预检")),
+            "drift 必须 fail-closed 拒绝：{err:?}"
+        );
+        assert_eq!(session.list_items(None).unwrap().len(), 0, "drift 拒绝必须零写入");
     }
 }

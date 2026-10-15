@@ -1057,6 +1057,106 @@ impl From<cf_importer::CsvImportResult> for FfiCsvImportResult {
     }
 }
 
+// ---------------------------------------------- 放置区导入（FR-16/P-4，v2.11.0-G2）
+
+/// 放置区去重分类（docs/21a §1.4；与 core `cf_importer::DedupCategory` 同构）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiDedupCategory {
+    /// 库内无此 `(Title, Username, URL)` 规范化三元组。
+    New,
+    /// 三元组完全匹配（含密码已更新的情形——元数据级去重已知限制）。
+    Duplicate,
+    /// Title 命中但 Username / URL 不一致。
+    Conflict,
+}
+
+impl From<cf_importer::DedupCategory> for FfiDedupCategory {
+    fn from(c: cf_importer::DedupCategory) -> Self {
+        match c {
+            cf_importer::DedupCategory::New => Self::New,
+            cf_importer::DedupCategory::Duplicate => Self::Duplicate,
+            cf_importer::DedupCategory::Conflict => Self::Conflict,
+        }
+    }
+}
+
+/// 放置区一行（非空）的去重分类与非敏感行元数据（docs/21a §1.4）。
+///
+/// R2 red line：**不含密码字段**——明文密码只在 core 内存，跨 FFI 只传
+/// 非敏感元数据（docs/21a §1.2）。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiDropzoneRow {
+    /// 文件行号（1 起、表头为第 1 行）——导入选择集身份。
+    pub line_no: u32,
+    /// 标题（缺失 Title 的行已兜底「（无标题）」）。
+    pub title: String,
+    /// 用户名。
+    pub username: Option<String>,
+    /// 主 URL（Website 列原值）。
+    pub url: Option<String>,
+    /// 去重分类。
+    pub category: FfiDedupCategory,
+    /// 冲突理由（「与库内同名条目用户名不同」等，caption2 展示）。
+    pub conflict_note: Option<String>,
+}
+
+impl From<cf_importer::DropzoneRow> for FfiDropzoneRow {
+    fn from(r: cf_importer::DropzoneRow) -> Self {
+        Self {
+            line_no: r.line_no,
+            title: r.title,
+            username: r.username,
+            url: r.url,
+            category: r.category.into(),
+            conflict_note: r.conflict_note,
+        }
+    }
+}
+
+/// 放置区预检报告（docs/21a §1.4 契约面 + §1.5 `is_empty_vault` 字段）。
+///
+/// R2 red line：**不含密码字段**。`is_empty_vault` 由 session 层以
+/// `meta.item_count` 派生（§1.5 lead 裁定：Swift 不自判库空），供 UI 决定
+/// 首装引导流程。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiDropzonePrecheck {
+    /// 非空行（顺序 = 文件行序）。
+    pub rows: Vec<FfiDropzoneRow>,
+    /// 数据行总数（不含表头，**含**全空行）。
+    pub total_rows: u32,
+    /// 非空行数（= `rows.len()`）。
+    pub valid_rows: u32,
+    /// 新增行数。
+    pub new_count: u32,
+    /// 重复行数。
+    pub duplicate_count: u32,
+    /// 冲突行数。
+    pub conflict_count: u32,
+    /// 告警（复用既有 CSV 预检警告语义，含文件内重名）。
+    pub warnings: Vec<String>,
+    /// 未识别的数据列名（其非空值并入 Notes，不静默丢弃）。
+    pub unmapped_columns: Vec<String>,
+    /// 导入前库是否为空（session 层派生）。
+    pub is_empty_vault: bool,
+}
+
+impl From<cf_session::vault::DropzonePrecheck> for FfiDropzonePrecheck {
+    fn from(p: cf_session::vault::DropzonePrecheck) -> Self {
+        let a = p.analysis;
+        Self {
+            rows: a.rows.into_iter().map(Into::into).collect(),
+            total_rows: a.total_rows,
+            valid_rows: a.valid_rows,
+            new_count: a.new_count,
+            duplicate_count: a.duplicate_count,
+            conflict_count: a.conflict_count,
+            warnings: a.warnings,
+            unmapped_columns: a.unmapped_columns,
+            is_empty_vault: p.is_empty_vault,
+        }
+    }
+}
+
 // ---------------------------------------------- CSV 导出（FR-8.3，v0.2.0-T06）
 
 /// CSV 明文导出结果（`cf_exporter::CsvExportResult` 映射）。

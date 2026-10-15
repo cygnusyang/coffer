@@ -1388,6 +1388,16 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
     func importCsv(path: String) throws  -> FfiCsvImportResult
     
     /**
+     * 放置区 CSV 导入（docs/21a §1.4）：选择集单事务 all-or-nothing。
+     *
+     * `include_line_nos` 为「将导入行」的文件行号集合（正向，U-1 冻结，源自
+     * `precheck_dropzone` 报告的 `rows[*].line_no`）；文件在预检与导入之间被
+     * 改动（行号 drift）→ fail-closed，零写入。锁定态 → 码 1001；许可拒绝态
+     * → 6002/6003（ImportRestore 组，docs/03 §14.6）。
+     */
+    func importDropzone(path: String, includeLineNos: [UInt32]) throws  -> FfiCsvImportResult
+    
+    /**
      * OPVault 导入（FR-7.3，v0.7.0-T05；锁定态 → 码 1001）。
      *
      * 密码保护目录导入（密码以 UTF-8 原始字节进 PBKDF2，勿追加 NUL），
@@ -1472,6 +1482,14 @@ public protocol VaultSessionProtocol: AnyObject, Sendable {
      * CSV 预检（只读、可反复调用；1Password 9 列，docs/07 §3）。
      */
     func precheckCsv(path: String) throws  -> FfiCsvPrecheckReport
+    
+    /**
+     * 放置区 CSV 预检（FR-16/P-4，docs/21a §1.4）：去重分类 + `is_empty_vault`。
+     *
+     * **需解锁态**（与 `precheck_csv` 不同——本预检读库去重，锁定态 → 码 1001，
+     * docs/21a §1.5）。报告含三档计数与逐行元数据，**不含密码字段**（R2）。
+     */
+    func precheckDropzone(path: String) throws  -> FfiDropzonePrecheck
     
     /**
      * OPVault 预检（FR-7.3，v0.7.0-T05）：只读、可反复调用，**不触密码**。
@@ -2234,6 +2252,25 @@ open func importCsv(path: String)throws  -> FfiCsvImportResult  {
 }
     
     /**
+     * 放置区 CSV 导入（docs/21a §1.4）：选择集单事务 all-or-nothing。
+     *
+     * `include_line_nos` 为「将导入行」的文件行号集合（正向，U-1 冻结，源自
+     * `precheck_dropzone` 报告的 `rows[*].line_no`）；文件在预检与导入之间被
+     * 改动（行号 drift）→ fail-closed，零写入。锁定态 → 码 1001；许可拒绝态
+     * → 6002/6003（ImportRestore 组，docs/03 §14.6）。
+     */
+open func importDropzone(path: String, includeLineNos: [UInt32])throws  -> FfiCsvImportResult  {
+    return try  FfiConverterTypeFfiCsvImportResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_import_dropzone(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterSequenceUInt32.lower(includeLineNos),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * OPVault 导入（FR-7.3，v0.7.0-T05；锁定态 → 码 1001）。
      *
      * 密码保护目录导入（密码以 UTF-8 原始字节进 PBKDF2，勿追加 NUL），
@@ -2407,6 +2444,22 @@ open func precheckCsv(path: String)throws  -> FfiCsvPrecheckReport  {
     return try  FfiConverterTypeFfiCsvPrecheckReport_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_cf_ffi_fn_method_vaultsession_precheck_csv(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * 放置区 CSV 预检（FR-16/P-4，docs/21a §1.4）：去重分类 + `is_empty_vault`。
+     *
+     * **需解锁态**（与 `precheck_csv` 不同——本预检读库去重，锁定态 → 码 1001，
+     * docs/21a §1.5）。报告含三档计数与逐行元数据，**不含密码字段**（R2）。
+     */
+open func precheckDropzone(path: String)throws  -> FfiDropzonePrecheck  {
+    return try  FfiConverterTypeFfiDropzonePrecheck_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_cf_ffi_fn_method_vaultsession_precheck_dropzone(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),uniffiCallStatus
     )
@@ -4022,6 +4075,261 @@ public func FfiConverterTypeFfiDiagnosticSummary_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeFfiDiagnosticSummary_lower(_ value: FfiDiagnosticSummary) -> RustBuffer {
     return FfiConverterTypeFfiDiagnosticSummary.lower(value)
+}
+
+
+/**
+ * 放置区预检报告（docs/21a §1.4 契约面 + §1.5 `is_empty_vault` 字段）。
+ *
+ * R2 red line：**不含密码字段**。`is_empty_vault` 由 session 层以
+ * `meta.item_count` 派生（§1.5 lead 裁定：Swift 不自判库空），供 UI 决定
+ * 首装引导流程。
+ */
+public struct FfiDropzonePrecheck: Equatable, Hashable {
+    /**
+     * 非空行（顺序 = 文件行序）。
+     */
+    public var rows: [FfiDropzoneRow]
+    /**
+     * 数据行总数（不含表头，**含**全空行）。
+     */
+    public var totalRows: UInt32
+    /**
+     * 非空行数（= `rows.len()`）。
+     */
+    public var validRows: UInt32
+    /**
+     * 新增行数。
+     */
+    public var newCount: UInt32
+    /**
+     * 重复行数。
+     */
+    public var duplicateCount: UInt32
+    /**
+     * 冲突行数。
+     */
+    public var conflictCount: UInt32
+    /**
+     * 告警（复用既有 CSV 预检警告语义，含文件内重名）。
+     */
+    public var warnings: [String]
+    /**
+     * 未识别的数据列名（其非空值并入 Notes，不静默丢弃）。
+     */
+    public var unmappedColumns: [String]
+    /**
+     * 导入前库是否为空（session 层派生）。
+     */
+    public var isEmptyVault: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 非空行（顺序 = 文件行序）。
+         */rows: [FfiDropzoneRow], 
+        /**
+         * 数据行总数（不含表头，**含**全空行）。
+         */totalRows: UInt32, 
+        /**
+         * 非空行数（= `rows.len()`）。
+         */validRows: UInt32, 
+        /**
+         * 新增行数。
+         */newCount: UInt32, 
+        /**
+         * 重复行数。
+         */duplicateCount: UInt32, 
+        /**
+         * 冲突行数。
+         */conflictCount: UInt32, 
+        /**
+         * 告警（复用既有 CSV 预检警告语义，含文件内重名）。
+         */warnings: [String], 
+        /**
+         * 未识别的数据列名（其非空值并入 Notes，不静默丢弃）。
+         */unmappedColumns: [String], 
+        /**
+         * 导入前库是否为空（session 层派生）。
+         */isEmptyVault: Bool) {
+        self.rows = rows
+        self.totalRows = totalRows
+        self.validRows = validRows
+        self.newCount = newCount
+        self.duplicateCount = duplicateCount
+        self.conflictCount = conflictCount
+        self.warnings = warnings
+        self.unmappedColumns = unmappedColumns
+        self.isEmptyVault = isEmptyVault
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDropzonePrecheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDropzonePrecheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDropzonePrecheck {
+        return
+            try FfiDropzonePrecheck(
+                rows: FfiConverterSequenceTypeFfiDropzoneRow.read(from: &buf), 
+                totalRows: FfiConverterUInt32.read(from: &buf), 
+                validRows: FfiConverterUInt32.read(from: &buf), 
+                newCount: FfiConverterUInt32.read(from: &buf), 
+                duplicateCount: FfiConverterUInt32.read(from: &buf), 
+                conflictCount: FfiConverterUInt32.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf), 
+                unmappedColumns: FfiConverterSequenceString.read(from: &buf), 
+                isEmptyVault: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDropzonePrecheck, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiDropzoneRow.write(value.rows, into: &buf)
+        FfiConverterUInt32.write(value.totalRows, into: &buf)
+        FfiConverterUInt32.write(value.validRows, into: &buf)
+        FfiConverterUInt32.write(value.newCount, into: &buf)
+        FfiConverterUInt32.write(value.duplicateCount, into: &buf)
+        FfiConverterUInt32.write(value.conflictCount, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
+        FfiConverterSequenceString.write(value.unmappedColumns, into: &buf)
+        FfiConverterBool.write(value.isEmptyVault, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropzonePrecheck_lift(_ buf: RustBuffer) throws -> FfiDropzonePrecheck {
+    return try FfiConverterTypeFfiDropzonePrecheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropzonePrecheck_lower(_ value: FfiDropzonePrecheck) -> RustBuffer {
+    return FfiConverterTypeFfiDropzonePrecheck.lower(value)
+}
+
+
+/**
+ * 放置区一行（非空）的去重分类与非敏感行元数据（docs/21a §1.4）。
+ *
+ * R2 red line：**不含密码字段**——明文密码只在 core 内存，跨 FFI 只传
+ * 非敏感元数据（docs/21a §1.2）。
+ */
+public struct FfiDropzoneRow: Equatable, Hashable {
+    /**
+     * 文件行号（1 起、表头为第 1 行）——导入选择集身份。
+     */
+    public var lineNo: UInt32
+    /**
+     * 标题（缺失 Title 的行已兜底「（无标题）」）。
+     */
+    public var title: String
+    /**
+     * 用户名。
+     */
+    public var username: String?
+    /**
+     * 主 URL（Website 列原值）。
+     */
+    public var url: String?
+    /**
+     * 去重分类。
+     */
+    public var category: FfiDedupCategory
+    /**
+     * 冲突理由（「与库内同名条目用户名不同」等，caption2 展示）。
+     */
+    public var conflictNote: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 文件行号（1 起、表头为第 1 行）——导入选择集身份。
+         */lineNo: UInt32, 
+        /**
+         * 标题（缺失 Title 的行已兜底「（无标题）」）。
+         */title: String, 
+        /**
+         * 用户名。
+         */username: String?, 
+        /**
+         * 主 URL（Website 列原值）。
+         */url: String?, 
+        /**
+         * 去重分类。
+         */category: FfiDedupCategory, 
+        /**
+         * 冲突理由（「与库内同名条目用户名不同」等，caption2 展示）。
+         */conflictNote: String?) {
+        self.lineNo = lineNo
+        self.title = title
+        self.username = username
+        self.url = url
+        self.category = category
+        self.conflictNote = conflictNote
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDropzoneRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDropzoneRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDropzoneRow {
+        return
+            try FfiDropzoneRow(
+                lineNo: FfiConverterUInt32.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                username: FfiConverterOptionString.read(from: &buf), 
+                url: FfiConverterOptionString.read(from: &buf), 
+                category: FfiConverterTypeFfiDedupCategory.read(from: &buf), 
+                conflictNote: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDropzoneRow, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.lineNo, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.username, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+        FfiConverterTypeFfiDedupCategory.write(value.category, into: &buf)
+        FfiConverterOptionString.write(value.conflictNote, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropzoneRow_lift(_ buf: RustBuffer) throws -> FfiDropzoneRow {
+    return try FfiConverterTypeFfiDropzoneRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropzoneRow_lower(_ value: FfiDropzoneRow) -> RustBuffer {
+    return FfiConverterTypeFfiDropzoneRow.lower(value)
 }
 
 
@@ -8128,6 +8436,91 @@ public func FfiConverterTypeFfiBwPasskeyFailureKind_lower(_ value: FfiBwPasskeyF
 
 
 /**
+ * 放置区去重分类（docs/21a §1.4；与 core `cf_importer::DedupCategory` 同构）。
+ */
+
+public enum FfiDedupCategory: Equatable, Hashable {
+    
+    /**
+     * 库内无此 `(Title, Username, URL)` 规范化三元组。
+     */
+    case new
+    /**
+     * 三元组完全匹配（含密码已更新的情形——元数据级去重已知限制）。
+     */
+    case duplicate
+    /**
+     * Title 命中但 Username / URL 不一致。
+     */
+    case conflict
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiDedupCategory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDedupCategory: FfiConverterRustBuffer {
+    typealias SwiftType = FfiDedupCategory
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDedupCategory {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .new
+        
+        case 2: return .duplicate
+        
+        case 3: return .conflict
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiDedupCategory, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .new:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .duplicate:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .conflict:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDedupCategory_lift(_ buf: RustBuffer) throws -> FfiDedupCategory {
+    return try FfiConverterTypeFfiDedupCategory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDedupCategory_lower(_ value: FfiDedupCategory) -> RustBuffer {
+    return FfiConverterTypeFfiDedupCategory.lower(value)
+}
+
+
+
+/**
  * 字段语义标识镜像（docs/03 §4.2）。
  */
 
@@ -9661,6 +10054,31 @@ fileprivate struct FfiConverterSequenceTypeFfiDegradedItem: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiDropzoneRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiDropzoneRow]
+
+    public static func write(_ value: [FfiDropzoneRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiDropzoneRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiDropzoneRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiDropzoneRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiDropzoneRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiDuplicateGroupFinding: FfiConverterRustBuffer {
     typealias SwiftType = [FfiDuplicateGroupFinding]
 
@@ -10296,6 +10714,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_csv() != 58011) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_import_dropzone() != 34671) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cf_ffi_checksum_method_vaultsession_import_opvault() != 7940) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10330,6 +10751,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_csv() != 64030) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_dropzone() != 59069) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cf_ffi_checksum_method_vaultsession_precheck_opvault() != 47448) {

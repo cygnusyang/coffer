@@ -27,6 +27,22 @@
 import AppKit
 import SwiftUI
 
+/// Claude Code 注册/检测状态（v2.11.0 lead 裁定：开关 ON 自动注册 + check 缓存态）。
+enum McpRegistrationState: Equatable {
+    /// 未检查（op 分支 / 开关 OFF）
+    case idle
+    /// 检测中（onAppear / 页面进入异步 check）
+    case checking
+    /// 注册中（开关 ON 自动注册在飞）
+    case registering
+    /// 已注册（携带读回的 COFFER_VAULT_DIR，供与当前库比对提示）
+    case registered(String?)
+    /// 未注册（check 结论；开关 ON 即自动注册）
+    case notRegistered
+    /// 失败（携带用户可读文案）
+    case failed(String)
+}
+
 /// 统一设置页「MCP / Agent 协作」节（docs/20 §6；docs/29 §7.1 翻转）。
 /// v2.2.0 起经 `@EnvironmentObject model: AppModel` 读取会话 / 库身份
 /// （vaultDirPath、vaultUUID、mcpEscrowStatus）——docs/29 §7.3 最小化注入。
@@ -42,12 +58,19 @@ struct McpSettingsSection: View {
     @State private var provider = McpProvider.defaultProvider
     /// 就绪状态（onAppear / 开关变更 / 链接动作 / provider 切换后刷新）。
     @State private var status: McpStatus = .disabled
+    /// Claude Code 注册/检测状态（v2.11.0：开关 ON 自动注册；check 缓存态）。
+    @State private var registration: McpRegistrationState = .idle
+    /// 注册/检测在飞任务（重入串行：新触发取消旧任务，防并发撞固定 config/result）。
+    @State private var registrationTask: Task<Void, Never>?
     /// 错误弹窗（FfiErrorAlert 统一「操作失败」呈现，docs/20 §6.3）。
     @State private var errorMessage: String?
     /// 信息/引导弹窗（链接 1Password 的成功或 `op signin` 引导文案）。
     @State private var infoMessage: String?
     /// 「已复制」瞬时反馈标记（2 s 后自动熄灭）。
     @State private var copied = false
+
+    /// 注册协调器（写入容器 tmp 固定 config → open 启嵌入式 helper → 轮询 result）。
+    private let registrar = McpRegistrar()
 
     /// 「已复制」反馈的显示时长（秒）。
     private static let copiedFeedbackSeconds: TimeInterval = 2
@@ -62,7 +85,10 @@ struct McpSettingsSection: View {
                 McpEscrowSettingsSection()
             }
         }
-        .onAppear { refreshStatus() }
+        .onAppear {
+            refreshStatus()
+            refreshRegistrationState()
+        }
         .ffiErrorAlert($errorMessage)
         .alert(
             "MCP / Agent 协作",
@@ -84,6 +110,14 @@ struct McpSettingsSection: View {
                 .onChange(of: enabled) { _, newValue in
                     McpSettings.saveEnabled(newValue)
                     refreshStatus()
+                    if newValue {
+                        // lead 裁定：开关 ON 动作本身 = 自动注册（主形态，无需再点按钮）
+                        autoRegisterIfNeeded()
+                    } else {
+                        // OFF：取消在飞注册，清态（claude config 条目不删，仅清展示态）
+                        registrationTask?.cancel()
+                        registration = .idle
+                    }
                 }
 
             providerRow
@@ -94,6 +128,7 @@ struct McpSettingsSection: View {
                 linkButtonRow
             }
             statusRow
+            registrationRow
             usageLogRow
         } header: {
             Text("MCP / Agent 协作")
@@ -115,6 +150,9 @@ struct McpSettingsSection: View {
                     Button {
                         provider = option
                         refreshStatus()
+                        // 切到 coffer 且已启用 → 补自动注册（op→coffer 流程同样
+                        // 「打开就能用」；op 分支 autoRegisterIfNeeded 内 guard 空转）
+                        autoRegisterIfNeeded()
                     } label: {
                         if option == provider {
                             Label(option.displayName, systemImage: "checkmark")
@@ -336,6 +374,140 @@ struct McpSettingsSection: View {
         case .disabled: return .secondary
         case .ready: return .green
         case .notReady: return .orange
+        }
+    }
+
+    // MARK: - Claude Code 注册行（v2.11.0：开关 ON 自动注册 + check 缓存态）
+
+    /// 注册/检测状态行：coffer 分支专用（op 无自动注册语义，copy 按钮兜底）。
+    /// 显示当前注册到 Claude Code（全局）的状态；失败/未注册文案指向
+    /// 「复制注册命令」兜底（lead 裁定：不另设注册按钮）。
+    @ViewBuilder
+    private var registrationRow: some View {
+        if provider == .coffer {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: registrationIcon)
+                    .foregroundStyle(registrationColor)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude Code 注册").font(.headline)
+                    Text(registrationLabel)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var registrationIcon: String {
+        switch registration {
+        case .registered: return "checkmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        case .registering, .checking: return "arrow.triangle.2.circlepath"
+        case .idle, .notRegistered: return "circle"
+        }
+    }
+
+    private var registrationColor: Color {
+        switch registration {
+        case .registered: return .green
+        case .failed: return .orange
+        case .registering, .checking: return .secondary
+        case .idle, .notRegistered: return .secondary
+        }
+    }
+
+    private var registrationLabel: String {
+        switch registration {
+        case .idle:
+            return enabled ? "未检查" : "已关闭。打开开关即自动注册到 Claude Code。"
+        case .checking:
+            return "检查注册状态…"
+        case .registering:
+            return "正在注册到 Claude Code（全局）…"
+        case .registered(let registeredDir):
+            var text = "已注册到 Claude Code（全局）。"
+            if let registeredDir, !model.vaultDirPath.isEmpty, registeredDir != model.vaultDirPath {
+                text += "\n注意：注册的密码库目录与当前不一致（可能为历史残留），建议用「复制注册命令」手动更新。"
+            }
+            return text
+        case .notRegistered:
+            return "未注册。打开开关即自动注册；也可用「复制注册命令」手动注册。"
+        case .failed(let message):
+            return message
+        }
+    }
+
+    // MARK: - 注册/检测执行（重入串行：registrationTask 新触发取消旧任务）
+
+    /// 开关 ON / provider 切到 coffer 时的自动注册（lead 裁定：主形态）。
+    /// 前置不足（未开库 / 未找到 coffer 二进制）→ 直接置失败/未注册态并指向
+    /// copy 按钮兜底，**不阻塞开关**（MCP 就绪态不受影响，点 3 要求）。
+    private func autoRegisterIfNeeded() {
+        guard enabled, provider == .coffer else { return }
+        guard canBuildCofferCommand else {
+            registration = .notRegistered
+            return
+        }
+        guard !cofferBinaryPath.isEmpty else {
+            registration = .failed("未找到 coffer 命令（App 包内或 PATH），无法自动注册。请用「复制注册命令」手动注册。")
+            return
+        }
+        registrationTask?.cancel()
+        registration = .registering
+        registrationTask = Task {
+            await performRegister()
+        }
+    }
+
+    private func performRegister() async {
+        do {
+            let result = try await registrar.register(
+                vaultDir: model.vaultDirPath,
+                cofferBinaryPath: cofferBinaryPath
+            )
+            guard !Task.isCancelled else { return }
+            if result.success && result.registered {
+                registration = .registered(result.vaultDir)
+            } else {
+                registration = .failed(McpRegistrar.errorMessage(for: result.code))
+            }
+        } catch is CancellationError {
+            // 被新任务取代，不更新状态
+        } catch {
+            guard !Task.isCancelled else { return }
+            let message = (error as? LocalizedError)?.errorDescription
+                ?? "注册失败，请重试或用「复制注册命令」手动注册。"
+            registration = .failed(message)
+        }
+    }
+
+    /// 页面进入 / 冷启动：异步 check 真实 ~/.claude.json 缓存注册态（lead 裁定）。
+    private func refreshRegistrationState() {
+        guard provider == .coffer else {
+            registration = .idle
+            return
+        }
+        registrationTask?.cancel()
+        registration = .checking
+        registrationTask = Task {
+            await performCheck()
+        }
+    }
+
+    private func performCheck() async {
+        do {
+            let result = try await registrar.checkRegistered()
+            guard !Task.isCancelled else { return }
+            registration = result.registered ? .registered(result.vaultDir) : .notRegistered
+        } catch is CancellationError {
+            // 被新任务取代，不更新状态
+        } catch {
+            guard !Task.isCancelled else { return }
+            let message = (error as? LocalizedError)?.errorDescription
+                ?? "检查注册状态失败，请重试。"
+            registration = .failed(message)
         }
     }
 

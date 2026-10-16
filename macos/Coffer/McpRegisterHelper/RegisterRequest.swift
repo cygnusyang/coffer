@@ -1,4 +1,6 @@
-// McpRegisterHelper/RegisterRequest.swift —— helper 配置（Codable）+ 校验（纯函数）。
+// McpRegisterHelper/RegisterRequest.swift —— App↔helper 握手契约（Codable）+ 校验
+// （纯函数）。本文件同时编译进 App 目标与 helper 目标（build 脚本 App 源收集显式
+// 加这两个共享文件、排除 McpRegisterHelper/main.swift——其顶层代码只属 helper）。
 //
 // 配置握手（BUG-30 三层取参收敛，lead 裁定）：
 //   - App 侧 McpRegistrar 写固定名 config 到容器 tmp → helper 经 getpwuid 真实
@@ -56,4 +58,40 @@ struct McpRegisterRequest: Codable, Equatable {
         guard Self.isExpectedHelperPath(cofferBinaryPath) else { return .binaryOutsideHelpers }
         return nil
     }
+}
+
+// MARK: - 结果契约（helper 写 → App 读；同一 Codable 结构，防两侧漂移）
+
+/// 结构化结果码（App 侧 McpRegistrar.errorMessage(for:) 映射为用户可读文案）。
+enum ResultCode: String, Codable, Equatable {
+    case ok
+    /// config 字段缺失/越界（missingVaultDir / missingBinary /
+    /// binaryOutsideHelpers / missingResultPath）
+    case configInvalid
+    /// coffer 二进制路径不存在（path 形状已过、IO 存在性不过）
+    case cofferBinaryInvalid
+    /// 未找到 claude CLI（candidates + login shell command -v 均无）
+    case claudeNotFound
+    /// claude mcp add 超时
+    case claudeTimeout
+    /// claude mcp add 退出码非 0
+    case claudeAddFailed
+    /// add 报告成功但读回 ~/.claude.json 无 coffer 键（read-back confirm 失败=
+    /// 注册失败态，UI 显式，lead 裁定）
+    case notRegistered
+    /// ~/.claude.json 读取/解析异常（check 模式）
+    case checkFailed
+    /// result 文件写入失败（App 侧轮询超时兜底）
+    case resultWriteFailed
+}
+
+/// 操作结果（App 侧读取；JSON：success/code/message/registered/vaultDir）。
+struct McpRegisterResult: Codable, Equatable {
+    let success: Bool
+    let code: ResultCode
+    let message: String
+    /// 读回确认 / check 结论：顶层 mcpServers 是否含 coffer 键。
+    let registered: Bool
+    /// 已注册条目的 COFFER_VAULT_DIR（读回/check 时提取；未注册/无 env → nil）。
+    let vaultDir: String?
 }

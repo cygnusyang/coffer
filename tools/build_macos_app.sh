@@ -94,8 +94,16 @@ while IFS= read -r f; do
 # 排除 Installer/ 目录（helper 独立 swiftc 编译，见 3.6）——注意必须用 */Installer/*
 # 而非 *Installer*：后者会误伤 Updater/OTAInstaller.swift（文件名含 "Installer"），
 # 导致 Installing 协议缺失、App 编译红（集成轮实证）。
-done < <(find "${SRC_DIR}" -name '*.swift' ! -path '*SmokeTest*' ! -path '*CoreBindings*' ! -path '*/Installer/*' | sort)
+# 排除 McpRegisterHelper/ 目录：其 main.swift 是 helper 独立顶层入口（3.7 单独
+# swiftc，-parse-as-library 对顶层代码报错），不得进 App 编译；该目录的**共享握手
+# 契约**（RegisterRequest.swift）由下方显式追加（McpRegistrar.swift 依赖它）。
+done < <(find "${SRC_DIR}" -name '*.swift' ! -path '*SmokeTest*' ! -path '*CoreBindings*' ! -path '*/Installer/*' ! -path '*/McpRegisterHelper/*' | sort)
 SOURCES+=("${SRC_DIR}/CoreBindings/cf_ffi.swift")
+# MCP 一键注册握手契约（v2.11.0）：McpRegisterRequest / McpRegisterResult /
+# ResultCode 与 helper 同 schema（RegisterRequest.swift 同时编进 App 与 helper，
+# 防两侧漂移；App 侧 McpRegistrar.swift 编解码依赖）。RegisterCommand.swift 只属
+# helper（命令结构硬编码），App 用 McpStatusConfig.buildArgs，不进 App 编译。
+SOURCES+=("${SRC_DIR}/McpRegisterHelper/RegisterRequest.swift")
 
 CLANG_INCLUDES=()
 if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then

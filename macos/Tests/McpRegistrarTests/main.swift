@@ -151,6 +151,92 @@ check(
 check(McpRegisterRequest.Mode.register.rawValue == "register", "mode rawValue=register")
 check(McpRegisterRequest.Mode.check.rawValue == "check", "mode rawValue=check")
 
+// ---- 6. McpRegistrar 纯函数（App 侧协调器可测边界：启动参数 / env 注入 /
+//        config/result 编解码 / 错误码文案 / 轮询预算）----
+
+// 6.1 open(1) 启动参数（BUG-29/30 同款）
+let helper = URL(fileURLWithPath: "/Applications/Coffer.app/Contents/Helpers/CofferMcpHelper.app")
+check(
+    McpRegistrar.openLaunchArgs(helper: helper, args: ["--config", "/tmp/c.json"]) == [
+        "-n", "/Applications/Coffer.app/Contents/Helpers/CofferMcpHelper.app",
+        "--args", "--config", "/tmp/c.json",
+    ],
+    "openLaunchArgs：-n <helper> --args <args> 结构"
+)
+
+// 6.2 env 注入（三层取参第一源）
+check(
+    McpRegistrar.configEnvironment(from: ["--config", "/tmp/c.json"]) ==
+        [McpRegistrar.configEnvironmentKey: "/tmp/c.json"],
+    "configEnvironment：含 --config → 注入 COFFER_MCP_REGISTER_CONFIG"
+)
+check(
+    McpRegistrar.configEnvironment(from: ["--config"]) == nil,
+    "configEnvironment：--config 缺值 → nil"
+)
+check(
+    McpRegistrar.configEnvironment(from: []) == nil,
+    "configEnvironment：无 --config → nil"
+)
+
+// 6.3 request 构造（register 需 vaultDir/二进制；check 可空；resultPath=固定名）
+let regRequest = McpRegistrar.request(mode: .register, vaultDir: "/Users/me/Vault", cofferBinaryPath: bundledCoffer)
+check(regRequest.mode == .register && regRequest.vaultDir == "/Users/me/Vault"
+    && regRequest.cofferBinaryPath == bundledCoffer, "request：register 携带 vaultDir/二进制")
+check(
+    regRequest.resultPath.hasSuffix("/" + McpRegistrar.resultFileName),
+    "request：resultPath 指向固定名 result（容器 tmp）"
+)
+let checkRequest = McpRegistrar.request(mode: .check, vaultDir: nil, cofferBinaryPath: nil)
+check(checkRequest.mode == .check && checkRequest.vaultDir == nil && checkRequest.cofferBinaryPath == nil,
+      "request：check 无 vaultDir/二进制")
+check(checkRequest.validate() == nil, "request：register/check 均过 validate（合法契约）")
+
+// 6.4 config 编解码往返（sortedKeys 确定性序列化 ↔ helper 同 schema）
+let encoded = try McpRegistrar.encodeRequest(regRequest)
+let decodedBack = try JSONDecoder().decode(McpRegisterRequest.self, from: encoded)
+check(decodedBack == regRequest, "encodeRequest/decode 往返一致（App↔helper config schema）")
+let encodedJSON = String(data: encoded, encoding: .utf8) ?? ""
+check(encodedJSON.contains("\"mode\":\"register\""), "config JSON 含 mode 字段（helper 解码所需）")
+
+// 6.5 result 解码（helper 写回 schema）
+let helperResultJSON = """
+{"success":false,"code":"claudeNotFound","message":"注册失败：未找到 Claude Code CLI。","registered":false,"vaultDir":null}
+""".data(using: .utf8)!
+let decodedResult = try McpRegistrar.decodeResult(helperResultJSON)
+check(decodedResult.success == false && decodedResult.code == .claudeNotFound && decodedResult.registered == false,
+      "decodeResult：helper result JSON 解析（code/registered）")
+let okJSON = """
+{"success":true,"code":"ok","message":"已注册","registered":true,"vaultDir":"/Users/me/Vault"}
+""".data(using: .utf8)!
+let okResult = try McpRegistrar.decodeResult(okJSON)
+check(okResult.success && okResult.registered == true && okResult.vaultDir == "/Users/me/Vault",
+      "decodeResult：成功结果含 vaultDir 提取")
+
+// 6.6 错误码文案（全部有非空映射；关键分支可区分）
+let allCodes: [ResultCode] = [.ok, .configInvalid, .cofferBinaryInvalid, .claudeNotFound,
+                              .claudeTimeout, .claudeAddFailed, .notRegistered, .checkFailed,
+                              .resultWriteFailed]
+check(allCodes.allSatisfy { !McpRegistrar.errorMessage(for: $0).isEmpty }, "errorMessage：全部 code 有非空文案")
+check(McpRegistrar.errorMessage(for: .ok) != McpRegistrar.errorMessage(for: .claudeNotFound),
+      "errorMessage：成功与 claude 缺失文案可区分")
+check(McpRegistrar.errorMessage(for: .resultWriteFailed).contains("超时") ||
+      McpRegistrar.errorMessage(for: .resultWriteFailed).contains("结果"),
+      "errorMessage：resultWriteFailed 指向超时兜底（可操作）")
+
+// 6.7 轮询预算（≤15s 硬超时）
+let deadline = McpRegistrar.resultPollDeadline(from: Date(timeIntervalSince1970: 1_000))
+check(abs(deadline.timeIntervalSince1970 - 1_000 - McpRegistrar.resultPollTimeout) < 0.01,
+      "resultPollDeadline：now + resultPollTimeout 预算")
+
+// 6.8 helper bundle 路径（App 包内嵌套位置，与 build 脚本 3.7 装配点一致）
+let appBundle = URL(fileURLWithPath: "/Applications/Coffer.app")
+check(
+    McpRegistrar.helperBundleURL(appBundle: appBundle).path ==
+        "/Applications/Coffer.app/Contents/Helpers/CofferMcpHelper.app",
+    "helperBundleURL：Contents/Helpers/CofferMcpHelper.app（build 3.7 装配点）"
+)
+
 // ---- 摘要 ----
 print("----------------------------------------")
 print("McpRegistrarTests: \(passed) passed, \(failed) failed")

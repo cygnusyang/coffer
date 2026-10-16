@@ -19,8 +19,9 @@ ARCH="$(uname -m)"
 OUT_DIR="$(mktemp -d)"
 trap 'rm -rf "${OUT_DIR}"' EXIT
 
-# 只编译被测单元 + 测试入口（helper 纯逻辑 + App 侧命令构造单源；不含 main.swift
-# 的 IO 路径——spawn / claude resolve / 结果读写归装配产物实测，standalone 不测 IO）
+# 只编译被测单元 + 测试入口（helper 纯逻辑 + App 侧命令构造单源 + Registrar 纯函数；
+# 不含 main.swift 的 IO 路径——spawn / claude resolve / 结果读写归装配产物实测，
+# standalone 不测 IO。DiagLog 为 Foundation-only 共享诊断，App/测试双侧同文）
 swiftc -O \
   -swift-version 5 \
   -target "${ARCH}-apple-macos14.0" \
@@ -28,6 +29,8 @@ swiftc -O \
   "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/RegisterRequest.swift" \
   "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/RegisterCommand.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpStatusConfig.swift" \
+  "${ROOT_DIR}/macos/Coffer/Support/McpRegistrar.swift" \
+  "${ROOT_DIR}/macos/Coffer/Support/DiagLog.swift" \
   -o "${OUT_DIR}/McpRegistrarTests"
 
 "${OUT_DIR}/McpRegistrarTests"

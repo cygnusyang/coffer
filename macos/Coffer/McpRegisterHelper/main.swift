@@ -119,41 +119,8 @@ private func appendToFileLog(_ line: String) {
     }
 }
 
-// MARK: - 结果码与 result 文件（App 侧按 code 映射用户可读文案）
-
-/// 结构化结果码（App 侧 McpRegistrar.errorMessage(for:) 映射）。
-enum ResultCode: String, Codable {
-    case ok
-    /// config 字段缺失/越界（missingVaultDir / missingBinary /
-    /// binaryOutsideHelpers / missingResultPath）
-    case configInvalid
-    /// coffer 二进制路径不存在（path 形状已过、IO 存在性不过）
-    case cofferBinaryInvalid
-    /// 未找到 claude CLI（candidates + login shell command -v 均无）
-    case claudeNotFound
-    /// claude mcp add 超时
-    case claudeTimeout
-    /// claude mcp add 退出码非 0
-    case claudeAddFailed
-    /// add 报告成功但读回 ~/.claude.json 无 coffer 键（read-back confirm 失败=
-    /// 注册失败态，UI 显式，lead 裁定）
-    case notRegistered
-    /// ~/.claude.json 读取/解析异常（check 模式）
-    case checkFailed
-    /// result 文件写入失败（App 侧超时兜底）
-    case resultWriteFailed
-}
-
-/// 操作结果（App 首启/轮询读取；JSON：success/code/message/registered/vaultDir）。
-struct McpRegisterResult: Codable {
-    let success: Bool
-    let code: ResultCode
-    let message: String
-    /// 读回确认 / check 结论：顶层 mcpServers 是否含 coffer 键。
-    let registered: Bool
-    /// 已注册条目的 COFFER_VAULT_DIR（读回/check 时提取；未注册/无 env → nil）。
-    let vaultDir: String?
-}
+// MARK: - result 文件（契约类型 McpRegisterResult / ResultCode 在共享文件
+// RegisterRequest.swift，App 与 helper 两侧同构；这里只写不定义）
 
 /// 写 result 文件（best-effort：失败只记 stderr，不改变退出码；App 侧轮询超时兜底）。
 func writeResultFile(at path: String, success: Bool, code: ResultCode, message: String, registered: Bool, vaultDir: String?) {

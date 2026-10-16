@@ -95,15 +95,20 @@ while IFS= read -r f; do
 # 而非 *Installer*：后者会误伤 Updater/OTAInstaller.swift（文件名含 "Installer"），
 # 导致 Installing 协议缺失、App 编译红（集成轮实证）。
 # 排除 McpRegisterHelper/ 目录：其 main.swift 是 helper 独立顶层入口（3.7 单独
-# swiftc，-parse-as-library 对顶层代码报错），不得进 App 编译；该目录的**共享握手
-# 契约**（RegisterRequest.swift）由下方显式追加（McpRegistrar.swift 依赖它）。
+# swiftc，-parse-as-library 对顶层代码报错），不得进 App 编译；该目录的**共享契约**
+# （RegisterRequest.swift 握手 schema + McpRegisterSpec.swift 命令 argv 单源，
+# lead 裁定修正：App/helper 双 target 共享编译）由下方显式追加（App 侧
+# McpRegistrar.swift / McpStatusConfig.swift 依赖）。
 done < <(find "${SRC_DIR}" -name '*.swift' ! -path '*SmokeTest*' ! -path '*CoreBindings*' ! -path '*/Installer/*' ! -path '*/McpRegisterHelper/*' | sort)
 SOURCES+=("${SRC_DIR}/CoreBindings/cf_ffi.swift")
 # MCP 一键注册握手契约（v2.11.0）：McpRegisterRequest / McpRegisterResult /
 # ResultCode 与 helper 同 schema（RegisterRequest.swift 同时编进 App 与 helper，
-# 防两侧漂移；App 侧 McpRegistrar.swift 编解码依赖）。RegisterCommand.swift 只属
-# helper（命令结构硬编码），App 用 McpStatusConfig.buildArgs，不进 App 编译。
+# 防两侧漂移；App 侧 McpRegistrar.swift 编解码依赖）。
 SOURCES+=("${SRC_DIR}/McpRegisterHelper/RegisterRequest.swift")
+# MCP 命令 argv 单源（lead 裁定修正）：McpRegisterSpec 同时编进 App 与 helper，
+# 单源=同一 spec 构造 argv（config 只传值）；App 侧 McpRegisterCommand.buildArgs
+# coffer 分支委托它，helper main.swift 直接 spawn 它。
+SOURCES+=("${SRC_DIR}/McpRegisterHelper/McpRegisterSpec.swift")
 
 CLANG_INCLUDES=()
 if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then
@@ -315,8 +320,8 @@ codesign --force --sign "${IDENTITY_HASH}" "${HELPER_APP_DIR}" || die "OTA insta
 # 直接 exec claude（process-exec 拒绝 exit 127）、读写真实 ~/.claude.json（HOME
 # 重映射容器）、open -a Terminal（-10820）全被拦，经 open 拉起本 helper 代劳
 # （BUG-30 / OTA CofferUpdater 生产实证逃生通道）。
-# 安全契约：命令结构硬编码（RegisterCommandBuilder），config 只传值（mode/
-# vaultDir/cofferBinaryPath/resultPath），无 shell 拼接；coffer 二进制路径双重
+# 安全契约：命令结构单源（McpRegisterSpec，App/helper 共享编译），config 只传值
+# （mode/vaultDir/cofferBinaryPath/resultPath），无 shell 拼接；coffer 二进制路径双重
 # 校验（.app/Contents/Helpers/ 形状 + isExecutableFile）。**无受限 entitlement、
 # 无 embedded.provisionprofile**（无 keychain-access-groups，Spike-0 同裁定）；
 # 签名顺序：嵌套 bundle 先于外层 App（对齐 3.5/3.6 先例，外层签名不覆盖）。
@@ -334,8 +339,8 @@ done < <(find "${MCP_HELPER_SRC_DIR}" -name '*.swift' | sort)
 mkdir -p "${MCP_HELPER_APP_DIR}/Contents/MacOS"
 # 与 App 主可执行同一 target 约定（arm64-apple-macos14.0）。helper 独立顶层入口
 # （main.swift 顶层代码），无需 -parse-as-library。共享契约 RegisterRequest.swift /
-# 命令结构 RegisterCommand.swift 同目录一并编入（App 侧也编 RegisterRequest.swift，
-# 同 schema 防漂移）。
+# 命令 argv 单源 McpRegisterSpec.swift 同目录一并编入（App 侧也编这两个文件，
+# 同 schema/同 spec 防漂移）。
 swiftc -O \
   -swift-version 5 \
   -target arm64-apple-macos14.0 \

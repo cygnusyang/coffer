@@ -18,12 +18,15 @@ OUT_DIR="$(mktemp -d)"
 trap 'rm -rf "${OUT_DIR}"' EXIT
 
 # 只编译被测单元 + 测试入口（不依赖 CoreBindings / Rust 静态库）
+# McpStatusConfig.swift 的 coffer 分支委托 McpRegisterSpec（App/helper 共享单源），
+# 故把 McpRegisterSpec.swift 一并编入。
 swiftc -O \
   -swift-version 5 \
   -target "${ARCH}-apple-macos14.0" \
   "${ROOT_DIR}/macos/Tests/McpStatusTests/main.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpStatus.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpStatusConfig.swift" \
+  "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/McpRegisterSpec.swift" \
   -o "${OUT_DIR}/McpStatusTests"
 
 "${OUT_DIR}/McpStatusTests"

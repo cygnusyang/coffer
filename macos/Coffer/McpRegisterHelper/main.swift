@@ -15,9 +15,9 @@
 // 不做网络、不碰 Keychain、不读秘密材料；config 全程无密码字段（R2）。
 //
 // 安全（lead 裁定硬约束）：
-//   - 命令结构硬编码（RegisterCommandBuilder），config 只传**值**（mode/vaultDir/
-//     cofferBinaryPath/resultPath）；**禁止 shell 字符串拼接**，Process spawn 用
-//     argv 数组；
+//   - 命令结构单源（McpRegisterSpec，App/helper 共享编译），config 只传**值**
+//     （mode/vaultDir/cofferBinaryPath/resultPath）；**禁止 shell 字符串拼接**，
+//     Process spawn 用 argv 数组；
 //   - coffer 二进制路径双重校验：路径须含 `.app/Contents/Helpers/` 段（纯校验，
 //     RegisterRequest.isExpectedHelperPath）+ spawn 前 isExecutableFile 存在性
 //     （IO 第二道）——防其他进程投喂恶意 config 注册任意命令；
@@ -348,8 +348,9 @@ func performRegister(config: McpRegisterRequest) -> McpRegisterResult {
                                  message: "注册失败：未找到 Claude Code CLI（claude）。请先安装 Claude Code，或用「复制注册命令」手动注册。",
                                  registered: false, vaultDir: nil)
     }
-    // 命令结构硬编码（RegisterCommandBuilder），argv 数组直传（无 shell 拼接）。
-    let args = RegisterCommandBuilder.buildArgs(claudePath: claudePath, vaultDir: vaultDir, cofferBinaryPath: cofferBinary)
+    // 命令结构单源（McpRegisterSpec，App/helper 共享编译），argv 数组直传（无 shell
+    // 拼接）；config 只传 vaultDir/二进制两个值，argv 不经 config 传递（无注入面）。
+    let args = McpRegisterSpec.commandArgs(vaultDir: vaultDir, cofferBinaryPath: cofferBinary)
     log("spawn claude mcp add（argv 直传，vaultDir=\(vaultDir)）")
     let result = runProcess(executablePath: claudePath, arguments: Array(args.dropFirst()), timeout: spawnTimeout)
     if result.timedOut {

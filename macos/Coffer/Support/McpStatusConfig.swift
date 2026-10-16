@@ -94,9 +94,10 @@ enum McpSettings {
 /// 调用方传入绝对路径（McpStatusProbe.cofferBinaryPath，shell 引号包裹）。
 /// coffer 版解锁走 MCP 托管，**不含密码 env**（docs/29 §7.1 本版收口核心）。
 ///
-/// 单源纪律：`buildArgs` 是结构唯一来源（helper `McpRegisterHelper/RegisterCommand
-/// .swift` 与其同构，一致性由 run_mcp_registrar_tests.sh 断言防漂移）；`build`
-/// 只是**展示串**格式化（粘贴到终端可执行），按需对可变值加 shell 引号。
+/// 单源纪律（lead 裁定修正）：coffer 分支的 argv 结构委托
+/// `McpRegisterHelper/McpRegisterSpec.swift`（App 与 helper 双 target 共享编译，
+/// 单源=同一 spec 构造 argv，一致性命中由构造保证）；`build` 只是**展示串**
+/// 格式化（粘贴到终端可执行），按需对可变值加 shell 引号。
 enum McpRegisterCommand {
     /// 无需引号的「安全字符集」：字母数字 + 常见路径/域内标点。
     /// 仅当 vault 名 / 目录路径含此集合以外的字符（空格、单引号等）才加引号
@@ -104,12 +105,8 @@ enum McpRegisterCommand {
     private static let safeUnquotedCharacters = "._-@/%+=:,"
 
     /// 注册命令 argv（**claude 之后**，原始未 shell 转义——Process spawn 数组直传
-    /// 用）。结构唯一来源：App 侧 build/一键注册与 helper（RegisterCommandBuilder）
-    /// 共用；coffer 分支与 helper buildArgs 逐 token 同构（一致性测试把关）。
-    ///
-    /// coffer 分支结构：
-    ///   `mcp add coffer --scope user -e COFFER_VAULT_DIR=<dir> -- <binary> mcp --provider coffer`
-    /// op 分支结构：
+    /// 用）。结构单源：coffer 分支委托 McpRegisterSpec.commandArgs（App/helper
+    /// 共享编译，同一 spec 构造 argv，防漂移）；op 分支结构：
     ///   `mcp add coffer --scope user -- <binary> mcp --provider <provider> [--vault <vault>]`
     ///
     /// - Parameters:
@@ -123,11 +120,7 @@ enum McpRegisterCommand {
         switch provider {
         case "coffer":
             let dir = (vaultDirPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return [
-                "mcp", "add", "coffer", "--scope", "user",
-                "-e", "COFFER_VAULT_DIR=\(dir)",
-                "--", cofferBinaryPath, "mcp", "--provider", "coffer",
-            ]
+            return McpRegisterSpec.commandArgs(vaultDir: dir, cofferBinaryPath: cofferBinaryPath)
         default:
             let trimmed = vault.map(McpSettings.normalizedVaultName) ?? ""
             var parts = [

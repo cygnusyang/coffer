@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_mcp_registrar_tests.sh —— MCP 一键注册 helper 纯逻辑单元测试
-# （CofferMcpHelper.app：RegisterCommandBuilder 命令结构 + McpRegisterRequest
-# 配置校验 + 与 App 侧 McpRegisterCommand.buildArgs 同构一致性）。
+# （CofferMcpHelper.app：McpRegisterSpec 命令结构单源 + McpRegisterRequest
+# 配置校验 + App/helper 同 spec 一致性）。
 #
 # 被测单元（McpRegisterHelper/*.swift + Support/McpStatusConfig.swift）均为纯函数 /
 # 纯数据结构：无 IO / 无 FFI / 无进程依赖，任何环境（含 CI 沙盒）均可运行，
@@ -26,8 +26,8 @@ swiftc -O \
   -swift-version 5 \
   -target "${ARCH}-apple-macos14.0" \
   "${ROOT_DIR}/macos/Tests/McpRegistrarTests/main.swift" \
+  "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/McpRegisterSpec.swift" \
   "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/RegisterRequest.swift" \
-  "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/RegisterCommand.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpStatusConfig.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpRegistrar.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/DiagLog.swift" \

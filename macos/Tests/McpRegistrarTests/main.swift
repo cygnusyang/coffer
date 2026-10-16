@@ -1,15 +1,19 @@
 // McpRegistrarTests/main.swift —— MCP 一键注册 helper 纯逻辑单元测试
-// （CofferMcpHelper.app：RegisterCommandBuilder 命令结构 + McpRegisterRequest 配置校验）。
+// （CofferMcpHelper.app：McpRegisterSpec 命令结构 + McpRegisterRequest 配置校验）。
 //
 // 编译运行：tools/run_mcp_registrar_tests.sh
 //
 // 被测单元（均为纯函数 / 纯数据结构，无 IO / 无进程 / 无 AppKit）：
-//   - RegisterCommandBuilder.buildArgs —— 注册命令 argv 结构硬编码（lead 裁定
-//     「helper 命令模式硬编码，禁止 shell 字符串拼接」）。与 App 侧
-//     McpRegisterCommand.buildArgs 的**同构性**由一致性断言保证（单源，防漂移）。
-//   - McpRegisterRequest.validate / isExpectedHelperPath —— 配置校验：coffer 二进制
-//     路径必须位于 `<某>.app/Contents/Helpers/` 下（安全契约：防其他进程投喂
-//     恶意 config 借 helper 注册任意命令）。
+//   - McpRegisterSpec —— 注册/移除命令 argv 构造**单源**（lead 裁定修正：同一
+//     spec 同时编译进 App 与 helper 两个 target，单源落在「同一 spec 构造 argv」，
+//     config 只传 vaultDir/cofferBinaryPath 两值，argv **不**经 config 传递，
+//     无注入面）。
+//   - McpRegisterRequest.validate / isExpectedHelperPath —— 配置校验：coffer
+//     二进制路径必须位于 `<某>.app/Contents/Helpers/` 下（安全契约：防其他进程
+//     投喂恶意 config 借 helper 注册任意命令）。
+//   - McpRegistrar 纯函数（openLaunchArgs / configEnvironment / request /
+//     encodeRequest / decodeResult / errorMessage / removeErrorMessage /
+//     resultPollDeadline / helperBundleURL）。
 //
 // 与 run_mcp_status_tests.sh 同纪律：只测纯逻辑；IO（claude resolve / spawn /
 // 结果文件读写）归 helper 主入口 main.swift，不在本文件（helper 主入口经
@@ -32,35 +36,47 @@ func check(_ condition: Bool, _ name: String) {
 
 // 与 MacOS 实际路径同构的样例（docs/20 §5.4 / D-6 嵌套 bundle）
 let bundledCoffer = "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer"
+let claudePath = "/Users/me/.local/bin/claude"
+let vaultDir = "/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid"
 
-// ---- 1. RegisterCommandBuilder.buildArgs：命令结构硬编码（lead 裁定安全契约）----
+// ---- 1. McpRegisterSpec：注册/移除命令 argv 构造（单源，lead 裁定安全契约）----
 
-let args = RegisterCommandBuilder.buildArgs(
-    claudePath: "/Users/me/.local/bin/claude",
-    vaultDir: "/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid",
-    cofferBinaryPath: bundledCoffer
-)
+let commandArgs = McpRegisterSpec.commandArgs(vaultDir: vaultDir, cofferBinaryPath: bundledCoffer)
+let fullArgv = McpRegisterSpec.fullArgv(claudePath: claudePath, vaultDir: vaultDir, cofferBinaryPath: bundledCoffer)
+
 check(
-    args == [
-        "/Users/me/.local/bin/claude",
+    commandArgs == [
         "mcp", "add", "coffer",
         "--scope", "user",
-        "-e", "COFFER_VAULT_DIR=/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid",
+        "-e", "COFFER_VAULT_DIR=\(vaultDir)",
         "--",
         bundledCoffer,
         "mcp", "--provider", "coffer",
     ],
-    "buildArgs：argv 结构与 --scope user 硬编码正确（coffer 版）"
+    "commandArgs：注册命令 argv 结构硬编码正确（coffer 版，含 --scope user）"
 )
-check(args.contains("coffer"), "buildArgs：服务器名恒为 coffer")
-check(args.contains("--scope"), "buildArgs：含 --scope")
-check(!args.contains(where: { $0.contains("PASSWORD") || $0.contains("password") }), "buildArgs：不含任何密码（R2 纪律）")
-check(args.filter { $0.hasPrefix("COFFER_VAULT_DIR=") }.count == 1, "buildArgs：COFFER_VAULT_DIR 恰一份 env 参数")
+check(fullArgv == [claudePath] + commandArgs, "fullArgv：= [claudePath] + commandArgs（helper 完整 spawn argv）")
+check(commandArgs.contains("coffer"), "commandArgs：服务器名恒为 coffer")
+check(commandArgs.contains("--scope"), "commandArgs：含 --scope")
+check(!commandArgs.contains(where: { $0.contains("PASSWORD") || $0.contains("password") }), "commandArgs：不含任何密码（R2 纪律）")
+check(commandArgs.filter { $0.hasPrefix("COFFER_VAULT_DIR=") }.count == 1, "commandArgs：COFFER_VAULT_DIR 恰一份 env 参数")
 check(
-    RegisterCommandBuilder.buildArgs(claudePath: "/usr/bin/claude", vaultDir: "/v a u", cofferBinaryPath: "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer")
+    McpRegisterSpec.commandArgs(vaultDir: "/v a u", cofferBinaryPath: bundledCoffer)
         .contains("COFFER_VAULT_DIR=/v a u"),
-    "buildArgs：vaultDir 含空格仍作单一 argv 元素（无 shell 拼接，无需引号）"
+    "commandArgs：vaultDir 含空格仍作单一 argv 元素（无 shell 拼接，无需引号）"
 )
+
+// remove 命令（开关 OFF 自动移除；lead 裁定：claude mcp remove coffer --scope user）
+check(
+    McpRegisterSpec.removeCommandArgs() == ["mcp", "remove", "coffer", "--scope", "user"],
+    "removeCommandArgs：claude mcp remove coffer --scope user 结构"
+)
+check(
+    McpRegisterSpec.removeFullArgv(claudePath: claudePath) == [claudePath, "mcp", "remove", "coffer", "--scope", "user"],
+    "removeFullArgv：= [claudePath] + removeCommandArgs（helper spawn 用）"
+)
+check(McpRegisterSpec.removeCommandArgs().filter { $0.hasPrefix("-e") }.isEmpty,
+      "removeCommandArgs：移除命令不携带 env 值（无注入面）")
 
 // ---- 2. McpRegisterRequest.validate：配置校验（安全契约）----
 
@@ -120,30 +136,27 @@ check(
     "isExpectedHelperPath：/usr/bin 前缀的伪 Helpers 路径 → false（须 .app 包语义）"
 )
 
-// ---- 4. App↔helper 单源一致性（lead 裁定「Helper 和 UI 共享同一套生成逻辑，
-//        禁止字符串重复」）----
+// ---- 4. 单源一致性（lead 裁定：App/helper 共享同一 spec 构造 argv，防漂移）----
 
-// helper buildArgs 首位是 claudePath（整条 argv）；App buildArgs 是 claude 之后
-// 的 argv。逐 token 同构（含 --scope user / 服务器名 / 顺序），防两处漂移。
+// App 侧 McpRegisterCommand.buildArgs（coffer 分支）委托 spec.commandArgs；
+// helper spawn 用 spec.fullArgv —— 单源真义=同一 spec 构造 argv，一致性由构造
+// 保证而非测试比对兜底。
 let appCofferArgs = McpRegisterCommand.buildArgs(
     provider: "coffer", vault: nil,
     vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: bundledCoffer
 )
-let helperCofferArgs = RegisterCommandBuilder.buildArgs(
-    claudePath: "/Users/me/.local/bin/claude",
-    vaultDir: "/Users/me/Coffer/Vault", cofferBinaryPath: bundledCoffer
+check(
+    appCofferArgs == McpRegisterSpec.commandArgs(vaultDir: "/Users/me/Coffer/Vault", cofferBinaryPath: bundledCoffer),
+    "单源一致性：App McpRegisterCommand.buildArgs（coffer）== McpRegisterSpec.commandArgs"
+)
+let helperFull = McpRegisterSpec.fullArgv(claudePath: claudePath, vaultDir: "/Users/me/Coffer/Vault", cofferBinaryPath: bundledCoffer)
+check(
+    Array(helperFull.dropFirst()) == appCofferArgs,
+    "单源一致性：helper fullArgv.dropFirst() == App buildArgs（仅差 claudePath）"
 )
 check(
-    appCofferArgs == Array(helperCofferArgs.dropFirst()),
-    "一致性：App buildArgs（coffer 版）== helper buildArgs 去掉 claudePath（含 --scope user）"
-)
-check(
-    appCofferArgs.count == helperCofferArgs.count - 1,
-    "一致性：App/helper 数组长度差恰为 1（仅 claudePath）"
-)
-check(
-    helperCofferArgs[1...] == ArraySlice(appCofferArgs),
-    "一致性：helper 从下标 1 起与 App 完全一致"
+    helperFull.count == appCofferArgs.count + 1,
+    "单源一致性：数组长度差恰为 1（仅 claudePath）"
 )
 
 // ---- 5. mode rawValue 稳定（config JSON 契约）----
@@ -179,7 +192,7 @@ check(
     "configEnvironment：无 --config → nil"
 )
 
-// 6.3 request 构造（register 需 vaultDir/二进制；check 可空；resultPath=固定名）
+// 6.3 request 构造（register 需 vaultDir/二进制；check/remove 可空；resultPath=固定名）
 let regRequest = McpRegistrar.request(mode: .register, vaultDir: "/Users/me/Vault", cofferBinaryPath: bundledCoffer)
 check(regRequest.mode == .register && regRequest.vaultDir == "/Users/me/Vault"
     && regRequest.cofferBinaryPath == bundledCoffer, "request：register 携带 vaultDir/二进制")
@@ -215,8 +228,8 @@ check(okResult.success && okResult.registered == true && okResult.vaultDir == "/
 
 // 6.6 错误码文案（全部有非空映射；关键分支可区分）
 let allCodes: [ResultCode] = [.ok, .configInvalid, .cofferBinaryInvalid, .claudeNotFound,
-                              .claudeTimeout, .claudeAddFailed, .notRegistered, .checkFailed,
-                              .resultWriteFailed]
+                              .claudeTimeout, .claudeAddFailed,
+                              .notRegistered, .checkFailed, .resultWriteFailed]
 check(allCodes.allSatisfy { !McpRegistrar.errorMessage(for: $0).isEmpty }, "errorMessage：全部 code 有非空文案")
 check(McpRegistrar.errorMessage(for: .ok) != McpRegistrar.errorMessage(for: .claudeNotFound),
       "errorMessage：成功与 claude 缺失文案可区分")

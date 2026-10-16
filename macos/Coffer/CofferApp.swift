@@ -4,8 +4,10 @@
 // 因此本文件的入口结构体命名为 `CofferMainApp`，避免类型名冲突。
 //
 // v0.4 MC-1（docs/15 §3.3.1 / §3.3.2；选型 docs/research-v0.4-menubar-hotkey.md）：
-//   - 菜单栏常驻（FR-13.3）：状态行 + 打开主窗口 + 快速搜索 + 锁定全部 +
-//     退出。只放状态与动作，不放文本输入（research §2：.window 样式有键盘
+//   - 菜单栏常驻（FR-13.3）：打开主窗口（标题并入库名+状态）+ 快速搜索 +
+//     锁定全部 + 退出。只放动作，不放纯展示行（2026-10-16 用户裁定：永久
+//     disabled 的状态行取消，状态并入打开项标题）、不放文本输入（research §2：
+//     .window 样式有键盘
 //     焦点缺陷，不采用）。v0.5.0 起由 AppKit NSStatusItem 实现
 //     （Platform/StatusItemController.swift；PL-6：macOS 26 MenuBarExtra
 //     图标空白，仅占位不渲染）。

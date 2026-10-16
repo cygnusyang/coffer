@@ -84,29 +84,72 @@ enum McpSettings {
 /// 注册命令构造（docs/20 §5.4：设置页「复制」输出，对齐 1Password
 /// 「Connect to Claude」一键复制；docs/29 §7.1：coffer 版随 provider 分支）。
 ///
-/// 输出形如：
-///   claude mcp add coffer -- /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider op --vault <vault>
-///   claude mcp add coffer -e COFFER_VAULT_DIR=<vaultDirPath> -- /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider coffer
+/// 输出形如（**`--scope user`** 为 lead 裁定：本地作用域写 `projects["<cwd>"]`，
+/// 在 App/helper 语境无意义——用户要「打开就能用」= 全局顶层 mcpServers）：
+///   claude mcp add coffer --scope user -- /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider op --vault <vault>
+///   claude mcp add coffer --scope user -e COFFER_VAULT_DIR=<vaultDirPath> -- /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider coffer
 /// 用户前置：op 路径需 `op signin`（1Password 集成会话）；coffer 二进制随 App
 /// 以**嵌套 bundle** 分发（`Contents/Helpers/coffer.app/…`，docs/20 §5.4 /
 /// docs/29 §8 D-6，**不入 PATH**、拷出即 SIGKILL）——命令里的 coffer 路径由
 /// 调用方传入绝对路径（McpStatusProbe.cofferBinaryPath，shell 引号包裹）。
 /// coffer 版解锁走 MCP 托管，**不含密码 env**（docs/29 §7.1 本版收口核心）。
+///
+/// 单源纪律：`buildArgs` 是结构唯一来源（helper `McpRegisterHelper/RegisterCommand
+/// .swift` 与其同构，一致性由 run_mcp_registrar_tests.sh 断言防漂移）；`build`
+/// 只是**展示串**格式化（粘贴到终端可执行），按需对可变值加 shell 引号。
 enum McpRegisterCommand {
     /// 无需引号的「安全字符集」：字母数字 + 常见路径/域内标点。
     /// 仅当 vault 名 / 目录路径含此集合以外的字符（空格、单引号等）才加引号
     /// ——简单名保持 §5.4 示例的自然形态（`--vault Personal`），特殊字符才包裹。
     private static let safeUnquotedCharacters = "._-@/%+=:,"
 
-    /// 生成注册命令。op 路径：vault 为空/全空白则省略 `--vault`，非空则按需
-    /// shell 单引号包裹（含内嵌单引号转义）；coffer 路径：出
-    /// `-e COFFER_VAULT_DIR=<vaultDirPath>` 版（目录路径同样按需引号包裹）。
-    /// 两分支的 MCP 服务器进程恒为 coffer，二进制路径同样按需引号包裹。
-    /// 命令粘贴到终端即原样执行，vault 名 / 路径含空格或引号也能正确解析。
+    /// 注册命令 argv（**claude 之后**，原始未 shell 转义——Process spawn 数组直传
+    /// 用）。结构唯一来源：App 侧 build/一键注册与 helper（RegisterCommandBuilder）
+    /// 共用；coffer 分支与 helper buildArgs 逐 token 同构（一致性测试把关）。
+    ///
+    /// coffer 分支结构：
+    ///   `mcp add coffer --scope user -e COFFER_VAULT_DIR=<dir> -- <binary> mcp --provider coffer`
+    /// op 分支结构：
+    ///   `mcp add coffer --scope user -- <binary> mcp --provider <provider> [--vault <vault>]`
     ///
     /// - Parameters:
-    ///   - provider: `McpProvider` 的 rawValue（如 `"op"` / `"coffer"`，
-    ///     docs/29 §7.1 注册命令随 provider 分支）。
+    ///   - provider: `McpProvider` 的 rawValue（`"op"` / `"coffer"`）。
+    ///   - vault: 默认 vault 名（仅 op 分支消费；nil / 空 / 全空白 → 省略
+    ///     `--vault`）。
+    ///   - vaultDirPath: 自家库目录路径（仅 coffer 分支消费，归一化首尾空白）。
+    ///   - cofferBinaryPath: coffer 二进制绝对路径（App 包内嵌套 bundle 优先）。
+    /// - Returns: `claude` 之后的 argv 数组（不含 "claude" 本身）。
+    static func buildArgs(provider: String, vault: String?, vaultDirPath: String? = nil, cofferBinaryPath: String) -> [String] {
+        switch provider {
+        case "coffer":
+            let dir = (vaultDirPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return [
+                "mcp", "add", "coffer", "--scope", "user",
+                "-e", "COFFER_VAULT_DIR=\(dir)",
+                "--", cofferBinaryPath, "mcp", "--provider", "coffer",
+            ]
+        default:
+            let trimmed = vault.map(McpSettings.normalizedVaultName) ?? ""
+            var parts = [
+                "mcp", "add", "coffer", "--scope", "user",
+                "--", cofferBinaryPath, "mcp", "--provider", provider,
+            ]
+            if !trimmed.isEmpty {
+                parts.append("--vault")
+                parts.append(trimmed)
+            }
+            return parts
+        }
+    }
+
+    /// 生成注册命令（展示串，粘贴到终端即原样执行）。op 路径：vault 为空/全空白
+    /// 则省略 `--vault`，非空则按需 shell 单引号包裹（含内嵌单引号转义）；
+    /// coffer 路径：出 `-e COFFER_VAULT_DIR=<vaultDirPath>` 版（目录路径同样按需
+    /// 引号包裹）。两分支的 MCP 服务器进程恒为 coffer，二进制路径同样按需引号包裹。
+    /// 结构取自 buildArgs（单源），此处仅做展示格式化。
+    ///
+    /// - Parameters:
+    ///   - provider: `McpProvider` 的 rawValue（如 `"op"` / `"coffer"`）。
     ///   - vault: 默认 vault 名（仅 op 分支消费；nil / 空 / 全空白 → 省略
     ///     `--vault`）。
     ///   - vaultDirPath: 自家库目录路径（docs/29 §7.1，仅 coffer 分支消费；
@@ -122,10 +165,10 @@ enum McpRegisterCommand {
         switch provider {
         case "coffer":
             let dir = (vaultDirPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return "claude mcp add coffer -e COFFER_VAULT_DIR=\(shellQuoteIfNeeded(dir)) -- \(binary) mcp --provider coffer"
+            return "claude mcp add coffer --scope user -e COFFER_VAULT_DIR=\(shellQuoteIfNeeded(dir)) -- \(binary) mcp --provider coffer"
         default:
             let trimmed = vault.map(McpSettings.normalizedVaultName) ?? ""
-            var parts = ["claude mcp add coffer -- \(binary) mcp --provider \(provider)"]
+            var parts = ["claude mcp add coffer --scope user -- \(binary) mcp --provider \(provider)"]
             if !trimmed.isEmpty {
                 parts.append("--vault \(shellQuoteIfNeeded(trimmed))")
             }

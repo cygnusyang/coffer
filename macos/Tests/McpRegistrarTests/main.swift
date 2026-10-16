@@ -120,7 +120,33 @@ check(
     "isExpectedHelperPath：/usr/bin 前缀的伪 Helpers 路径 → false（须 .app 包语义）"
 )
 
-// ---- 4. mode rawValue 稳定（config JSON 契约）----
+// ---- 4. App↔helper 单源一致性（lead 裁定「Helper 和 UI 共享同一套生成逻辑，
+//        禁止字符串重复」）----
+
+// helper buildArgs 首位是 claudePath（整条 argv）；App buildArgs 是 claude 之后
+// 的 argv。逐 token 同构（含 --scope user / 服务器名 / 顺序），防两处漂移。
+let appCofferArgs = McpRegisterCommand.buildArgs(
+    provider: "coffer", vault: nil,
+    vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: bundledCoffer
+)
+let helperCofferArgs = RegisterCommandBuilder.buildArgs(
+    claudePath: "/Users/me/.local/bin/claude",
+    vaultDir: "/Users/me/Coffer/Vault", cofferBinaryPath: bundledCoffer
+)
+check(
+    appCofferArgs == Array(helperCofferArgs.dropFirst()),
+    "一致性：App buildArgs（coffer 版）== helper buildArgs 去掉 claudePath（含 --scope user）"
+)
+check(
+    appCofferArgs.count == helperCofferArgs.count - 1,
+    "一致性：App/helper 数组长度差恰为 1（仅 claudePath）"
+)
+check(
+    helperCofferArgs[1...] == ArraySlice(appCofferArgs),
+    "一致性：helper 从下标 1 起与 App 完全一致"
+)
+
+// ---- 5. mode rawValue 稳定（config JSON 契约）----
 
 check(McpRegisterRequest.Mode.register.rawValue == "register", "mode rawValue=register")
 check(McpRegisterRequest.Mode.check.rawValue == "check", "mode rawValue=check")

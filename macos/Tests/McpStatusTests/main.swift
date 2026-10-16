@@ -147,7 +147,8 @@ check(McpEscrowStatus.disabled.label == "已停用", "escrow disabled 文案")
 check(McpEscrowStatus.enabled.label == "已启用", "escrow enabled 文案")
 check(McpEscrowStatus.stale.label == "凭据已失效（需重新启用）", "escrow stale 文案")
 
-// ---- 8. McpRegisterCommand.build（docs/20 §5.4 注册命令，op 版回归 + coffer 版新增）----
+// ---- 8. McpRegisterCommand.build / buildArgs（docs/20 §5.4 注册命令，op 版回归
+//        + coffer 版新增；lead 裁定加 --scope user 单源结构）----
 
 // coffer 二进制路径：App 包内嵌套 bundle（docs/20 §5.4 / docs/29 §8 D-6，
 // `Contents/Helpers/coffer.app/Contents/MacOS/coffer`，不入 PATH、拷出即 SIGKILL）。
@@ -155,57 +156,95 @@ check(McpEscrowStatus.stale.label == "凭据已失效（需重新启用）", "es
 let cofferBin = "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer"
 
 check(
-    McpRegisterCommand.build(provider: "op", vault: nil, cofferBinaryPath: cofferBin) == "claude mcp add coffer -- \(cofferBin) mcp --provider op",
+    McpRegisterCommand.build(provider: "op", vault: nil, cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -- \(cofferBin) mcp --provider op",
     "op：无 vault → 省略 --vault（§5.4 基础形态，coffer 用包内绝对路径）"
 )
 check(
-    McpRegisterCommand.build(provider: "op", vault: "", cofferBinaryPath: cofferBin) == "claude mcp add coffer -- \(cofferBin) mcp --provider op",
+    McpRegisterCommand.build(provider: "op", vault: "", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -- \(cofferBin) mcp --provider op",
     "op：空 vault → 省略 --vault"
 )
 check(
-    McpRegisterCommand.build(provider: "op", vault: "  ", cofferBinaryPath: cofferBin) == "claude mcp add coffer -- \(cofferBin) mcp --provider op",
+    McpRegisterCommand.build(provider: "op", vault: "  ", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -- \(cofferBin) mcp --provider op",
     "op：全空白 vault → 归一化后省略 --vault"
 )
 check(
-    McpRegisterCommand.build(provider: "op", vault: "Personal", cofferBinaryPath: cofferBin) == "claude mcp add coffer -- \(cofferBin) mcp --provider op --vault Personal",
+    McpRegisterCommand.build(provider: "op", vault: "Personal", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -- \(cofferBin) mcp --provider op --vault Personal",
     "op：vault=Personal → 追加 --vault Personal"
 )
 check(
-    McpRegisterCommand.build(provider: "op", vault: "My Vault", cofferBinaryPath: cofferBin) == "claude mcp add coffer -- \(cofferBin) mcp --provider op --vault 'My Vault'",
+    McpRegisterCommand.build(provider: "op", vault: "My Vault", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -- \(cofferBin) mcp --provider op --vault 'My Vault'",
     "op：vault 含空格 → shell 单引号包裹（粘贴到终端可原样执行）"
 )
 check(
-    McpRegisterCommand.build(provider: "op", vault: " Bob's ", cofferBinaryPath: cofferBin) == "claude mcp add coffer -- \(cofferBin) mcp --provider op --vault 'Bob'\\''s'",
+    McpRegisterCommand.build(provider: "op", vault: " Bob's ", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -- \(cofferBin) mcp --provider op --vault 'Bob'\\''s'",
     "op：vault 含单引号 + 首尾空白 → 归一化 + 单引号转义"
 )
 
 // coffer 版（docs/29 §7.1：-e COFFER_VAULT_DIR=，不含密码 env；路径同样按需引号）
 check(
-    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: cofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR=/Users/me/Coffer/Vault -- \(cofferBin) mcp --provider coffer",
-    "coffer：vaultDirPath 常规路径 → 原样（§7.1 形态）"
+    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -e COFFER_VAULT_DIR=/Users/me/Coffer/Vault -- \(cofferBin) mcp --provider coffer",
+    "coffer：vaultDirPath 常规路径 → 原样（§7.1 形态 + --scope user）"
 )
 check(
-    McpRegisterCommand.build(provider: "coffer", vault: "ignored", vaultDirPath: "/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid", cofferBinaryPath: cofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR=/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid -- \(cofferBin) mcp --provider coffer",
+    McpRegisterCommand.build(provider: "coffer", vault: "ignored", vaultDirPath: "/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -e COFFER_VAULT_DIR=/Users/me/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/uuid -- \(cofferBin) mcp --provider coffer",
     "coffer：沙盒容器路径 → 原样（vault 参数被忽略，走 vaultDirPath）"
 )
 check(
-    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "/Users/my name/Coffer", cofferBinaryPath: cofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR='/Users/my name/Coffer' -- \(cofferBin) mcp --provider coffer",
+    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "/Users/my name/Coffer", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -e COFFER_VAULT_DIR='/Users/my name/Coffer' -- \(cofferBin) mcp --provider coffer",
     "coffer：路径含空格 → shell 单引号包裹"
 )
 check(
-    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "  /Users/me/Coffer  ", cofferBinaryPath: cofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR=/Users/me/Coffer -- \(cofferBin) mcp --provider coffer",
+    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "  /Users/me/Coffer  ", cofferBinaryPath: cofferBin) == "claude mcp add coffer --scope user -e COFFER_VAULT_DIR=/Users/me/Coffer -- \(cofferBin) mcp --provider coffer",
     "coffer：路径含首尾空白 → 归一化"
 )
 
 // coffer 二进制路径本身的引号（包内路径亦可含空格，D-6 装配不约束安装目录）
 let spacedCofferBin = "/Applications/My App/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer"
 check(
-    McpRegisterCommand.build(provider: "op", vault: nil, cofferBinaryPath: spacedCofferBin) == "claude mcp add coffer -- '/Applications/My App/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer' mcp --provider op",
+    McpRegisterCommand.build(provider: "op", vault: nil, cofferBinaryPath: spacedCofferBin) == "claude mcp add coffer --scope user -- '/Applications/My App/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer' mcp --provider op",
     "coffer 二进制路径含空格 → shell 单引号包裹（App 可装在含空格目录）"
 )
 check(
-    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: spacedCofferBin) == "claude mcp add coffer -e COFFER_VAULT_DIR=/Users/me/Coffer/Vault -- '/Applications/My App/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer' mcp --provider coffer",
+    McpRegisterCommand.build(provider: "coffer", vault: nil, vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: spacedCofferBin) == "claude mcp add coffer --scope user -e COFFER_VAULT_DIR=/Users/me/Coffer/Vault -- '/Applications/My App/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer' mcp --provider coffer",
     "coffer：二进制路径含空格 + vaultDirPath 常规 → 各自按需引号"
+)
+
+// buildArgs：原始 argv 结构（claude 之后，未 shell 转义）——App 与 helper 单源的
+// 结构来源；与 McpRegisterHelper/RegisterCommand.swift 的同构一致性由
+// run_mcp_registrar_tests.sh 断言（防 scope/顺序/服务器名漂移）。
+check(
+    McpRegisterCommand.buildArgs(provider: "coffer", vault: nil, vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: cofferBin) == [
+        "mcp", "add", "coffer", "--scope", "user",
+        "-e", "COFFER_VAULT_DIR=/Users/me/Coffer/Vault",
+        "--", cofferBin, "mcp", "--provider", "coffer",
+    ],
+    "buildArgs：coffer 版 argv 结构（含 --scope user）"
+)
+check(
+    McpRegisterCommand.buildArgs(provider: "op", vault: "Personal", cofferBinaryPath: cofferBin) == [
+        "mcp", "add", "coffer", "--scope", "user",
+        "--", cofferBin, "mcp", "--provider", "op",
+        "--vault", "Personal",
+    ],
+    "buildArgs：op 版 argv 结构（vault 非空 → 末尾追加 --vault）"
+)
+check(
+    McpRegisterCommand.buildArgs(provider: "op", vault: "  ", cofferBinaryPath: cofferBin) == [
+        "mcp", "add", "coffer", "--scope", "user",
+        "--", cofferBin, "mcp", "--provider", "op",
+    ],
+    "buildArgs：op 版空 vault → 无 --vault 尾段"
+)
+check(
+    McpRegisterCommand.buildArgs(provider: "coffer", vault: "ignored", vaultDirPath: " /v ", cofferBinaryPath: cofferBin)
+        .contains("-e") && McpRegisterCommand.buildArgs(provider: "coffer", vault: "ignored", vaultDirPath: " /v ", cofferBinaryPath: cofferBin)
+        .contains("COFFER_VAULT_DIR=/v"),
+    "buildArgs：coffer 版 vault 参数被忽略，走 vaultDirPath（且归一化空白）"
+)
+check(
+    McpRegisterCommand.buildArgs(provider: "coffer", vault: nil, vaultDirPath: "/Users/me/Coffer/Vault", cofferBinaryPath: cofferBin)
+        .allSatisfy { !$0.lowercased().contains("password") },
+    "buildArgs：coffer 版不含任何密码（R2 纪律，解锁走 MCP 托管）"
 )
 
 // ---- 9. McpRegisterCommand.shellQuote（纯函数边界）----

@@ -97,18 +97,18 @@ echo "----------------------------------------------"
 
 : > "${GATE_RUN_LOG}"
 RC_L1=0; RC_L2=0; RC_L3=0
-{
-  echo "### L1 模型面（run_dropzone_import_model_tests.sh）"
-  run_section_gated L1 || RC_L1=$?
-} | tee -a "${GATE_RUN_LOG}"
-{
-  echo "### L2 真样全链路回归（run_dropzone_l2_regression_tests.sh）"
-  run_section_gated L2 || RC_L2=$?
-} | tee -a "${GATE_RUN_LOG}"
-{
-  echo "### L3 AX 黑盒 harness（run_l3_ax_harness.sh）"
-  run_section_gated L3 || RC_L3=$?
-} | tee -a "${GATE_RUN_LOG}"
+# 段状态必须经 PIPESTATUS 回传：`cmd | tee` 中 cmd 在**子 shell**，`|| RC=$?` 赋不回
+# 父进程（曾致假绿：L3 实红但汇总 PASS/ALL GREEN——lead 复跑实证，根因即此）。
+# bash 3.2 支持 PIPESTATUS（3.0+）；set -u 下 RC_* 已预初始化。
+echo "### L1 模型面（run_dropzone_import_model_tests.sh）" | tee -a "${GATE_RUN_LOG}"
+run_section_gated L1 2>&1 | tee -a "${GATE_RUN_LOG}"
+RC_L1=${PIPESTATUS[0]}
+echo "### L2 真样全链路回归（run_dropzone_l2_regression_tests.sh）" | tee -a "${GATE_RUN_LOG}"
+run_section_gated L2 2>&1 | tee -a "${GATE_RUN_LOG}"
+RC_L2=${PIPESTATUS[0]}
+echo "### L3 AX 黑盒 harness（run_l3_ax_harness.sh）" | tee -a "${GATE_RUN_LOG}"
+run_section_gated L3 2>&1 | tee -a "${GATE_RUN_LOG}"
+RC_L3=${PIPESTATUS[0]}
 
 # 摘要
 echo "----------------------------------------------"

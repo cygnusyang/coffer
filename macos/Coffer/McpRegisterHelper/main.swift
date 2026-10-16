@@ -6,12 +6,15 @@
 // 读写真实 ~/.claude.json（HOME 重映射容器）——经 open 拉起本 helper 代劳（BUG-30 /
 // OTA CofferUpdater 生产实证的逃生通道）。
 //
-// 职责（单一直线，非通用执行器）：把 App 设置页开关的注册/检测委托执行——
-//   register 模式：resolve claude CLI → spawn `claude mcp add coffer --scope user
-//     -e COFFER_VAULT_DIR=<dir> -- <coffer二进制> mcp --provider coffer`
-//     （argv 数组直传，**无 shell 拼接**）→ 读回 ~/.claude.json 顶层 mcpServers
-//     confirm coffer 键 → 写 result JSON。
+// 职责（单一直线，非通用执行器）：把 App 设置页开关的注册/检测/移除委托执行——
+//   register 模式（upsert）：resolve claude CLI → 若既有同名校则先 spawn
+//     `claude mcp remove coffer --scope user`（防旧 COFFER_VAULT_DIR 残留）→ spawn
+//     `claude mcp add coffer --scope user -e COFFER_VAULT_DIR=<dir> -- <coffer二进制>
+//     mcp --provider coffer`（argv 数组直传，**无 shell 拼接**）→ 读回
+//     ~/.claude.json 顶层 mcpServers confirm coffer 键 + vaultDir 为目标值 → 写 result。
 //   check 模式：只读 ~/.claude.json 顶层 mcpServers 的 coffer 键 → 写 result JSON。
+//   remove 模式：resolve claude → spawn `claude mcp remove coffer --scope user`
+//     → 读回 confirm coffer 键已消失 → 写 result（开关 OFF 自动移除，best-effort）。
 // 不做网络、不碰 Keychain、不读秘密材料；config 全程无密码字段（R2）。
 //
 // 安全（lead 裁定硬约束）：
@@ -326,8 +329,40 @@ func readRegisteredCoffer() -> (found: Bool, vaultDir: String?)? {
 
 // MARK: - 执行模式
 
-/// register 模式：resolve claude → 校验 coffer 二进制存在 → spawn add（超时）→
-/// 读回 confirm → result。
+/// 移除 coffer 注册项（claude mcp remove coffer --scope user，固定形状无值注入）。
+/// 返回 nil = 移除成功（读回确认 coffer 键已消失）；非 nil = 失败 result（含
+/// 超时 / 退出码 / 读回仍在三类）。register upsert 清理旧条目与 remove 模式共用。
+func runClaudeRemove(claudePath: String) -> McpRegisterResult? {
+    let args = McpRegisterSpec.removeCommandArgs()
+    log("spawn claude mcp remove（argv 直传，固定形状）")
+    let result = runProcess(executablePath: claudePath, arguments: args, timeout: spawnTimeout)
+    if result.timedOut {
+        log("claude mcp remove 超时（\(Int(spawnTimeout))s）")
+        return McpRegisterResult(success: false, code: .claudeTimeout,
+                                 message: "移除失败：claude 移除命令超时（超过 \(Int(spawnTimeout)) 秒）。可在终端运行 claude mcp remove coffer 手动清理。",
+                                 registered: false, vaultDir: nil)
+    }
+    guard result.status == 0 else {
+        let detail = result.output.isEmpty ? "" : "（\(result.output.prefix(300))）"
+        log("claude mcp remove 失败 status=\(result.status)\(detail)")
+        return McpRegisterResult(success: false, code: .claudeRemoveFailed,
+                                 message: "移除失败：claude 返回错误（退出码 \(result.status)）。可在终端运行 claude mcp remove coffer 手动清理。",
+                                 registered: false, vaultDir: nil)
+    }
+    // 读回确认：coffer 键应已消失。
+    guard let readBack = readRegisteredCoffer(), !readBack.found else {
+        log("claude 报告成功但读回 mcpServers.coffer 仍存在")
+        return McpRegisterResult(success: false, code: .claudeRemoveFailed,
+                                 message: "移除失败：claude 报告成功但 coffer 条目仍存在。可在终端运行 claude mcp remove coffer 手动清理。",
+                                 registered: false, vaultDir: nil)
+    }
+    log("移除成功（读回确认：mcpServers.coffer 已消失）")
+    return nil
+}
+
+/// register 模式（upsert，lead 裁定）：resolve claude → 校验 coffer 二进制存在 →
+/// 既有同名校先 remove → spawn add（超时）→ 读回 confirm（键存在 + vaultDir 为
+/// 目标值）→ result。
 func performRegister(config: McpRegisterRequest) -> McpRegisterResult {
     guard let vaultDir = config.vaultDir, !vaultDir.isEmpty else {
         return McpRegisterResult(success: false, code: .configInvalid,
@@ -348,11 +383,20 @@ func performRegister(config: McpRegisterRequest) -> McpRegisterResult {
                                  message: "注册失败：未找到 Claude Code CLI（claude）。请先安装 Claude Code，或用「复制注册命令」手动注册。",
                                  registered: false, vaultDir: nil)
     }
+    // upsert（lead 裁定：同名 add 跳过不覆盖=旧 COFFER_VAULT_DIR 残留陷阱，换库后
+    // vault dir 必须刷新）：顶层已存在 coffer 条目 → 先 remove 再 add。
+    if let existing = readRegisteredCoffer(), existing.found {
+        log("检测到既有 coffer 条目（vaultDir=\(existing.vaultDir ?? "<nil>")），upsert：先移除再注册")
+        if let failure = runClaudeRemove(claudePath: claudePath) {
+            return failure
+        }
+    }
     // 命令结构单源（McpRegisterSpec，App/helper 共享编译），argv 数组直传（无 shell
     // 拼接）；config 只传 vaultDir/二进制两个值，argv 不经 config 传递（无注入面）。
+    // commandArgs 已不含 claudePath——整条直接 spawn，不得再 dropFirst。
     let args = McpRegisterSpec.commandArgs(vaultDir: vaultDir, cofferBinaryPath: cofferBinary)
     log("spawn claude mcp add（argv 直传，vaultDir=\(vaultDir)）")
-    let result = runProcess(executablePath: claudePath, arguments: Array(args.dropFirst()), timeout: spawnTimeout)
+    let result = runProcess(executablePath: claudePath, arguments: args, timeout: spawnTimeout)
     if result.timedOut {
         log("claude mcp add 超时（\(Int(spawnTimeout))s）")
         return McpRegisterResult(success: false, code: .claudeTimeout,
@@ -373,7 +417,15 @@ func performRegister(config: McpRegisterRequest) -> McpRegisterResult {
                                  message: "注册失败：claude 报告成功但未在 ~/.claude.json 找到 coffer 条目。请用「复制注册命令」手动注册。",
                                  registered: false, vaultDir: nil)
     }
-    log("注册成功（读回 confirm：mcpServers.coffer 存在）")
+    // vaultDir 必须为目标值（upsert 后若读回目录与当前不一致 = 注册未生效，仍残留
+    // 旧目录——正是 lead 裁定要防的陷阱）。
+    guard readBack.vaultDir == vaultDir else {
+        log("注册未生效：读回 vaultDir=\(readBack.vaultDir ?? "<nil>") != 目标 \(vaultDir)")
+        return McpRegisterResult(success: false, code: .claudeAddFailed,
+                                 message: "注册失败：claude 报告成功但密码库目录未刷新（可能为历史残留）。请用「复制注册命令」手动注册。",
+                                 registered: true, vaultDir: readBack.vaultDir)
+    }
+    log("注册成功（读回 confirm：mcpServers.coffer 存在且 vaultDir=\(vaultDir)）")
     return McpRegisterResult(success: true, code: .ok,
                              message: "已注册到 Claude Code（全局，scope user）。",
                              registered: true, vaultDir: readBack.vaultDir)
@@ -393,6 +445,22 @@ func performCheck() -> McpRegisterResult {
     }
     return McpRegisterResult(success: true, code: .ok,
                              message: "未注册到 Claude Code。",
+                             registered: false, vaultDir: nil)
+}
+
+/// remove 模式（开关 OFF 自动移除，lead 裁定；best-effort）：resolve claude →
+/// spawn claude mcp remove coffer --scope user → 读回 confirm → result。
+func performRemove() -> McpRegisterResult {
+    guard let claudePath = resolveClaudePath() else {
+        return McpRegisterResult(success: false, code: .claudeNotFound,
+                                 message: "移除失败：未找到 Claude Code CLI（claude）。可在终端运行 claude mcp remove coffer 手动清理。",
+                                 registered: false, vaultDir: nil)
+    }
+    if let failure = runClaudeRemove(claudePath: claudePath) {
+        return failure
+    }
+    return McpRegisterResult(success: true, code: .ok,
+                             message: "已停用（已从 Claude Code 移除 coffer 注册项）。",
                              registered: false, vaultDir: nil)
 }
 
@@ -438,6 +506,8 @@ func run(arguments: [String]) -> Int32 {
         result = performRegister(config: request)
     case .check:
         result = performCheck()
+    case .remove:
+        result = performRemove()
     }
 
     // 4. 写 result → 按成功/失败退出

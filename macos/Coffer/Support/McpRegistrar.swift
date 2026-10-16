@@ -104,12 +104,37 @@ final class McpRegistrar {
             return "注册失败：claude 注册命令超时。请重试，或用「复制注册命令」手动注册。"
         case .claudeAddFailed:
             return "注册失败：claude 返回错误。请用「复制注册命令」手动注册。"
+        case .claudeRemoveFailed:
+            return "注册失败：无法清理旧的 coffer 注册项。请用「复制注册命令」手动注册。"
         case .notRegistered:
             return "注册失败：claude 报告成功但未确认到已注册条目。请用「复制注册命令」手动注册。"
         case .checkFailed:
             return "检查注册状态失败：无法读取 Claude Code 配置。"
         case .resultWriteFailed:
             return "注册未完成：辅助进程未在限定时间内返回结果，请重试。"
+        }
+    }
+
+    /// 移除语境错误码 → 用户可读文案（开关 OFF 自动移除失败时展示，lead 裁定
+    /// 「已停用，但需手动清理注册项」引导）。与 errorMessage(for:)（注册语境）
+    /// 分离：同一 code 在两套语义下文案不同（如 claudeNotFound 在注册=可重试，
+    /// 在移除=只能手动清理）。
+    static func removeErrorMessage(for code: ResultCode) -> String {
+        switch code {
+        case .ok:
+            return "已停用（已从 Claude Code 移除 coffer 注册项）。"
+        case .claudeNotFound:
+            return "未找到 Claude Code（claude），无法自动移除。可在终端运行 claude mcp remove coffer 手动清理。"
+        case .claudeTimeout:
+            return "自动移除超时。可在终端运行 claude mcp remove coffer 手动清理。"
+        case .claudeRemoveFailed:
+            return "未能从 Claude Code 移除 coffer 注册项。可在终端运行 claude mcp remove coffer 手动清理。"
+        case .checkFailed:
+            return "无法读取 Claude Code 配置确认移除结果。可在终端运行 claude mcp remove coffer 手动清理。"
+        case .resultWriteFailed:
+            return "移除未完成（辅助进程未在限定时间内返回结果）。可在终端运行 claude mcp remove coffer 手动清理。"
+        default:
+            return "已停用，但需手动清理注册项：在终端运行 claude mcp remove coffer。"
         }
     }
 
@@ -153,6 +178,13 @@ final class McpRegistrar {
     /// 设置页 onAppear / 冷启动异步调用；缓存态由视图持有。
     func checkRegistered(helperURL: URL = McpRegistrar.helperBundleURL()) async throws -> McpRegisterResult {
         try await run(mode: .check, vaultDir: nil, cofferBinaryPath: nil, helperURL: helperURL)
+    }
+
+    /// 执行移除（remove 模式）：开关 OFF 自动移除 coffer 注册项（lead 裁定，
+    /// best-effort——失败不阻塞 OFF 本身，经 result.code 回写，UI 显示
+    /// 「已停用，需手动清理」引导）。
+    func remove(helperURL: URL = McpRegistrar.helperBundleURL()) async throws -> McpRegisterResult {
+        try await run(mode: .remove, vaultDir: nil, cofferBinaryPath: nil, helperURL: helperURL)
     }
 
     /// 通用执行（register/check 共用管线）。

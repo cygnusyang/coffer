@@ -109,6 +109,13 @@ check(validCheck.validate() == nil, "check 合法配置（无 vaultDir/二进制
 let checkNoResult = McpRegisterRequest(mode: .check, vaultDir: nil, cofferBinaryPath: nil, resultPath: "")
 check(checkNoResult.validate() == .missingResultPath, "check 缺 resultPath → missingResultPath")
 
+// remove 模式：与 check 同，仅需 resultPath（无 vaultDir/二进制——只 spawn 固定移除命令）
+let validRemove = McpRegisterRequest(mode: .remove, vaultDir: nil, cofferBinaryPath: nil, resultPath: "/tmp/r.json")
+check(validRemove.validate() == nil, "remove 合法配置（无 vaultDir/二进制）→ 无错误")
+
+let removeNoResult = McpRegisterRequest(mode: .remove, vaultDir: nil, cofferBinaryPath: nil, resultPath: "")
+check(removeNoResult.validate() == .missingResultPath, "remove 缺 resultPath → missingResultPath")
+
 // ---- 3. McpRegisterRequest.isExpectedHelperPath：路径白名单校验 ----
 
 check(
@@ -163,6 +170,7 @@ check(
 
 check(McpRegisterRequest.Mode.register.rawValue == "register", "mode rawValue=register")
 check(McpRegisterRequest.Mode.check.rawValue == "check", "mode rawValue=check")
+check(McpRegisterRequest.Mode.remove.rawValue == "remove", "mode rawValue=remove")
 
 // ---- 6. McpRegistrar 纯函数（App 侧协调器可测边界：启动参数 / env 注入 /
 //        config/result 编解码 / 错误码文案 / 轮询预算）----
@@ -204,6 +212,10 @@ let checkRequest = McpRegistrar.request(mode: .check, vaultDir: nil, cofferBinar
 check(checkRequest.mode == .check && checkRequest.vaultDir == nil && checkRequest.cofferBinaryPath == nil,
       "request：check 无 vaultDir/二进制")
 check(checkRequest.validate() == nil, "request：register/check 均过 validate（合法契约）")
+let removeRequest = McpRegistrar.request(mode: .remove, vaultDir: nil, cofferBinaryPath: nil)
+check(removeRequest.mode == .remove && removeRequest.vaultDir == nil && removeRequest.cofferBinaryPath == nil,
+      "request：remove 无 vaultDir/二进制")
+check(removeRequest.validate() == nil, "request：remove 过 validate")
 
 // 6.4 config 编解码往返（sortedKeys 确定性序列化 ↔ helper 同 schema）
 let encoded = try McpRegistrar.encodeRequest(regRequest)
@@ -211,6 +223,9 @@ let decodedBack = try JSONDecoder().decode(McpRegisterRequest.self, from: encode
 check(decodedBack == regRequest, "encodeRequest/decode 往返一致（App↔helper config schema）")
 let encodedJSON = String(data: encoded, encoding: .utf8) ?? ""
 check(encodedJSON.contains("\"mode\":\"register\""), "config JSON 含 mode 字段（helper 解码所需）")
+let encodedRemove = try McpRegistrar.encodeRequest(removeRequest)
+let encodedRemoveJSON = String(data: encodedRemove, encoding: .utf8) ?? ""
+check(encodedRemoveJSON.contains("\"mode\":\"remove\""), "config JSON remove 模式含 mode 字段")
 
 // 6.5 result 解码（helper 写回 schema）
 let helperResultJSON = """
@@ -226,9 +241,9 @@ let okResult = try McpRegistrar.decodeResult(okJSON)
 check(okResult.success && okResult.registered == true && okResult.vaultDir == "/Users/me/Vault",
       "decodeResult：成功结果含 vaultDir 提取")
 
-// 6.6 错误码文案（全部有非空映射；关键分支可区分）
+// 6.6 错误码文案（全部有非空映射；关键分支可区分；注册/移除两套语境）
 let allCodes: [ResultCode] = [.ok, .configInvalid, .cofferBinaryInvalid, .claudeNotFound,
-                              .claudeTimeout, .claudeAddFailed,
+                              .claudeTimeout, .claudeAddFailed, .claudeRemoveFailed,
                               .notRegistered, .checkFailed, .resultWriteFailed]
 check(allCodes.allSatisfy { !McpRegistrar.errorMessage(for: $0).isEmpty }, "errorMessage：全部 code 有非空文案")
 check(McpRegistrar.errorMessage(for: .ok) != McpRegistrar.errorMessage(for: .claudeNotFound),
@@ -236,6 +251,13 @@ check(McpRegistrar.errorMessage(for: .ok) != McpRegistrar.errorMessage(for: .cla
 check(McpRegistrar.errorMessage(for: .resultWriteFailed).contains("超时") ||
       McpRegistrar.errorMessage(for: .resultWriteFailed).contains("结果"),
       "errorMessage：resultWriteFailed 指向超时兜底（可操作）")
+check(allCodes.allSatisfy { !McpRegistrar.removeErrorMessage(for: $0).isEmpty },
+      "removeErrorMessage：全部 code 有非空文案")
+check(McpRegistrar.removeErrorMessage(for: .ok).contains("已停用"), "removeErrorMessage：ok 为已停用语义")
+check(McpRegistrar.removeErrorMessage(for: .claudeNotFound).contains("claude mcp remove"),
+      "removeErrorMessage：claude 缺失含手动清理指引（claude mcp remove coffer）")
+check(McpRegistrar.removeErrorMessage(for: .claudeRemoveFailed).contains("claude mcp remove"),
+      "removeErrorMessage：移除失败含手动清理指引")
 
 // 6.7 轮询预算（≤15s 硬超时）
 let deadline = McpRegistrar.resultPollDeadline(from: Date(timeIntervalSince1970: 1_000))

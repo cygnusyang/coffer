@@ -15,11 +15,15 @@ import Foundation
 
 struct McpRegisterRequest: Codable, Equatable {
     enum Mode: String, Codable, Equatable {
+        /// 注册（upsert：既有同名校则先 remove 再 add，防旧 COFFER_VAULT_DIR 残留）。
         case register
+        /// 只读 ~/.claude.json 顶层 mcpServers 的 coffer 键（状态展示）。
         case check
+        /// 移除注册项（开关 OFF 自动移除，lead 裁定；best-effort 不阻塞 OFF）。
+        case remove
     }
 
-    /// 命令模式（register=执行注册；check=只读 ~/.claude.json 顶层 mcpServers）。
+    /// 命令模式（register=执行注册；check=只读；remove=移除注册项）。
     let mode: Mode
     /// vault 目录绝对路径（仅 register 模式必填；R2：不含密码）。
     let vaultDir: String?
@@ -76,6 +80,9 @@ enum ResultCode: String, Codable, Equatable {
     case claudeTimeout
     /// claude mcp add 退出码非 0
     case claudeAddFailed
+    /// claude mcp remove 退出码非 0 / 读回确认 coffer 键仍在（upsert 清理旧条目
+    /// 或开关 OFF 自动移除失败；App 侧错误码映射两套语境文案）
+    case claudeRemoveFailed
     /// add 报告成功但读回 ~/.claude.json 无 coffer 键（read-back confirm 失败=
     /// 注册失败态，UI 显式，lead 裁定）
     case notRegistered

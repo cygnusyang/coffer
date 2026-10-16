@@ -193,17 +193,24 @@ pass "TC-L3-PRE-03" "目标窗口存在（role=AXWindow）"
 # PRE-04 content 元素非空 + 首启到达锁定态（LockView）。§5.7 第 3 检的意图是排除
 # 窗口塌缩（零 content）；本 harness 首启目标恒为 LockView，其 SecureField 即为
 # content 证据。窗口先于内容渲染、内容曝光依赖 App 前台（实测）——轮询内每次先激活
-# 再查（open 已运行实例=activate），fail-closed：超时 → 屏幕锁定/异常态。
+# 再查（open 已运行实例=activate），并取**双锚点**（占位 find 或结构性 AXSecureTextField
+# role/subrole，同 W2-03 加固）。间歇 AX 曝光缝隙（W2-03 同款，11:20/11:32 两轮实证）
+# 预算 60 轮；超时自诊断后 fail-closed：屏幕锁定/异常态。
 LOCKVIEW_UP=0
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   open "${APP_PATH}" >/dev/null 2>&1
   sleep 1
-  if "${DRIVER}" find "请输入主密码" >/dev/null 2>&1; then LOCKVIEW_UP=1; break; fi
+  if "${DRIVER}" find "请输入主密码" >/dev/null 2>&1 \
+     || "${DRIVER}" tree 2>/dev/null | awk -F'\t' '$3=="AXSecureTextField" || $4=="AXSecureTextField"{f=1} END{exit !f}'; then
+    LOCKVIEW_UP=1; break
+  fi
 done
 if (( LOCKVIEW_UP )); then
   pass "TC-L3-PRE-04" "主窗口 content 非空（首启锁定态 LockView 呈现）"
 else
-  echo "ERROR  启动后未到锁定态（30s 无 content 元素）——屏幕锁定/异常态（fail-closed）" >&2
+  APP_ALIVE=no; pgrep -x Coffer >/dev/null 2>&1 && APP_ALIVE=yes
+  WIN_INFO="$("${DRIVER}" windows 2>/dev/null | grep '^WINDOW' | tr '\n' ';')"
+  echo "ERROR  启动后未到锁定态（60 轮无 content；app 存活=${APP_ALIVE} 窗口=${WIN_INFO:-<none>}）——屏幕锁定/异常态（fail-closed）" >&2
   exit 6
 fi
 echo "--- 已到锁定态 ---"
@@ -311,19 +318,32 @@ if ! wait_for "设置窗关闭（P2-B）" 8 sh -c "! ${DRIVER} find '设置放�
 else
   pass "TC-L3-W2-02" "锁库 → 设置窗关闭（phase 离 .unlocked 自关，P2-B）"
 fi
-# W2-03：锁库后窗口重建为 LockView。两项实测延迟：窗口重建 8-15s；SecureField 占位
-# 只在 App 前台时曝光。轮询内**每次先激活再查**（open 已运行实例=activate），不依赖
-# 单次 activate 时机——确定性取相变终态。
+# W2-03：锁库后窗口重建为 LockView。实测相变终态常 2-5s 内复现、间歇更久（lead 复跑
+# 与本地复跑合计 4 次 60s+ 未现 AX 内容——冷启动 PRE-04 同款，自恢复非崩溃：若 App
+# 崩溃，40 次 `open` 会重启新实例并呈 LockView，而未现即证 App 存活但 AX 未曝 LockView）。
+# 双脆弱：① 窗口重建/内容曝光时间可变（间歇性，疑似瞬时 AX 曝光缝隙或主线程暂歇）；
+# ② SecureField 占位「请输入主密码」只在 App 前台时曝光（frontmost 依赖）。
+# 加固：轮询内**每次先激活再查**（open 已运行实例=activate）；**双锚点**任一命中即判
+# LockView 复现——语义锚（占位 find）+ 结构性锚（AXSecureTextField，role 或 subrole；
+# 元素存在不依赖前台占位曝光；锁定态独有——解锁态主内容无 SecureField，且 W2-01/02
+# 已证向导/设置窗拆除，无其他 SecureField 源）；预算 60 轮（~2min+ 覆盖间歇曝光缝隙）。
+# 超时自诊断（归因残留项）：报 App 存活/窗口枚举/App 进程响应——区分瞬时曝光缝隙
+# （环境/测试侧，自恢复）与主线程暂歇（生产侧，需 coder 核）。登记 docs/18 §9。
 LOCKVIEW_BACK=0
-for _ in $(seq 1 25); do
+for _ in $(seq 1 60); do
   open "${APP_PATH}" >/dev/null 2>&1
   sleep 1
-  if "${DRIVER}" find "请输入主密码" >/dev/null 2>&1; then LOCKVIEW_BACK=1; break; fi
+  if "${DRIVER}" find "请输入主密码" >/dev/null 2>&1 \
+     || "${DRIVER}" tree 2>/dev/null | awk -F'\t' '$3=="AXSecureTextField" || $4=="AXSecureTextField"{f=1} END{exit !f}'; then
+    LOCKVIEW_BACK=1; break
+  fi
 done
 if (( LOCKVIEW_BACK )); then
   pass "TC-L3-W2-03" "锁库后 LockView 复现（真实 phase 相变）"
 else
-  fail "TC-L3-W2-03" "锁库后 LockView 复现（真实 phase 相变）" "25s 内未到锁定态"
+  APP_ALIVE=no; pgrep -x Coffer >/dev/null 2>&1 && APP_ALIVE=yes
+  WIN_INFO="$("${DRIVER}" windows 2>/dev/null | grep '^WINDOW' | tr '\n' ';')"
+  fail "TC-L3-W2-03" "锁库后 LockView 复现（真实 phase 相变）" "60 轮未到锁定态（app 存活=${APP_ALIVE} 窗口=${WIN_INFO:-<none>}）"
 fi
 
 # MARK: - 汇总

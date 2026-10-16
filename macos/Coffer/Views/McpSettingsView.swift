@@ -27,7 +27,8 @@
 import AppKit
 import SwiftUI
 
-/// Claude Code 注册/检测状态（v2.11.0 lead 裁定：开关 ON 自动注册 + check 缓存态）。
+/// Claude Code 注册/检测/移除状态（v2.11.0 lead 裁定：开关 ON 自动注册 +
+/// check 缓存态 + 开关 OFF 自动移除）。
 enum McpRegistrationState: Equatable {
     /// 未检查（op 分支 / 开关 OFF）
     case idle
@@ -35,10 +36,14 @@ enum McpRegistrationState: Equatable {
     case checking
     /// 注册中（开关 ON 自动注册在飞）
     case registering
+    /// 移除中（开关 OFF 自动移除在飞，best-effort）
+    case removing
     /// 已注册（携带读回的 COFFER_VAULT_DIR，供与当前库比对提示）
     case registered(String?)
     /// 未注册（check 结论；开关 ON 即自动注册）
     case notRegistered
+    /// 已停用但注册项未清理干净（开关 OFF 移除失败，引导手动清理）
+    case cleanupNeeded(String)
     /// 失败（携带用户可读文案）
     case failed(String)
 }
@@ -114,9 +119,13 @@ struct McpSettingsSection: View {
                         // lead 裁定：开关 ON 动作本身 = 自动注册（主形态，无需再点按钮）
                         autoRegisterIfNeeded()
                     } else {
-                        // OFF：取消在飞注册，清态（claude config 条目不删，仅清展示态）
+                        // OFF（lead 裁定 3）：best-effort 自动 remove——取消在飞任务并
+                        // 异步移除 coffer 注册项（残留项会在 Claude Code 侧持续拉起一个
+                        // owner 已禁用的服务，语义不一致）。移除失败**不阻塞 OFF 本身**，
+                        // UI 显示「已停用，但需手动清理注册项」引导。
                         registrationTask?.cancel()
                         registration = .idle
+                        autoRemoveIfNeeded()
                     }
                 }
 
@@ -403,8 +412,8 @@ struct McpSettingsSection: View {
     private var registrationIcon: String {
         switch registration {
         case .registered: return "checkmark.circle"
-        case .failed: return "exclamationmark.triangle"
-        case .registering, .checking: return "arrow.triangle.2.circlepath"
+        case .failed, .cleanupNeeded: return "exclamationmark.triangle"
+        case .registering, .checking, .removing: return "arrow.triangle.2.circlepath"
         case .idle, .notRegistered: return "circle"
         }
     }
@@ -412,8 +421,8 @@ struct McpSettingsSection: View {
     private var registrationColor: Color {
         switch registration {
         case .registered: return .green
-        case .failed: return .orange
-        case .registering, .checking: return .secondary
+        case .failed, .cleanupNeeded: return .orange
+        case .registering, .checking, .removing: return .secondary
         case .idle, .notRegistered: return .secondary
         }
     }
@@ -426,6 +435,8 @@ struct McpSettingsSection: View {
             return "检查注册状态…"
         case .registering:
             return "正在注册到 Claude Code（全局）…"
+        case .removing:
+            return "正在从 Claude Code 移除 coffer 注册项…"
         case .registered(let registeredDir):
             var text = "已注册到 Claude Code（全局）。"
             if let registeredDir, !model.vaultDirPath.isEmpty, registeredDir != model.vaultDirPath {
@@ -433,7 +444,11 @@ struct McpSettingsSection: View {
             }
             return text
         case .notRegistered:
-            return "未注册。打开开关即自动注册；也可用「复制注册命令」手动注册。"
+            return enabled
+                ? "未注册。打开开关即自动注册；也可用「复制注册命令」手动注册。"
+                : "已停用。已从 Claude Code 移除注册项（打开开关即自动重新注册）。"
+        case .cleanupNeeded(let detail):
+            return "已停用，但需手动清理注册项。\(detail)"
         case .failed(let message):
             return message
         }
@@ -480,6 +495,37 @@ struct McpSettingsSection: View {
             let message = (error as? LocalizedError)?.errorDescription
                 ?? "注册失败，请重试或用「复制注册命令」手动注册。"
             registration = .failed(message)
+        }
+    }
+
+    /// 开关 OFF 自动移除（lead 裁定 3：best-effort，不阻塞 OFF 本身）。仅 coffer
+    /// 分支（op 无自动注册故无自动移除）；claude 缺失 / 超时 / 未移除成功 →
+    /// cleanupNeeded 引导手动清理（claude mcp remove coffer），开关保持 OFF。
+    private func autoRemoveIfNeeded() {
+        guard !enabled, provider == .coffer else { return }
+        registrationTask?.cancel()
+        registration = .removing
+        registrationTask = Task {
+            await performRemove()
+        }
+    }
+
+    private func performRemove() async {
+        do {
+            let result = try await registrar.remove()
+            guard !Task.isCancelled else { return }
+            if result.success {
+                registration = .notRegistered
+            } else {
+                registration = .cleanupNeeded(McpRegistrar.removeErrorMessage(for: result.code))
+            }
+        } catch is CancellationError {
+            // 被新任务取代（如又拨回 ON），不更新状态
+        } catch {
+            guard !Task.isCancelled else { return }
+            let message = (error as? LocalizedError)?.errorDescription
+                ?? "移除失败，请重试或手动运行 claude mcp remove coffer。"
+            registration = .cleanupNeeded(message)
         }
     }
 

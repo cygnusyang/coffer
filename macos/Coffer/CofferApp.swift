@@ -26,6 +26,9 @@ struct CofferMainApp: App {
     @StateObject
     private var model = AppModel()
 
+    @Environment(\.openWindow)
+    private var openWindow
+
     var body: some Scene {
         WindowGroup("Coffer") {
             // AppDelegate.model 接线点：必须在 RootView.onAppear 而非 App.init——
@@ -77,8 +80,44 @@ struct CofferMainApp: App {
             // 触发同一 sheet 状态（AppModel @Published）。锁定态禁用——
             // 导入需解锁态（1001 门禁）、导出/设置入口在主界面（解锁区）。
             // v2.4.1：设置改独立窗口（对齐 macOS 系统设置红绿灯），经
-            // DataCommands（@Environment openWindow）触发，不再走 showSettings。
-            DataCommands(model: model)
+            // @Environment(\.openWindow) 触发，不再走 showSettings。
+            // BUG（Task #18，2026-10-16）：macOS 26 上独立 Commands 结构体
+            // （DataCommands）的菜单项 enabled 不随 phase 更新（Divider 之前
+            // 的项卡启动初态恒 disabled，AX+真机截图双实证）。改内联
+            // CommandMenu（镜像同文件实证可用的「文件」菜单形态）。
+            CommandMenu("数据") {
+                Button("从 macOS 密码 App…") { model.showImportDropzone = true }
+                    .disabled(model.phase != .unlocked)
+                Button("导入 CSV…") { model.showImport = true }
+                    .keyboardShortcut("i", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+                // 1PUX 导入（v0.3.0-T05 FR-7.1）：import1pux 有 1001 门禁
+                // （需解锁态），与 CSV 同纪律禁用于锁定态
+                Button("导入 1Password (.1pux)…") { model.showImportPux = true }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+                    .disabled(model.phase != .unlocked)
+                // Bitwarden 导入（v0.5.0 PK3）：import_bitwarden_json 有 1001
+                // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
+                Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
+                    .disabled(model.phase != .unlocked)
+                // OPVault 导入（v2.9.0 P3 IA-06）：import_opvault 有 1001
+                // 门禁（需解锁态），与其余导入同纪律禁用于锁定态；默认无快捷键
+                // （与 Bitwarden 一致，AC-2.9.0-P3-9b）。
+                Button("导入 1Password (OPVault)…") { model.showImportOpvault = true }
+                    .disabled(model.phase != .unlocked)
+                Button("导出…") { model.showExport = true }
+                    .keyboardShortcut("e", modifiers: .command)
+                    .disabled(model.phase != .unlocked)
+                Divider()
+                Button("设置…") { openWindow(id: "settings") }
+                    .keyboardShortcut(",", modifiers: .command)
+                    // M-2（docs/15 §2.4，AC-2.10.0-A1-10）：首启向导置位期间
+                    // （pendingBioOffer || pendingRecoveryOffer）同样禁用——向导内
+                    // 设置窗结构性不可达，并发覆盖路径确定性消除（对齐 phase !=
+                    // .unlocked 既有纪律；向导收口旗标全清后自动恢复可开）。
+                    .disabled(model.phase != .unlocked
+                              || model.pendingBioOffer || model.pendingRecoveryOffer)
+            }
 
             // P7（v2.9.0，docs/14 §A P7 §2/§3）：⌘N/⌘L 文件菜单「新建条目」
             // 槽位。⌘N 以 `replacing: .newItem` 覆盖隐式「新建窗口」绑定——
@@ -132,7 +171,7 @@ struct CofferMainApp: App {
             // CommandMenu）后注入行为可能残留，但「不再报错」即修复实证。
             // 帮助无密级：三项均不 disabled，锁定/解锁态都可用（与「关于」
             // 同纪律，不涉及任何密级内容）。触发走 AppModel @Published 旗标
-            // （commands 闭包无法用 @EnvironmentObject，同 DataCommands/
+            // （commands 闭包无法用 @EnvironmentObject，同上方内联数据菜单/
             // showImport 先例），sheet 挂主窗口（见上）。
             CommandGroup(replacing: .help) {
                 Button("键盘快捷键…") { model.showShortcuts = true }
@@ -156,57 +195,6 @@ struct CofferMainApp: App {
     }
 }
 
-/// 「数据」菜单命令组（v2.4.1 从 CofferMainApp.commands 内联 CommandMenu 抽出）：
-/// 与工具栏触发同一 sheet 状态（AppModel @Published）。锁定态禁用——导入需
-/// 解锁态（1001 门禁）、导出/设置入口在主界面（解锁区）。
-/// v2.4.1：设置改独立窗口（对齐 macOS 系统设置红绿灯），经
-/// @Environment(\.openWindow) 触发，不再走 showSettings。model 直接以值传入
-/// （commands 闭包无法用 @EnvironmentObject，随 CofferMainApp 捕获同源实例）。
-/// v2.11.0：放置区入口置顶第 1 项（⚠4），与工具栏/空态菜单同源触发
-/// model.showImportDropzone，无快捷键（E-2）。
-private struct DataCommands: Commands {
-    @Environment(\.openWindow)
-    private var openWindow
-
-    let model: AppModel
-
-    var body: some Commands {
-        CommandMenu("数据") {
-            Button("从 macOS 密码 App…") { model.showImportDropzone = true }
-                .disabled(model.phase != .unlocked)
-            Button("导入 CSV…") { model.showImport = true }
-                .keyboardShortcut("i", modifiers: .command)
-                .disabled(model.phase != .unlocked)
-            // 1PUX 导入（v0.3.0-T05 FR-7.1）：import1pux 有 1001 门禁
-            // （需解锁态），与 CSV 同纪律禁用于锁定态
-            Button("导入 1Password (.1pux)…") { model.showImportPux = true }
-                .keyboardShortcut("i", modifiers: [.command, .shift])
-                .disabled(model.phase != .unlocked)
-            // Bitwarden 导入（v0.5.0 PK3）：import_bitwarden_json 有 1001
-            // 门禁（需解锁态），与 CSV/1PUX 同纪律禁用于锁定态
-            Button("导入 Bitwarden (.json)…") { model.showImportBitwarden = true }
-                .disabled(model.phase != .unlocked)
-            // OPVault 导入（v2.9.0 P3 IA-06）：import_opvault 有 1001 门禁
-            // （需解锁态），与其余导入同纪律禁用于锁定态；默认无快捷键
-            // （与 Bitwarden 一致，AC-2.9.0-P3-9b）。
-            Button("导入 1Password (OPVault)…") { model.showImportOpvault = true }
-                .disabled(model.phase != .unlocked)
-            Button("导出…") { model.showExport = true }
-                .keyboardShortcut("e", modifiers: .command)
-                .disabled(model.phase != .unlocked)
-            Divider()
-            Button("设置…") { openWindow(id: "settings") }
-                .keyboardShortcut(",", modifiers: .command)
-                // M-2（docs/15 §2.4，AC-2.10.0-A1-10）：首启向导置位期间
-                // （pendingBioOffer || pendingRecoveryOffer）同样禁用——向导内
-                // 设置窗结构性不可达，并发覆盖路径确定性消除（对齐 phase !=
-                // .unlocked 既有纪律；向导收口旗标全清后自动恢复可开）。
-                .disabled(model.phase != .unlocked
-                          || model.pendingBioOffer || model.pendingRecoveryOffer)
-        }
-    }
-}
-
 /// 设置窗口宿主（v2.9.0 P2-B，docs/14 §A P2 §3.2 候选 1）：薄包装，只负责在
 /// phase 离开 `.unlocked`（→ .locked / .noVault）时关闭设置窗口。
 ///
@@ -216,7 +204,7 @@ private struct DataCommands: Commands {
 /// 对不存在的窗口为 no-op 安全。窗口上正挂的 sheet（改密等）随窗口一并
 /// 拆除（AC-2.9.0-P2B-5），与「锁定即拆解锁态表面」语义一致。
 ///
-/// 菜单纪律（AC-2.9.0-P2B-3）：DataCommands「设置…」保留 `.disabled(phase !=
+/// 菜单纪律（AC-2.9.0-P2B-3）：数据菜单「设置…」保留 `.disabled(phase !=
 /// .unlocked)`——锁定态无法打开设置窗口 + 已开者被本宿主关闭，自相矛盾解除。
 private struct SettingsWindowHost: View {
     @EnvironmentObject

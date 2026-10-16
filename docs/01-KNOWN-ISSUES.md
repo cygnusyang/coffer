@@ -1734,3 +1734,47 @@ helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agen
 **现象**：v2.7.0 起 entitlements 含 `com.apple.security.network.client`（OTA 更新豁免，docs/35 §2.2），但 NetworkSelfCertView 四处仍是 OTA 之前的事实：①标题「本 App 不含网络权限（零网络架构）」；②正文「完全离线运行」；③静态自证步骤 1「输出中不应出现任何 com.apple.security.network.* 键」——用户照做会看到 network.client，页面自相矛盾；④步骤 2「不应有 Network.framework / CFNetwork 等网络框架」——otool 实证 CFNetwork 在链接表内（URLSession 依赖）。
 **修复路径**：1e46c70（v2.10.3-T3）——标题改「数据都在本机，不上传云端」；正文改「本机不上传 + Rust 核心依赖图零网络（check_no_network.sh 自证）+ 唯一联网例外=OTA 白名单」；步骤 1 改「最多允许出现 network.client 一项（软件更新豁免），不得出现 network.server 或其他 network.*」；步骤 2 改诚实断言（otool 实证：无第三方网络库、CFNetwork 属预期、无独立 Network.framework）；运行时节补「OTA 下载进行中除外」限定；头注同步。FR-14.5 需求行同步修订注记（docs/01-需求与架构/01-需求分析.md）。
 **核销测试**：swiftc -parse OK；无测试锁旧文案（grep 证实 CofferTests/CofferUITests 零依赖）；otool/codesign 实证见 commit。
+
+## BUG-32（✅ 已修复，2026-10-17）：主窗口菜单栏「数据」菜单项解锁态仍恒灰——独立 Commands 结构体在 macOS 26 上 enabled 不随 phase 更新
+
+**登记日期**：2026-10-17
+**发现环境**：用户真机截图（macOS 26.6.2，/Applications/Coffer.app v2.10.3）+ dev build @ ffd1b6e AX 直查双实证
+**严重级/优先级**：S3（次要功能——菜单栏导入/导出入口不可用；工具栏/空态/设置三处入口不受影响）/ P1（用户可见回归，v2.11.0 发版前修复）
+**来源版本**：v2.4.1（DataCommands 独立 Commands 结构体抽出时引入；v2.11.0 放置区入口置顶后暴露面扩大）
+**发现版本**：v2.10.3 真机（用户截图报告）；dev build 复现矩阵确认
+**状态**：✅ 已修复（2026-10-17，commit 待补）
+
+### 现象
+
+解锁态下主窗口顶部系统菜单栏「数据」菜单的导入/导出各项（Divider 之前 6 项）呈灰色不可点；「设置…」（Divider 之后）正常。锁定/解锁切换不改变前 6 项状态。
+
+### 复现步骤
+
+1. 启动 Coffer（有库，启动即锁定态）→ 解锁
+2. 点开菜单栏「数据」菜单 → 前 6 项灰色，「设置…」黑色正常
+3. UIAXDriver enabled 直查：Divider 前 6 项 `ENABLED false`、「设置…」`true`、对照组「锁定 Coffer」`true`
+
+### 预期/实际
+
+- 预期：解锁态 6 项 enabled，锁定态 disabled（随 `phase != .unlocked` 动态更新）
+- 实际：6 项卡在启动初态（.booting 时构造的 disabled）恒 false，不随 phase 更新
+
+### 根因
+
+macOS 26（Darwin 25.6.0）SwiftUI 的 AppKit 菜单 diff 传播缺陷：独立 `Commands` 结构体（v2.4.1 从 App body `.commands` 内联抽出的 `DataCommands`）构建的 CommandMenu 菜单项，其 AppKit `isEnabled` 不随观测的 AppModel @Published phase 更新——Divider 之后的项不受影响，机制不明（疑与 diff 分组传播边界有关）。同文件内联在 App body `.commands` 里的「文件」菜单项（CommandGroup）无此问题——形态对照排除 phase 信号、订阅、AX 读取层，归因到结构体形态差异。
+
+### 影响面
+
+数据菜单前 6 项（放置区导入 + 4 导入 + 导出）在菜单栏路径不可点。工具栏/空态/设置入口正常，核心功能不受损。
+
+### 误归因史（重要教训）
+
+本现象曾在 v2.11.0 harness 轮被 AX 直查观测到，但被误归因为「SwiftUI CommandMenu 项 AX enabled 恒 false 为已知 quirk」（run_l3_ax_harness.sh 旧注释 + docs/18 §IT-01 注），以「存在性锚点」降格绕过。**AX enabled 实为忠实 oracle**（直读 AppKit isEnabled），真机截图证明菜单真灰——quirk 不存在，缺陷一直在生产代码。
+
+### 修复路径（Exp1 内联，已实证）
+
+DataCommands 结构体删除，「数据」CommandMenu 内联回 App body `.commands`（镜像同文件实证可用的「文件」菜单形态）+ `@Environment(\.openWindow)` 上移 CofferMainApp。修复后 AX 直查双向验证：锁定 6 项 false → 解锁 7/7 true → 重锁 6 项 false（设置… 项锁定态 false 经 find 三匹配甄别确认为真实读数；`enabled` 子命令取首个子串命中读到「系统设置…」恒 true 系测量假象，非缺陷）。
+
+### 核销记录
+
+修复 commit 待补；核销测试 = AX 黑盒双向循环（锁定 false → 解锁 true → 重锁 false，/tmp/coffer-menu-lockcycle.log 留档）+ harness 断言升级（TC-L3-IT01-04 由存在性锚点升级为 enabled false 断言 + 新增 TC-L3-IT01-09 解锁态 enabled true 断言）。

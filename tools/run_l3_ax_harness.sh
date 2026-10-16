@@ -230,18 +230,18 @@ else
   pass "TC-L3-IT01-02" "锁定态主界面入口不可达（空态「导入已有密码…」absent）"
 fi
 
-# 锁定态「锁定 Coffer」disabled（可靠 phase 信号；数据 CommandMenu 项 AX enabled 恒 false 为已知 quirk，见 docs/18）
+# 锁定态「锁定 Coffer」disabled（可靠 phase 信号）
 if "${DRIVER}" enabled "锁定 Coffer" 2>/dev/null | grep -q '^ENABLED	false'; then
-  pass "TC-L3-IT01-03" "锁定态「锁定 Coffer」disabled（phase != .unlocked 可靠信号）"
+  pass "TC-L3-IT01-03" "锁定态「锁定 Coffer」disabled（phase != .unlocked 可靠 phase 信号）"
 else
   fail "TC-L3-IT01-03" "锁定态「锁定 Coffer」disabled" "ENABLED 非 false"
 fi
 
-# 锁定态数据菜单「从 macOS 密码 App…」结构性存在（菜单栏锚点；enabled 恒 false 为 SwiftUI CommandMenu AX quirk）
-if "${DRIVER}" find "从 macOS 密码" >/dev/null 2>&1; then
-  pass "TC-L3-IT01-04" "锁定态数据菜单「从 macOS 密码 App…」存在（结构性锚点）"
+# 锁定态数据菜单「从 macOS 密码 App…」disabled（BUG-32 修复后 AX enabled 为可靠判据，锁定态 false；曾误记为 quirk，修正记录见 docs/18）
+if "${DRIVER}" enabled "从 macOS 密码 App…" 2>/dev/null | grep -q '^ENABLED	false'; then
+  pass "TC-L3-IT01-04" "锁定态数据菜单「从 macOS 密码 App…」disabled（BUG-32 修复后为可靠 phase 信号）"
 else
-  fail "TC-L3-IT01-04" "锁定态数据菜单「从 macOS 密码 App…」存在" "未找到菜单项"
+  fail "TC-L3-IT01-04" "锁定态数据菜单「从 macOS 密码 App…」disabled" "ENABLED 非 false"
 fi
 
 # MARK: - TEST 解锁（type env 密码 + 解锁按钮 enabled false→true → press）
@@ -277,6 +277,13 @@ if "${DRIVER}" find "导入已有密码" >/dev/null 2>&1; then
   pass "TC-L3-IT01-06" "解锁态空态「导入已有密码…」呈现（入口可达）"
 else
   fail "TC-L3-IT01-06" "解锁态空态「导入已有密码…」呈现" "未找到"
+fi
+
+# 解锁态数据菜单「从 macOS 密码 App…」enabled（BUG-32 修复后解锁态 true；修复前卡启动初态恒 false——旧记录误归因为 AX quirk）
+if "${DRIVER}" enabled "从 macOS 密码 App…" 2>/dev/null | grep -q '^ENABLED	true'; then
+  pass "TC-L3-IT01-09" "解锁态数据菜单「从 macOS 密码 App…」enabled（BUG-32 修复后 phase 信号恢复）"
+else
+  fail "TC-L3-IT01-09" "解锁态数据菜单「从 macOS 密码 App…」enabled" "ENABLED 非 true"
 fi
 
 # 设置「设置放置区…」按钮可点 → 向导 S0 打开（AXPress 于 SwiftUI Button 有效；Menu/CommandMenu 项无效，已实证）

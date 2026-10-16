@@ -309,6 +309,66 @@ printf 'APPL????' > "${HELPER_APP_DIR}/Contents/PkgInfo"
 # 不加 --options runtime（对齐 App 与 coffer CLI 现有签名约定）。
 codesign --force --sign "${IDENTITY_HASH}" "${HELPER_APP_DIR}" || die "OTA install helper（嵌套 bundle）codesign 失败。"
 
+# ---- 3.7/4 MCP 注册 helper 构建 + 装配 + 签名（v2.11.0，lead 裁定）----
+# MCP 一键注册 helper（lead 裁定，spike 双/三重 block 实证）：嵌入式**非沙盒**
+# helper，装配为嵌套 .app bundle Contents/Helpers/CofferMcpHelper.app——沙盒 App
+# 直接 exec claude（process-exec 拒绝 exit 127）、读写真实 ~/.claude.json（HOME
+# 重映射容器）、open -a Terminal（-10820）全被拦，经 open 拉起本 helper 代劳
+# （BUG-30 / OTA CofferUpdater 生产实证逃生通道）。
+# 安全契约：命令结构硬编码（RegisterCommandBuilder），config 只传值（mode/
+# vaultDir/cofferBinaryPath/resultPath），无 shell 拼接；coffer 二进制路径双重
+# 校验（.app/Contents/Helpers/ 形状 + isExecutableFile）。**无受限 entitlement、
+# 无 embedded.provisionprofile**（无 keychain-access-groups，Spike-0 同裁定）；
+# 签名顺序：嵌套 bundle 先于外层 App（对齐 3.5/3.6 先例，外层签名不覆盖）。
+step "3.7/4 构建并装配 MCP 注册 helper（CofferMcpHelper.app，v2.11.0）"
+
+MCP_HELPER_SRC_DIR="${SRC_DIR}/McpRegisterHelper"
+MCP_HELPER_APP_DIR="${APP_DIR}/Contents/Helpers/CofferMcpHelper.app"
+[[ -d "${MCP_HELPER_SRC_DIR}" ]] || die "缺少 MCP 注册 helper 源码目录: ${MCP_HELPER_SRC_DIR}"
+MCP_HELPER_SOURCES=()
+while IFS= read -r f; do
+  MCP_HELPER_SOURCES+=("${f}")
+done < <(find "${MCP_HELPER_SRC_DIR}" -name '*.swift' | sort)
+[[ ${#MCP_HELPER_SOURCES[@]} -gt 0 ]] || die "MCP 注册 helper 源码目录无 Swift 文件: ${MCP_HELPER_SRC_DIR}"
+
+mkdir -p "${MCP_HELPER_APP_DIR}/Contents/MacOS"
+# 与 App 主可执行同一 target 约定（arm64-apple-macos14.0）。helper 独立顶层入口
+# （main.swift 顶层代码），无需 -parse-as-library。共享契约 RegisterRequest.swift /
+# 命令结构 RegisterCommand.swift 同目录一并编入（App 侧也编 RegisterRequest.swift，
+# 同 schema 防漂移）。
+swiftc -O \
+  -swift-version 5 \
+  -target arm64-apple-macos14.0 \
+  "${MCP_HELPER_SOURCES[@]}" \
+  -o "${MCP_HELPER_APP_DIR}/Contents/MacOS/coffer-mcp-register" \
+  || die "MCP 注册 helper（swiftc）编译失败。"
+
+# 最小 Info.plist：CFBundleIdentifier=top.cygnusyang.coffer.mcpregister（同 TeamID
+# 同 DR），LSMinimumSystemVersion 对齐主 App 14.0。**无 XML 注释**（entitlements
+# 注释 `--` 坑同族：plutil/codesign 解析敏感，见记忆 coffer-entitlements-amfi-comment）。
+cat > "${MCP_HELPER_APP_DIR}/Contents/Info.plist" <<'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>top.cygnusyang.coffer.mcpregister</string>
+	<key>CFBundleExecutable</key>
+	<string>coffer-mcp-register</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleName</key>
+	<string>CofferMcpHelper</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+</dict>
+</plist>
+PLIST_EOF
+printf 'APPL????' > "${MCP_HELPER_APP_DIR}/Contents/PkgInfo"
+
+# 不带 --entitlements、不嵌 profile（无受限 entitlement 即 AMFI 放行，Spike-0 同款）。
+codesign --force --sign "${IDENTITY_HASH}" "${MCP_HELPER_APP_DIR}" || die "MCP 注册 helper（嵌套 bundle）codesign 失败。"
+
 # ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
 step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
 # 签名身份与 profile 已在 3.5 发现/校验（coffer CLI 与 App 同一身份、同一 profile）。
@@ -324,12 +384,14 @@ codesign --force --sign "${IDENTITY_HASH}" \
 codesign --verify --strict "${APP_DIR}" || die "签名校验失败。"
 codesign --verify --strict "${CLI_APP_DIR}" || die "coffer CLI 嵌套 bundle 签名校验失败。"
 codesign --verify --strict "${HELPER_APP_DIR}" || die "OTA install helper（嵌套 bundle）签名校验失败。"
+codesign --verify --strict "${MCP_HELPER_APP_DIR}" || die "MCP 注册 helper（嵌套 bundle）签名校验失败。"
 
 step "完成 ✅"
 echo "  App : ${APP_DIR}"
 echo "  启动: open ${APP_DIR}"
 echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
 echo "  install helper: ${HELPER_APP_DIR}（OTA 替换，docs/35 §6.4）"
+echo "  MCP 注册 helper: ${MCP_HELPER_APP_DIR}（设置页开关一键注册，v2.11.0）"
 echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
 echo "  分发渠道: appstore（沙盒单渠道）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

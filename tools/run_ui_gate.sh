@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# run_ui_gate.sh —— UI 测试自动化汇总门禁（L1 + L2 + L3，docs/19 §7.2 W4 交付）。
+# run_ui_gate.sh —— UI 测试自动化汇总门禁（L1 + L2 + L3 + MCP，docs/19 §7.2 W4 交付）。
 #
-# 三层（docs/19 §2 分层设计）：
+# 各段（docs/19 §2 分层设计 + v2.11.0 MCP 一键注册）：
 #   L1  模型面 RED→GREEN：run_dropzone_import_model_tests.sh（docs/19 §3.3）
 #   L2  真样全链路回归：run_dropzone_l2_regression_tests.sh（docs/19 §4.4）
 #   L3  AX 黑盒 harness：run_l3_ax_harness.sh（docs/19 §5.6，IT-01 + W-2 子集）
+#   MCP  MCP 注册 helper 纯逻辑（RegisterCommandBuilder / McpRegisterRequest /
+#       McpRegistrar 纯函数 / App↔helper 一致性）：run_mcp_registrar_tests.sh
+#       （v2.11.0 lead 裁定契入；纯逻辑无 IO/env 依赖，任何环境可跑）
 #
 # 语义：
 #   - 每段独立跑，逐段短摘要 + 退出码；**任一段红 → 整体 exit 1**（后续段仍执行，
@@ -56,6 +59,7 @@ section_script() {
     L1) echo "${ROOT_DIR}/tools/run_dropzone_import_model_tests.sh" ;;
     L2) echo "${ROOT_DIR}/tools/run_dropzone_l2_regression_tests.sh" ;;
     L3) echo "${ROOT_DIR}/tools/run_l3_ax_harness.sh" ;;
+    MCP) echo "${ROOT_DIR}/tools/run_mcp_registrar_tests.sh" ;;
     *) echo "" ;;
   esac
 }
@@ -96,7 +100,7 @@ echo "全量日志：${GATE_LOG}（各段独立日志亦在 ${GATE_DIR}/）"
 echo "----------------------------------------------"
 
 : > "${GATE_RUN_LOG}"
-RC_L1=0; RC_L2=0; RC_L3=0
+RC_L1=0; RC_L2=0; RC_L3=0; RC_MCP=0
 # 段状态必须经 PIPESTATUS 回传：`cmd | tee` 中 cmd 在**子 shell**，`|| RC=$?` 赋不回
 # 父进程（曾致假绿：L3 实红但汇总 PASS/ALL GREEN——lead 复跑实证，根因即此）。
 # bash 3.2 支持 PIPESTATUS（3.0+）；set -u 下 RC_* 已预初始化。
@@ -109,6 +113,9 @@ RC_L2=${PIPESTATUS[0]}
 echo "### L3 AX 黑盒 harness（run_l3_ax_harness.sh）" | tee -a "${GATE_RUN_LOG}"
 run_section_gated L3 2>&1 | tee -a "${GATE_RUN_LOG}"
 RC_L3=${PIPESTATUS[0]}
+echo "### MCP 注册 helper 纯逻辑（run_mcp_registrar_tests.sh）" | tee -a "${GATE_RUN_LOG}"
+run_section_gated MCP 2>&1 | tee -a "${GATE_RUN_LOG}"
+RC_MCP=${PIPESTATUS[0]}
 
 # 摘要
 echo "----------------------------------------------"
@@ -120,10 +127,11 @@ if (( SKIP_L3 )); then
 else
   echo "  L3 AX 黑盒   : $([[ ${RC_L3} -eq 0 ]] && echo PASS || echo "FAIL (exit ${RC_L3})")"
 fi
+echo "  MCP 注册     : $([[ ${RC_MCP} -eq 0 ]] && echo PASS || echo "FAIL (exit ${RC_MCP})")"
 echo "日志：${GATE_LOG}（运行记录 ${GATE_RUN_LOG}）"
 cp "${GATE_RUN_LOG}" "${GATE_LOG}"
 
-if [[ ${RC_L1} -eq 0 && ${RC_L2} -eq 0 && (${SKIP_L3} -eq 1 || ${RC_L3} -eq 0) ]]; then
+if [[ ${RC_L1} -eq 0 && ${RC_L2} -eq 0 && (${SKIP_L3} -eq 1 || ${RC_L3} -eq 0) && ${RC_MCP} -eq 0 ]]; then
   echo "UI GATE ALL GREEN"
   exit 0
 fi

@@ -570,8 +570,11 @@ fn run_coffer_with_stdin(args: &[&str], envs: &[(&str, &str)], stdin: &str) -> O
     let mut child = cmd.spawn().expect("spawn coffer binary");
     {
         let mut si = child.stdin.take().expect("stdin pipe");
-        si.write_all(stdin.as_bytes())
-            .expect("write stdin payload");
+        // 写入容忍 EPIPE：被测 CLI 走参数校验失败快路径时（如 --user 空值
+        // exit 4）可能在读取 stdin 前退出，Linux 下 write 与子进程退出竞态
+        // 命中 BrokenPipe（CI 首跑实证 flake；macOS 缓冲时序侥幸通过）。快路径
+        // 的行为断言由下游出口码/输出检查锁定，此处写入失败属预期时序。
+        let _ = si.write_all(stdin.as_bytes());
     }
     child.wait_with_output().expect("collect output")
 }

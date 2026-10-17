@@ -12,6 +12,24 @@ release 中有体现）。
 
 ---
 
+## v2.11.0 — 2026-10-18
+
+### 新增/变化
+- **放置区导入**（v2.11.0 主特性，docs/21）：从 macOS「密码」App 导出 CSV 到授权目录（放置区），App 自动检测新导出、Safari 列映射、库内去重分类、预览后选择集导入——密码明文全程只在 core 内存解析、不跨 FFI 进 Agent/日志（R2 最强姿态）；工具栏/空态/数据菜单三处入口，向导 S0-S5 状态机 + 授权/监视/去重三组件。
+- **MCP 一键注册**（docs/18 §10）：设置页「MCP / Agent 协作」开关联动——ON 自动注册（upsert）到 Claude Code、OFF 自动移除，注册经嵌入式无沙盒 helper（CofferMcpHelper.app）完成，全程无密码参与（R2）；claude 未安装时给安装引导。
+- **去 Pro 化，全产品免费 + 开源（AGPL-3.0）**：set-env（写环境容器）与环境容器 App 编辑转为免费功能（pro feature 门控拆除）；仓库主仓迁 GitHub 公开开源，GitLab 转镜像；OTA 端点切 GitHub Releases（清单 URL `github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json`，白名单回归 4 GitHub host）。
+- **UI 测试自动化三层落地**（docs/19）：L1 放置区模型面 32/0 + L2 真样全链路 8/0 + L3 AX 黑盒 harness（19 断言），`run_ui_gate.sh` 三段汇总门禁。
+- **菜单栏精简**：取消灰色状态行，状态文案并入「打开主窗口」项标题（2026-10-16 用户裁定）。
+- **文档**：NASA KSC-DF-107 风格指南落档 + 试点；README 补 CLI/MCP 注册全文档（R2 stdin 取值纪律、退出码表）；全仓 MIT → AGPL-3.0；CLA v1.1。
+
+### 修复/纪律
+- **BUG-32**：菜单栏「数据」菜单解锁态恒灰——独立 Commands 结构体在 macOS 26 上 enabled 不随 phase 更新（Divider 前恒卡启动初态），内联回 App body `.commands` 修复；AX 黑盒双向（锁定 false → 解锁 true → 重锁 false）实证 + harness 断言升级（18→19）。
+- **README 恢复断言事实修正**：删除「遗失 = 数据永久丢失」绝对化表述——已启用 Touch ID 解锁或已生成离线恢复码（FR-17，均 opt-in）可重设主密码。
+- **OTA 嵌套 helper 验签 allowlist 补列**（`top.cygnusyang.coffer.mcpregister`，MCP 一键注册轮引入的嵌套 bundle 此前未过 UpdateTests 漏列）；UpdateTests 226/0/2 全绿。
+- GitHub Actions 首跑踩出的 cli 测试 helper stdin 写入竞态（Linux BrokenPipe）修复；L3 harness 间歇 flake 加固（双锚点 + 60 轮预算 + 超时自诊断）；run_ui_gate 段状态 PIPESTATUS 假绿修复。
+
+---
+
 ## v2.10.3 — 2026-10-15
 
 ### 新增/变化

@@ -146,3 +146,4 @@ cd core && cargo test --workspace --no-fail-fast
 [AGPL-3.0](LICENSE)（GNU Affero General Public License v3.0）。Copyright (c) 2026 Coffer contributors。
 
 > 修订注记：本文按 [docs/00-文档风格指南.md](docs/00-文档风格指南.md) 于 2026-10-16 重构（仅风格转换：术语统一「MCP 服务器」、删冗余、修订注记；命令、版本、退出码、废弃注记等事实不变）。
+> 修订注记（2026-10-17）：「首次启动与建库」主密码表述事实修正——补 Touch ID 解锁 / 离线恢复码重设路径（FR-17，均 opt-in），删除「唯一解锁凭据 / 遗失不可恢复」绝对化表述（与 v2.5.0 已实现恢复通道矛盾；doc-reviewer NOTE-3 核销）。

@@ -81,9 +81,7 @@ cd core && cargo build --release -p cf-mcp    # 产物：core/target/release/cof
 | --- | --- | --- |
 | `mcp` | 启动 MCP 服务器（只读，见上节） | v2.0.0+ |
 | `set-password` | 更新条目密码（可选 `--user` 用户名一对写） | v2.5.0+（`--user` v2.5.2+） |
-| `set-env` | 写入环境容器（**Pro 专属**） | v2.8.0+ |
-
-<!-- 免费分叉维护注记：set-env 为 Pro 专属（coffer-store + pro 双 feature 门控），免费仓库的 README 分叉须移除所有 set-env 相关内容：写环境容器小节、子命令表对应行、开头简介中「写入环境容器」、退出码表 0/3 两行的 set-env 表述 -->
+| `set-env` | 写入环境容器 | v2.8.0+ |
 
 ### 更新密码 —— `coffer set-password`
 
@@ -98,7 +96,7 @@ coffer set-password --force "GitHub"                  # 绕过强度门禁（慎
 - 强度不达标默认拒绝（`--force` 绕过）；成功自动追加历史，App 内可回滚。
 - 成功提示：`已更新 GitHub（cygnusyang） · 旧版本可在 App 历史中回滚`。
 
-### 写环境容器 —— `coffer set-env`（Pro 专属）
+### 写环境容器 —— `coffer set-env`
 
 ```bash
 coffer set-env --scope my-app API_KEY=xxx LOG_LEVEL=debug   # 内联写入（非敏感值）

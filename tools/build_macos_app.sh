@@ -125,14 +125,6 @@ else
   IMPORT_HEADERS=("-import-objc-header" "${SRC_DIR}/CoreBindings/cf_ffiFFI.h")
 fi
 
-# Pro 专属面（免费/Pro 隔离轮，2026-10-11，FEATURES.md）：macos/Coffer/Pro/
-# 目录存在即编译（find 已自动收集）并注入 -DCOFFER_PRO 编译宏；免费仓无该
-# 目录 → 宏不定义、Views 内 #if COFFER_PRO 段编译剔除（本脚本两侧仓同文，
-# 唯一差异 = Pro/ 目录有无）。
-if [[ -d "${SRC_DIR}/Pro" ]]; then
-  COMPILE_DEFS+=("-D" "COFFER_PRO")
-fi
-
 printf '编译 %d 个 Swift 源文件%s\n' "${#SOURCES[@]}" "$([[ "${OFFICIAL_LICENSE}" == "1" ]] && echo '（官方模式）' || echo '（公开模式）')"
 
 # bash 3.2 + set -u 下空数组 "${arr[@]}" 展开报 unbound variable（macOS 自带 /bin/bash），

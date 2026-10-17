@@ -71,16 +71,10 @@ struct ItemEditView: View {
     /// 读面一致）：编辑时标签锁恒回写、字段行 NAME 实时校验告警（docs/36
     /// §5.2）。仅编辑模式判定——新建时 details 不可及（无 category/tags，
     /// 双条件无从判），且新建该标签仍由用户自由输入（手编容器入口，AC-36.2-4）。
-    /// **免费/Pro 隔离轮**：Pro 专属判定；免费侧恒 false（#if 两侧同文，
-    /// FEATURES.md）。
-    #if COFFER_PRO
     private var isEnvContainer: Bool {
         guard let details = existingDetails else { return false }
         return EnvironmentContainer.isEnvContainer(category: details.category, tags: details.tags)
     }
-    #else
-    private var isEnvContainer: Bool { false }
-    #endif
 
     private var hasExistingTotp: Bool {
         existingTotpMeta != nil && !totpRemoved
@@ -117,9 +111,7 @@ struct ItemEditView: View {
 
                 // 环境容器标签锁（D-36.8）：`coffer:environment` 不进入自由
                 // 文本（populate 时已剔除），以锁定徽章呈现——不可编辑/不可删，
-                // 保存时 buildDraft 恒回写该标签。Pro 专属（隔离轮，免费侧
-                // isEnvContainer 恒 false 编译不出）。
-                #if COFFER_PRO
+                // 保存时 buildDraft 恒回写该标签。
                 if isEnvContainer {
                     HStack(spacing: 6) {
                         Image(systemName: "lock.fill")
@@ -136,7 +128,6 @@ struct ItemEditView: View {
                         Spacer()
                     }
                 }
-                #endif
                 TextField("标签（逗号分隔）", text: $tagsText, prompt: Text("工作, 邮箱"))
 
                 if category == .login {
@@ -293,15 +284,10 @@ struct ItemEditView: View {
         if let details = existingDetails {
             title = details.title
             urlText = details.urls.first(where: { $0.isPrimary })?.url ?? ""
-            // 环境容器：`coffer:environment` 剔除出自由文本（以锁定徽章呈现；
-            // Pro 专属，免费侧无保留标签语义）
-            #if COFFER_PRO
+            // 环境容器：`coffer:environment` 剔除出自由文本（以锁定徽章呈现）
             tagsText = details.tags
                 .filter { $0 != EnvironmentContainer.tag }
                 .joined(separator: ", ")
-            #else
-            tagsText = details.tags.joined(separator: ", ")
-            #endif
             rows = Self.buildRows(for: details)
             // 既有 TOTP 元数据（绝不含 secret）：展示「已有 TOTP」并默认保留
             existingTotpMeta = try? model.totpConfig(itemId: details.uuid)
@@ -546,12 +532,10 @@ struct ItemEditView: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         // 标签恒回写锁死（D-36.8）：编辑容器保存后 `coffer:environment` 必在，
-        // 不因 tagsText 被清空/改动而丢失容器契约。Pro 专属（隔离轮）。
-        #if COFFER_PRO
+        // 不因 tagsText 被清空/改动而丢失容器契约。
         if isEnvContainer && !tags.contains(EnvironmentContainer.tag) {
             tags.append(EnvironmentContainer.tag)
         }
-        #endif
 
         // TOTP：编辑模式恒 nil（三态参数另行提交）；新建解析粘贴的 URI
         var totp: FfiTotpDraft?
@@ -635,13 +619,9 @@ struct EditFieldRowView: View {
     /// 自然进入「已改动」语义）。
     @State private var showGenerator = false
 
-    #if COFFER_PRO
     private var nameInvalid: Bool {
         isEnvContainer && !row.isTemplateField && !EnvironmentContainer.isValidEnvName(row.name)
     }
-    #else
-    private var nameInvalid: Bool { false }
-    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -698,13 +678,11 @@ struct EditFieldRowView: View {
             default:
                 TextField(row.name, text: $row.value)
             }
-            #if COFFER_PRO
             if nameInvalid {
                 Text("不是合法环境变量名")
                     .font(.caption2)
                     .foregroundStyle(.red)
             }
-            #endif
         }
     }
 }

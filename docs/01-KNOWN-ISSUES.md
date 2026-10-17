@@ -247,14 +247,14 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ### 根因（已实证 / 待查）
 
-已实证：`ImportView.swift` 的 `dismiss` 只在 `doneBody` 被调用；v0.1 实现时顶部 HStack 未放关闭按钮。**与 BUG-3 同类**（安全设置 sheet 无关闭控件，2026-09-27 修复）——本条是同类缺陷的第二个实例；第三个实例（AuditLogView，T-I）在独立验证中已同步修复。三个实例共同根因：**项目级纪律缺失——「macOS sheet 必须自带显式关闭出口」未写入 docs/03-功能设计/01-macOS纵切设计.md UI 纪律**，靠 review 记忆不可靠。
+已实证：`ImportView.swift` 的 `dismiss` 只在 `doneBody` 被调用；v0.1 实现时顶部 HStack 未放关闭按钮。**与 BUG-3 同类**（安全设置 sheet 无关闭控件，2026-09-27 修复）——本条是同类缺陷的第二个实例；第三个实例（AuditLogView，T-I）在独立验证中已同步修复。三个实例共同根因：**项目级纪律缺失——「macOS sheet 必须自带显式关闭出口」未写入 docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md UI 纪律**，靠 review 记忆不可靠。
 
 ### 修复路径
 
 1. ImportView 标题栏右侧补「关闭」按钮（`.keyboardShortcut(.cancelAction)`，Esc 生效），导入事务执行中禁用（防丢结果页；事务 all-or-nothing 无数据风险）。
 2. T-I（AuditLogView）已于合入前修复（toolbar「完成」+ dismiss）。
 3. **全量 sheet 审计（2026-09-28，验收中发现 ExportView 同病后触发）**：9 处 `.sheet` 挂载 8 个目标 View 逐一核查——ExportView（备份/CSV 两流的选路径与确认页）与 RestoreBackupView（选文件与确认页）同样缺失，已按同款修复（标题栏「关闭」+ cancelAction，exporting/restoring/verifying 执行中禁用）。其余 6 个（SettingsView / ChangePasswordView / AuditLogView / ImportView / ItemEditView / VaultBioEnableOfferView）确认合格。
-4. **流程改进**：docs/03-功能设计/01-macOS纵切设计.md §2.4 UI 纪律补一条「macOS sheet 必须提供显式关闭出口（关闭/完成按钮，含 cancelAction 快捷键）；执行中需禁用时必须保证可从错误/取消路径返回」——防第四个实例。
+4. **流程改进**：docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md §2.4 UI 纪律补一条「macOS sheet 必须提供显式关闭出口（关闭/完成按钮，含 cancelAction 快捷键）；执行中需禁用时必须保证可从错误/取消路径返回」——防第四个实例。
 
 ### 复现与诊断
 
@@ -326,14 +326,14 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 **登记日期**：2026-09-29
 **发现环境**：v0.4.0 发版回归（任务 #8）TC2-B 实跑，带阳性对照
-**分级**：S3（测试判据）/ P2 / 来源版本 docs/03-功能设计/04-v0.4实现方案.md r1.1（0 socket 判据映射引入时） / 发现版本 v0.4.0（发版回归）
-**状态**：✅ 已核销（2026-09-30 实跑 / 2026-10-02 登记闭环，#19 发版回归 TC-G5 四步程序：① docs/03-功能设计/04-v0.4实现方案.md 内容锚实核通过——§3.3.2/§3.3.6 现行文本均为 `lsof -a -i -p` 修正口径；② 实跑零命中——关窗驻留态 Coffer 0 行；③ 阳性对照命中——python 本地监听 2 行；④ 登记闭环 + docs/04-测试与验收/04-v0.4验收判据骨架.md TC2-B 声明闭环）
-**核销记录**：docs/03-功能设计/04-v0.4实现方案.md §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）→ **核销闭环（#19 发版回归 TC-G5，2026-09-30 实跑 / 2026-10-02 登记）**：关窗驻留态 Coffer PID 47042 `lsof -a -i -p` = 0 行；阳性对照 python http.server PID 47244 = 2 行（TCP LISTEN 命中）；四步齐备核销
+**分级**：S3（测试判据）/ P2 / 来源版本 docs/03-功能设计/04-v0.4.0-实现方案.md r1.1（0 socket 判据映射引入时） / 发现版本 v0.4.0（发版回归）
+**状态**：✅ 已核销（2026-09-30 实跑 / 2026-10-02 登记闭环，#19 发版回归 TC-G5 四步程序：① docs/03-功能设计/04-v0.4.0-实现方案.md 内容锚实核通过——§3.3.2/§3.3.6 现行文本均为 `lsof -a -i -p` 修正口径；② 实跑零命中——关窗驻留态 Coffer 0 行；③ 阳性对照命中——python 本地监听 2 行；④ 登记闭环 + docs/04-测试与验收/04-v0.4验收判据骨架.md TC2-B 声明闭环）
+**核销记录**：docs/03-功能设计/04-v0.4.0-实现方案.md §3.3.2 命令改为 `lsof -a -i -p <pid>` 后由下一轮回归复验（本轮已实跑正确命令：Coffer 运行态 0 行 / 阳性对照 2 行，判据②实质通过）→ **核销闭环（#19 发版回归 TC-G5，2026-09-30 实跑 / 2026-10-02 登记）**：关窗驻留态 Coffer PID 47042 `lsof -a -i -p` = 0 行；阳性对照 python http.server PID 47244 = 2 行（TCP LISTEN 命中）；四步齐备核销
 **证据**：本轮实跑读数——`lsof -i -p <Coffer_pid>` 402 行、同命令对本地 python 监听进程 330 行（两读数均被系统级 socket 集主导，进程间不可区分）；改 `lsof -a -i -p` 后 Coffer 0 行、python 监听 2 行（LISTEN 条目命中）
 
 ### 现象（预期/实际 分行写）
 
-- 预期：`lsof -i -p <pid>` 对零网络 App 输出为空（docs/03-功能设计/04-v0.4实现方案.md §3.3.2 判据②）。
+- 预期：`lsof -i -p <pid>` 对零网络 App 输出为空（docs/03-功能设计/04-v0.4.0-实现方案.md §3.3.2 判据②）。
 - 实际：lsof 的 `-i` 与 `-p` 缺 `-a` 时是 **OR** 组合——输出 = 全系统 internet 文件 ∪ 该进程全部文件，恒非空；零网络 App 与持网进程读数同量级（402 vs 330），断言永不成立也无法区分。
 
 ### 根因（已实证 / 待查）
@@ -344,7 +344,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 1. 判据命令定为 `lsof -a -i -p <pid>`（AND 语义）并保留阳性对照必配（已知持 socket 进程跑同命令须非空）；
 2. docs/04-测试与验收/04-v0.4验收判据骨架.md r1.6 TC2-B / §1 判据② 已按此口径更新（本轮）；
-3. docs/03-功能设计/04-v0.4实现方案.md §3.3.2 原文修正转 dev-architect（同工单），此条核销以其合入为准。
+3. docs/03-功能设计/04-v0.4.0-实现方案.md §3.3.2 原文修正转 dev-architect（同工单），此条核销以其合入为准。
 
 ### 复现与诊断
 
@@ -403,7 +403,7 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 
 ### 修复路径
 
-1. 支持 Bitwarden password-protected export 解密（用户输入导出密码 → 解出 fido2Credentials 私钥 → 归一化 PKCS#8）——目标版本待定（ADP/后续版本卡均可，量级 ≈ 1 周内）；**解法方向 2 设计规格 + 真实样本获取协议已于 2026-10-04 留档：`docs/03-功能设计/07-v0.7实现方案.md` §2.6（v0.7.0 T10，规格留档不排实现——真实样本 + 版本卡排期为前置）**；
+1. 支持 Bitwarden password-protected export 解密（用户输入导出密码 → 解出 fido2Credentials 私钥 → 归一化 PKCS#8）——目标版本待定（ADP/后续版本卡均可，量级 ≈ 1 周内）；**解法方向 2 设计规格 + 真实样本获取协议已于 2026-10-04 留档：`docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md` §2.6（v0.7.0 T10，规格留档不排实现——真实样本 + 版本卡排期为前置）**；
 2. 或接受现状并显式声明（UI 预检已逐条列出不可导入原因）；
 3. **发版文案约束（审查裁定，即时生效）**：TCB-1 真实样本核对关闭前，README/docs/04-测试与验收/04-v0.4验收判据骨架.md 判据不得声称「Bitwarden passkey 导入可用」。
 
@@ -466,10 +466,10 @@ K_bio 未写入，header 未变（有测试断言的补偿逻辑生效）。
 ## M-1（✅ 已修复：72e4af6）：run_with_secret 目标子进程 stderr 整体吞掉 + 子进程继承 OP_SESSION（blast-radius 未文档化）
 
 **登记日期**：2026-09-30
-**发现环境**：dev-reviewer 对 G-C（mcp-op）审查发现，非阻断项（docs/03-功能设计/06-MCP设计.md §9.1 G-F 登记）
-**分级**：严重级 S3（dev-reviewer 判 MEDIUM——子进程 stderr 对调用方不可见，且 OP_SESSION 落入目标子进程 env 的 blast-radius 未明示）/ 优先级 P2 / 来源版本 v2.0.0（MCP，docs/03-功能设计/06-MCP设计.md §4.2） / 发现版本 v2.0.0（G-C 审查）
+**发现环境**：dev-reviewer 对 G-C（mcp-op）审查发现，非阻断项（docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §9.1 G-F 登记）
+**分级**：严重级 S3（dev-reviewer 判 MEDIUM——子进程 stderr 对调用方不可见，且 OP_SESSION 落入目标子进程 env 的 blast-radius 未明示）/ 优先级 P2 / 来源版本 v2.0.0（MCP，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.2） / 发现版本 v2.0.0（G-C 审查）
 **状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
-**核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 1 文档 + 方案 2 子集 stderr 透传）。透传语义 = 目标子进程**非零退出**时其 stderr 透传到 cf-mcp 自身 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 = stderr），截断至 16 KiB 取末段（`MAX_FORWARDED_CHILD_STDERR`）、**标注不脱敏**（子进程输出不受 Coffer 控制，§3.5-3 诚实边界延伸）；**成功路径与 op 层失败路径不透传**（op stderr 仅按关键字归类为稳定文案，不进错误载荷，§4.2）。blast-radius 文档化 = docs/03-功能设计/06-MCP设计.md §3.5-6 / §4.4 补注（本次 G-F 核销批次）。复验 = `forward_child_stderr_labels_content_and_caps`（op.rs 单测）+ `run_with_secret_child_stderr_does_not_break_exit_code_contract`（core/cf-mcp/tests/provider_op_run.rs）→ cf-mcp 全测试 / clippy `-D warnings` 绿
+**核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 1 文档 + 方案 2 子集 stderr 透传）。透传语义 = 目标子进程**非零退出**时其 stderr 透传到 cf-mcp 自身 stderr 诊断通道（`COFFER_MCP_LOG` 缺省 = stderr），截断至 16 KiB 取末段（`MAX_FORWARDED_CHILD_STDERR`）、**标注不脱敏**（子进程输出不受 Coffer 控制，§3.5-3 诚实边界延伸）；**成功路径与 op 层失败路径不透传**（op stderr 仅按关键字归类为稳定文案，不进错误载荷，§4.2）。blast-radius 文档化 = docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §3.5-6 / §4.4 补注（本次 G-F 核销批次）。复验 = `forward_child_stderr_labels_content_and_caps`（op.rs 单测）+ `run_with_secret_child_stderr_does_not_break_exit_code_contract`（core/cf-mcp/tests/provider_op_run.rs）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` run_with_secret（`cmd.stdout(Stdio::null())` + `output()` 捕获 stderr 仅作 op 层分类，不向调用方透出）；`op_command()` 设 `OP_SESSION`，经 `op run` spawn 的目标子进程继承之
 
 ### 现象（预期/实际 分行写）
@@ -483,7 +483,7 @@ stderr 捕获后归一为稳定错误文案（剥离敏感值，§3.5-4 日志�
 
 ### 修复路径（2026-10-05 已落地：方案 1 + 方案 2 子集）
 
-1. 文档明示 blast-radius（docs/03-功能设计/06-MCP设计.md §3.5/§4.4 补一句：`op run` 启动的目标子进程继承 `OP_SESSION`，须视为凭据暴露半径的一部分）——✅ 落地：docs/03-功能设计/06-MCP设计.md §3.5-6 / §4.4 补注（本次 G-F 核销批次）；
+1. 文档明示 blast-radius（docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §3.5/§4.4 补一句：`op run` 启动的目标子进程继承 `OP_SESSION`，须视为凭据暴露半径的一部分）——✅ 落地：docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §3.5-6 / §4.4 补注（本次 G-F 核销批次）；
 2. 子进程 stderr 透传/日志化取舍：stdout 恒为协议帧不可让渡，stderr 可经日志文件（`COFFER_MCP_LOG`）落盘或加开关透传——泄露面 vs 可诊断性，需架构裁定——✅ 落地子集：非零退出路径透传（16 KiB 截断、不脱敏标注），成功路径与 op 层失败路径不透传（保持剥离纪律）；
 3. 不动作（MVP 保持吞掉）亦可接受——登记留档。
 
@@ -496,7 +496,7 @@ fake op fixture + 子进程写 stderr（`sh -c 'echo oops >&2; exit 1'`）→ ru
 ## M-4（✅ 已修复：72e4af6）：run_with_secret 缺省 env_name 取整个 secret 串——`op://` 引用必 7005
 
 **登记日期**：2026-09-30
-**发现环境**：dev-reviewer 对 G-C 审查发现，跨层联动（G-B `tools.rs` 缺省 vs G-C `op.rs` 校验），非阻断项（docs/03-功能设计/06-MCP设计.md §9.1 G-F 登记）
+**发现环境**：dev-reviewer 对 G-C 审查发现，跨层联动（G-B `tools.rs` 缺省 vs G-C `op.rs` 校验），非阻断项（docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §9.1 G-F 登记）
 **分级**：严重级 S3（dev-reviewer 判 MEDIUM——带 `op://` 引用且省略 env_name 的 run_with_secret 调用恒 7005，功能面缺口）/ 优先级 P2 / 来源版本 v2.0.0（MCP，G-B/G-C 契约） / 发现版本 v2.0.0（G-C 审查）
 **状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
 **核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 2：缺省取 `op://` 引用末段——新增 `default_env_name`，field 名优先、退化取 item 名，规则随 L-3 一并锁定）；API 签名不变（env_name 保持可选，**不触 D-1 冻结契约**）。复验 = `default_env_name_takes_reference_last_segment`（op.rs 单测）+ `run_uses_default_env_name_derived_from_reference`（core/cf-mcp/tests/provider_op_run.rs）→ cf-mcp 全测试 / clippy `-D warnings` 绿
@@ -527,7 +527,7 @@ G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用�
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
-**分级**：S4 / P3 / 来源版本 v2.0.0（MCP，docs/03-功能设计/06-MCP设计.md §4.2） / 发现版本 v2.0.0（G-C 审查）
+**分级**：S4 / P3 / 来源版本 v2.0.0（MCP，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.2） / 发现版本 v2.0.0（G-C 审查）
 **状态**：✅ 已修复（v2.0.0，commit `72e4af6`，2026-10-05）
 **核销记录**：修复 = commit `72e4af6`（2026-10-05，方案 B：非 unix 分支随不支持平台一并拒编译——模块级 `#[cfg(not(unix))] compile_error!`，消除无权限约束缺口面）；复验 = `temp_dotenv_writes_with_0600_permissions`（op.rs 单测）→ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` `TempDotenv::write`——`#[cfg(unix)]` 分支 `OpenOptionsExt::mode(0o600)`，`#[cfg(not(unix))]` 分支 `File::create` 无权限约束
@@ -568,10 +568,10 @@ G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用�
 **发现环境**：dev-reviewer 对 G-C 审查（L 系列，可选登记项）
 **分级**：S4 / P3 / 来源版本 v2.0.0 / 发现版本 v2.0.0
 **状态**：✅ 已核销（v2.0.0，2026-10-07：实现 `74a4538` + 接入 `f623eb9`，核销条件「实现 + 接入」两段齐备）
-**核销记录**：实现 = commit `74a4538`（feature 门控生产实现：trait 4 方法 + 8 操作同语义映射 cf-store，`unimplemented!` 占位全部替换）；接入 = commit `f623eb9`（`coffer mcp --provider coffer` 经 `coffer-store` feature 门控接线 McpServer/CLI，库路径/密码走 §4.3 env 约定 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`）。docs/03-功能设计/06-MCP设计.md §4.5 已同步为生产实现 + 已接入。复验 = coffer.rs 单测 17 条 + cli 接入测试（`coffer_provider_serves_on_stdio_with_valid_vault` / `coffer_provider_missing_env_config_exits_1` / `coffer_provider_vault_dir_missing_exits_1` / `coffer_provider_wrong_password_exits_3` / `coffer_provider_unsupported_when_feature_off`，tests/cli.rs）→ cf-mcp feature 门禁绿
+**核销记录**：实现 = commit `74a4538`（feature 门控生产实现：trait 4 方法 + 8 操作同语义映射 cf-store，`unimplemented!` 占位全部替换）；接入 = commit `f623eb9`（`coffer mcp --provider coffer` 经 `coffer-store` feature 门控接线 McpServer/CLI，库路径/密码走 §4.3 env 约定 `COFFER_VAULT_DIR` / `COFFER_VAULT_PASSWORD`）。docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.5 已同步为生产实现 + 已接入。复验 = coffer.rs 单测 17 条 + cli 接入测试（`coffer_provider_serves_on_stdio_with_valid_vault` / `coffer_provider_missing_env_config_exits_1` / `coffer_provider_vault_dir_missing_exits_1` / `coffer_provider_wrong_password_exits_3` / `coffer_provider_unsupported_when_feature_off`，tests/cli.rs）→ cf-mcp feature 门禁绿
 **证据**：`core/cf-mcp/src/provider/coffer.rs` 各 `SecretProvider` 方法 `unimplemented!("CofferStoreProvider 骨架：v2.x Secret 实体未建模")`
 
-编译通过、调用即 panic 属显式占位（docs/03-功能设计/06-MCP设计.md §4.5 明示），非隐藏缺陷。已接受，不设修复工单。
+编译通过、调用即 panic 属显式占位（docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.5 明示），非隐藏缺陷。已接受，不设修复工单。
 
 ---
 
@@ -579,19 +579,19 @@ G-B 工具层把 env_name 缺省定义为「secret 名」，对 `op://` 引用�
 
 **登记日期**：2026-09-30
 **发现环境**：dev-reviewer 对 v2.0.0 MCP 合并集终审（H-1，HIGH——合并前应修复）
-**分级**：严重级 S2（主要功能受损——run 面静默注入错误"值"至子进程 env，行为不可预期且极难排查）/ 优先级 P1 / 来源版本 v2.0.0（MCP，docs/03-功能设计/06-MCP设计.md §4.2） / 发现版本 v2.0.0（MCP 终审）
+**分级**：严重级 S2（主要功能受损——run 面静默注入错误"值"至子进程 env，行为不可预期且极难排查）/ 优先级 P1 / 来源版本 v2.0.0（MCP，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.2） / 发现版本 v2.0.0（MCP 终审）
 **状态**：✅ 已修复（2026-09-30）
 **核销记录**：修复 = commit `6585218`；复验 = `run_with_secret_rejects_bare_item_id`（core/cf-mcp/tests/provider_op_run.rs，裸 id → 7005）+ cf-mcp 全测试 / clippy `-D warnings` 绿
 **证据**：`core/cf-mcp/src/provider/op.rs` 原 `validate_run_spec`（裸 id 经 `is_valid_secret_ref` 放行）→ `TempDotenv::write` 写 `ENV_NAME=<裸 id>` → `op run` 不解析、原样 export 字面量
 
 ### 现象（预期/实际 分行写）
 
-- 预期：run_with_secret 的临时 dotenv 只承载 `op://` 引用（docs/03-功能设计/06-MCP设计.md §4.2），子进程 env 拿到的是 op 解析出的真实 secret 值。
+- 预期：run_with_secret 的临时 dotenv 只承载 `op://` 引用（docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.2），子进程 env 拿到的是 op 解析出的真实 secret 值。
 - 实际：secret_ref 传裸 item id（如 `fixture-item-api-key`，`is_valid_secret_ref` 明确放行）时，dotenv 写 `MY_KEY=fixture-item-api-key`，`op run` 当字面量透传——子进程 env 注入的是 **id 字符串本身，不是 secret 明文**；子进程以为注入了真凭据，静默产生错误行为。`provider_op_run.rs` 全部用例只用 `op://` 引用，此路径无测试覆盖。
 
 ### 根因（已实证）
 
-run 面把「secret_ref 非明文」校验与元数据面共用 `is_valid_secret_ref`（`op://` 引用与裸 id 两种形态皆可），未约束 run 必须为 `op://` 引用形态——与 docs/03-功能设计/06-MCP设计.md §4.2「dotenv 内容为 `ENV_NAME=op://vault/item/field`」协议不一致。
+run 面把「secret_ref 非明文」校验与元数据面共用 `is_valid_secret_ref`（`op://` 引用与裸 id 两种形态皆可），未约束 run 必须为 `op://` 引用形态——与 docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.2「dotenv 内容为 `ENV_NAME=op://vault/item/field`」协议不一致。
 
 ### 修复路径（2026-09-30 已落地）
 
@@ -672,7 +672,7 @@ run 面把「secret_ref 非明文」校验与元数据面共用 `is_valid_secret
 
 ### 现象（预期/实际 分行写）
 
-- 预期：docs/03-功能设计/06-MCP设计.md §3.5-2 输出 Redactor 管道（AS-11）为纵深防御；精确已知值替换是更强防御面。
+- 预期：docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §3.5-2 输出 Redactor 管道（AS-11）为纵深防御；精确已知值替换是更强防御面。
 - 实际：`redact_known_values` 从未被生产路径调用——已知值清单未接线到 `McpServer`。
 
 ### 修复路径（候选）
@@ -748,7 +748,7 @@ grep 显示 `redact_known_values` 生产路径零调用；`protocol_redact.rs` �
 
 ### 现象（预期/实际 分行写）
 
-- 预期：L-2 纪律（docs/03-功能设计/05-v0.5实现方案.md r2.4 §9.1 / docs/06-交接记录/02-v0.5暂停交接清单.md §7）「按数据不按文案」有回归哨兵——同分类数据、不同 reason 文案 → 分类不变。
+- 预期：L-2 纪律（docs/03-功能设计/05-v0.5.0-Passkey降级-实现方案.md r2.4 §9.1 / docs/06-交接记录/02-v0.5暂停交接清单.md §7）「按数据不按文案」有回归哨兵——同分类数据、不同 reason 文案 → 分类不变。
 - 实际：哨兵测试按字面不存在。现有三处最近测试只锁枚举 kind 与列表归属（`BwPasskeyFailureKind::is_non_es256()` 枚举→bool、fixture→kind、跨 FFI 计数），无「同数据两条不同 reason → kind/is_non_es256 一致」的独立变换断言；调用侧若改回文本分类且当前文案未变，三处全测不出来。
 
 ### 根因（已实证 / 待查）
@@ -810,25 +810,25 @@ CommandMenu("数据") 在 1PUX 项后增 `Button("导入 Bitwarden (.json)…") 
 **发现环境**：#19 发版回归真机陪跑（用户实跑报告，AskUserQuestion 确认：第①次=启动后触控 ID 指纹框，第②次=又弹一次指纹框）
 **分级**：S3（主解锁路径体验缺陷，非阻断，可降级主密码）/ P1 / 来源版本 v0.5.0 / 发现版本 v0.5.0
 **状态**：✅ 已核销（2026-10-04 用户真机复验全部通过，见核销记录末尾复验确认；代码修复 commit `e04070b` + `4f05139`）
-**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）+ commit `4f05139`（2026-10-03：itemExists 探测查询加 LAContext.interactionNotAllowed=true 禁弹 UI——macOS 26 上元数据查询亦触发完整 ACL 认证 UI，消启动 ~1s 自动弹窗；`kSecUseAuthenticationUIFail` 自 macOS 11 弃用改用本字段；返回语义改三态：存在 / 存在但认证锁定返 true / 不存在）。**取消语义漂移已接受 → 本轮彻底修（reviewer HIGH 处置选 B，2026-10-03）**：改前取消 = App 侧预认证报 4001，改后取消 = 钥匙串认证报 4002（文案「凭据已失效」对单纯取消有误导）——顺延项「`errSecUserCanceled` 独立呈现」本轮核销关闭：`BiometricKeychainError` 增 `.userCanceled`（`mapStatus` 拆分 `errSecUserCanceled`，不再归入 `authFailed`）；`ErrorPresenter` 对 `.userCanceled` 返回空串不弹（`FfiErrorAlert` 空串不弹双保险）；`unlockWithTouchID` catch 改按错误类型分派——取消完全静默（手动/自动一致）、失效（itemNotFound/authFailed）呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码）、其余照常呈现；`isAutoPrompt` 参数移除，静默语义改由错误类型驱动（docs/03-功能设计/02-TouchID解锁设计.md §7.3/§7.6 + KeychainTests 7c1 哨兵同步；build 退出 0，TouchIDStatus 19/19 + AutoPrompt 30/30 回归无损）。复验 = 待真机（#19 回归同法：启动零弹窗 + 点击解锁单弹窗 + 取消静默无 4002 + 指纹变更后按钮消失）。KeychainTests 哨兵（9a/9b/9c + 7c1）编译零警告，运行时断言需签名宿主执行（沙盒/裸二进制 -34018），**以用户真机解锁复验为准**。**真机复验确认（lead 落档 2026-10-04）**：①启动单弹/正常解锁——2026-10-03 用户确认「可以了 正常了」（4f05139 后）；②取消静默——2026-10-04 用户确认「取消自动引导指纹框 没有问题」（自动弹出的指纹框点取消 → 无错误框、按钮可再点，userCanceled 静默路径真机走通）；③持久失效 4002 → stale 路径 2026-10-03 真机事件已走通（诊断日志 -25293→4002 + 主密码恢复）。「指纹变更后按钮消失」子项未单独演练，由 ②③ 的 stale 终判机制与真机 4002 事件覆盖。
+**核销记录**：修复 = commit `e04070b`（2026-10-02：删除 App 侧 `authenticateWithBiometrics` 预认证；`read` 查询改带全新 LAContext + localizedReason——`kSecUseOperationPrompt` 自 macOS 11 弃用改用本字段，单次弹窗）+ commit `4f05139`（2026-10-03：itemExists 探测查询加 LAContext.interactionNotAllowed=true 禁弹 UI——macOS 26 上元数据查询亦触发完整 ACL 认证 UI，消启动 ~1s 自动弹窗；`kSecUseAuthenticationUIFail` 自 macOS 11 弃用改用本字段；返回语义改三态：存在 / 存在但认证锁定返 true / 不存在）。**取消语义漂移已接受 → 本轮彻底修（reviewer HIGH 处置选 B，2026-10-03）**：改前取消 = App 侧预认证报 4001，改后取消 = 钥匙串认证报 4002（文案「凭据已失效」对单纯取消有误导）——顺延项「`errSecUserCanceled` 独立呈现」本轮核销关闭：`BiometricKeychainError` 增 `.userCanceled`（`mapStatus` 拆分 `errSecUserCanceled`，不再归入 `authFailed`）；`ErrorPresenter` 对 `.userCanceled` 返回空串不弹（`FfiErrorAlert` 空串不弹双保险）；`unlockWithTouchID` catch 改按错误类型分派——取消完全静默（手动/自动一致）、失效（itemNotFound/authFailed）呈现 4002 + 置 `touchIDStatus = .stale`（§4.1 stale 终判落地：LockView 按钮消失引导主密码）、其余照常呈现；`isAutoPrompt` 参数移除，静默语义改由错误类型驱动（docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md §7.3/§7.6 + KeychainTests 7c1 哨兵同步；build 退出 0，TouchIDStatus 19/19 + AutoPrompt 30/30 回归无损）。复验 = 待真机（#19 回归同法：启动零弹窗 + 点击解锁单弹窗 + 取消静默无 4002 + 指纹变更后按钮消失）。KeychainTests 哨兵（9a/9b/9c + 7c1）编译零警告，运行时断言需签名宿主执行（沙盒/裸二进制 -34018），**以用户真机解锁复验为准**。**真机复验确认（lead 落档 2026-10-04）**：①启动单弹/正常解锁——2026-10-03 用户确认「可以了 正常了」（4f05139 后）；②取消静默——2026-10-04 用户确认「取消自动引导指纹框 没有问题」（自动弹出的指纹框点取消 → 无错误框、按钮可再点，userCanceled 静默路径真机走通）；③持久失效 4002 → stale 路径 2026-10-03 真机事件已走通（诊断日志 -25293→4002 + 主密码恢复）。「指纹变更后按钮消失」子项未单独演练，由 ②③ 的 stale 终判机制与真机 4002 事件覆盖。
 **证据**：代码面——`AppModel.swift:580` 仅一次 evaluatePolicy；`BiometricKeychain.swift:139` 读取绑定同一 LAContext（kSecUseAuthenticationContext，设计为不二次弹窗）；`LockView.swift` 无 onAppear 自动触发；启动路径 `openSession`/`lock()` 均跑 `refreshTouchIDStatus` → `itemExists`（AppModel.swift:351/509）碰 biometryCurrentSet 项。日志面——沙盒 diag log 2026-10-02 **零记录**（两次认证均无失败落盘，与「第二次弹窗来自 Keychain 读取自行认证且成功」假说相容）；2026-09-28 曾有 `itemExists 失败 status=-25293`（errSecAuthFailed）记录。
 
 ### 现象（预期/实际 分行写）
 
-- 预期：Touch ID 解锁全程只弹 1 次指纹框（docs/03-功能设计/02-TouchID解锁设计.md §3.2「读取时复用认证结果、不再二次弹窗」；用户裁定基线：启动到拿到密码一次授权）。
+- 预期：Touch ID 解锁全程只弹 1 次指纹框（docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md §3.2「读取时复用认证结果、不再二次弹窗」；用户裁定基线：启动到拿到密码一次授权）。
 - 实际：用户报告弹了 2 次指纹框才完成解锁。
 
 ### 根因（已实证 / 待查）
 
 **已实证（2026-10-02 真机 log stream 取证，/tmp/coffer-pl4-repro.log）**：`kSecUseAuthenticationContext` 复用在本机 macOS 26 上未生效。时序：①用户点按钮 → App 主动 `evaluatePolicy`（rid 30292）→ 指纹匹配 ✓（22:16:40.37）；②200ms 后 `BiometricKeychain.read` 的 `SecItemCopyMatching`（BiometricKeychain.swift:139 绑定同一已认证 context）→ securityd **不认该认证结果**，自行发起 1008 策略认证（传感器监听，无 UI）；③securityd 经 Coffer 进程内 LAContext 驱动第二次 UI 认证（rid 30295，22:16:51.5 弹出）→ 匹配后 **`externalizedContextWithReply` rid:30296**（22:16:53.35，认证结果外化交钥匙串）→ 读取成功。两次认证均无失败落盘（diag log 10-02 零记录），与「第二次为钥匙串重认证且成功」完全相容。排除项：代码无启动自动触发（unlockWithTouchID 仅 LockView 按钮/CrossCopySheet 两个调用点）；itemExists 元数据查询未触发弹窗；首次弹窗于启动后约 1 秒出现系用户点击快，非自动弹。
 
-**补证（2026-10-03 真机 log stream 取证，新构建已无 App 侧预认证）**：仍有两次弹窗，且第一次是**自动弹**——①**启动路径**：`refreshTouchIDStatus → itemExists`（AppModel.swift:351/509，openSession/lock 均调用）对挂 biometryCurrentSet ACL 的 DP 钥匙串项做元数据查询（SecItemCopyMatching 不带 kSecReturnData），macOS 26 亦触发完整 ACL 认证 UI（rid 30354，进程启动 +1.3s 弹出，无任何用户点击）；授权结果被 App 丢弃（纯探测）。docs/03-功能设计/02-TouchID解锁设计.md Q-2「itemExists 不触发弹窗」结论作废——09-28 的 `itemExists 失败 status=-25293` 静默形态与今日弹 UI 系同一机制两态。②**点击解锁**：`read` 钥匙串自有单次认证 = 正常唯一一次（rid 30360，externalize/import 机械可证）——e04070b 这半已修好。**结论：PL-4 = 双源**（启动自动弹：itemExists 元数据查询；点击双弹：预认证 + 读取再认证），e04070b 消后者，`4f05139` 消前者。
+**补证（2026-10-03 真机 log stream 取证，新构建已无 App 侧预认证）**：仍有两次弹窗，且第一次是**自动弹**——①**启动路径**：`refreshTouchIDStatus → itemExists`（AppModel.swift:351/509，openSession/lock 均调用）对挂 biometryCurrentSet ACL 的 DP 钥匙串项做元数据查询（SecItemCopyMatching 不带 kSecReturnData），macOS 26 亦触发完整 ACL 认证 UI（rid 30354，进程启动 +1.3s 弹出，无任何用户点击）；授权结果被 App 丢弃（纯探测）。docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md Q-2「itemExists 不触发弹窗」结论作废——09-28 的 `itemExists 失败 status=-25293` 静默形态与今日弹 UI 系同一机制两态。②**点击解锁**：`read` 钥匙串自有单次认证 = 正常唯一一次（rid 30360，externalize/import 机械可证）——e04070b 这半已修好。**结论：PL-4 = 双源**（启动自动弹：itemExists 元数据查询；点击双弹：预认证 + 读取再认证），e04070b 消后者，`4f05139` 消前者。
 
 ### 修复路径
 
-删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案，实际落地因 macOS 11 弃用改用 LAContext.localizedReason）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码（错误码映射未变；**取消语义漂移已接受**——改前取消经 App 侧预认证报 4001，改后经钥匙串认证报 4002）；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/03-功能设计/02-TouchID解锁设计.md §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
+删除 App 侧预认证（AppModel.swift:578-580 authenticateWithBiometrics 调用），解锁改为**钥匙串自有单次认证**：`BiometricKeychain.read` 查询带 `kSecUseOperationPrompt`（提示文案，实际落地因 macOS 11 弃用改用 LAContext.localizedReason）+ 全新 LAContext，系统弹唯一一次指纹框，读取成功即继续 FFI unlockWithBiometric。取消（errSecUserCanceled）/指纹集失效（errSecAuthFailed）→ 既有 4002 降级主密码（错误码映射未变；**取消语义漂移已接受**——改前取消经 App 侧预认证报 4001，改后经钥匙串认证报 4002）；4001 前置门禁（hasBiometricWrap + isBiometricsAvailable）保留。同步更新 docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md §7.2 时序 / §3.2 / §7.4 锚点（「不再二次弹窗」由设计声明变为实证行为）。CrossCopySheet 的 authenticateWithBiometrics 不涉 Keychain 读取（纯 FFI 确认），无此缺陷，不动。
 
-补（2026-10-03，commit `4f05139`，双源①）：`itemExists` 探测查询加全新 LAContext + interactionNotAllowed=true（`kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` 自 macOS 11 弃用，改用本字段），需认证时立即返回 `errSecInteractionNotAllowed` / `errSecAuthFailed`，不打扰用户；返回语义改三态——success → true、authFailed/interactionNotAllowed → true（项物理存在但认证锁定，可读性终判以 read 失败为准，docs/03-功能设计/02-TouchID解锁设计.md §4.1；TouchIDStatus 保持 .enabled，LockView 按钮不消失，点按后由 read 弹单次认证）、itemNotFound → false。
+补（2026-10-03，commit `4f05139`，双源①）：`itemExists` 探测查询加全新 LAContext + interactionNotAllowed=true（`kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` 自 macOS 11 弃用，改用本字段），需认证时立即返回 `errSecInteractionNotAllowed` / `errSecAuthFailed`，不打扰用户；返回语义改三态——success → true、authFailed/interactionNotAllowed → true（项物理存在但认证锁定，可读性终判以 read 失败为准，docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md §4.1；TouchIDStatus 保持 .enabled，LockView 按钮不消失，点按后由 read 弹单次认证）、itemNotFound → false。
 
 ### 复现与诊断
 
@@ -914,11 +914,11 @@ AppKit NSStatusItem + 程序化 template 图标（StatusItemController.swift）�
 
 ### 根因（已实证 / 待查）
 
-AppModel.unlockWithTouchID 的 catch 把 `.authFailed`（read 返回 errSecAuthFailed -25293）一律按持久凭据失效处置：`touchIDStatus = .stale` 终判（docs/03-功能设计/02-TouchID解锁设计.md §4.1）+ 4002 → LockView 按钮 `touchIDStatus == .enabled` 条件不满足，整段隐藏直至主密码解锁后 openSession 刷新。但 -25293 成因有两类：持久（指纹集变更 biometryCurrentSet 失效，现行处置正确）与瞬时（系统锁屏/刚唤醒传感器未就绪/系统级 biometry lockout——本日多次无人应答的启动自动引导弹框超时可能累计失败计数触发）。瞬时被误判为持久。
+AppModel.unlockWithTouchID 的 catch 把 `.authFailed`（read 返回 errSecAuthFailed -25293）一律按持久凭据失效处置：`touchIDStatus = .stale` 终判（docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md §4.1）+ 4002 → LockView 按钮 `touchIDStatus == .enabled` 条件不满足，整段隐藏直至主密码解锁后 openSession 刷新。但 -25293 成因有两类：持久（指纹集变更 biometryCurrentSet 失效，现行处置正确）与瞬时（系统锁屏/刚唤醒传感器未就绪/系统级 biometry lockout——本日多次无人应答的启动自动引导弹框超时可能累计失败计数触发）。瞬时被误判为持久。
 
 ### 修复路径
 
-catch 的 `.authFailed` 分支按失败瞬间 `BiometricKeychain.isBiometricsAvailable()` 双分道：false → 瞬时（不置 stale，按钮保留，静态温和文案「暂时不可用请稍后重试」，DiagLog 记判定依据）；true → 维持 4002 + .stale 终判。.itemNotFound 分支不动。判定抽纯函数补单测；docs/03-功能设计/02-TouchID解锁设计.md §7.3 补两行。
+catch 的 `.authFailed` 分支按失败瞬间 `BiometricKeychain.isBiometricsAvailable()` 双分道：false → 瞬时（不置 stale，按钮保留，静态温和文案「暂时不可用请稍后重试」，DiagLog 记判定依据）；true → 维持 4002 + .stale 终判。.itemNotFound 分支不动。判定抽纯函数补单测；docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md §7.3 补两行。
 
 ### 复现与诊断
 
@@ -932,7 +932,7 @@ catch 的 `.authFailed` 分支按失败瞬间 `BiometricKeychain.isBiometricsAva
 **发现环境**：v2.1.0 终审（dev-reviewer-v210，审 01a6ca9..HEAD，2026-10-07），`core/cf-mcp/src/uds.rs` accept 后无读超时
 **分级**：S4（availability-only，非安全缺口）/ P3 / 来源版本 v2.1.0 / 发现版本 v2.1.0（终审）
 **状态**：✅ 已核销（v2.2.0，G1d 实现，2026-10-07）
-**核销记录**：修复 = v2.2.0 G1d（`core/cf-mcp/src/uds.rs` 逐帧 idle 读超时，commit 待 lead 收口）——accept 后 `set_read_timeout`（SO_RCVTIMEO，非阻塞读超时）：每读到数据即隐式重置计时（下一帧读窗从该帧处理完毕重新起算），超过超时值无任何数据到达 → 读返回 WouldBlock → 干净退出 0（连接生命周期完成，对照 peer 拒绝路径）；challenge / initialize 握手阶段同受窗约束（未完成握手的不活动同样超时断开）。缺省 120 s；env `COFFER_MCP_UDS_READ_TIMEOUT_SECS` 可配、下限 10 s（低于/非数字 → 配置错误退出 1）、**不提供 0=off 关闭路径**（fail-closed）。**边界诚实声明（任务口径）**：语义「任何数据到达重置」实现近似「**有效帧重置**」——逐字节慢滴（字节间隔 < 超时值）的非法/半帧数据流理论可维持连接存活（慢滴理论存活）；LOW-1 为 availability-only（非安全缺口），可用性意图（消除无界挂起）已满足，边界接受。复验 = `uds_idle_read_timeout_disconnects` / `uds_idle_timeout_resets_on_valid_frame` / `uds_active_session_not_timed_out` / `uds_handshake_inactivity_times_out` / `uds_idle_timeout_default_is_120s` / `uds_idle_timeout_below_min_rejected`（uds.rs 单测，docs/04-测试与验收/10-v2.2.0验收判据骨架.md §1.5/§2 先红后绿）+ 既有 UDS 防护全套回归（peer / challenge / 单调 id / 单次 connect / 权限）全绿。缺省值 / 下限 / env 名已落 docs/03-功能设计/06-MCP设计.md §4.3
+**核销记录**：修复 = v2.2.0 G1d（`core/cf-mcp/src/uds.rs` 逐帧 idle 读超时，commit 待 lead 收口）——accept 后 `set_read_timeout`（SO_RCVTIMEO，非阻塞读超时）：每读到数据即隐式重置计时（下一帧读窗从该帧处理完毕重新起算），超过超时值无任何数据到达 → 读返回 WouldBlock → 干净退出 0（连接生命周期完成，对照 peer 拒绝路径）；challenge / initialize 握手阶段同受窗约束（未完成握手的不活动同样超时断开）。缺省 120 s；env `COFFER_MCP_UDS_READ_TIMEOUT_SECS` 可配、下限 10 s（低于/非数字 → 配置错误退出 1）、**不提供 0=off 关闭路径**（fail-closed）。**边界诚实声明（任务口径）**：语义「任何数据到达重置」实现近似「**有效帧重置**」——逐字节慢滴（字节间隔 < 超时值）的非法/半帧数据流理论可维持连接存活（慢滴理论存活）；LOW-1 为 availability-only（非安全缺口），可用性意图（消除无界挂起）已满足，边界接受。复验 = `uds_idle_read_timeout_disconnects` / `uds_idle_timeout_resets_on_valid_frame` / `uds_active_session_not_timed_out` / `uds_handshake_inactivity_times_out` / `uds_idle_timeout_default_is_120s` / `uds_idle_timeout_below_min_rejected`（uds.rs 单测，docs/04-测试与验收/10-v2.2.0验收判据骨架.md §1.5/§2 先红后绿）+ 既有 UDS 防护全套回归（peer / challenge / 单调 id / 单次 connect / 权限）全绿。缺省值 / 下限 / env 名已落 docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §4.3
 **证据**：`core/cf-mcp/src/uds.rs`（`UDS_ENV_READ_TIMEOUT` / `DEFAULT_READ_TIMEOUT_SECS` / `MIN_READ_TIMEOUT_SECS` / `set_read_timeout` / `is_idle_timeout`）；docs/04-测试与验收/09-v2.1.0验收判据骨架.md §7 顺延登记（⏳ 目标 v2.2.0）
 
 ### 现象（预期/实际 分行写）
@@ -970,13 +970,13 @@ accept 后的读循环无超时窗；`set_read_timeout`（SO_RCVTIMEO）未设�
 
 ### 根因（已实证 / 待查）
 
-待查（设计期）。缓解设计 = additive 字段 + `#[serde(default)]`（docs/03-功能设计/08-v2.2.0设计-MCP解锁托管.md D-3 先例），D-3 已冻结格式为三型
+待查（设计期）。缓解设计 = additive 字段 + `#[serde(default)]`（docs/03-功能设计/08-v2.2.0-MCP解锁托管-设计.md D-3 先例），D-3 已冻结格式为三型
 （exact / subdomain / domain，无 regex，匹配优先级 exact > subdomain > domain）；**发布后改格式 / 改类型集 =
 既有条目绑定需迁移**（🔴 不可逆，docs/archive/02-v2.3.0不可逆决策工作稿.md D-3）。
 
 ### 修复路径
 
-G-A 实施时按 additive + `#[serde(default)]` 加字段（对齐 docs/03-功能设计/08-v2.2.0设计-MCP解锁托管.md §5.1 先例），零 format_version / DDL 变更；旧库读取单测覆盖；
+G-A 实施时按 additive + `#[serde(default)]` 加字段（对齐 docs/03-功能设计/08-v2.2.0-MCP解锁托管-设计.md §5.1 先例），零 format_version / DDL 变更；旧库读取单测覆盖；
 发布后格式变更走 D-3 迁移流程（用户裁定后）。
 
 ### 复现与诊断
@@ -1188,7 +1188,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 **登记日期**：2026-10-08
 **发现环境**：merge-time 接线轮组 A（session-seam）`unlock_with_dek` 直开 seam 实现时如实发现
 **分级**：S4（防御纵深注记，无实际攻击路径）/ P3 / 来源版本 既有 / 发现版本 v2.3.0（merge-time 轮）
-**状态**：🟢 知悉项——cf-store `verify_integrity` 既有行为（docs/03-功能设计/01-macOS纵切设计.md §5 C-4 旧库兼容自举语义），**非本 seam 引入**；不阻塞。**失效注记（2026-10-09）**：触发 seam `unlock_with_dek` 已随 v2.4.0 DEK retention 层整体裁除（浏览器集成移除轮），本注记核心关注点（直开 seam 空库错 DEK）路径不再可达；cf-store 自举语义本身不变，登记留档
+**状态**：🟢 知悉项——cf-store `verify_integrity` 既有行为（docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md §5 C-4 旧库兼容自举语义），**非本 seam 引入**；不阻塞。**失效注记（2026-10-09）**：触发 seam `unlock_with_dek` 已随 v2.4.0 DEK retention 层整体裁除（浏览器集成移除轮），本注记核心关注点（直开 seam 空库错 DEK）路径不再可达；cf-store 自举语义本身不变，登记留档
 **核销记录**：—（知悉项；如需空库也 fail-closed 属 cf-store 改动，另议）
 **证据**：`core/cf-store/src/repo/meta.rs:180-215`——`(stored_count, stored_mac)` 任一行缺失 → `bump_integrity(key)` 自举；`core/cf-session/src/unlock.rs:378-388` finish_unlock 调 `verify_integrity(&store.subkeys().root_mac_key)`
 
@@ -1199,7 +1199,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ### 根因（已实证）
 
-`verify_integrity` 对「meta 基线缺失」采用自举（旧库兼容，docs/03-功能设计/01-macOS纵切设计.md §5 C-4）：缺行即用传入 key 重算基线落盘。空库首次打开时无基线 → 任何 key 都触发自举。属既有设计，非 unlock_with_dek 引入。
+`verify_integrity` 对「meta 基线缺失」采用自举（旧库兼容，docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md §5 C-4）：缺行即用传入 key 重算基线落盘。空库首次打开时无基线 → 任何 key 都触发自举。属既有设计，非 unlock_with_dek 引入。
 
 ### 修复路径
 

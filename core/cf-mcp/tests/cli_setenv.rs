@@ -1,10 +1,10 @@
-//! `coffer set-env` CLI 集成测试（docs/36 §4，AC-36.1）——**Pro 专属测试文件**。
+//! `coffer set-env` CLI 集成测试（docs/36 §4，AC-36.1）。
 //!
-//! 隔离轮（2026-10-11）：环境容器写面为 Pro 专属功能，本文件整文件
-//! `#![cfg(feature = "pro")]` 门控（免费仓不编译也不存在本文件），与
-//! `cli.rs`（免费/Pro 共有）分文件防漂移；共享夹具见 `common/mod.rs`。
+//! OS-3 去 Pro 化（2026-10-17）：环境容器写面转普通免费功能，本文件整文件
+//! `#![cfg(feature = "coffer-store")]` 门控（对齐 `set-password` 用例；slim
+//! 构建不编译），与 `cli.rs` 分文件；共享夹具见 `common/mod.rs`。
 
-#![cfg(all(feature = "coffer-store", feature = "pro"))]
+#![cfg(feature = "coffer-store")]
 
 mod common;
 use common::*;

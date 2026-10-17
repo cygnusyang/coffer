@@ -59,11 +59,10 @@ cf-escrow-keychain = { path = "../cf-escrow-keychain", optional = true }
 rpassword = { workspace = true, optional = true }
 
 [features]
-# `pro`（免费/Pro 隔离轮，2026-10-11）：Pro 专属功能编译开关（现仅环境容器
-# 写面 set-env，docs/36 §4）。**本仓库默认开**（Pro trunk）；免费仓同步时
-# 关掉 default 里的 "pro" 即可（共享文件 cfg 行两侧同文，见 FEATURES.md）。
-default = ["coffer-store", "pro"]
-pro = []
+# 默认形态 = 免费形态（OS-3 去 Pro 化，2026-10-17，docs/02/03 追认表附节）：
+# 环境容器写面 set-env 转普通免费功能，不再需要 `pro` 编译开关，门控随
+# `coffer-store`（对齐 set-password，docs/27 D-2）。
+default = ["coffer-store"]
 # 启用 Coffer 自家 Secret Store provider（D-2 用户裁定：缺省 provider = coffer，
 # coffer-store 转 default feature，docs/27 D-2）。依赖边 cf-mcp → cf-session →
 # cf-store（docs/20 §2.2，§9.2 互斥核对）；`--no-default-features` 才瘦依赖树。

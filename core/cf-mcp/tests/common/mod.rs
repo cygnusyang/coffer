@@ -1,8 +1,9 @@
-//! CLI 集成测试共享夹具（cli.rs / cli_pro.rs 共用；docs/36 隔离轮拆出）。
+//! CLI 集成测试共享夹具（cli.rs / cli_setenv.rs 共用；docs/36 隔离轮拆出）。
 //!
-//! 拆分背景（2026-10-11 免费/Pro 隔离）：`set-env`（Pro 专属）用例迁至
-//! `cli_pro.rs`（整文件 `#![cfg(feature = "pro")]` 门控，免费仓不存在该文件），
-//! 两者共用的二进制路径 / fake op / 临时目录 / 运行器夹具落本模块。
+//! 拆分背景（2026-10-11 免费/Pro 隔离；2026-10-17 OS-3 去 Pro 化后 set-env 转
+//! 普通免费功能）：`set-env` 用例在 `cli_setenv.rs`（整文件
+//! `#![cfg(feature = "coffer-store")]` 门控，对齐 set-password 用例），两者
+//! 共用的二进制路径 / fake op / 临时目录 / 运行器夹具落本模块。
 
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};

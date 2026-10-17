@@ -676,12 +676,9 @@ fn build_op_provider(
 ///
 /// 本函数不 panic（生产禁 unwrap / expect）；`main.rs` 仅透传返回码。
 pub fn run(args: &[String]) -> i32 {
-    // 子命令提示文案（免费/Pro 隔离轮）：Pro 侧多 `set-env`（免费/Pro 同文
-    // cfg 切换，避免共享文件分叉，FEATURES.md）。
-    #[cfg(all(feature = "coffer-store", feature = "pro"))]
+    // 子命令提示（OS-3 去 Pro 化，2026-10-17）：set-env 转普通免费功能后与
+    // set-password 同为 `coffer-store` 门控，提示文案恒编译为同一条。
     let subcommand_hint = "`coffer mcp`, `coffer set-password` or `coffer set-env`";
-    #[cfg(not(all(feature = "coffer-store", feature = "pro")))]
-    let subcommand_hint = "`coffer mcp` or `coffer set-password`";
     let Some(subcommand) = args.first() else {
         eprintln!("error: missing subcommand; expected {subcommand_hint} (docs/20 §5.2 / docs/34 §5 / docs/36 §4)");
         return exit_code::CONFIG_ERROR;
@@ -694,9 +691,9 @@ pub fn run(args: &[String]) -> i32 {
         return crate::set_password::run(&args[1..]);
     }
     // v2.8.0 环境容器写面（docs/36 §4）：`coffer set-env` 写子命令。依赖
-    // cf-session/rpassword/zeroize，均在 `coffer-store` feature 依赖树内。
-    // **Pro 专属**（免费/Pro 隔离轮）：双 feature 门控，免费侧编译零引用。
-    #[cfg(all(feature = "coffer-store", feature = "pro"))]
+    // cf-session/rpassword/zeroize，均在 `coffer-store` feature 依赖树内
+    // （OS-3 去 Pro 化，2026-10-17：转普通免费功能，门控对齐 set-password）。
+    #[cfg(feature = "coffer-store")]
     if subcommand == "set-env" {
         return crate::set_env::run(&args[1..]);
     }

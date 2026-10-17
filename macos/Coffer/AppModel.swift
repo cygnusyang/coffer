@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
     /// 与 showImport/showImportPux/showImportBitwarden 同纪律）。
     @Published var showImportOpvault = false
     /// 放置区导入 sheet（v2.11.0，docs/03 §21a §3.1）：三处入口（MainView 工具栏
-    /// 导入菜单 + 空态菜单 + DataCommands「数据」菜单）同源触发；sheet 挂载是
+    /// 导入菜单 + 空态菜单 + 内联「数据」菜单）同源触发；sheet 挂载是
     /// G6 的职责（MainView `.sheet(isPresented:)`），本属性只作跨视图触发开关，
     /// 与 showImport/showImportOpvault 提升同先例。
     @Published var showImportDropzone = false

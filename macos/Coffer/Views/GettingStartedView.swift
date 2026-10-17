@@ -5,7 +5,7 @@
 // 的一行入口指引（AC-2.10.0-UX-6）。指引路径与真实入口逐一核对过：
 //   - 建库：无库时首屏「创建密码库」（VaultSetupView）
 //   - 解锁：锁定页主密码 / Touch ID（LockView）
-//   - 新建 / 导入 / 导出：主窗工具栏 + ⌘N / ⌘I / ⌘⇧I / ⌘E（MainView / DataCommands）
+//   - 新建 / 导入 / 导出：主窗工具栏 + ⌘N / ⌘I / ⌘⇧I / ⌘E（MainView / CofferApp.swift 内联数据菜单）
 //   - 备份提醒：设置 → 备份提醒（SettingsView ③）
 //   - 恢复：首屏「从备份恢复…」（noVault）/ 设置 → 数据（SettingsView ⑥）/
 //     锁定态「管理密码库…」→「从备份恢复…」（UX #1 管理面，T5-LOW-2 补行）

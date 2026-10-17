@@ -280,10 +280,13 @@ else
 fi
 
 # 解锁态数据菜单「从 macOS 密码 App…」enabled（BUG-32 修复后解锁态 true；修复前卡启动初态恒 false——旧记录误归因为 AX quirk）
-if "${DRIVER}" enabled "从 macOS 密码 App…" 2>/dev/null | grep -q '^ENABLED	true'; then
-  pass "TC-L3-IT01-09" "解锁态数据菜单「从 macOS 密码 App…」enabled（BUG-32 修复后 phase 信号恢复）"
+# MEDIUM-1 复审修正：enabled 子命令取首个匹配（遍历先窗口后菜单栏），解锁态窗口子树有同标题
+# SwiftUI Button（工具栏/空态），首匹配可能落按钮致假绿——改 find 全量 + AXMenuItem 角色过滤，
+# 无歧义锚定菜单栏项（按钮 role=AXButton 被过滤）。
+if "${DRIVER}" find "从 macOS 密码 App…" 2>/dev/null | awk -F'\t' '$3=="AXMenuItem" && $6=="true"{f=1} END{exit !f}'; then
+  pass "TC-L3-IT01-09" "解锁态数据菜单「从 macOS 密码 App…」enabled（find+AXMenuItem 角色过滤，无歧义锚定）"
 else
-  fail "TC-L3-IT01-09" "解锁态数据菜单「从 macOS 密码 App…」enabled" "ENABLED 非 true"
+  fail "TC-L3-IT01-09" "解锁态数据菜单「从 macOS 密码 App…」enabled" "AXMenuItem 项无 enabled=true"
 fi
 
 # 设置「设置放置区…」按钮可点 → 向导 S0 打开（AXPress 于 SwiftUI Button 有效；Menu/CommandMenu 项无效，已实证）

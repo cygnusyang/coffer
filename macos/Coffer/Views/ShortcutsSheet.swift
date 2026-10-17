@@ -2,7 +2,7 @@
 //
 // 静态只读面板：分组列出应用级与列表级快捷键，供用户自查（快捷键此前
 // 无任何速查入口，issue #5 可发现性修复）。内容与 CofferApp.swift 的
-// CommandGroup / DataCommands / HotKeyMonitor 实际注册逐一核对过（实读
+// CommandGroup / 内联数据菜单 / HotKeyMonitor 实际注册逐一核对过（实读
 // 代码，有出入以代码为准）：
 //   - ⌥⌘P 为 HK-1 全局呼出/隐藏主窗口（HotKeyMonitor，非库切换）；
 //     库切换无快捷键（仅工具栏按钮触发 showVaultSwitcher）。
@@ -10,7 +10,7 @@
 // 键位核对出处（仅维护期参考，不渲染；锚点用语义位置，行号随改动漂移）：
 //   ⌘N/⌘L：CofferApp.swift `CommandGroup(replacing: .newItem)`
 //   ⌘⇧C/⌘U/⌥⇧C：CofferApp.swift `CommandGroup(after: .pasteboard)`
-//   ⌘I/⌘⇧I/⌘E/⌘,：CofferApp.swift `DataCommands`（「数据」CommandMenu）
+//   ⌘I/⌘⇧I/⌘E/⌘,：CofferApp.swift 内联「数据」CommandMenu
 //   ↑/↓/Enter：MainView.swift `hotKeyActions`（列表层上下文键，D-9.1）
 //   ⌥⌘P：HotKeyMonitor.swift `HotKeyCombination.summonMainWindow`（HK-1）
 //

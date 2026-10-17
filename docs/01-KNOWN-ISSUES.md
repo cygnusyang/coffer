@@ -1742,7 +1742,7 @@ helper 新包残留 xattr：`com.apple.quarantine: 0286;00000000;Coffer;`（agen
 **严重级/优先级**：S3（次要功能——菜单栏导入/导出入口不可用；工具栏/空态/设置三处入口不受影响）/ P1（用户可见回归，v2.11.0 发版前修复）
 **来源版本**：v2.4.1（DataCommands 独立 Commands 结构体抽出时引入；v2.11.0 放置区入口置顶后暴露面扩大）
 **发现版本**：v2.10.3 真机（用户截图报告）；dev build 复现矩阵确认
-**状态**：✅ 已修复（2026-10-17，commit 待补）
+**状态**：✅ 已修复（2026-10-17，commit a0c22b7 已推 main）
 
 ### 现象
 
@@ -1777,4 +1777,5 @@ DataCommands 结构体删除，「数据」CommandMenu 内联回 App body `.comm
 
 ### 核销记录
 
-修复 commit 待补；核销测试 = AX 黑盒双向循环（锁定 false → 解锁 true → 重锁 false，/tmp/coffer-menu-lockcycle.log 留档）+ harness 断言升级（TC-L3-IT01-04 由存在性锚点升级为 enabled false 断言 + 新增 TC-L3-IT01-09 解锁态 enabled true 断言）。
+修复 commit a0c22b7；核销测试 = AX 黑盒双向循环（锁定 false → 解锁 true → 重锁 false，/tmp/coffer-menu-lockcycle.log 留档）+ 重锁态「设置…」find 直证（解锁 true → 重锁 false，排除 enabled 子命令子串假象）+ harness 断言升级（TC-L3-IT01-04 由存在性锚点升级为 enabled false 断言 + 新增 TC-L3-IT01-09 解锁态 enabled true 断言，19/0 ALL GREEN）。
+**独立审查（dev-reviewer-b32r2，2026-10-17）**：Approve——0 CRITICAL / 0 HIGH / 1 MEDIUM / 2 LOW；结论存档 /tmp/coffer-bug32-review.md。MEDIUM-1（TC-L3-IT01-09 `enabled` 首匹配可能落窗口子树同标题按钮致假绿）已修：断言改 `find` 全量 + `AXMenuItem` 角色过滤（按钮 role=AXButton 被排除，无歧义锚定菜单栏项）。LOW-1（commit 回填）与 LOW-2（三处 DataCommands 陈旧注释：AppModel.swift/GettingStartedView.swift/ShortcutsSheet.swift）随本修正 commit 一并处理。

@@ -86,3 +86,9 @@ logs/
 
 # ---------- 浏览器扩展（已拆独立仓库 coffer-browser-extension，2026-10-08）----------
 # 扩展源码与构建均移入独立仓库；忽略规则随迁（新仓 .gitignore：node_modules/、tests-dist/）
+
+# 并行会话/运维产物（开源公开前防误 add）
+.codex/
+.omc/
+.playwright-mcp/
+AGENTS.md

@@ -1,5 +1,5 @@
 // VaultManagementView.swift —— 密码库管理面（v2.10.0 D1，docs/16 §4.5 线框 /
-// docs/03-功能设计/17-库删除实现接线.md §4.1）。
+// docs/03-功能设计/17-v2.10.0-库删除接线-实现方案.md §4.1）。
 //
 // sheet 形态，列**全库**（含当前库，行标「当前库」）→ 行内 [删除…]
 // （destructive）→ DeleteVaultConfirmSheet 多步向导。三入口：

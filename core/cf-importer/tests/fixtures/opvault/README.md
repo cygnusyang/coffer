@@ -16,7 +16,7 @@ OPVault 客户端产物）。
   - `iterations`：40000
   - 条目：3 个 Login（category 001）+ 2 个文件夹
   - 目录结构：`profile.js` + `folders.js` + `band_3/6/D/E.js`（`ld(` 前缀）
-  - 无 `.attachment`（附件面不覆盖，见 `docs/03-功能设计/07-v0.7实现方案.md` §2.2.3 out-of-scope）
+  - 无 `.attachment`（附件面不覆盖，见 `docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md` §2.2.3 out-of-scope）
 
 ## 使用纪律
 

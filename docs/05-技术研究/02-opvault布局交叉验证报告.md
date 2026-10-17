@@ -3,19 +3,19 @@
 > 状态：**D-04 闭环**（T02 实现前置调研结论）
 > 调研日期：2026-10-04
 > 依据时效：官方设计文档（support.1password.com/opvault-design/，2026 版页面）+ 5 个第三方独立实现 + 1 个真实样本端到端解密实证（本调研已跑通）
-> 定位：对 `docs/03-功能设计/07-v0.7实现方案.md` §2.2.1 与 `docs/01-需求与架构/03-详细设计.md` §6.3 的 opvault 布局假设做逐字节交叉验证。**结论先行：两个关键假设需修正**（opdata 布局、目录结构），其余密码学链大体与设计一致。
+> 定位：对 `docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md` §2.2.1 与 `docs/01-需求与架构/03-详细设计.md` §6.3 的 opvault 布局假设做逐字节交叉验证。**结论先行：两个关键假设需修正**（opdata 布局、目录结构），其余密码学链大体与设计一致。
 
 ---
 
 ## 0. 结论先行（推荐方案一句话）
 
-**opdata 对象实际布局为 `[magic "opdata01":8]‖[plaintext_len:8 LE]‖[IV:16]‖[AES-256-CBC ct]‖[HMAC-SHA256:32]`，且 CBC 填充为「前置随机字节」（解密取末 plen 字节）而非 PKCS#7；`docs/03-功能设计/07-v0.7实现方案.md` §2.2.1 假设的 `[IV:16]‖[ct]‖[MAC:32]` 仅对条目 `k` 字段（item keys 块，无 header）成立——T02 实现必须按本报告的修正布局落地，否则真实 opvault 全量解密失败。**
+**opdata 对象实际布局为 `[magic "opdata01":8]‖[plaintext_len:8 LE]‖[IV:16]‖[AES-256-CBC ct]‖[HMAC-SHA256:32]`，且 CBC 填充为「前置随机字节」（解密取末 plen 字节）而非 PKCS#7；`docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md` §2.2.1 假设的 `[IV:16]‖[ct]‖[MAC:32]` 仅对条目 `k` 字段（item keys 块，无 header）成立——T02 实现必须按本报告的修正布局落地，否则真实 opvault 全量解密失败。**
 
 目录结构同理修正：opvault **没有** `contents.js`、`data/*.opdata`、`masterkey.js`、独立 `passwordhint.txt`（这些是前身 AgileKeychain 格式的特征）；真实布局为 `profile.js + folders.js + band_0.js~band_F.js + <itemUUID>_<attachUUID>.attachment`。
 
 ---
 
-## 1. 布局逐字节结论表（vs docs/03-功能设计/07-v0.7实现方案.md §2.2 / docs/01-需求与架构/03-详细设计.md §6.3 假设）
+## 1. 布局逐字节结论表（vs docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2 / docs/01-需求与架构/03-详细设计.md §6.3 假设）
 
 ### 1.1 目录结构
 
@@ -28,7 +28,7 @@ xxx.opvault/
     └── <itemUUID>_<attachUUID>.attachment   # 附件（OPCLDAT 头，条目密钥加密）
 ```
 
-| 项 | docs/01-需求与架构/03-详细设计.md §6.3 / docs/03-功能设计/07-v0.7实现方案.md 假设 | 实际（官方文档 + 5 实现 + 真实样本） | 判定 |
+| 项 | docs/01-需求与架构/03-详细设计.md §6.3 / docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md 假设 | 实际（官方文档 + 5 实现 + 真实样本） | 判定 |
 | --- | --- | --- | --- |
 | 条目承载 | `contents.js`（条目索引）+ `<item_uuid>.js`（每条目一文件） | 16 个 `band_[0-F].js`（按 UUID 首字符分桶）；无 contents.js | **纠正** |
 | 文件夹 | （未覆盖） | `folders.js`（`loadFolders(` 前缀） | 补充 |
@@ -52,7 +52,7 @@ xxx.opvault/
 
 **CBC 填充（官方明文，非 PKCS#7）**：明文若为块大小的整倍数，则**前置** 1 块（16 字节）随机数据；否则**前置** 1~15 字节随机数据凑整。解密后**取末 `plaintext_len` 字节**即为明文。官方理由：前置填充兼作「附加的 mini-IV」，且规避 PKCS#7 padding-oracle CCA。
 
-| 项 | docs/03-功能设计/07-v0.7实现方案.md §2.2.1 / docs/01-需求与架构/03-详细设计.md §6.3 假设 | 实际 | 判定 |
+| 项 | docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.1 / docs/01-需求与架构/03-详细设计.md §6.3 假设 | 实际 | 判定 |
 | --- | --- | --- | --- |
 | opdata 布局 | `[IV:16]‖[ct]‖[MAC:32]` | `[magic:8]‖[plen:8 LE]‖[IV:16]‖[ct]‖[MAC:32]` | **纠正** |
 | CBC 填充 | 未明示（按标准 PKCS#7 推断） | **前置随机字节**，解密取末 plen 字节 | **纠正**（PKCS#7 去除会剥掉明文头） |
@@ -121,19 +121,19 @@ xxx.opvault/
 
 ### 3.1 顶层 Login 字段 `type` 码（go-opvault / Python / Rust 三源并集 + 真实样本）
 
-| `type` 码 | 含义 | docs/03-功能设计/07-v0.7实现方案.md §2.2.3 假设 | 校正后 Coffer 映射 |
+| `type` 码 | 含义 | docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.3 假设 | 校正后 Coffer 映射 |
 | --- | --- | --- | --- |
 | `T` | Text | Text → Text | Text |
 | `P` | Password | Password → Concealed | Concealed |
 | `E` | Email | （未列） | Text（可标 Email） |
-| `N` | **Number** | **docs/03-功能设计/07-v0.7实现方案.md 误作「N(Notes)」** | Text（数字字段按字符串） |
+| `N` | **Number** | **docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md 误作「N(Notes)」** | Text（数字字段按字符串） |
 | `R` | Radio | （未列） | Text |
-| `TEL` | Telephone | **docs/03-功能设计/07-v0.7实现方案.md 误作「B(Phone)」** | Text（可标 Phone） |
+| `TEL` | Telephone | **docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md 误作「B(Phone)」** | Text（可标 Phone） |
 | `C` | Checkbox | （未列） | Text/Boolean |
 | `U` | URL | URL → Text(URL 行) | Text(URL) |
 | `I` / `B`(Button) / `S` | Rust 额外观测 | （未列） | Text 降级 + 报告 |
 
-> **docs/03-功能设计/07-v0.7实现方案.md §2.2.3 假设的 `N`（Notes）/ `M`（Multiline）/ `D`（Date）/ `B`（Phone）type 码在真实格式中不存在**：`N`=Number、`M`/`D` 未见、电话=`TEL`。多行备注（Multiline/Notes）在 details 中的承载是**顶层 `notesPlain` 键**与 section 字段的 `k=concealed`，不是 `type` 码。T02 的「未映射字段」报告需按真实码表校准，避免把 `N` 误当 Notes 映射到 Multiline。
+> **docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.3 假设的 `N`（Notes）/ `M`（Multiline）/ `D`（Date）/ `B`（Phone）type 码在真实格式中不存在**：`N`=Number、`M`/`D` 未见、电话=`TEL`。多行备注（Multiline/Notes）在 details 中的承载是**顶层 `notesPlain` 键**与 section 字段的 `k=concealed`，不是 `type` 码。T02 的「未映射字段」报告需按真实码表校准，避免把 `N` 误当 Notes 映射到 Multiline。
 
 ### 3.2 section 字段 `k`（kind）码（Rust detail.rs + go-opvault SectionField）
 
@@ -141,11 +141,11 @@ xxx.opvault/
 
 ### 3.3 designation（`designation` 键）
 
-真实样本实证：`username`、`password`。业界实践另见 `totp`/`otp`（docs/03-功能设计/07-v0.7实现方案.md 假设成立）、`notesPlain`（1PUX 侧概念，opvault 的 notes 是顶层 `notesPlain` 键而非 designation 值）。**建议**：designation 按 docs/03-功能设计/07-v0.7实现方案.md §2.2.3 映射（username/password/totp→对应 Coffer Designation，其余原样保留为 `Designation::Other`），与 `docs/01-需求与架构/03-详细设计.md` §6.4.3 一致。
+真实样本实证：`username`、`password`。业界实践另见 `totp`/`otp`（docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md 假设成立）、`notesPlain`（1PUX 侧概念，opvault 的 notes 是顶层 `notesPlain` 键而非 designation 值）。**建议**：designation 按 docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.3 映射（username/password/totp→对应 Coffer Designation，其余原样保留为 `Designation::Other`），与 `docs/01-需求与架构/03-详细设计.md` §6.4.3 一致。
 
 ### 3.4 details 顶层键（Login 类）
 
-实证：`fields[]`、`notesPlain`；Rust 另见 `htmlForm`、`backupKeys`（base64 字节，语义未知）；Generic 类：`sections[]`、`notesPlain`。**docs/03-功能设计/07-v0.7实现方案.md §2.2.3 已定「解析策略而非硬编码表」+ 未知降级 Text + 报告——本报告支持该策略**；字段码表以真实样本为基线冻结。
+实证：`fields[]`、`notesPlain`；Rust 另见 `htmlForm`、`backupKeys`（base64 字节，语义未知）；Generic 类：`sections[]`、`notesPlain`。**docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.3 已定「解析策略而非硬编码表」+ 未知降级 Text + 报告——本报告支持该策略**；字段码表以真实样本为基线冻结。
 
 ### 3.5 overview 结构（解密后）
 
@@ -166,13 +166,13 @@ xxx.opvault/
 
 | # | 风险 / 差异 | 级别 | 处置 |
 | --- | --- | --- | --- |
-| 1 | **opdata 布局**：按 docs/03-功能设计/07-v0.7实现方案.md §2.2.1 的 `[IV]‖[ct]‖[MAC]` 实现将导致真实 opvault 全量解密失败（magic 字节被误当 IV） | 高（T02 必改） | T02 实现按本报告 §1.2 布局；`opdata_decrypt` 签名不变但内部实现必须含 header 解析 + 前置填充剥离 |
+| 1 | **opdata 布局**：按 docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.1 的 `[IV]‖[ct]‖[MAC]` 实现将导致真实 opvault 全量解密失败（magic 字节被误当 IV） | 高（T02 必改） | T02 实现按本报告 §1.2 布局；`opdata_decrypt` 签名不变但内部实现必须含 header 解析 + 前置填充剥离 |
 | 2 | **CBC 填充**：PKCS#7 去除会剥掉明文头字节 | 高 | 解密取**末 plen 字节**；不按 PKCS#7 验尾 |
 | 3 | **`k` 与 opdata01 布局不同**（k 无 header） | 中 | 两条解码路径分别实现、分别测试（§1.2 澄清） |
 | 4 | **`hmac` 字段覆盖分歧**：Rust/Ruby 含 folder，官方+实证排除 folder | 低（导入侧可豁免） | 导入时**跳过条目级 hmac 校验**，以各 opdata 的 MAC 作为完整性校验（这才是真实防线）；若实现校验则按官方（排除 hmac 与 folder、字典序、trashed 按 0/1） |
 | 5 | **JS 前缀**：`var profile=` / `ld(` / `loadFolders(` + 尾分号 | 低 | 解析器按格式剥离前缀（与 go-opvault 12/3 字节前缀一致） |
 | 6 | 附件 `.attachment` 存在但首版 out-of-scope | 中 | 官方已文档化格式（OPCLDAT 头 + metadata/icon/contents 三段 opdata）；首版跳过+计数可行；注意附件的**存在性**可从 `.attachment` 文件名（`<itemUUID>_` 前缀）得知，不影响详情解析 |
-| 7 | **多 profile** 目录 | 低 | 取 `default/`（docs/03-功能设计/07-v0.7实现方案.md 已定），其余 profile 目录列出不导入 |
+| 7 | **多 profile** 目录 | 低 | 取 `default/`（docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md 已定），其余 profile 目录列出不导入 |
 | 8 | 密码「NUL 结尾」误解 | 中（实现细节） | **勿**把 NUL 字节追加进 PBKDF2 输入；用 UTF-8 原始字节 |
 | 9 | 真实样本覆盖不足：本报告实证仅 Login（001）类 | 中 | 其余类别（002~111）字段结构由第三方代码（Rust detail.rs / go-opvault）佐证，但**字段码表冻结仍需更广真实样本**；T02 按「未知降级 + 报告」策略兜底 |
 | 10 | overview `URLs` 数组与 `url` 并存 | 低 | 取 primary URL（`url` 或 `URLs[0].u`）落 Coffer urls |
@@ -181,11 +181,11 @@ xxx.opvault/
 
 ## 6. 对 T02 实现的集成注意点（直接影响）
 
-- `cf-crypto/src/opvault.rs`（docs/03-功能设计/07-v0.7实现方案.md §3.2 草案）的 `opdata_decrypt` 注释「opdata 布局 [IV:16]‖[ct]‖[MAC:32]」**需改写**为 §1.2 布局；函数签名不变。
-- 依赖（docs/03-功能设计/07-v0.7实现方案.md §2.2.4）`pbkdf2` + `aes`/`cbc` + `hmac`/`sha2` + `subtle` 足够，无需新增。AES-CBC 用 RustCrypto 时注意**关闭 PKCS#7 padding**（手动按 plen 截取末段）。
-- `precheck_opvault` 结构预检（docs/03-功能设计/07-v0.7实现方案.md §2.2.3）判定要素应为：目录 + `profile.js` 存在且可解析（剥前缀）+ `iterations`/`salt`/`masterKey`/`overviewKey` 读数，**不触密码**；`folders.js`/`band_*.js` 属解锁后内容。
+- `cf-crypto/src/opvault.rs`（docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §3.2 草案）的 `opdata_decrypt` 注释「opdata 布局 [IV:16]‖[ct]‖[MAC:32]」**需改写**为 §1.2 布局；函数签名不变。
+- 依赖（docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.4）`pbkdf2` + `aes`/`cbc` + `hmac`/`sha2` + `subtle` 足够，无需新增。AES-CBC 用 RustCrypto 时注意**关闭 PKCS#7 padding**（手动按 plen 截取末段）。
+- `precheck_opvault` 结构预检（docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md §2.2.3）判定要素应为：目录 + `profile.js` 存在且可解析（剥前缀）+ `iterations`/`salt`/`masterKey`/`overviewKey` 读数，**不触密码**；`folders.js`/`band_*.js` 属解锁后内容。
 - 建议 T02 引入第 1 项 vendor 真实样本，把本报告 §1.5 的预期明文直接固化为 RED 断言（先红后绿），互操作证据链完整。
 
 ---
 
-*文档结束。本报告将 `docs/03-功能设计/07-v0.7实现方案.md` §2.2.1 与 `docs/01-需求与架构/03-详细设计.md` §6.3 的布局假设逐条校正；`docs/01-需求与架构/03-详细设计.md` §6.3 目录结构（contents.js / 每条目一文件）与 opdata 填充描述建议在 T11 收尾时一并修订。*
+*文档结束。本报告将 `docs/03-功能设计/07-v0.7.0-收尾顺延-实现方案.md` §2.2.1 与 `docs/01-需求与架构/03-详细设计.md` §6.3 的布局假设逐条校正；`docs/01-需求与架构/03-详细设计.md` §6.3 目录结构（contents.js / 每条目一文件）与 opdata 填充描述建议在 T11 收尾时一并修订。*

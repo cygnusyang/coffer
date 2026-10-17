@@ -1,6 +1,6 @@
 // VaultDeleteTests/main.swift —— 库删除向导/管理面纯函数策略单元测试
 // （v2.10.0 D1，docs/16 §5 C7 + docs/04-测试与验收/17-v2.10.0 §2 CF-2 / §3 DL-5
-// 自动段；对照 docs/03-功能设计/17-库删除实现接线.md §4）。
+// 自动段；对照 docs/03-功能设计/17-v2.10.0-库删除接线-实现方案.md §4）。
 //
 // 被测单元 DeleteVaultPolicy（Support/DeleteVaultPolicy.swift）为纯函数：
 // 无 IO / 无 FFI / 无 Keychain 依赖（LicenseStatus 定义于 LicenseServicing.swift，

@@ -7,7 +7,7 @@
 ## 字段形态注记（TCB-1 状态）
 
 `fido2Credentials` 的 schema 为【单源】（Bitwarden 官方文档未承诺第三方
-互通，docs/03-功能设计/05-v0.5实现方案.md §4.2）。lead 裁定（2026-09-29）：**合成样本先行开发，
+互通，docs/03-功能设计/05-v0.5.0-Passkey降级-实现方案.md §4.2）。lead 裁定（2026-09-29）：**合成样本先行开发，
 真实导出样本的逆向核对降级为 TCB-1 回归门禁**。当前 fixtures 采用：
 
 - 键名对齐 Bitwarden 客户端源码的导出模型（`Fido2Key`）：`credentialId` /

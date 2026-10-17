@@ -1,7 +1,7 @@
 // HelpCenterContentTests/main.swift —— 帮助中心正文完整性断言（v2.10.1，
 // docs/19 §5 转写回归点）。
 //
-// 目标判据（docs/03-功能设计/19-帮助文档.md §5「正文文案源」+ §8 验收要点）：
+// 目标判据（docs/03-功能设计/19-v2.10.1-帮助中心-规格.md §5「正文文案源」+ §8 验收要点）：
 //   九章正文 = 11 个 HelpSection（§5.4「键盘快捷键」含 3 个 Section：列表操作 /
 //   条目操作 / 通用，章节标题为 List 分组语义不单独成 Section）——本文件把每个
 //   Section 的标题与条目数断言为常量，HelpCenterContent 转写回归即红。

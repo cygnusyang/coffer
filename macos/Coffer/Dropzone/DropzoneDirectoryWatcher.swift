@@ -1,4 +1,4 @@
-// DropzoneDirectoryWatcher.swift —— 放置区目录监视（docs/21a-放置区导入实现方案.md
+// DropzoneDirectoryWatcher.swift —— 放置区目录监视（docs/21a-v2.11.0-放置区导入-实现方案.md
 // §2.2 裁定 A：DispatchSource.vnode + 补扫；接口见 §3.3）。
 //
 // 机制：一目录一 O_EVTONLY fd + DispatchSourceFileSystemObject（.write/.delete/.rename）。

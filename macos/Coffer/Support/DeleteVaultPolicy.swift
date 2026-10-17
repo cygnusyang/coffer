@@ -6,8 +6,8 @@
 // （绑定只读元数据，非密钥材料）——可独立单测
 // （tools/run_vault_delete_tests.sh，同 TouchIDStatusTests 纪律）。
 //
-// 对照：docs/03-功能设计/16-库删除设计.md §4/§5（UDR-1 trim 比对 / UDR-7
-// 只读隐藏 / D-5.1/5.3 masked UUID）+ docs/03-功能设计/17-库删除实现接线.md
+// 对照：docs/03-功能设计/16-v2.10.0-库删除-设计.md §4/§5（UDR-1 trim 比对 / UDR-7
+// 只读隐藏 / D-5.1/5.3 masked UUID）+ docs/03-功能设计/17-v2.10.0-库删除接线-实现方案.md
 // §3 落位选择。
 
 import Foundation

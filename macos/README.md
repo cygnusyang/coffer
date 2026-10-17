@@ -25,7 +25,7 @@ open macos/build/Coffer.app         # 启动
 每个新 tag（`v*`）触发 `.github/workflows/release.yml`：ubuntu 可靠门禁
 + clippy → macos-latest 从 GitHub Secrets 注入签名证书与 provisioning profile，
 `./tools/build_macos_app.sh --rebuild-bindings` 构建签名产物 → 打包
-`Coffer-<tag>.zip`（OTA 更新载体，docs/03-功能设计/11-OTA设计.md §6.1 契约，App 只认 zip 覆盖）
+`Coffer-<tag>.zip`（OTA 更新载体，docs/03-功能设计/11-v2.7.0-OTA升级-设计.md §6.1 契约，App 只认 zip 覆盖）
 + `./tools/make_dmg.sh` 打包 `Coffer-<tag>.dmg`（人类手动安装包，拖拽安装）
 → 自动创建 GitHub Release，Release body 取 **`CHANGELOG.md` 当前版本段**
 （发版前须在 CHANGELOG.md 登记该版本段落，缺失则流水线 fail）。
@@ -57,7 +57,7 @@ open macos/build/Coffer.app         # 启动
 
 ## coffer CLI（MCP 解锁托管，v2.2.0）
 
-`coffer`（`coffer mcp` MCP 服务器，docs/03-功能设计/06-MCP设计.md）**随 App bundle 分发，不独立安装**：
+`coffer`（`coffer mcp` MCP 服务器，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md）**随 App bundle 分发，不独立安装**：
 
 - **路径**：`macos/build/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`
   （装配为**嵌套 bundle** `coffer.app`，构建脚本 `tools/build_macos_app.sh` step 3.5 自动完成）。
@@ -71,7 +71,7 @@ open macos/build/Coffer.app         # 启动
   bundle 内嵌 profile，AMFI 也只对最近 `.app` 的**主代码**应用 profile——带
   `keychain-access-groups` 的裸 CLI spawn 即 SIGKILL；嵌套 `.app` bundle 自带
   `embedded.provisionprofile` 才获得覆盖。
-- **注册命令示例**（Claude Code，docs/03-功能设计/06-MCP设计.md §5.4 同构）：
+- **注册命令示例**（Claude Code，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §5.4 同构）：
 
   ```bash
   claude mcp add coffer -- "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer" mcp --provider op --vault <vault>
@@ -91,9 +91,9 @@ open macos/build/Coffer.app         # 启动
   `tools/build_swift_bindings.sh` 生成，勿手改**）。
 - `Coffer/SmokeTest/main.swift` —— swiftc 冒烟样例（链接静态库验证
   Rust ↔ Swift 全链路），编译命令见 `tools/build_swift_bindings.sh` 尾部注释。
-- v0.1 明确不做（推后清单见 `docs/03-功能设计/01-macOS纵切设计.md` §1.2）：Touch ID、
+- v0.1 明确不做（推后清单见 `docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md` §1.2）：Touch ID、
   菜单栏常驻、全局快捷键、Passkey、1PUX 导入。
-- **Touch ID 现状补充**：代码已完成（`docs/03-功能设计/02-TouchID解锁设计.md` T01–T04），
+- **Touch ID 现状补充**：代码已完成（`docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md` T01–T04），
   但被 **BUG-2（Keychain -34018，ad-hoc 签名无代码签名身份）** 阻塞，
   **真机上尚不可用**；解锁流程的真机端到端验收（08-T05）待 cygnus 执行。
   详见 `docs/01-KNOWN-ISSUES.md` BUG-2。
@@ -195,7 +195,7 @@ macOS 端 Passkey 为**降级形态**（FR-10.1 导入 / 10.2 查看 / 10.5 删�
 2. **iCloud 不同步是特性**（lead 裁定沿用）：Passkey 私钥存 Coffer 自有加密库，**不经 iCloud Keychain**（第三方提供者路径下同步从设计上不存在）；跨设备 = 库文件搬运（加密备份/恢复）。用户文档主动声明。
 3. **数据源边界**：桌面端 1PUX **无 Passkey**——1Password 桌面端导出的 1PUX 不含 Passkey（官方明确只有 iOS/Android 能导出）。已用 1Password 桌面版的用户首建数据需 iOS/Android 导出或改用 Bitwarden JSON，或网站重新注册（ADP 后）。这条无法通过技术绕过，用户文档明示。
 
-> 完整版（凭据提供者扩展 + 创建/断言）随 ADP 购买后重启——机制设计见 `docs/01-需求与架构/02-概要设计.md` §4.6，要点摘录见 `docs/03-功能设计/05-v0.5实现方案.md` §9（休眠）。
+> 完整版（凭据提供者扩展 + 创建/断言）随 ADP 购买后重启——机制设计见 `docs/01-需求与架构/02-概要设计.md` §4.6，要点摘录见 `docs/03-功能设计/05-v0.5.0-Passkey降级-实现方案.md` §9（休眠）。
 
 ---
 

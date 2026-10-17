@@ -90,11 +90,13 @@ final class UpdaterManager: ObservableObject {
     /// 固定清单 URL（契约 6.1，恒一 URL，不依赖版本枚举）。
     /// 公开产物仓（2026-10-14）：原 coffer-pro（project 95）私有 → GitLab 对未鉴权
     /// 请求掩蔽 404 → App 沙盒无 token 拉清单必 404，OTA 通道自迁 GitLab 起即断
-    /// （BUG-25）；切公开产物仓 coffer-ota（project 97，匿名 200 已验证）。同 host
-    /// 同端口，白名单/OTAEndpointPolicy 不受影响。免费版仓仍走 GitHub releases。
+    /// （BUG-25）；开源迁移轮（2026-10-17，OS-2/OS-5）切 GitHub 主仓 Releases：
+    /// manifest 随 release.yml 上传至 github.com/cygnusyang/coffer 的 Release 资产，
+    /// `/releases/latest/download/` 为 GitHub 官方 latest 永久链接。白名单回归
+    /// 4 GitHub host（docs/35 §6.2，OTAEndpointPolicy 同步收口）。
     /// `nonisolated`：类为 @MainActor，纯常量供非隔离上下文（init 默认参）引用。
     nonisolated static let defaultManifestURL = URL(
-        string: "https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json")!
+        string: "https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json")!
 
     private let manifestURL: URL
     private let currentVersion: String

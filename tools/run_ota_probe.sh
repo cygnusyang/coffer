@@ -41,7 +41,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${OTA_PROBE_REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 LOG="${OTA_PROBE_LOG:-${TMPDIR:-/tmp}/ota-probe.log}"
-MANIFEST_URL="${OTA_PROBE_MANIFEST_URL:-https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json}"
+MANIFEST_URL="${OTA_PROBE_MANIFEST_URL:-https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json}"
 
 MANIFEST_VERIFIER_SRC="$REPO_ROOT/macos/Coffer/Updater/ManifestVerifier.swift"
 VERIFY_HELPER="$SCRIPT_DIR/verify_update_manifest.swift"

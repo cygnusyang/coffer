@@ -297,7 +297,7 @@ do {
           userMsg == "检查更新失败（OTA-E-2001）")
     check("checkNetworkFailureMessage: 绝不带原始 NSError（无 Domain/错误原文）",
           !userMsg.contains("NSError") && !userMsg.contains("Domain"))
-    let url = URL(string: "https://gitlab.internal.invalid/ota/update-manifest.json")!
+    let url = URL(string: "https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json")!
     let connRefused = URLError(.cannotConnectToHost)
     let line = UpdateCopy.checkNetworkFailureLogLine(error: connRefused, url: url)
     check("checkNetworkFailureLogLine: 诊断行含错误码", line.contains("OTA-E-2001"))

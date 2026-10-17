@@ -861,25 +861,23 @@ check("TC-VER-13", "负组件可比较：-1.0 < 0.0",
 // MARK: - TC-HOST 白名单 host 判定（纯函数）
 
 let allowed = OTAEndpointPolicy.allowedHosts
-// 2026-10-12 对齐：白名单 4→5 host（GitLab 迁移轮 287c37d 增列 gitlab.internal.invalid，
-// 契约注记见 docs/03-功能设计/11-OTA设计.md「GitLab 迁移轮扩展注记」；旧断言
-// 「恰为 4 host」自该批起结构性红，TC-HOST-01 登记 KNOWN-ISSUES 顺延项随本轮核销）。
-check("TC-HOST-01", "白名单恰为契约 5 host（4 GitHub + GitLab）", allowed == [
+// 2026-10-17 开源迁移（OS-5）：移除 GitLab 自托管 host，回归契约 4 GitHub host 基线
+// （manifest URL 同步切 GitHub Releases，UpdaterManager.defaultManifestURL）；GitLab
+// 迁移轮（2026-10-12）的 5 host 扩展与 TC-HOST-01 KNOWN-ISSUES 顺延登记随本轮核销。
+check("TC-HOST-01", "白名单恰为契约 4 host（4 GitHub）", allowed == [
     "api.github.com", "github.com", "objects.githubusercontent.com",
-    "release-assets.githubusercontent.com", "gitlab.internal.invalid",
+    "release-assets.githubusercontent.com",
 ])
 
 check("TC-HOST-02", "api.github.com 放行", OTAEndpointPolicy.isAllowedHost("api.github.com"))
 check("TC-HOST-02", "github.com 放行", OTAEndpointPolicy.isAllowedHost("github.com"))
 check("TC-HOST-02", "objects.githubusercontent.com 放行", OTAEndpointPolicy.isAllowedHost("objects.githubusercontent.com"))
 check("TC-HOST-02", "release-assets.githubusercontent.com 放行", OTAEndpointPolicy.isAllowedHost("release-assets.githubusercontent.com"))
-check("TC-HOST-02", "gitlab.internal.invalid 放行", OTAEndpointPolicy.isAllowedHost("gitlab.internal.invalid"))
-// 剥端口语义在 URL 解析层（url.host 永不含端口），policy 层是裸 host 精确匹配：
-// 带端口 host 字符串必须 fail-closed 拒绝，带端口 URL 经 isAllowedURL 放行。
+// 裸 host 精确匹配 + 带端口 fail-closed 语义保留（负路径），用任意非白名单 host 断言：
 check("TC-HOST-02", "裸 host 精确匹配：带端口 host 字符串拒绝（fail-closed）",
-      !OTAEndpointPolicy.isAllowedHost("gitlab.internal.invalid"))
-check("TC-HOST-02", "带端口 URL 放行（url.host 不含端口）",
-      OTAEndpointPolicy.isAllowedURL(URL(string: "https://gitlab.internal.invalid/coffer/app.xml")!))
+      !OTAEndpointPolicy.isAllowedHost("example.com:8443"))
+check("TC-HOST-02", "非白名单 host URL 拒绝（fail-closed）",
+      !OTAEndpointPolicy.isAllowedURL(URL(string: "https://example.com/coffer/app.xml")!))
 
 check("TC-HOST-03", "https + 白名单 host URL 放行",
       OTAEndpointPolicy.isAllowedURL(URL(string: TestFixture.validDownloadUrl)!))
@@ -2604,7 +2602,7 @@ do {
 
     // 两路径行为面：fetch（manifest）与 download（产物）都经净化后的配置建
     // session 并走通，返回 fresh 数据——「两条 fetch/download 路径都要断言到」。
-    let manifestURL = URL(string: "https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json")!
+    let manifestURL = URL(string: "https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json")!
     MockURLProtocol.payload = Data("cached-manifest-must-never-be-used".utf8)
     let fetchSession = OTANetworkSession(configuration: mockURLProtocolConfiguration())
     let manifest = try await fetchSession.fetchManifest(from: manifestURL)
@@ -2614,7 +2612,7 @@ do {
 
     MockURLProtocol.payload = Data("fresh-zip-bytes".utf8)
     let downloadSession = OTANetworkSession(configuration: mockURLProtocolConfiguration())
-    let zipURL = URL(string: "https://gitlab.internal.invalid/api/v4/projects/97/packages/generic/coffer/2.10.2/Coffer.zip")!
+    let zipURL = URL(string: "https://github.com/cygnusyang/coffer/releases/download/v2.10.2/Coffer-v2.10.2.zip")!
     let downloaded = try await downloadSession.download(from: zipURL) { _ in }
     let downloadedData = try Data(contentsOf: downloaded)
     check("TC-OTA-CACHE-02", "download（产物）路径经净化配置走通且返回 fresh 数据",
@@ -2630,7 +2628,7 @@ do {
 do {
     MockURLProtocol.requestCount = 0
     MockURLProtocol.payload = Data("manifest-v1".utf8)
-    let manifestURL = URL(string: "https://gitlab.internal.invalid/api/v4/projects/97/releases/permalink/latest/downloads/ota/update-manifest.json")!
+    let manifestURL = URL(string: "https://github.com/cygnusyang/coffer/releases/latest/download/update-manifest.json")!
     let sameSession = OTANetworkSession(configuration: mockURLProtocolConfiguration())
     let first = try await sameSession.fetchManifest(from: manifestURL)
     check("TC-OTA-CACHE-03", "同一 session 第一次 fetch 走网络层（请求计数 1）",

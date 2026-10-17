@@ -35,6 +35,7 @@ enum SecCodeVerifier {
     static let expectedHelperIdentifiers: Set<String> = [
         "top.cygnusyang.coffer",
         "top.cygnusyang.coffer.updater",
+        "top.cygnusyang.coffer.mcpregister",
     ]
 
     /// 验签显式错误（fail-closed：任何一级不过即拒装）。

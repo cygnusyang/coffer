@@ -10,15 +10,14 @@ import Foundation
 /// 更新端点白名单策略（应用层，4 host 硬编码，契约 6.2）。
 enum OTAEndpointPolicy {
     /// 白名单端点（docs/35 §6.2：发布查询 / 下载重定向源 / Release asset CDN）。
-    /// GitLab 迁移轮（2026-10-11）Pro trunk 增列 `gitlab.internal.invalid`（自托管
-    /// GitLab，端口 0，host 匹配剥端口；docs/35 §6.2 契约扩展注记）。
-    /// 免费版分支在本改动之前切出，白名单仍为 4 GitHub host，不受影响。
+    /// 开源迁移轮（2026-10-17，OS-2/OS-5）：移除自托管 GitLab host（原 GitLab 迁移轮增列项，
+    /// GitLab 产物通道随主仓迁 GitHub 退役），回归 4 GitHub host；manifest
+    /// URL 随 UpdaterManager.defaultManifestURL 同步切 GitHub Releases。
     static let allowedHosts: Set<String> = [
         "api.github.com",
         "github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
-        "gitlab.internal.invalid",
     ]
 
     /// 显式错误（fail-closed：非白名单一律拒绝，不静默降级）。

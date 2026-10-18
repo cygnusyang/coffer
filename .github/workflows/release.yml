@@ -164,10 +164,16 @@ jobs:
 
       - name: 打包 zip
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           ditto -c -k --keepParent macos/build/Coffer.app \
             "macos/build/Coffer-${TAG}.zip"
           ls -lh macos/build/Coffer-*.zip
+          # T1（v2.10.3）：zip 产物 SHA256（下载完整性前置校验的声明源；签名写入清单）。
+          # 与 .gitlab-ci.yml 同一口径——两侧发版线生成的清单必须同构。
+          ZIP_SHA256="$(shasum -a 256 "macos/build/Coffer-${TAG}.zip" | awk '{print $1}')"
+          echo "产物 SHA256=$ZIP_SHA256"
+          echo "ZIP_SHA256=$ZIP_SHA256" >> "$GITHUB_ENV"
 
       - name: 打包 DMG（人类手动安装包，hdiutil 零依赖）
         run: |
@@ -202,6 +208,7 @@ jobs:
           MF_BUILD_TIME="$BUILD_TIME" \
           MF_DOWNLOAD_URL="$DOWNLOAD_URL" \
           MF_CDHASH="$CDHASH" \
+          MF_SHA256="$ZIP_SHA256" \
           MF_SECURITY_CRITICAL="$OTA_SECURITY_CRITICAL" \
           ./tools/sign_update_manifest.sh > macos/build/update-manifest.json
           echo "--- update-manifest.json ---"

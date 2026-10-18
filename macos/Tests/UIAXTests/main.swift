@@ -210,6 +210,52 @@ func cmdPress(pid: pid_t, query: String) -> Int32 {
     return pressed > 0 ? DriverExit.ok.rawValue : DriverExit.noMatch.rawValue
 }
 
+/// 只按**第一个**匹配（J-1/A-3 向导流实证需求：`press` 全量按压会重复触发开关型
+/// 按钮——「设置放置区…」匹配 6 项被连按 6 次，sheet 开了又关，后续断言全空）。
+/// 遍历序（先窗口后菜单栏）下首匹配 = 视图内最深优先命中，向导/设置流用此子命令。
+func cmdPressFirst(pid: pid_t, query: String) -> Int32 {
+    guard let first = allMatches(pid: pid, query: query).first else {
+        print("PRESSED1\t0")
+        return DriverExit.noMatch.rawValue
+    }
+    let ok = AXUIElementPerformAction(first.element, kAXPressAction as CFString) == .success
+    print("PRESSED1\t\(ok ? 1 : 0)")
+    return ok ? DriverExit.ok.rawValue : DriverExit.noMatch.rawValue
+}
+
+/// 合成键盘事件（J-1/A-3 NSOpenPanel 自动化）：面板内部层级不经 App AX 树暴露，
+/// ⌘⇧G（前往文件夹）/ Return 确认须 CGEvent HID 注入——Accessibility 信任域与
+/// 本 driver 同源（TC-L3-PRE-01）。参数形态 "<keycode>[:<flags>]"；flags 字符：
+/// c=command s=shift o=option n=control（如 "5:cs" = ⌘⇧G，"36" = Return）。
+func cmdKey(_ arg: String) -> Int32 {
+    let parts = arg.split(separator: ":")
+    guard let part0 = parts.first, let kc32 = UInt32(part0) else { print("KEY\tbad-arg"); return DriverExit.usage.rawValue }
+    let kc = CGKeyCode(UInt16(truncatingIfNeeded: kc32))
+    var flags: CGEventFlags = []
+    if parts.count > 1 {
+        for ch in parts[1] {
+            switch ch {
+            case "c": flags.insert(.maskCommand)
+            case "s": flags.insert(.maskShift)
+            case "o": flags.insert(.maskAlternate)
+            case "n": flags.insert(.maskControl)
+            default: break
+            }
+        }
+    }
+    for keyDown in [true, false] {
+        guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: kc, keyDown: keyDown) else {
+            print("KEY\tcreate-failed")
+            return DriverExit.ok.rawValue
+        }
+        if !flags.isEmpty { ev.flags = flags }
+        ev.post(tap: CGEventTapLocation.cghidEventTap)
+        usleep(40_000)
+    }
+    print("KEY\t1")
+    return DriverExit.ok.rawValue
+}
+
 func cmdEnabled(pid: pid_t, query: String) -> Int32 {
     guard let first = allMatches(pid: pid, query: query).first else {
         print("ENABLED\tmissing")
@@ -258,7 +304,7 @@ func cmdTrusted() -> Int32 {
 // MARK: - 入口
 
 func usage() -> Int32 {
-    print("usage: UIAXDriver <trusted|windows|tree|find|label|press|enabled|type> [args] [--pid <n>]")
+    print("usage: UIAXDriver <trusted|windows|tree|find|label|press|press1|key|enabled|type> [args] [--pid <n>]")
     print("  type <query> [--env VAR]   值来源 env（缺省 COFFER_TEST_PASSWORD），绝不进 argv")
     return DriverExit.usage.rawValue
 }
@@ -282,7 +328,7 @@ case "tree":
         exit(DriverExit.targetNotRunning.rawValue)
     }
     exit(cmdTree(pid: pid))
-case "find", "label", "press", "enabled":
+case "find", "label", "press", "press1", "enabled":
     guard args.count >= 3 else { exit(usage()) }
     guard let pid = resolvePID(arguments: Array(args.dropFirst(2))) else {
         print("TARGET\tnot-running")
@@ -293,8 +339,10 @@ case "find", "label", "press", "enabled":
     case "find": exit(cmdFind(pid: pid, query: query))
     case "label": exit(cmdLabel(pid: pid, query: query))
     case "press": exit(cmdPress(pid: pid, query: query))
+    case "press1": exit(cmdPressFirst(pid: pid, query: query))
     default: exit(cmdEnabled(pid: pid, query: query))
     }
+case "key": exit(cmdKey(args.count >= 3 ? args[2] : ""))
 case "type":
     guard args.count >= 3 else { exit(usage()) }
     guard let pid = resolvePID(arguments: Array(args.dropFirst(2))) else {

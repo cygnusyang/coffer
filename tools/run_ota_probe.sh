@@ -135,7 +135,9 @@ fi
 # ---------- ② zip Range 探测（downloadUrl 前 64 字节 + PK 魔数） ----------
 if [ $FAILED -eq 0 ]; then
     note "--- ② zip Range 探测 ---"
-    ZIP_INFO="$(curl -fsS --max-time 30 -r 0-63 -o "$ZIP_HEAD" -w '%{http_code}' "$DOWNLOAD_URL" 2>>"$LOG")"
+    # -L 必加：GitHub Releases 资产 URL 先 302 到 objects.githubusercontent.com，
+    # 不跟随重定向则落盘为空（魔数判定必红）。v2.11.0 端点切 GitHub 后实证。
+    ZIP_INFO="$(curl -fsSL --max-time 30 -r 0-63 -o "$ZIP_HEAD" -w '%{http_code}' "$DOWNLOAD_URL" 2>>"$LOG")"
     ZIP_RC=$?
     if [ $ZIP_RC -ne 0 ]; then
         note "ERROR ②: zip Range 探测失败（rc=$ZIP_RC, HTTP=${ZIP_INFO:-n/a}）。downloadUrl 指向的资源不可读（缺件/改名/漂移）"

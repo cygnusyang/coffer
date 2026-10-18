@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """workitem.py —— 任务板（docs/00-WORK-ITEMS.md）命令行维护。
 
+本文件是通用版 ~/.claude/teams/scripts/workitem.py 的仓库内副本（CI 与协作者需要），
+改动须两侧同步；任务板数据与协议适配留在本仓。
+
 协议见 ~/.claude/teams/PROTOCOL.md。任务板是唯一 claim 入口：
 未 claim 不得开工；同一文件同一时间只允许一个 owner。
 

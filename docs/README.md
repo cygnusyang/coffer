@@ -8,8 +8,7 @@
 
 - [00-WORK-ITEMS 任务板](00-WORK-ITEMS.md) —— 三队（dev/ui/doc）唯一 claim 入口，含 files 范围与关闭证据
 - [00-协作适配](00-协作适配.md) —— 公共协议在本仓的落地：路径、门禁脚本、红线、角色映射
-- [templates/设计交接单](templates/设计交接单.md) —— ui-team → dev-team 交付契约
-- [templates/任务卡](templates/任务卡.md) —— 单个工作项的完整记录模板
+- 通用协议、设计交接单/任务卡模板、任务板脚本在 Claude Code 全局配置 `~/.claude/teams/`；本仓不存副本，改动只改全局一处
 
 | 目录 | 内容 |
 | --- | --- |

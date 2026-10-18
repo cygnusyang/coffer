@@ -2,7 +2,7 @@
 # run_dropzone_j5_sample.sh —— J-5 真样采样探针（docs/19 §4.1 / docs/18 §6 RT-05）
 #
 # 定位：J-5 为发版门禁（未过则 P-2 列映射 provisional 不得发版）。本脚本在用户
-# 一次 Touch ID 导出「所有密码」后，对放置区的真实 Passwords.csv 做**本地一次性**
+# 一次 Touch ID 导出「所有密码」后，对放置区的真实导出 CSV 做**本地一次性**
 # 采样，只出【非敏感】摘要：
 #   - 列头快照（J-5 四核对项之一，docs/19 §4.2 列头非敏感）
 #   - 数据行数（含/不含密码单元格计数——只计数，绝不打印密码值）
@@ -14,15 +14,16 @@
 #   - 输出落 .local-samples/j5-sample-<date>.txt（.gitignore:81 已忽略，不入库）；
 #   - 真样文件本身永不入库、不复制、不移动（只读采样）。
 #
-# 用法：./tools/run_dropzone_j5_sample.sh [真实 Passwords.csv 路径]
+# 用法：./tools/run_dropzone_j5_sample.sh [真实导出 CSV 路径]
 #   路径缺省用环境变量 COFFER_J5_SAMPLE，再缺省查放置区默认名
-#   （~/Downloads/coffer-import/Passwords.csv，docs/21 社区默认，可改）。
+#   （~/Downloads/coffer-import/密码.csv；2026-10-18 J-5 实样：默认名随系统
+#   语言本地化，中文环境为 密码.csv）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SAMPLE="${1:-${COFFER_J5_SAMPLE:-${HOME}/Downloads/coffer-import/Passwords.csv}}"
+SAMPLE="${1:-${COFFER_J5_SAMPLE:-${HOME}/Downloads/coffer-import/密码.csv}}"
 if [[ ! -f "${SAMPLE}" ]]; then
   echo "ERROR: 真实导出不存在：${SAMPLE}" >&2
   echo "       请先在 Passwords.app 手动导出「所有密码」+ Touch ID 验证后，把文件路径作为参数传入。" >&2
@@ -64,10 +65,10 @@ cat > "${OUT_FILE}" <<EOF
 ${HEADER}
 # ② 数据行数：${TOTAL_ROWS}
 # ③ 密码列（Password）非空单元格数：${PW_FILLED}（只计数，值不落任何输出）
-# ④ 待用户填写（导出瞬间观察，非从文件推导）：
-#    - 「导出所有密码」菜单名：______
-#    - 默认文件名（Passwords.csv?）：______
-#    - 重复导出命名（Passwords 2.csv?）：______
+# ④ 导出瞬间观察（非从文件推导）；2026-10-18 实样已核销：
+#    - 菜单名实样：「将所有密码导出至文件…」
+#    - 默认文件名实样：密码.csv（随系统语言本地化）
+#    - 重复导出实样：默认名不变，系统弹替换确认（不自动改名）
 
 ## P-2 provisional 锚定
 # 本列头如与 tests/fixtures/csv/dropzone_passwords_headers.csv 不符 → 更新 fixture

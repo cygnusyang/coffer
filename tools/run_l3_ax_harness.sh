@@ -255,10 +255,21 @@ else
   fail "TC-L3-UNL-01" "密码注入后「解锁」按钮 enabled false→true" "ENABLED 非 true"
 fi
 "${DRIVER}" press "解锁" >/dev/null 2>&1
-if ! wait_for "解锁后 LockView 消失（请输入主密码 absent）" 15 sh -c "! ${DRIVER} find '请输入主密码' >/dev/null 2>&1"; then
-  fail "TC-L3-UNL-02" "解锁成功（LockView 消失）" "10s 内仍在锁定态"
+# 解锁成功判据（macOS 27 修正）：正向证据为主（主界面出现=解锁成功），LockView 消失
+# 为辅——OS 27 上 LockView 的 AX 节点解锁后滞留更久（stale exposure，两轮实证），
+# 纯负向断言（请输入主密码 absent）脆弱。OR 语义：任一成立即解锁成功。
+UNL02_OK=0
+for _ in $(seq 1 20); do
+  if ! "${DRIVER}" find "请输入主密码" >/dev/null 2>&1 \
+     || "${DRIVER}" find "全部条目" >/dev/null 2>&1; then
+    UNL02_OK=1; break
+  fi
+  sleep 1
+done
+if (( UNL02_OK )); then
+  pass "TC-L3-UNL-02" "解锁成功（主界面呈现或 LockView 消失）"
 else
-  pass "TC-L3-UNL-02" "解锁成功（LockView 消失）"
+  fail "TC-L3-UNL-02" "解锁成功" "20s 内既无主界面也未消失"
 fi
 if ! wait_for "主窗口「全部条目」出现" 10 "${DRIVER}" find "全部条目"; then
   fail "TC-L3-UNL-03" "解锁后主界面「全部条目」" "未找到"

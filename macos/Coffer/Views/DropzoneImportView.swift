@@ -269,13 +269,13 @@ struct DropzoneImportView: View {
 
     /// macOS < 14 检测（J-2）：Passwords.app 是否存在。
     private var passwordsAppAvailable: Bool {
-        FileManager.default.fileExists(atPath: "/System/Applications/Passwords.app")
+        PasswordsAppLauncher.isAvailable
     }
 
     /// J-1：无参数纯 URL 唤起（BUG-30 类沙盒坑仅涉 --args 剥离，本路径无参数）。
     private func openPasswordsApp() {
-        let url = URL(fileURLWithPath: "/System/Applications/Passwords.app")
-        guard NSWorkspace.shared.open(url) else {
+        // 共享实现（J-1 seam 与按钮同链）：Support/PasswordsAppLauncher.swift。
+        guard PasswordsAppLauncher.open() else {
             importModel.waitingHint = "无法打开 macOS 密码 App，请在访达中手动打开。"
             return
         }

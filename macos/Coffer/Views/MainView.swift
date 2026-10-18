@@ -40,6 +40,19 @@ struct MainView: View {
             if model.selectedItemID != nil {
                 model.loadSelectedDetails()
             }
+            maybeAutoOpenDropzoneWizard()
+        }
+        // 测试 seam（A-3 自动化；docs/19 §5.3 lead 批准纪律，与 testBaseDir /
+        // debugDisableTouchID / --test-open-passwords 同族）：启动参数
+        // --test-open-dropzone-wizard 在解锁后自动置位 showImportDropzone，
+        // 打开与三处产品入口（工具栏/数据菜单/设置页）**完全相同**的放置区
+        // 向导 sheet。跳过的仅是「点击入口」这一步（锁定态入口 disabled，
+        // AXPress 经设置窗在 OS 27 下不稳定），sheet 本体与 S0-S5 状态机全走
+        // 产品码路，零安全面变化。
+        // 注：RootView 按 phase 切换视图，MainView 只在 .unlocked 时挂载——
+        // 挂载即已解锁，故 onAppear 为主判点；onChange 兜底同会话再解锁。
+        .onChange(of: model.phase) {
+            maybeAutoOpenDropzoneWizard()
         }
         // P4（v2.9.0）：选择任一列表条目即退出安全体检 destination 回条目详情
         // （跳条目路径 HealthCheckView.jump 已先行清位，此处对程序性选中为 no-op）。
@@ -50,6 +63,15 @@ struct MainView: View {
             ItemEditView(mode: .create(category))
                 .environmentObject(model)
         }
+    }
+
+    /// 测试 seam：`--test-open-dropzone-wizard` 解锁后自动打开放置区向导
+    /// （A-3 自动化；仅测试启动参数触发，生产路径零变化）。
+    private func maybeAutoOpenDropzoneWizard() {
+        guard model.phase == .unlocked,
+              ProcessInfo.processInfo.arguments.contains("--test-open-dropzone-wizard"),
+              !model.showImportDropzone else { return }
+        model.showImportDropzone = true
     }
 
     // MARK: - 备份提醒横幅（FR-8.5，T-G）

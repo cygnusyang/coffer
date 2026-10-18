@@ -120,12 +120,20 @@ func walk(_ root: AXUIElement, _ collect: (AXInfo) -> Void) {
             for c in children { rec(c, depth + 1) }
         }
     }
-    // 窗口先挂（主内容）；再走 App 子节点（菜单栏/其他）。注意窗口本身也可能
-    // 在 children 里（部分 App），走两遍不重复收集元素（count 上限兜底）。
-    if let wins = axAttr(root, kAXWindowsAttribute as CFString) as? [AXUIElement] {
-        for w in wins { rec(w, 1) }
+    // 窗口先挂（主内容）；再走 App 子节点（菜单栏/其他）。注意窗口本身**也**在
+    // children 里（实测本 App：kAXWindows 与 kAXChildren 同含两窗口），直接 rec(root)
+    // 会把每个窗口整棵走两遍——同一按钮出现两次匹配，press 按两次把开关型按钮
+    // 开了又关（A-3 向导 sheet 实测复现）。此处对 root 的一级子节点跳过已挂窗口。
+    let wins = axAttr(root, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? []
+    for w in wins { rec(w, 1) }
+    count += 1
+    collect(snapshot(root, depth: 0))
+    if let children = axAttr(root, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+        for c in children {
+            if wins.contains(where: { CFEqual($0, c) }) { continue }
+            rec(c, 1)
+        }
     }
-    rec(root, 0)
 }
 
 /// 匹配：title / desc / value / placeholder 任一包含 query（大小写不敏感）。
@@ -256,6 +264,48 @@ func cmdKey(_ arg: String) -> Int32 {
     return DriverExit.ok.rawValue
 }
 
+/// 把匹配标题的窗口置前并设为主窗口（A-3 实证：设置窗非 key 时 AXPress 返回
+/// success 但 SwiftUI 动作不触发）。
+func cmdRaise(pid: pid_t, query: String) -> Int32 {
+    let app = AXUIElementCreateApplication(pid)
+    guard let wins = axAttr(app, kAXWindowsAttribute as CFString) as? [AXUIElement] else {
+        print("RAISED\tno-windows")
+        return DriverExit.internalError.rawValue
+    }
+    for w in wins {
+        let t = axString(w, kAXTitleAttribute as CFString) ?? ""
+        guard t.contains(query) else { continue }
+        _ = AXUIElementSetAttributeValue(w, kAXMainAttribute as CFString, kCFBooleanTrue)
+        _ = AXUIElementSetAttributeValue(w, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        let err = AXUIElementPerformAction(w, "AXRaise" as CFString)
+        print("RAISED\t\(t)\t\(err.rawValue)")
+        return DriverExit.ok.rawValue
+    }
+    print("RAISED\tnone")
+    return DriverExit.noMatch.rawValue
+}
+
+/// 诊断：枚举各窗口的 kAXSheetsAttribute 子元素（sheet 可能不在 children 里，
+/// walk 遍历不到——A-3 向导 sheet 打开与否的定谳探针）。
+func cmdSheets(pid: pid_t) -> Int32 {
+    let app = AXUIElementCreateApplication(pid)
+    var n = 0
+    if let wins = axAttr(app, kAXWindowsAttribute as CFString) as? [AXUIElement] {
+        for w in wins {
+            let wt = axString(w, kAXTitleAttribute as CFString) ?? ""
+            if let sheets = axAttr(w, "AXSheets" as CFString) as? [AXUIElement] {
+                for s in sheets {
+                    let ss = snapshot(s, depth: 0)
+                    print("SHEET\t\(wt)\t\(ss.role)\t\(ss.title)\t\(ss.desc)")
+                    n += 1
+                }
+            }
+        }
+    }
+    print("SHEETS\t\(n)")
+    return DriverExit.ok.rawValue
+}
+
 func cmdEnabled(pid: pid_t, query: String) -> Int32 {
     guard let first = allMatches(pid: pid, query: query).first else {
         print("ENABLED\tmissing")
@@ -304,7 +354,7 @@ func cmdTrusted() -> Int32 {
 // MARK: - 入口
 
 func usage() -> Int32 {
-    print("usage: UIAXDriver <trusted|windows|tree|find|label|press|press1|key|enabled|type> [args] [--pid <n>]")
+    print("usage: UIAXDriver <trusted|windows|tree|find|label|press|press1|key|enabled|type|sheets|raise> [args] [--pid <n>]")
     print("  type <query> [--env VAR]   值来源 env（缺省 COFFER_TEST_PASSWORD），绝不进 argv")
     return DriverExit.usage.rawValue
 }
@@ -328,6 +378,19 @@ case "tree":
         exit(DriverExit.targetNotRunning.rawValue)
     }
     exit(cmdTree(pid: pid))
+case "sheets":
+    guard let pid = resolvePID(arguments: Array(args.dropFirst(2))) else {
+        print("TARGET\tnot-running")
+        exit(DriverExit.targetNotRunning.rawValue)
+    }
+    exit(cmdSheets(pid: pid))
+case "raise":
+    guard args.count >= 3 else { exit(usage()) }
+    guard let pid = resolvePID(arguments: Array(args.dropFirst(2))) else {
+        print("TARGET\tnot-running")
+        exit(DriverExit.targetNotRunning.rawValue)
+    }
+    exit(cmdRaise(pid: pid, query: args[2]))
 case "find", "label", "press", "press1", "enabled":
     guard args.count >= 3 else { exit(usage()) }
     guard let pid = resolvePID(arguments: Array(args.dropFirst(2))) else {

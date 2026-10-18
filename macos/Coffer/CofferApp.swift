@@ -275,6 +275,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeyMonitor.start { [weak self] action in
             self?.handleHotKeyAction(action)
         }
+
+        // 测试 seam（J-1 自动化；直接执行二进制 + 本参数，非经 open(1) 无 LS
+        // 参数剥离）：走与 S1 指引卡按钮相同的 PasswordsAppLauncher.open()
+        // 启动链，验证沙盒内唤起系统「密码」App 的真机可用性。结果落 DiagLog。
+        if ProcessInfo.processInfo.arguments.contains("--test-open-passwords") {
+            let ok = PasswordsAppLauncher.open()
+            DiagLog.append("test-open-passwords seam: open=\(ok)")
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

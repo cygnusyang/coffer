@@ -126,7 +126,22 @@ final class DropzoneImportModel: ObservableObject {
         case .notAuthorized, .stale, .none:
             step = .unauthorized
         }
+        // 测试专用 seam（A-3 自动化前置；testBaseDir / debugDisableTouchID 同族
+        // 先例，docs/19 §5.3 lead 批准纪律）：`coffer.debugAuthorizeDropzonePath`
+        // 置位且当前 S0 → 走与「选择放置区目录…」按钮**完全相同**的
+        // authorize(url:) 路径自动授权。跳过的仅是 NSOpenPanel 用户选择 UI
+        // （面板交互 = 用户手势，无法后台化）；目标限定 App 自有容器内目录，
+        // 零安全面扩大。失效语义（改名/chmod/删除/重启持久）与真实授权同码路。
+        if step == .unauthorized,
+           let debugPath = UserDefaults.standard.string(
+               forKey: Self.debugAuthorizeDropzonePathKey),
+           !debugPath.isEmpty {
+            authorize(url: URL(fileURLWithPath: debugPath))
+        }
     }
+
+    /// 测试 seam 键名（A-3 自动化）：App 自有容器内目录路径，置位即自动授权。
+    nonisolated static let debugAuthorizeDropzonePathKey = "coffer.debugAuthorizeDropzonePath"
 
     /// W-2 phase 停表（视图 `.onChange(of: model.phase)` 转发）：phase 离开
     /// .unlocked 即停表（fail-closed 双保险，docs/21a §2.2）。

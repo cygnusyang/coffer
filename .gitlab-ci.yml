@@ -52,6 +52,7 @@ docs_facts:
   script:
     - bash tools/check_docs_facts.sh
     - python3 tools/workitem.py check
+    - python3 tools/check_criteria_coverage.py
 
 release:
   stage: release

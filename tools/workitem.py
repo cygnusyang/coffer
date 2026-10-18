@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import re
 import sys
 from pathlib import Path
@@ -167,6 +168,132 @@ def cmd_done(args: argparse.Namespace) -> int:
     return cmd_status(args)
 
 
+EMPTY_TOKENS = {"", "-", "—", "–"}
+
+
+def split_scopes(cell: str) -> list[str]:
+    """把 files 单元格拆成若干路径/glob。
+
+    逗号、分号、空白分隔；花括号内的逗号（`core/{a,b}/src`）不拆。
+    """
+    if cell.strip() in EMPTY_TOKENS:
+        return []
+    out: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in cell:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(0, depth - 1)
+        if ch in ",; \t\n" and depth == 0:
+            if buf:
+                out.append("".join(buf))
+                buf = []
+            continue
+        buf.append(ch)
+    if buf:
+        out.append("".join(buf))
+    return [s for s in out if s not in EMPTY_TOKENS]
+
+
+def literal_prefix(pattern: str) -> str:
+    """取第一个通配符之前的字面前缀，用于保守判定两个范围是否可能重叠。"""
+    pattern = pattern.strip().lstrip("./")
+    cut = [pattern.find(c) for c in "*?[" if c in pattern]
+    return pattern[: min(cut)] if cut else pattern
+
+
+def expand_braces(pattern: str) -> list[str]:
+    """`core/{a,b}/src` → [`core/a/src`, `core/b/src`]。"""
+    m = re.search(r"\{([^{}]*)\}", pattern)
+    if not m:
+        return [pattern]
+    out: list[str] = []
+    for alt in m.group(1).split(","):
+        out.extend(expand_braces(pattern[: m.start()] + alt + pattern[m.end():]))
+    return out
+
+
+def _overlap(a: str, b: str) -> bool:
+    pa, pb = literal_prefix(a), literal_prefix(b)
+    # `**`、`*`、`*.rs` 这类从根开始的范围与任何范围都可能重叠
+    if not pa or not pb:
+        return True
+    if a == b:
+        return True
+    # 通配符可能落在目录中间（`core/cf-*/src` × `core/cf-domain/src`）
+    if fnmatch.fnmatch(pb.rstrip("/"), a) or fnmatch.fnmatch(pa.rstrip("/"), b):
+        return True
+    return pa.startswith(pb.rstrip("/") + "/") or pb.startswith(pa.rstrip("/") + "/")
+
+
+def scopes_conflict(a: str, b: str) -> bool:
+    """保守判定两个范围是否可能改到同一文件（宁可误报，不可漏报）。"""
+    return any(_overlap(x, y) for x in expand_braces(a) for y in expand_braces(b))
+
+
+def cmd_conflicts(args: argparse.Namespace) -> int:
+    """列出声明的 files 范围之间的冲突；同一文件同一时间只允许一个 owner。"""
+    _, rows = load_board(args.board)
+    active = []
+    for _, cells, rid in rows:
+        status = cells[4]
+        if not args.all and status != "in_progress":
+            continue
+        scopes = split_scopes(cells[5])
+        if scopes:
+            active.append((rid, cells[3], scopes))
+
+    parent = {rid: rid for rid, _, _ in active}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    conflicts: list[str] = []
+    for i in range(len(active)):
+        for j in range(i + 1, len(active)):
+            rid_a, owner_a, scopes_a = active[i]
+            rid_b, owner_b, scopes_b = active[j]
+            hits = [
+                (sa, sb)
+                for sa in scopes_a
+                for sb in scopes_b
+                if scopes_conflict(sa, sb)
+            ]
+            if hits:
+                conflicts.append(
+                    f"CONFLICT {rid_a}({owner_a}) × {rid_b}({owner_b}): "
+                    + ", ".join(f"{sa} ∩ {sb}" for sa, sb in hits)
+                )
+                ra, rb = find(rid_a), find(rid_b)
+                if ra != rb:
+                    parent[rb] = ra
+
+    groups: dict[str, list[str]] = {}
+    for rid, owner, _ in active:
+        groups.setdefault(find(rid), []).append(f"{rid}({owner})")
+    serial = [" + ".join(v) for v in groups.values() if len(v) > 1]
+    parallel = [v[0] for v in groups.values() if len(v) == 1]
+
+    for line in conflicts:
+        print(line)
+    for g in serial:
+        print(f"SERIAL   {g}")
+    for p in parallel:
+        print(f"PARALLEL {p}")
+    print(
+        f"CONFLICTS: {len(active)} 个进行中工作项，{len(conflicts)} 对冲突，"
+        f"{len(serial)} 个串行组 / {len(parallel)} 个可并行"
+    )
+    if conflicts and args.strict:
+        return 1
+    return 0
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     _, rows = load_board(args.board)
     errors: list[str] = []
@@ -232,6 +359,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pk = sub.add_parser("check", help="校验任务板完整性")
     pk.set_defaults(func=cmd_check)
+
+    pf = sub.add_parser("conflicts", help="检查进行中工作项的 files 范围冲突")
+    pf.add_argument("--all", action="store_true", help="含非 in_progress 项")
+    pf.add_argument("--strict", action="store_true", help="存在冲突时退出码 1")
+    pf.set_defaults(func=cmd_conflicts)
     return p
 
 

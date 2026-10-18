@@ -34,3 +34,5 @@ jobs:
       run: bash tools/check_docs_facts.sh
     - name: workitem.py check（任务板列结构 / 重复 ID / 必填证据）
       run: python3 tools/workitem.py check
+    - name: check_criteria_coverage.py（判据 ID ↔ 测试覆盖，WARN-only 不阻断）
+      run: python3 tools/check_criteria_coverage.py

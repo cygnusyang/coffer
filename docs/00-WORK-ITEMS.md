@@ -14,9 +14,9 @@
 | BUG-18 | BUG | cf-mcp uds 并行执行偶发 Connection refused（测试基建） | — | pending | core/cf-mcp/src/uds.rs | docs/01-KNOWN-ISSUES.md §BUG-18 | — |
 | BUG-19 | BUG | set_password_usage_errors_exit_4 CI 间歇 BrokenPipe（测试基建） | — | pending | core/cf-mcp/src/cli.rs | docs/01-KNOWN-ISSUES.md §BUG-19 | — |
 | BUG-21 | BUG | UpdateTests 三项依赖 Developer ID 签名产物（环境项） | — | accepted | macos/CofferTests/ | docs/01-KNOWN-ISSUES.md §BUG-21 | 目标版本：随 Developer ID 签名线恢复 |
-| TASK-1 | TASK | run_gate.sh 增量门禁（--changed） | lead | done | tools/run_gate.sh | docs/00-协作适配.md §2 | docs-only 增量 1s 通过 /tmp/gate-docsonly3.log exit=0；全量对照 1451/0/10 build=OK（/tmp/coffer-gate-205728-64343.log） |
-| TASK-2 | TASK | workitem.py conflicts 并行冲突判定 | lead | done | tools/workitem.py | - | conflicts 正负例 /tmp/wi-evidence.log：实板 3 并行 0 冲突 exit=0；合成板 6 对冲突 1 串行组 --strict exit=1 |
-| TASK-3 | TASK | 判据覆盖核对脚本 | lead | done | tools/check_criteria_coverage.py,docs/00-协作适配.md,.github/workflows/rust.yml,.gitlab-ci.yml | - | WARN-only 接入两 CI（docs-facts/docs_facts）；/tmp/crit-cover6.log 112 条 18覆盖/41未覆盖 exit=0；负例 /tmp/crit-negative3.log 文档缺失 exit=2 |
+| TASK-1 | TASK | run_gate.sh 增量门禁（--changed） | lead | done | tools/run_gate.sh | docs/00-协作适配.md §2 | docs-only 1s 通过 /tmp/gate-docsonly4.log；全量对照 1451/0/10 build=OK；假 cargo exit=2、非法 BASE exit=2（/tmp/gate-negative4.log）；--print-crates 反依赖闭包 cf-mcp→5 crate |
+| TASK-2 | TASK | workitem.py conflicts 并行冲突判定 | lead | done | tools/workitem.py | - | conflicts 正负例 /tmp/wi-evidence2.log：词中通配 CONFLICT、同 owner 不冲突、accepted/blocked claim 拒绝 exit=1；/tmp/wi-evidence.log 串行组 6 对冲突 |
+| TASK-3 | TASK | 判据覆盖核对脚本 | lead | done | tools/check_criteria_coverage.py,docs/00-协作适配.md,.github/workflows/rust.yml,.gitlab-ci.yml | - | 112 条 15 覆盖全部逐条可溯（/tmp/crit-evidence-audit3.log，修复同行别名串用假阳性）；零解析 exit=2；两 CI WARN-only 接入 |
 
 ## 维护
 

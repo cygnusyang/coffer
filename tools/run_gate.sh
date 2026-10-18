@@ -188,9 +188,9 @@ if [ "$CHANGED" -eq 1 ]; then
     # shellcheck disable=SC2086
     PKG_ARGS=""
     for p in $CRATE_ARGS; do PKG_ARGS="$PKG_ARGS -p $p"; done
-    run_step "cargo test --workspace" run_in_core $CARGO test $PKG_ARGS --no-fail-fast; R_TEST=$?
+    run_step "cargo test ${PKG_ARGS}" run_in_core $CARGO test $PKG_ARGS --no-fail-fast; R_TEST=$?
     TEST_SUM="$(sum_test)"
-    run_step "cargo clippy" run_in_core $CARGO clippy $PKG_ARGS --all-targets -- -D warnings; R_CLIPPY=$?
+    run_step "cargo clippy ${PKG_ARGS}" run_in_core $CARGO clippy $PKG_ARGS --all-targets -- -D warnings; R_CLIPPY=$?
     CLIPPY_SUM=$([ $R_CLIPPY -eq 0 ] && echo OK || echo FAIL)
     MODE="增量（受影响 crate：$(echo $CRATE_ARGS | wc -w | tr -d ' ') 个）"
   fi

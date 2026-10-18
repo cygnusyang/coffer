@@ -31,7 +31,7 @@ DOCS_DIR = ROOT / "docs" / "04-测试与验收"
 CRIT_ID_RE = re.compile(
     r"^((?:AC|FR|IT|UT|RT|GATE|EN|UX|J|A|W|T|D)-[0-9][0-9A-Za-z.\-]*)"
 )
-TC_ID_RE = re.compile(r"^TC-[A-Za-z0-9][A-Za-z0-9-]*$")
+TC_ID_RE = re.compile(r"^TC-[A-Za-z0-9][A-Za-z0-9.-]*$")
 
 MANUAL_WORDS = ("真机", "走查", "手动", "审读", "人工")
 AUTO_WORDS = ("单测", "集成", "UITest", "自动化")
@@ -70,14 +70,33 @@ def ids_in_cell(cell: str, pattern: re.Pattern[str]) -> list[str]:
 
 
 def variants(alias: str) -> list[str]:
-    """原文与归一化形态：AC-2.10.0-EN-1 → ac-2.10.0-en-1 / ac2_10_0_1 / ac2100en1。"""
+    """原文与归一化形态：AC-2.10.0-EN-1 → ac-2.10.0-en-1 / ac2_10_0_1 / ac2100en1。
+
+    `_` 形态用于对上测试函数名里的 `tc_mac_06_...` 这类写法。
+    """
     low = alias.lower()
     forms = {
         low,
+        low.replace(".", "_").replace("-", "_"),
         low.replace(".", "_").replace("-", ""),
         low.replace(".", "").replace("-", ""),
     }
     return [f for f in forms if f]
+
+
+def own_aliases(key: str, aliases: set[str]) -> set[str]:
+    """只保留与 key 指向同一判据的别名。
+
+    一行常并列多个判据（`W-3/W-4/W-5`）或并列判据与其 TC 用例（`A-3` / `TC-DRZ-A-3`）。
+    若整行别名共享，任何一个 ID 出现在测试里就会把同行的其他判据一并判成覆盖
+    （实测：`W-5` 靠 `W-1` 的证据判 COVERED、`IT-24` 靠 `IT-28` 判 COVERED）。
+    只认「相同」或「互为后缀」的 ID：`TC-DRZ-A-3` ↔ `A-3` 合并，`W-1` × `W-5` 不合并。
+    """
+    return {
+        a
+        for a in aliases
+        if a == key or a.endswith("-" + key) or key.endswith("-" + a)
+    } or {key}
 
 
 def token_hit(variant: str, text: str) -> bool:
@@ -238,7 +257,8 @@ def main() -> int:
             if args.list:
                 print(f"MANUAL    {key}")
             continue
-        alias_variants = [v for a in g["aliases"] for v in variants(a)]
+        own = own_aliases(key, g["aliases"])
+        alias_variants = [v for a in own for v in variants(a)]
         if any(token_hit(v, name) for v in alias_variants for name in names) or any(
             token_hit(v, corpus) for v in alias_variants
         ):
@@ -246,7 +266,7 @@ def main() -> int:
             if args.list:
                 print(f"COVERED   {key}")
             continue
-        ref = trace_hit(method, tuple(g["aliases"]), carriers)
+        ref = trace_hit(method, tuple(own), carriers)
         if ref:
             traced += 1
             if args.list:

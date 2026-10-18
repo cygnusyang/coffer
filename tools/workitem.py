@@ -133,9 +133,9 @@ def cmd_claim(args: argparse.Namespace) -> int:
     lines, rows = load_board(args.board)
     idx, cells = locate(rows, args.id)
     owner, status = cells[3], cells[4]
-    if status == "done":
-        sys.exit(f"ERROR: {args.id} 已完成，不能 claim")
-    if status == "in_progress" and owner not in (EMPTY, args.owner):
+    if status in {"done", "accepted"}:
+        sys.exit(f"ERROR: {args.id} 已完成（{status}），不能 claim")
+    if status in {"in_progress", "blocked"} and owner not in (EMPTY, args.owner):
         sys.exit(f"ERROR: {args.id} 已被 {owner} claim；停止并联系占用者")
     cells[3] = args.owner
     cells[4] = "in_progress"
@@ -225,7 +225,9 @@ def _overlap(a: str, b: str) -> bool:
     # 通配符可能落在目录中间（`core/cf-*/src` × `core/cf-domain/src`）
     if fnmatch.fnmatch(pb.rstrip("/"), a) or fnmatch.fnmatch(pa.rstrip("/"), b):
         return True
-    return pa.startswith(pb.rstrip("/") + "/") or pb.startswith(pa.rstrip("/") + "/")
+    # 前缀本身可能是词中截断（`core/cf-*` 的前缀 `core/cf-`、`docs/0*.md` 的 `docs/0`），
+    # 此时不能要求 `/` 边界，否则 `core/cf-*/src` × `core/cf-mcp/src/uds.rs` 会漏判。
+    return pa.startswith(pb) or pb.startswith(pa)
 
 
 def scopes_conflict(a: str, b: str) -> bool:
@@ -258,6 +260,9 @@ def cmd_conflicts(args: argparse.Namespace) -> int:
         for j in range(i + 1, len(active)):
             rid_a, owner_a, scopes_a = active[i]
             rid_b, owner_b, scopes_b = active[j]
+            # 协议约束的是「同一文件不得有两个 owner」；同一 owner 的多个范围不是冲突
+            if owner_a == owner_b and owner_a not in EMPTY_TOKENS:
+                continue
             hits = [
                 (sa, sb)
                 for sa in scopes_a

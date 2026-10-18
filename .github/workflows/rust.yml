@@ -24,3 +24,13 @@ jobs:
       working-directory: core
     - name: Run MCP smoke
       run: bash tools/run_mcp_smoke.sh
+
+  docs-facts:
+    name: 文档事实核查 + 任务板完整性
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: check_docs_facts.sh（README 子命令 / 版本 / 链接 / entitlements / OTA 白名单）
+      run: bash tools/check_docs_facts.sh
+    - name: workitem.py check（任务板列结构 / 重复 ID / 必填证据）
+      run: python3 tools/workitem.py check

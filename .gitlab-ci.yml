@@ -46,6 +46,13 @@ gate:
     - cd core
     - PATH="$HOME/.cargo/bin:$PATH" cargo test --workspace --no-fail-fast -- --skip 极端kdf参数建库记录与解锁往返 --skip 千条搜索基线
 
+docs_facts:
+  stage: gate
+  tags: [macos]
+  script:
+    - bash tools/check_docs_facts.sh
+    - python3 tools/workitem.py check
+
 release:
   stage: release
   tags: [macos]
@@ -96,6 +103,9 @@ release:
     - mkdir -p macos/build
     - echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > macos/build/top.cygnusyang.coffer.provisionprofile
     - '[ -s macos/build/top.cygnusyang.coffer.provisionprofile ] || { echo "profile base64 解码后为空"; exit 1; }'
+
+    # ---- 发版前检查清单（版本/CHANGELOG/profile 有效期/OTA 公钥/文档事实）----
+    - ./tools/run_release_checklist.sh "${CI_COMMIT_TAG}"
 
     # ---- 构建 + 签名 + 零网络核查 ----
     - ./tools/build_macos_app.sh --rebuild-bindings

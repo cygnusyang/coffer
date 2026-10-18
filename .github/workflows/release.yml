@@ -139,6 +139,9 @@ jobs:
           [ -s macos/build/top.cygnusyang.coffer.provisionprofile ] || \
             { echo "::error::profile base64 解码后为空"; exit 1; }
 
+      - name: 发版前检查清单（tools/run_release_checklist.sh，含文档事实核查）
+        run: bash tools/run_release_checklist.sh "${GITHUB_REF_NAME}"
+
       - name: 构建签名产物（--rebuild-bindings 强制重生成绑定）
         run: ./tools/build_macos_app.sh --rebuild-bindings
 

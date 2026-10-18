@@ -1,0 +1,8 @@
+{
+  "name": "coffer",
+  "description": "Coffer — local-first password manager; plugins for AI coding tools (use secrets, never read them)",
+  "owner": { "name": "cygnusyang" },
+  "plugins": [
+    { "name": "coffer", "source": "./plugins/claude-code" }
+  ]
+}

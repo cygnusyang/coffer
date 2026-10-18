@@ -83,6 +83,7 @@ logs/
 # ---------- 本地 Agent/助手目录（按需不入库） ----------
 .claude/
 .codebuddy/
+.agent-runs/
 
 # ---------- 浏览器扩展（已拆独立仓库 coffer-browser-extension，2026-10-08）----------
 # 扩展源码与构建均移入独立仓库；忽略规则随迁（新仓 .gitignore：node_modules/、tests-dist/）

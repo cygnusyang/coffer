@@ -12,6 +12,13 @@ release 中有体现）。
 
 ---
 
+## [Unreleased]
+
+### 新增/变化
+- **Claude Code 插件收编进主仓**：独立仓 coffer-claude（@79d2e7b）插件整体迁入 `plugins/claude-code/`（MCP 服务器 + 2 个 skills + 登录助手，功能不变；清除本机硬编码回落路径、独立注册脚本 remove 对齐 `--scope user`），根级 `.claude-plugin/marketplace.json` 取代原自源式市场清单；安装入口变更为 `claude plugin marketplace add cygnusyang/coffer` + `claude plugin install coffer@coffer`；插件许可随主仓 AGPL-3.0（原 MIT LICENSE 不随迁）；README「与 AI 工具协同（MCP）」节新增插件安装为推荐路径，手动注册降级兜底。
+
+---
+
 ## v2.11.0 — 2026-10-18
 
 ### 新增/变化

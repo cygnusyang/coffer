@@ -37,12 +37,23 @@ open macos/build/Coffer.app     # 建议拖入 /Applications
 
 先在 App「设置 → MCP / Agent 协作」启用「MCP 解锁托管」（需输入主密码确认）：解锁密钥存入本机钥匙串，之后 CLI 可**免密码**启动，注册命令无需写入密码。
 
+推荐：安装 Claude Code 插件（随主仓分发）。插件在连接时自动探测 App 二进制与本机 vault，无需写路径：
+
 ```bash
-# 注册到 Claude Code（免密，推荐；前置 = 设置 → MCP / Agent 协作 → 启用「MCP 解锁托管」）
+claude plugin marketplace add cygnusyang/coffer
+claude plugin install coffer@coffer
+```
+
+不用插件时的手动注册：
+
+```bash
+# 注册到 Claude Code（免密；前置 = 设置 → MCP / Agent 协作 → 启用「MCP 解锁托管」）
 claude mcp add coffer \
   -e COFFER_VAULT_DIR=/path/to/vault \
   -- "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer" mcp --provider coffer
 ```
+
+> 已安装插件时无需再执行本步——同名 `coffer` 条目并存时来源优先级不直观。
 
 > 未启用托管时，可追加 `-e COFFER_VAULT_PASSWORD=...` 用环境变量兜底——但密码会**明文写入** Claude Code 配置文件，建议优先启用托管。
 
@@ -145,3 +156,4 @@ cd core && cargo test --workspace --no-fail-fast
 
 > 修订注记：本文按 [docs/00-文档风格指南.md](docs/00-文档风格指南.md) 于 2026-10-16 重构（仅风格转换：术语统一「MCP 服务器」、删冗余、修订注记；命令、版本、退出码、废弃注记等事实不变）。
 > 修订注记（2026-10-17）：「首次启动与建库」主密码表述事实修正——补 Touch ID 解锁 / 离线恢复码重设路径（FR-17，均 opt-in），删除「唯一解锁凭据 / 遗失不可恢复」绝对化表述（与 v2.5.0 已实现恢复通道矛盾；doc-reviewer NOTE-3 核销）。
+> 修订注记（2026-10-18）：Claude Code 插件自独立仓 coffer-claude 收编入主仓 `plugins/claude-code/`（根级 `.claude-plugin/marketplace.json` 提供市场清单，许可随主仓 AGPL-3.0）；「与 AI 工具协同（MCP）」节新增插件安装为推荐路径，原手动 `claude mcp add` 注册降级为不用插件时的兜底。

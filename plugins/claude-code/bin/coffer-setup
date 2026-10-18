@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# PATH shim: while this plugin is enabled, `bin/` is on the Bash tool's PATH,
+# so skills can call `coffer-setup` without knowing where the plugin lives.
+# Execs scripts/coffer-mcp-setup.sh.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$DIR/../scripts/coffer-mcp-setup.sh" "$@"

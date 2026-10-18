@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+// PATH shim: while this plugin is enabled, `bin/` is on the Bash tool's PATH,
+// so skills can call `coffer-login` without knowing where the plugin lives.
+// Forwards argv to scripts/coffer-login.mjs.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'coffer-login.mjs');
+import(script).catch((e) => {
+  console.error('[coffer-login] failed:', e.message);
+  process.exit(1);
+});

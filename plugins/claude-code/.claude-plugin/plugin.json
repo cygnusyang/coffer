@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-plugin.json",
+  "name": "coffer",
+  "displayName": "Coffer — Use secrets, not read them",
+  "version": "0.1.0",
+  "description": "Local secrets gateway for Claude Code: connects coffer's MCP server with zero-config per-machine discovery (vault + binary auto-detected at connect time). Passwords only ever reach subprocesses via env injection.",
+  "author": { "name": "cygnusyang", "url": "https://github.com/cygnusyang" },
+  "homepage": "https://github.com/cygnusyang/coffer",
+  "repository": "https://github.com/cygnusyang/coffer",
+  "license": "AGPL-3.0",
+  "mcpServers": {
+    "coffer": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/coffer-launch.sh",
+      "env": {
+        "COFFER_VAULT_DIR": "${COFFER_VAULT_DIR:-}",
+        "COFFER_BIN": "${COFFER_BIN:-}"
+      }
+    }
+  }
+}

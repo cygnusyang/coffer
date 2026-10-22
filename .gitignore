@@ -93,3 +93,7 @@ logs/
 .omc/
 .playwright-mcp/
 AGENTS.md
+
+# AI 助手本地协议文件（与 AGENTS.md 同性质：本地协作入口，不入库）
+CLAUDE.md
+CLAUDE.local.md

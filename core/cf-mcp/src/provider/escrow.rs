@@ -31,14 +31,47 @@
 //! - `Ok(None)`：托管**不存在**（`errSecItemNotFound`）→ 合法的 env 兜底分支；
 //! - `Err(..)`：读取失败（ACL / 签名 / 内容非法）→ **须 fail-closed**（CLI
 //!   报错退出 1，不回退 env——防掩盖签名 / ACL 问题，docs/30 §1.3）。
+//!
+//! # access group 兼容（BUG-33）
+//!
+//! App 自改名后把托管条目写入当前 bundle id 对应的组
+//! `A6DS985SJJ.top.cygnusyang.coffer`，而本模块曾冻结在改名前的旧组
+//! `A6DS985SJJ.app.coffer.Coffer` → 查询全落 `errSecItemNotFound` →
+//! `Ok(None)` → 误走 env 兜底（表现为「未启用 MCP 解锁托管」）。
+//!
+//! 修复口径：**只扩大读取面**——[`access_group_candidates`] 返回
+//! [主组（当前 bundle id）, legacy 组（改名前的历史条目）]，按序试读：
+//! 首条命中即返回，主组 `Ok(None)` 才继续 legacy，任何 `Err` 立即
+//! fail-closed。Keychain 条目与 App 写入路径**不动**（非破坏性格式变更，
+//! 旧版 helper 与历史条目均不受影响）。
 
 use std::fmt;
 
 use cf_session::MCP_KEYCHAIN_SERVICE;
 
-/// 共享 Keychain access group（docs/29 §5.1 冻结字面量，与 Coffer.entitlements:27
-/// 同组；组内二进制读取静默放行，无跨组同意弹窗，docs/29 §9 风险 1 实证）。
-pub const ESCROW_ACCESS_GROUP: &str = "A6DS985SJJ.app.coffer.Coffer";
+/// 主 Keychain access group：当前 App bundle id（`top.cygnusyang.coffer`）对应的组。
+///
+/// 与 `macos/Coffer/Coffer.entitlements` 及 App 写入路径
+/// `macos/Coffer/Platform/McpEscrowKeychain.swift:67` 同组——托管条目**实际所在**
+/// 的组（BUG-33：此处曾停在改名前的旧组，导致读取全落 `errSecItemNotFound`）。
+/// 组内二进制读取静默放行，无跨组同意弹窗（docs/29 §9 风险 1 实证）。
+pub const ESCROW_ACCESS_GROUP: &str = "A6DS985SJJ.top.cygnusyang.coffer";
+
+/// legacy Keychain access group：App 改名（bundle id `app.coffer.Coffer` →
+/// `top.cygnusyang.coffer`）之前写入的托管条目所在组。
+///
+/// 仅作**读取兜底**：保留它以让老库的托管条目仍可解锁，不迁移、不删除
+/// Keychain 条目（非破坏性）。App 新写入一律进 [`ESCROW_ACCESS_GROUP`]。
+pub const ESCROW_ACCESS_GROUP_LEGACY: &str = "A6DS985SJJ.app.coffer.Coffer";
+
+/// 读取候选 access group，顺序为 **[主组, legacy 组]**。
+///
+/// 读取按此顺序试：主组命中即返回；主组 `Ok(None)`（条目不存在）才继续
+/// legacy；任一候选返回错误立即 fail-closed（见 [`VaultEscrowStore::read_mcp_key`]
+/// 的错误语义，绝不因兜底而掩盖缺 entitlement / ACL 问题）。
+pub fn access_group_candidates() -> [&'static str; 2] {
+    [ESCROW_ACCESS_GROUP, ESCROW_ACCESS_GROUP_LEGACY]
+}
 
 /// Escrow 错误类别（docs/29 §4.2 冻结：三类）。
 ///
@@ -137,10 +170,12 @@ pub trait VaultEscrowStore: Send + Sync {
 
 /// macOS Keychain escrow 实现（docs/29 §4.2）。
 ///
-/// 查询条件（docs/29 §5.1 / D-2 冻结）：`kSecClassGenericPassword` +
-/// service `cn.coffer.mcp-escrow` + account `vault_uuid` + access group
-/// `A6DS985SJJ.app.coffer.Coffer`（数据保护 Keychain 同口径，由
-/// `cf-escrow-keychain` 承载 FFI）。
+/// 查询条件（docs/29 §5.1 / D-2）：`kSecClassGenericPassword` +
+/// service `cn.coffer.mcp-escrow` + account `vault_uuid` +
+/// access group 按 [`access_group_candidates`] 顺序试读（主组
+/// `A6DS985SJJ.top.cygnusyang.coffer` → legacy 组
+/// `A6DS985SJJ.app.coffer.Coffer`；BUG-33 改名兼容，数据保护
+/// Keychain 同口径，由 `cf-escrow-keychain` 承载 FFI）。
 ///
 /// 本类型零字段（无状态适配器）；`read_mcp_key` 的 FFI 调用隔离在
 /// `cf-escrow-keychain`（unsafe 面，cf-mcp 保持 `forbid(unsafe_code)`）。
@@ -177,6 +212,32 @@ impl MacKeychainEscrow {
         }
     }
 
+    /// 按 [`access_group_candidates`] 顺序试读，命中或失败即停（BUG-33）。
+    ///
+    /// `read` 注入单次 Keychain 查询（参数为 `(account, access_group)`；
+    /// 生产为 `cf_escrow_keychain::read_generic_password`，单测为闭包），故本函数
+    /// 可完全不触 FFI 地覆盖三态 × 多候选的组合：
+    ///
+    /// - `Ok(Some(_))`：命中 → 经 [`map_read`] 校验长度后返回（内容非法
+    ///   同样按 `Err` 返回，不再试后续候选）；
+    /// - `Ok(None)`：该组无条目 → 继续下一个候选（主组无、legacy 有 = 改名前的
+    ///   历史条目仍可解锁；全部无 → `Ok(None)` 走 env 兜底）；
+    /// - `Err(..)`：立即返回 `Err`（**fail-closed**，不试 legacy——兜底不得
+    ///   掩盖缺 entitlement / ACL / 签名问题，docs/30 §1.3）。
+    fn read_with(
+        vault_uuid: &str,
+        read: impl Fn(&str, &str) -> Result<Option<Vec<u8>>, cf_escrow_keychain::EscrowKeychainError>,
+    ) -> Result<Option<[u8; 32]>, EscrowError> {
+        for access_group in access_group_candidates() {
+            match Self::map_read(read(vault_uuid, access_group)) {
+                Ok(Some(key)) => return Ok(Some(key)),
+                Ok(None) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
+    }
+
     /// 把 `cf-escrow-keychain` 错误归类为 [`EscrowError`]（fail-closed，类别
     /// 只影响调用方可操作提示分档）。
     fn map_err(e: cf_escrow_keychain::EscrowKeychainError) -> EscrowError {
@@ -208,11 +269,9 @@ impl MacKeychainEscrow {
 #[cfg(target_os = "macos")]
 impl VaultEscrowStore for MacKeychainEscrow {
     fn read_mcp_key(&self, vault_uuid: &str) -> Result<Option<[u8; 32]>, EscrowError> {
-        Self::map_read(cf_escrow_keychain::read_generic_password(
-            MCP_KEYCHAIN_SERVICE,
-            vault_uuid,
-            ESCROW_ACCESS_GROUP,
-        ))
+        Self::read_with(vault_uuid, |account, access_group| {
+            cf_escrow_keychain::read_generic_password(MCP_KEYCHAIN_SERVICE, account, access_group)
+        })
     }
 }
 
@@ -334,6 +393,166 @@ mod tests {
                 "non-OsStatus failures must be Other"
             );
         }
+    }
+
+    /// 候选读组顺序（BUG-33）：**主组在前**（当前 App bundle id
+    /// `top.cygnusyang.coffer` 对应的组，App 写入路径 McpEscrowKeychain.swift:67），
+    /// **legacy 组在后**（改名前的 `app.coffer.Coffer` 组，仅兜底历史条目）。
+    ///
+    /// 断言字面量而非仅互相引用——防止常量被改成「两个相同的组」或顺序被对调
+    /// 后测试仍然自洽（BUG-33 的正是「读到旧组」这类静默错配）。
+    #[test]
+    fn access_group_candidates_put_current_group_first() {
+        assert_eq!(
+            access_group_candidates(),
+            [
+                "A6DS985SJJ.top.cygnusyang.coffer",
+                "A6DS985SJJ.app.coffer.Coffer"
+            ],
+            "候选顺序须为 [当前组, legacy 组]"
+        );
+        // 下面两行是**别名自检**（常量名 ↔ 候选表位置的绑定），本身近乎恒真；
+        // 防漂移的主断言是上面那条字面量比较——改常量值或换顺序，主断言必红。
+        assert_eq!(access_group_candidates()[0], ESCROW_ACCESS_GROUP);
+        assert_eq!(access_group_candidates()[1], ESCROW_ACCESS_GROUP_LEGACY);
+    }
+
+    /// 按候选顺序读取的可测核心（`read_with`，不触 FFI）：记录每次实际被查的
+    /// access group，便于断言「是否继续下一个候选」。
+    #[cfg(target_os = "macos")]
+    struct ReadLog {
+        groups: std::cell::RefCell<Vec<String>>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ReadLog {
+        fn new() -> Self {
+            Self {
+                groups: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn called(&self) -> Vec<String> {
+            self.groups.borrow().clone()
+        }
+    }
+
+    /// 期望的候选组序列（String 形式，与 [`ReadLog::called`] 直接比较）。
+    #[cfg(target_os = "macos")]
+    fn expected_groups(groups: &[&str]) -> Vec<String> {
+        groups.iter().map(|g| (*g).to_string()).collect()
+    }
+
+    /// 主组 `Ok(None)` + legacy `Ok(Some(32B))` → 命中 legacy（改名前的历史
+    /// 条目仍可读，向后兼容），且主组先被查。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_with_falls_back_to_legacy_group_on_not_found() {
+        let log = ReadLog::new();
+        let key = [0x5Au8; 32];
+        let got = MacKeychainEscrow::read_with("uuid-1", |account, group| {
+            assert_eq!(account, "uuid-1", "account 须为 vault_uuid");
+            log.groups.borrow_mut().push(group.to_string());
+            if group == ESCROW_ACCESS_GROUP {
+                Ok(None)
+            } else {
+                Ok(Some(key.to_vec()))
+            }
+        })
+        .expect("legacy 组命中须 Ok(Some)")
+        .expect("must be Some");
+        assert_eq!(got, key);
+        assert_eq!(
+            log.called(),
+            expected_groups(&[ESCROW_ACCESS_GROUP, ESCROW_ACCESS_GROUP_LEGACY]),
+            "须先查主组、再兜底查 legacy 组"
+        );
+    }
+
+    /// 主组 `Ok(Some)` → 直接返回，**legacy 不被调用**（不做无谓的第二次
+    /// Keychain 查询）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_with_returns_immediately_on_current_group_hit() {
+        let log = ReadLog::new();
+        let key = [0x11u8; 32];
+        let got = MacKeychainEscrow::read_with("uuid-1", |_, group| {
+            log.groups.borrow_mut().push(group.to_string());
+            Ok(Some(key.to_vec()))
+        })
+        .expect("主组命中须 Ok(Some)")
+        .expect("must be Some");
+        assert_eq!(got, key);
+        assert_eq!(
+            log.called(),
+            expected_groups(&[ESCROW_ACCESS_GROUP]),
+            "主组命中后不得再查 legacy 组"
+        );
+    }
+
+    /// 主组返回**坏长度**数据（31 字节）→ `Err(NotFound)` 且 **不查 legacy**。
+    ///
+    /// 守卫的是 `map_read` 与 `read_with` 的组合语义：坏长度不是「条目不存在」，
+    /// 若 `map_read` 被改成把非法长度降级为 `Ok(None)`，本函数就会**静默转去
+    /// 读 legacy 组**，把半写 / 损坏的托管条目掩盖成另一个组的命中（fail-closed 被破坏）。
+    /// 单测在 map_read 层无法捕获这类改动——只有 `read_with` 层能锁住「不得兜底」。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_with_bad_length_on_current_group_does_not_fall_back() {
+        let log = ReadLog::new();
+        let e = MacKeychainEscrow::read_with("uuid-1", |_, group| {
+            log.groups.borrow_mut().push(group.to_string());
+            Ok(Some(vec![0u8; 31]))
+        })
+        .expect_err("坏长度须 Err（fail-closed，不得降级为 Ok(None)）");
+        assert_eq!(
+            e.kind(),
+            EscrowErrorKind::NotFound,
+            "条目存在但内容非法 → NotFound"
+        );
+        assert_eq!(
+            log.called(),
+            expected_groups(&[ESCROW_ACCESS_GROUP]),
+            "坏长度不得触发 legacy 兜底"
+        );
+    }
+
+    /// 主组 `Err(-34018)`（缺 entitlement）→ `AccessDenied` 且 **不查 legacy**
+    /// （fail-closed：绝不因兜底而掩盖 entitlement / ACL 错误）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_with_fails_closed_without_trying_legacy_group() {
+        let log = ReadLog::new();
+        let e = MacKeychainEscrow::read_with("uuid-1", |_, group| {
+            log.groups.borrow_mut().push(group.to_string());
+            Err(os_err(-34018))
+        })
+        .expect_err("读取失败须 Err（fail-closed）");
+        assert_eq!(e.kind(), EscrowErrorKind::AccessDenied);
+        assert_eq!(
+            log.called(),
+            expected_groups(&[ESCROW_ACCESS_GROUP]),
+            "错误不得触发 legacy 兜底"
+        );
+    }
+
+    /// 主组 `Ok(None)` + legacy `Ok(None)` → `Ok(None)`（两处均无条目，
+    /// 调用方走合法的 env 兜底分支）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_with_returns_none_when_no_candidate_has_item() {
+        let log = ReadLog::new();
+        let r = MacKeychainEscrow::read_with("uuid-1", |_, group| {
+            log.groups.borrow_mut().push(group.to_string());
+            Ok(None)
+        })
+        .expect("两处均 not found 须 Ok(None)");
+        assert!(r.is_none(), "无条目须 Ok(None)");
+        assert_eq!(
+            log.called(),
+            expected_groups(&[ESCROW_ACCESS_GROUP, ESCROW_ACCESS_GROUP_LEGACY]),
+            "两个候选均须被查过"
+        );
     }
 
     /// 非 macOS：`UnsupportedEscrow` 恒 `Err(Other)`（fail-closed，不落明文）。

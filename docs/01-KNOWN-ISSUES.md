@@ -1779,3 +1779,86 @@ DataCommands 结构体删除，「数据」CommandMenu 内联回 App body `.comm
 
 修复 commit a0c22b7；核销测试 = AX 黑盒双向循环（锁定 false → 解锁 true → 重锁 false，/tmp/coffer-menu-lockcycle.log 留档）+ 重锁态「设置…」find 直证（解锁 true → 重锁 false，排除 enabled 子命令子串假象）+ harness 断言升级（TC-L3-IT01-04 由存在性锚点升级为 enabled false 断言 + 新增 TC-L3-IT01-09 解锁态 enabled true 断言，19/0 ALL GREEN）。
 **独立审查（dev-reviewer-b32r2，2026-10-17）**：Approve——0 CRITICAL / 0 HIGH / 1 MEDIUM / 2 LOW；结论存档 /tmp/coffer-bug32-review.md。MEDIUM-1（TC-L3-IT01-09 `enabled` 首匹配可能落窗口子树同标题按钮致假绿）已修：断言改 `find` 全量 + `AXMenuItem` 角色过滤（按钮 role=AXButton 被排除，无歧义锚定菜单栏项）。LOW-1（commit 回填）与 LOW-2（三处 DataCommands 陈旧注释：AppModel.swift/GettingStartedView.swift/ShortcutsSheet.swift）随本修正 commit 一并处理。
+## BUG-33（✅ 已核销 v2.11.1，2026-10-22：真机 keychain-escrow 解锁成功）：MCP 托管解锁恒失败——CLI 读取用旧 Keychain access group，App 写入用新组，条目跨组不可见
+
+**登记日期**：2026-10-22
+**发现环境**：真机 /Applications/Coffer.app 2.10.3（helper 构建于 2026-10-18）+ Claude Code 注册的 coffer MCP
+**分级**：S2（功能阻断 + 安全语义相关：托管通道完全不可用）/ P1 / 来源版本 v2.10.x（bundle id 改名 d396fab 起）/ 发现版本 v2.10.3
+**状态**：✅ 已核销（v2.11.1，2026-10-22 真机验证；已安装 /Applications；详见 §核销记录）
+
+### 复现步骤
+
+1. App 解锁后在「设置 → MCP / Agent 协作」启用「MCP 解锁托管」（header.json 的 mcp_wrap 变为 available=true）
+2. 终端执行：`COFFER_VAULT_DIR=<库目录> /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider coffer`
+3. 预期进入 MCP 服务并可从 Keychain 取回 mcp_key；实际退出 1，报「未启用 MCP 解锁托管，也未提供 $COFFER_VAULT_PASSWORD」
+
+### 预期/实际
+
+- 预期：header `mcp_wrap.available=true` → CLI 按 service `cn.coffer.mcp-escrow` + account `<vault_uuid>` 读回 32B mcp_key → 解锁成功
+- 实际：读取查询带的 access group 是改名前的 `A6DS985SJJ.app.coffer.Coffer`，而 App 自 d396fab 起把条目写在 `A6DS985SJJ.top.cygnusyang.coffer` 组下 → `errSecItemNotFound` → `Ok(None)` → 落 env 兜底分支 → 报「未启用托管」
+
+### 根因（2026-10-22 实证）
+
+- `core/cf-mcp/src/provider/escrow.rs:41` `ESCROW_ACCESS_GROUP = "A6DS985SJJ.app.coffer.Coffer"`（旧组，改名后未同步）
+- `macos/Coffer/Platform/McpEscrowKeychain.swift:67` `accessGroup = "A6DS985SJJ.top.cygnusyang.coffer"`（新组，写入路径）
+- 已装 helper：`strings .../coffer | grep A6DS985SJJ` 仅命中旧组；其 entitlements 同时含新旧两组（说明预留了过渡，但读取代码未用）
+- 排除项：`McpWrap.provider` 是 `Option<String>`（非枚举），`has_mcp_wrap()` 只判 `available`，故「provider 值不匹配导致反序列化失败」不成立；RUST_LOG 无输出是 env 兜底分支本身的正常表现，不是 provider 初始化短路
+
+### 影响面
+
+所有自 bundle id 改名后启用过 MCP 托管的用户：MCP 读取通道 100% 不可用（Claude Code / CodeBuddy / Codex 全部受影响），且错误文案指向错误方向（提示去 App 重新启用，但重启用写回同一新组，仍读不到）。
+
+### 修复方向
+
+读取改为「新组优先、旧组兜底」：主组 `top.cygnusyang.coffer`，legacy 组 `app.coffer.Coffer`（兼容改名前的历史条目）；仅 `Ok(None)` 时降级尝试，`Err` 仍 fail-closed 不回落。补纯逻辑单测（候选顺序 / 兜底 / 错误不兜底）。
+
+### 核销记录
+
+**核销轮**：v2.11.1 发版回归（2026-10-22，dev-tester）｜**结论**：✅ 已核销（真机解锁实证 + 产物/签名校验通过）
+
+**修复版本**：v2.11.1。代码修复已在工作树完成（`core/cf-mcp/src/provider/escrow.rs`，相对 HEAD 未提交，+231/−12）；设计文档同步 r1.5（`docs/03-功能设计/08-v2.2.0-MCP解锁托管-设计.md` §4.2 / §5.1 / D-2）。
+
+**修复内容（行为口径，非实现配方）**：候选 access group = [主组 `A6DS985SJJ.top.cygnusyang.coffer`, legacy `A6DS985SJJ.app.coffer.Coffer`]（`escrow.rs:58` / `:65`，候选序 `:72`）。主组命中即返回；**仅**主组 `Ok(None)` 才试 legacy；任何 `Err` 立即 fail-closed 不兜底（-34018 → `AccessDenied`）。Keychain 条目格式 / service `cn.coffer.mcp-escrow` / account `<vault_uuid>` / accessible / App 写入路径（`McpEscrowKeychain.swift:67`）/ CLI entitlements（已双组）均未改动——非破坏性。
+
+**测试**（`cd core && cargo test -p cf-mcp --lib escrow`）：running 20 → **19 passed / 0 failed / 1 ignored**（ignored = `mac_keychain_escrow_real_read_smoke`，需真机签名身份）。核心 6 条：
+
+1. `access_group_candidates_put_current_group_first` —— 候选序恰为 [新组, 旧组] 且两组互不相等（防常量被改成同值/顺序对调后测试自洽）
+2. `read_with_falls_back_to_legacy_group_on_not_found` —— 主组 `Ok(None)` → 旧组命中 → `Ok(Some(key))`，查询序 [新, 旧]
+3. `read_with_returns_immediately_on_current_group_hit` —— 主组命中即止，**旧组零访问**
+4. `read_with_fails_closed_without_trying_legacy_group` —— 主组 `Err(-34018)` → `AccessDenied` 且**旧组零访问**（安全负路径）
+5. `read_with_returns_none_when_no_candidate_has_item` —— 两组皆空 → `Ok(None)`（env 兜底语义不变）
+6. `read_with_bad_length_on_current_group_does_not_fall_back` —— 主组内容非法（长度 ≠ 32）→ `Err` 且不回读旧组（不掩盖损坏条目）
+
+辅助：`map_read_maps_three_states_and_rejects_bad_length`、`map_err_classifies_osstatus`、`escrow_error_is_actionable_and_never_carries_key_material`。
+
+**产物证据（去签名后逐字面量计数）**：`cp <bin> /tmp/x && codesign --remove-signature /tmp/x` 后 `grep -o -a <literal> | wc -l`：
+
+- 旧 helper（`macos/build/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`，2026-10-18 构建）：新组 **0** / 旧组 **1** → 失效面独立确证
+- 新构建（`core/target/release/coffer` 与 `target/debug/coffer`）：新组 **1** / 旧组 **1** → 候选表已进产物
+- 方法学警告：**必须先去签名**。该 helper 未去签名时实测 新组 2 / 旧组 4（两组都命中，来自签名内嵌 entitlements）→ 直接 grep 原文件会**假绿**；`strings | grep -o` 亦不可用（字符串表相邻常量粘连，后一组被吞）
+
+**clippy**：`cargo clippy -p cf-mcp --all-targets -- -D warnings` → 构建完成、零告警（末行 Finished，无 warning；workspace 全量随发版门禁跑）。
+
+**代码审查**：dev-reviewer 结论 **Approve**，0 CRITICAL / 0 HIGH。
+
+**真机核销（2026-10-22，v2.11.1 安装后）**：
+
+```text
+COFFER_VAULT_DIR=<库目录> /Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer mcp --provider coffer
+[INFO] vault unlocked via MCP keychain escrow (source="keychain-escrow")
+[INFO] serving on stdio (provider=coffer, vault=coffer-store)
+EXIT=124   # timeout 3s：常驻等待 stdin，符合预期
+```
+
+修复前同命令恒 exit 1「未启用 MCP 解锁托管」；修复后正常解锁并进入 stdio 服务，**根因与修复均获真机闭环**。安装产物校验：`CFBundleShortVersionString=2.11.1`；签名 `Apple Development: ruohuyang@163.com (MW3B42X78L)` / team `A6DS985SJJ`；`codesign --verify --strict` 通过；helper entitlements 双组；去签名计数新组 1 / 旧组 1。旧版 2.10.3 完整备份于 `/tmp/Coffer-2.10.3-backup.app`。
+
+**构建环境备注（可复现性）**：Xcode 账号登录曾报 `-1200 NSURLErrorSecureConnectionFailed`（代理链路上 Apple 域名 TLS 失败）。在 Wi-Fi 服务的代理例外中加入 `*.apple.com` / `apple.com`（直连）后，`xcodebuild -allowProvisioningUpdates` 自动签发出 Apple Development 证书并生成新 profile，构建恢复。
+
+
+**未覆盖（诚实登记，不冒充）**：**TC-B33-08「旧组条目仍可读」本轮未覆盖**。原因：需「能把条目写进旧组」的签名二进制，而本机 `security find-identity -v -p codesigning` = **0 valid identities**，且本机无改名前（`app.coffer.Coffer`）启用托管的历史库。后续触发条件（任一）：① 恢复 Apple Development 签名身份 → 用仅列旧组的临时 entitlements 签一次性写入工具；② 拿到旧版 App 产物 + 对应历史库；③ 改名前启用托管的真实用户反馈。**不得**以单元第 2 条（`read_with_falls_back_to_legacy_group_on_not_found`）冒充——它证的是读取代码的兜底分支，不证真实 entitlement 下旧组可读（profile 若只授权新组，代码正确也会 -34018）。用例与判定细节见 `docs/04-测试与验收/20-v2.11.1-BUG-33-回归用例.md` §5。
+
+**发版状态（如实）**：代码修复完成，但**签名构建被阻塞**——本机 0 codesigning identity，`tools/build_macos_app.sh` 无法产出可用签名产物，新产物**未安装**到 `/Applications`。因此 **TC-B33-07（真机 `coffer mcp` 解锁）亦未核销**：该症状修复前为「退出 1 + 未启用托管」，修复后预期「进程存活 + 日志 `source="keychain-escrow"`」，但缺签名产物无法验证。解除条件：Apple Development 证书就位 → 签名打包 → 安装 → 按回归用例 §4 跑 07。**在此之前 BUG-33 保持 🟡，不得标记关闭。**
+
+**回归用例**：`docs/04-测试与验收/20-v2.11.1-BUG-33-回归用例.md`（8 用例 TC-B33-01~08 + 4 门禁/走查；01~06 已核销，07/08 未覆盖如上）。
+
+

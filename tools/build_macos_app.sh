@@ -109,6 +109,10 @@ SOURCES+=("${SRC_DIR}/McpRegisterHelper/RegisterRequest.swift")
 # 单源=同一 spec 构造 argv（config 只传值）；App 侧 McpRegisterCommand.buildArgs
 # coffer 分支委托它，helper main.swift 直接 spawn 它。
 SOURCES+=("${SRC_DIR}/McpRegisterHelper/McpRegisterSpec.swift")
+# MCP 目标单源（v2.12.0 多 AI 工具注册）：McpAgentTarget 同时编进 App 与 helper，
+# 单源=同一份 target 定义（展示名 / 配置落点 / argv 形状 / 复制串），App 侧
+# UI 与 McpRegistrar、helper 侧命令分派共用，防两侧漂移。
+SOURCES+=("${SRC_DIR}/McpRegisterHelper/McpAgentTarget.swift")
 
 CLANG_INCLUDES=()
 if [[ "${OFFICIAL_LICENSE}" == "1" ]]; then

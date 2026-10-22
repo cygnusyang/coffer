@@ -27,6 +27,7 @@ swiftc -O \
   -target "${ARCH}-apple-macos14.0" \
   "${ROOT_DIR}/macos/Tests/McpRegistrarTests/main.swift" \
   "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/McpRegisterSpec.swift" \
+  "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/McpAgentTarget.swift" \
   "${ROOT_DIR}/macos/Coffer/McpRegisterHelper/RegisterRequest.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpStatusConfig.swift" \
   "${ROOT_DIR}/macos/Coffer/Support/McpRegistrar.swift" \

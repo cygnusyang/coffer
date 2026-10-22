@@ -20,33 +20,21 @@
 //     + 状态只查 coffer 二进制与托管启用；
 //   - MCP 解锁托管三态节（McpEscrowSettingsSection）仅 coffer 分支呈现。
 //
+// v2.12.0 多 AI 工具（docs/23 §4.1）：
+//   - coffer 分支的「Claude Code 注册」单行 → 「AI 工具」子节
+//     （McpAgentToolsSection）：已安装的自动注册工具逐行开关（Claude Code /
+//     CodeBuddy / Codex），未安装者与 copy-only 工具收进「其他工具」折叠组、
+//     只给复制入口；
+//   - coffer 分支的全局「复制注册命令」行删除——命令必须绑定单一 target；
+//   - 总开关语义扩为批量：ON = 对已安装且用户未关闭的工具批量注册，OFF = 批量
+//     移除；存在已注册工具时先确认（默认取消），移除失败不阻塞 OFF 本身。
+//
 // 呈现纪律（docs/20 §6.3 / docs/07 §2.4）：显式错误处理——复制失败 /
 // 剪贴板失败 / op 缺失均给用户可操作提示；op token 即用即弃、不落本视图
 // 状态（本版只探测 env 级会话信号，不捕获 token，见 McpStatusProbe 注释）。
 
 import AppKit
 import SwiftUI
-
-/// Claude Code 注册/检测/移除状态（v2.11.0 lead 裁定：开关 ON 自动注册 +
-/// check 缓存态 + 开关 OFF 自动移除）。
-enum McpRegistrationState: Equatable {
-    /// 未检查（op 分支 / 开关 OFF）
-    case idle
-    /// 检测中（onAppear / 页面进入异步 check）
-    case checking
-    /// 注册中（开关 ON 自动注册在飞）
-    case registering
-    /// 移除中（开关 OFF 自动移除在飞，best-effort）
-    case removing
-    /// 已注册（携带读回的 COFFER_VAULT_DIR，供与当前库比对提示）
-    case registered(String?)
-    /// 未注册（check 结论；开关 ON 即自动注册）
-    case notRegistered
-    /// 已停用但注册项未清理干净（开关 OFF 移除失败，引导手动清理）
-    case cleanupNeeded(String)
-    /// 失败（携带用户可读文案）
-    case failed(String)
-}
 
 /// 统一设置页「MCP / Agent 协作」节（docs/20 §6；docs/29 §7.1 翻转）。
 /// v2.2.0 起经 `@EnvironmentObject model: AppModel` 读取会话 / 库身份
@@ -63,10 +51,12 @@ struct McpSettingsSection: View {
     @State private var provider = McpProvider.defaultProvider
     /// 就绪状态（onAppear / 开关变更 / 链接动作 / provider 切换后刷新）。
     @State private var status: McpStatus = .disabled
-    /// Claude Code 注册/检测状态（v2.11.0：开关 ON 自动注册；check 缓存态）。
-    @State private var registration: McpRegistrationState = .idle
-    /// 注册/检测在飞任务（重入串行：新触发取消旧任务，防并发撞固定 config/result）。
-    @State private var registrationTask: Task<Void, Never>?
+    /// 多 AI 工具注册状态中心（v2.12.0：每个 target 独立注册态 + helper 串行通道）。
+    /// 与「AI 工具」子节共用同一实例——总开关需读 hasRegisteredTarget 决定是否弹
+    /// 关闭确认（docs/23 §5.4）。
+    @StateObject private var agentTools = McpAgentToolCenter()
+    /// 关闭总开关前的确认（仅有已注册工具时出现；默认取消，docs/23 §5.4）。
+    @State private var showDisableConfirm = false
     /// 错误弹窗（FfiErrorAlert 统一「操作失败」呈现，docs/20 §6.3）。
     @State private var errorMessage: String?
     /// 信息/引导弹窗（链接 1Password 的成功或 `op signin` 引导文案）。
@@ -74,11 +64,8 @@ struct McpSettingsSection: View {
     /// 「已复制」瞬时反馈标记（2 s 后自动熄灭）。
     @State private var copied = false
 
-    /// 注册协调器（写入容器 tmp 固定 config → open 启嵌入式 helper → 轮询 result）。
-    private let registrar = McpRegistrar()
-
-    /// 「已复制」反馈的显示时长（秒）。
-    private static let copiedFeedbackSeconds: TimeInterval = 2
+    /// 「已复制」反馈的显示时长（秒；docs/23 §7.4 STD-03：随 v2.12.0 统一 1.5 s）。
+    private static let copiedFeedbackSeconds: TimeInterval = 1.5
 
     var body: some View {
         Group {
@@ -92,7 +79,11 @@ struct McpSettingsSection: View {
         }
         .onAppear {
             refreshStatus()
-            refreshRegistrationState()
+            refreshAgentTools()
+        }
+        .onDisappear {
+            // 离开本页：取消在飞 helper 操作，不留幽灵中间态（docs/23 N-8）。
+            agentTools.cancelAll()
         }
         .ffiErrorAlert($errorMessage)
         .alert(
@@ -106,38 +97,65 @@ struct McpSettingsSection: View {
         } message: {
             Text(infoMessage ?? "")
         }
+        .confirmationDialog(
+            "关闭「启用 MCP 服务器」？",
+            isPresented: $showDisableConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("关闭并移除注册", role: .destructive) {
+                // 真正的落态在 enabled 的 onChange（单一路径）；此处只落意图。
+                enabled = false
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将从以下工具移除 coffer 注册项：\(agentTools.cleanupTargetNames)。移除后这些工具不再能经 MCP 访问本机密码库。MCP 解锁托管保持开启，不受影响。")
+        }
     }
 
     /// 主节（开关 / provider / vault / 命令 / 状态；docs/29 §7.1 分支）。
     private var mainSection: some View {
         Section {
-            Toggle("启用 MCP 服务器", isOn: $enabled)
+            Toggle("启用 MCP 服务器", isOn: masterEnabledBinding)
+                // H3：在飞时禁用总开关（串行通道一次一个 helper 请求；OFF 与在飞注册
+                // 竞态会留下半写配置）。检测（AI 工具行 ⟳）同样受此互斥约束。
+                .disabled(agentTools.busy)
+                .help(agentTools.busy ? "正在处理注册操作，请稍候" : "关闭会移除全部工具的注册项")
                 .onChange(of: enabled) { _, newValue in
                     McpSettings.saveEnabled(newValue)
                     refreshStatus()
                     if newValue {
-                        // lead 裁定：开关 ON 动作本身 = 自动注册（主形态，无需再点按钮）
-                        autoRegisterIfNeeded()
+                        // 开关 ON 本身 = 批量注册（docs/23 §4.2 OFF→ON：只对已安装且
+                        // 用户未关闭的工具 upsert，主形态，无需再点按钮）。
+                        if provider == .coffer {
+                            agentTools.activateAll(vaultDir: model.vaultDirPath,
+                                                   cofferBinaryPath: cofferBinaryPath)
+                        }
                     } else {
-                        // OFF（lead 裁定 3）：best-effort 自动 remove——取消在飞任务并
-                        // 异步移除 coffer 注册项（残留项会在 Claude Code 侧持续拉起一个
-                        // owner 已禁用的服务，语义不一致）。移除失败**不阻塞 OFF 本身**，
-                        // UI 显示「已停用，但需手动清理注册项」引导。
-                        registrationTask?.cancel()
-                        registration = .idle
-                        autoRemoveIfNeeded()
+                        // OFF：best-effort 批量移除（残留项会让工具侧继续持有取密权限）。
+                        // 移除失败**不阻塞 OFF 本身**：失败行按事实态渲染 + 再次清理入口。
+                        if provider == .coffer {
+                            agentTools.deactivateAll()
+                        }
                     }
                 }
 
             providerRow
             vaultRow
-            commandPreviewRow
-            copyButtonRow
+            // 注册命令必须绑定单一 target（docs/23 §4.1）：coffer 分支取消全局
+            // 「复制注册命令」行，复制入口下沉到每个工具行；op 分支保持原样。
             if provider == .op {
+                commandPreviewRow
+                copyButtonRow
                 linkButtonRow
             }
             statusRow
-            registrationRow
+            if provider == .coffer {
+                McpAgentToolsSection(
+                    center: agentTools,
+                    masterEnabled: enabled,
+                    cofferBinaryPath: cofferBinaryPath
+                )
+            }
             usageLogRow
         } header: {
             Text("MCP / Agent 协作")
@@ -159,9 +177,9 @@ struct McpSettingsSection: View {
                     Button {
                         provider = option
                         refreshStatus()
-                        // 切到 coffer 且已启用 → 补自动注册（op→coffer 流程同样
-                        // 「打开就能用」；op 分支 autoRegisterIfNeeded 内 guard 空转）
-                        autoRegisterIfNeeded()
+                        // 切到 coffer → 重新探测工具与注册态（op 分支不渲染工具行，
+                        // 但探测只读、无副作用；切回 coffer 时状态即刻可用）。
+                        refreshAgentTools()
                     } label: {
                         if option == provider {
                             Label(option.displayName, systemImage: "checkmark")
@@ -386,175 +404,33 @@ struct McpSettingsSection: View {
         }
     }
 
-    // MARK: - Claude Code 注册行（v2.11.0：开关 ON 自动注册 + check 缓存态）
+    // MARK: - AI 工具（v2.12.0 多工具注册；子节见 McpAgentToolsSection）
 
-    /// 注册/检测状态行：coffer 分支专用（op 无自动注册语义，copy 按钮兜底）。
-    /// 显示当前注册到 Claude Code（全局）的状态；失败/未注册文案指向
-    /// 「复制注册命令」兜底（lead 裁定：不另设注册按钮）。
-    @ViewBuilder
-    private var registrationRow: some View {
-        if provider == .coffer {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: registrationIcon)
-                    .foregroundStyle(registrationColor)
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude Code 注册").font(.headline)
-                    Text(registrationLabel)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+    /// 总开关绑定：coffer 分支关闭前先确认（docs/23 §5.4 关闭确认清单）。
+    ///
+    /// setter 里**不改** enabled（值不变即界面开关自动回弹），只弹确认；确认后由
+    /// 「关闭并移除注册」置 false，落态统一走 enabled 的 onChange（单一路径）。
+    private var masterEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { enabled },
+            set: { newValue in
+                // H3 第二半：在飞（checking / registering / removing）也可能已写入
+                // 半份配置，必须与「已注册」同权进确认，不得直接放行关闭。
+                if !newValue, provider == .coffer,
+                   agentTools.hasRegisteredTarget || agentTools.anyInFlight {
+                    showDisableConfirm = true
+                    return
                 }
-                Spacer()
+                enabled = newValue
             }
-        }
+        )
     }
 
-    private var registrationIcon: String {
-        switch registration {
-        case .registered: return "checkmark.circle"
-        case .failed, .cleanupNeeded: return "exclamationmark.triangle"
-        case .registering, .checking, .removing: return "arrow.triangle.2.circlepath"
-        case .idle, .notRegistered: return "circle"
-        }
-    }
-
-    private var registrationColor: Color {
-        switch registration {
-        case .registered: return .green
-        case .failed, .cleanupNeeded: return .orange
-        case .registering, .checking, .removing: return .secondary
-        case .idle, .notRegistered: return .secondary
-        }
-    }
-
-    private var registrationLabel: String {
-        switch registration {
-        case .idle:
-            return enabled ? "未检查" : "已关闭。打开开关即自动注册到 Claude Code。"
-        case .checking:
-            return "检查注册状态…"
-        case .registering:
-            return "正在注册到 Claude Code（全局）…"
-        case .removing:
-            return "正在从 Claude Code 移除 coffer 注册项…"
-        case .registered(let registeredDir):
-            var text = "已注册到 Claude Code（全局）。"
-            if let registeredDir, !model.vaultDirPath.isEmpty, registeredDir != model.vaultDirPath {
-                text += "\n注意：注册的密码库目录与当前不一致（可能为历史残留），建议用「复制注册命令」手动更新。"
-            }
-            return text
-        case .notRegistered:
-            return enabled
-                ? "未注册。打开开关即自动注册；也可用「复制注册命令」手动注册。"
-                : "已停用。已从 Claude Code 移除注册项（打开开关即自动重新注册）。"
-        case .cleanupNeeded(let detail):
-            return "已停用，但需手动清理注册项。\(detail)"
-        case .failed(let message):
-            return message
-        }
-    }
-
-    // MARK: - 注册/检测执行（重入串行：registrationTask 新触发取消旧任务）
-
-    /// 开关 ON / provider 切到 coffer 时的自动注册（lead 裁定：主形态）。
-    /// 前置不足（未开库 / 未找到 coffer 二进制）→ 直接置失败/未注册态并指向
-    /// copy 按钮兜底，**不阻塞开关**（MCP 就绪态不受影响，点 3 要求）。
-    private func autoRegisterIfNeeded() {
-        guard enabled, provider == .coffer else { return }
-        guard canBuildCofferCommand else {
-            registration = .notRegistered
-            return
-        }
-        guard !cofferBinaryPath.isEmpty else {
-            registration = .failed("未找到 coffer 命令（App 包内或 PATH），无法自动注册。请用「复制注册命令」手动注册。")
-            return
-        }
-        registrationTask?.cancel()
-        registration = .registering
-        registrationTask = Task {
-            await performRegister()
-        }
-    }
-
-    private func performRegister() async {
-        do {
-            let result = try await registrar.register(
-                vaultDir: model.vaultDirPath,
-                cofferBinaryPath: cofferBinaryPath
-            )
-            guard !Task.isCancelled else { return }
-            if result.success && result.registered {
-                registration = .registered(result.vaultDir)
-            } else {
-                registration = .failed(McpRegistrar.errorMessage(for: result.code))
-            }
-        } catch is CancellationError {
-            // 被新任务取代，不更新状态
-        } catch {
-            guard !Task.isCancelled else { return }
-            let message = (error as? LocalizedError)?.errorDescription
-                ?? "注册失败，请重试或用「复制注册命令」手动注册。"
-            registration = .failed(message)
-        }
-    }
-
-    /// 开关 OFF 自动移除（lead 裁定 3：best-effort，不阻塞 OFF 本身）。仅 coffer
-    /// 分支（op 无自动注册故无自动移除）；claude 缺失 / 超时 / 未移除成功 →
-    /// cleanupNeeded 引导手动清理（claude mcp remove coffer），开关保持 OFF。
-    private func autoRemoveIfNeeded() {
-        guard !enabled, provider == .coffer else { return }
-        registrationTask?.cancel()
-        registration = .removing
-        registrationTask = Task {
-            await performRemove()
-        }
-    }
-
-    private func performRemove() async {
-        do {
-            let result = try await registrar.remove()
-            guard !Task.isCancelled else { return }
-            if result.success {
-                registration = .notRegistered
-            } else {
-                registration = .cleanupNeeded(McpRegistrar.removeErrorMessage(for: result.code))
-            }
-        } catch is CancellationError {
-            // 被新任务取代（如又拨回 ON），不更新状态
-        } catch {
-            guard !Task.isCancelled else { return }
-            let message = (error as? LocalizedError)?.errorDescription
-                ?? "移除失败，请重试或手动运行 claude mcp remove coffer。"
-            registration = .cleanupNeeded(message)
-        }
-    }
-
-    /// 页面进入 / 冷启动：异步 check 真实 ~/.claude.json 缓存注册态（lead 裁定）。
-    private func refreshRegistrationState() {
-        guard provider == .coffer else {
-            registration = .idle
-            return
-        }
-        registrationTask?.cancel()
-        registration = .checking
-        registrationTask = Task {
-            await performCheck()
-        }
-    }
-
-    private func performCheck() async {
-        do {
-            let result = try await registrar.checkRegistered()
-            guard !Task.isCancelled else { return }
-            registration = result.registered ? .registered(result.vaultDir) : .notRegistered
-        } catch is CancellationError {
-            // 被新任务取代，不更新状态
-        } catch {
-            guard !Task.isCancelled else { return }
-            let message = (error as? LocalizedError)?.errorDescription
-                ?? "检查注册状态失败，请重试。"
-            registration = .failed(message)
-        }
+    /// 工具侧状态刷新（进入页面 / 切 provider 回 coffer）：probe → 逐 target check。
+    /// 检测只读且恒可用（不随总开关 / 会话 / 辅助程序就绪而禁用，docs/23 STD-05）。
+    private func refreshAgentTools() {
+        guard provider == .coffer else { return }
+        agentTools.refresh()
     }
 
     // MARK: - 查看使用记录（docs/20 §6.1 控件表末项）

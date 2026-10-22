@@ -14,6 +14,21 @@ release 中有体现）。
 
 ## [Unreleased]
 
+## v2.12.0 — 2026-10-22
+
+### 新增/变化
+- **多 AI 工具注册（P0）**：设置页「MCP / Agent 协作」新增「AI 工具」列表——Claude Code / CodeBuddy / Codex 三家自动注册（各带独立开关与状态回读），Gemini CLI / Cursor / VS Code / Windsurf / Zed 提供一键复制命令/配置。总开关 ON 注册所有已安装且启用的工具，OFF 批量移除（有已注册项时二次确认），单个工具开关独立生效。注册仍经非沙盒 helper、argv 直传无 shell 拼接；解锁走 MCP 托管，全程无密码 env。
+
+---
+
+## v2.11.1 — 2026-10-22
+
+### 修复/纪律
+- **BUG-33（阻断，S2/P1）**：MCP 托管解锁恒失败——CLI 读 Keychain 用的是 bundle id 改名前的旧 access group `A6DS985SJJ.app.coffer.Coffer`，而 App 自 d396fab 起把条目写入 `A6DS985SJJ.top.cygnusyang.coffer`，条目跨组不可见 → `errSecItemNotFound` → 误落 env 兜底并报「未启用 MCP 解锁托管」。修复为**新组优先、旧组兜底**：主组未命中才试 legacy，任何 `Err`（缺 entitlement / ACL / 签名）仍 fail-closed 不回落；Keychain 条目与写入路径不动（非破坏性，旧条目仍可解锁）。`cf-mcp` 新增 5 条纯逻辑单测（候选顺序 / 兜底命中 / 命中短路 / 错误不兜底 / 全未命中），`cargo test -p cf-mcp escrow` 18 passed。影响面：Claude Code / CodeBuddy / Codex 等全部 MCP 客户端。
+
+---
+
+
 ### 新增/变化
 - **Claude Code 插件收编进主仓**：独立仓 coffer-claude（@79d2e7b）插件整体迁入 `plugins/claude-code/`（MCP 服务器 + 2 个 skills + 登录助手，功能不变；清除本机硬编码回落路径、独立注册脚本 remove 对齐 `--scope user`），根级 `.claude-plugin/marketplace.json` 取代原自源式市场清单；安装入口变更为 `claude plugin marketplace add cygnusyang/coffer` + `claude plugin install coffer@coffer`；插件许可随主仓 AGPL-3.0（原 MIT LICENSE 不随迁）；README「与 AI 工具协同（MCP）」节新增插件安装为推荐路径，手动注册降级兜底。
 

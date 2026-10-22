@@ -17,6 +17,10 @@
 | TASK-1 | TASK | run_gate.sh 增量门禁（--changed） | lead | done | tools/run_gate.sh | docs/00-协作适配.md §2 | docs-only 1s 通过 /tmp/gate-docsonly4.log；全量对照 1451/0/10 build=OK；假 cargo exit=2、非法 BASE exit=2（/tmp/gate-negative4.log）；--print-crates 反依赖闭包 cf-mcp→5 crate |
 | TASK-2 | TASK | workitem.py conflicts 并行冲突判定 | lead | done | tools/workitem.py | - | conflicts 正负例 /tmp/wi-evidence2.log：词中通配 CONFLICT、同 owner 不冲突、accepted/blocked claim 拒绝 exit=1；/tmp/wi-evidence.log 串行组 6 对冲突 |
 | TASK-3 | TASK | 判据覆盖核对脚本 | lead | done | tools/check_criteria_coverage.py,docs/00-协作适配.md,.github/workflows/rust.yml,.gitlab-ci.yml | - | 112 条 15 覆盖全部逐条可溯（/tmp/crit-evidence-audit3.log，修复同行别名串用假阳性）；零解析 exit=2；两 CI WARN-only 接入 |
+| TASK-4 | TASK | 多 AI 工具注册设计规格（Claude Code / CodeBuddy / Codex） | ui-lead | done | docs/03-功能设计/23-v2.12.0-多AI工具注册-设计.md | docs/03-功能设计/23-v2.12.0-多AI工具注册-设计.md §评审记录 + 设计交接单 | docs/03-功能设计/23-v2.12.0-多AI工具注册-设计.md r0.9（ui-reviewer 终局复检 PASS，REV 全关闭）+ 设计交接单 §12；docs/DESIGN.md D-11.1~11.8 / D-13.6 / D-7.2a / D-5.5 登记 |
+| TASK-5 | TASK | DESIGN.md 登记 MCP 工具行组件与本节变更 | ui-standard | done | docs/DESIGN.md | DESIGN.md §11 组件库条目 + §16 变更登记 | docs/DESIGN.md §11.1 MCP 工具行 + D-7.2a + D-5.5 + D-11.7/11.8 + D-13.6，§16 登记，§17 计数 64 |
+| BUG-33 | BUG | MCP 托管解锁恒失败：CLI 读旧 Keychain access group、App 写新组 | dev-coder-mcp | done | core/cf-mcp/src/provider/escrow.rs | docs/01-KNOWN-ISSUES.md §BUG-33 | v2.11.1 真机核销：coffer mcp 输出 vault unlocked via MCP keychain escrow；19 passed/0 failed/1 ignored；reviewer Approve；/Applications 2.11.1 已安装（签名 Apple Development A6DS985SJJ） |
+| TASK-6 | TASK | 多 AI 工具注册 P0（Claude Code / CodeBuddy / Codex 自动注册） | dev-coder-backend | done | macos/Coffer/McpRegisterHelper/McpAgentTarget.swift,macos/Coffer/McpRegisterHelper/McpRegisterSpec.swift,macos/Coffer/McpRegisterHelper/RegisterRequest.swift,macos/Coffer/McpRegisterHelper/main.swift,macos/Coffer/Support/McpRegistrar.swift,tools/build_macos_app.sh | docs/03-功能设计/23-v2.12.0-多AI工具注册-设计.md §10 UX-01~UX-36 | v2.12.0 已实现并安装：198 tests passed；build EXIT=0；真机 probe 检出 claude-code/codebuddy（codex 未安装）；/Applications 2.12.0 签名校验通过；reviewer 复审 Approve（H1/H2/H3/M1/M2 全 PASS） |
 
 ## 维护
 

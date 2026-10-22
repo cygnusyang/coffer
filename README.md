@@ -37,6 +37,8 @@ open macos/build/Coffer.app     # 建议拖入 /Applications
 
 先在 App「设置 → MCP / Agent 协作」启用「MCP 解锁托管」（需输入主密码确认）：解锁密钥存入本机钥匙串，之后 CLI 可**免密码**启动，注册命令无需写入密码。
 
+同一页的「AI 工具」可直接为 **Claude Code / CodeBuddy / Codex** 一键注册（各带独立开关与状态回读），Gemini CLI / Cursor / VS Code / Windsurf / Zed 提供一键复制命令。以下以 Claude Code 为例。
+
 推荐：安装 Claude Code 插件（随主仓分发）。插件在连接时自动探测 App 二进制与本机 vault，无需写路径：
 
 ```bash

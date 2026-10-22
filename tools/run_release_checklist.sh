@@ -196,7 +196,7 @@ if [ -d "$APP" ]; then
         fail "⑨ 产物签名校验失败：$APP"
     fi
 else
-    warn "⑨ 未找到 $APP，跳过签名/entitlement 检查（CI 构建后自动覆盖）"
+    warn "⑨ 未找到 ${APP}，跳过签名/entitlement 检查（CI 构建后自动覆盖）"
 fi
 
 # --with-gate

@@ -50,7 +50,8 @@ struct DropzoneImportView: View {
     /// 格式配置（docs/21 §4.5 线框 + docs/14 P3 §3；S4/S5 文案逐字对齐 CSV，
     /// ImportView.swift:49,55）。语义死字段逐个注 N/A 及缘由（C-2）。
     static let importFormatConfig = ImportFormatConfig(
-        title: "从 macOS 密码 App 导入",
+        // 配置字段是 String 且由 Text/Button 消费，不查表（设计 24 F6）→ 译文在产生点取（§5.4）。
+        title: String(localized: "从 macOS 密码 App 导入"),
         icon: "lock.doc",
         // N/A：S0 授权 UI 在 content 闭包内自持（不走壳 pickBody，docs/21 裁定 M-1）。
         pickTitle: "",
@@ -61,10 +62,10 @@ struct DropzoneImportView: View {
         precheckErrorAlertTitle: "",
         transactionSemantics: .allOrNothing,
         // S4 文案逐字对齐 CSV（ImportView.swift:53）。
-        importingCopy: "正在导入（单事务，全部成功或全部回滚）…",
+        importingCopy: String(localized: "正在导入（单事务，全部成功或全部回滚）…"),
         failureSuffix: "",
         // S5 单事务行逐字对齐 CSV（ImportView.swift:55）。
-        doneFooter: "所有行已在单事务内写入（全部成功或全部回滚）。",
+        doneFooter: String(localized: "所有行已在单事务内写入（全部成功或全部回滚）。"),
         failureRecovery: .backToPick,
         // N/A：S0 闭包自开 NSOpenPanel（目录选择），不走壳 pickBody 面板。
         canChooseDirectories: false,
@@ -161,7 +162,7 @@ struct DropzoneImportView: View {
             // D-18.2：三态组件（未授权态 / 失效态由 model.dropzoneAuthStatus 派生）。
             DropzoneAuthStatusView(
                 status: model.dropzoneAuthStatus,
-                setButtonLabel: "选择放置区目录…",
+                setButtonLabel: String(localized: "选择放置区目录…"),
                 onSet: pickAndAuthorize
             )
             .padding(12)
@@ -185,7 +186,8 @@ struct DropzoneImportView: View {
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = []
         // 授权范围声明在面板 message 重申（D-18.1）。
-        panel.message = "Coffer 将获得对所选目录的只读访问，用于自动检测新的密码导出 CSV。仅本地读取、零网络、可随时在『系统设置 › 隐私与安全性 › 文件与文件夹』或本应用内撤销授权。"
+        // NSOpenPanel.message 是 AppKit 面，不参与表回落（设计 24 F6）→ 显式本地化。
+        panel.message = String(localized: "Coffer 将获得对所选目录的只读访问，用于自动检测新的密码导出 CSV。仅本地读取、零网络、可随时在『系统设置 › 隐私与安全性 › 文件与文件夹』或本应用内撤销授权。")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importModel.authorize(url: url)
     }
@@ -276,7 +278,7 @@ struct DropzoneImportView: View {
     private func openPasswordsApp() {
         // 共享实现（J-1 seam 与按钮同链）：Support/PasswordsAppLauncher.swift。
         guard PasswordsAppLauncher.open() else {
-            importModel.waitingHint = "无法打开 macOS 密码 App，请在访达中手动打开。"
+            importModel.waitingHint = String(localized: "无法打开 macOS 密码 App，请在访达中手动打开。")
             return
         }
     }
@@ -373,9 +375,9 @@ struct DropzoneImportView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if candidate.isImported {
-                    metaBadge("已导入过", color: .secondary)
+                    metaBadge(String(localized: "已导入过"), color: .secondary)
                 } else {
-                    metaBadge("新", color: .blue)
+                    metaBadge(String(localized: "新"), color: .blue)
                 }
             }
             .padding(6)
@@ -386,7 +388,13 @@ struct DropzoneImportView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(candidate.url.lastPathComponent)\(candidate.isImported ? "，已导入过" : "，新文件")")
+        // 文件名是数据、后缀是文案：三元里的两个字面量各自成键，避免把中文后缀
+        // 塞进插值值里（那样英文界面会露出「，新文件」，设计 §5.4 拼接串规则）。
+        .accessibilityLabel(candidate.isImported
+                            ? String(format: String(localized: "%@，已导入过"),
+                                     candidate.url.lastPathComponent)
+                            : String(format: String(localized: "%@，新文件"),
+                                     candidate.url.lastPathComponent))
     }
 
     private func metaBadge(_ text: String, color: Color) -> some View {
@@ -501,7 +509,9 @@ struct DropzoneImportView: View {
                     Button("跳过（默认）") { importModel.excludeAllDuplicates(in: report) }
                     Button("全部导入（新建不覆盖）") { importModel.includeAllDuplicates(in: report) }
                 } label: {
-                    Label(importModel.allDuplicatesIncluded(in: report) ? "全部导入" : "跳过", systemImage: "chevron.down")
+                    Label(importModel.allDuplicatesIncluded(in: report)
+                          ? String(localized: "全部导入") : String(localized: "跳过"),
+                          systemImage: "chevron.down")
                 }
                 .controlSize(.small)
             }
@@ -548,7 +558,7 @@ struct DropzoneImportView: View {
                     }
                 }
                 // 选择态文本（D-8.4 状态可见；D-13.4 不以颜色为唯一通道）。
-                Text(included ? "已选" : "跳过")
+                Text(included ? String(localized: "已选") : String(localized: "跳过"))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(included ? Color.secondary : Color.orange)
                     .frame(width: 44, alignment: .trailing)

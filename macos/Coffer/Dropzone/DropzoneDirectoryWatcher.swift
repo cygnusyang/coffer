@@ -27,9 +27,9 @@ enum DropzoneWatchError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .scopeDenied(url):
-            return "无法访问放置区目录（\(url.lastPathComponent)），授权可能已失效。"
+            return String(localized: "无法访问放置区目录（\(url.lastPathComponent)），授权可能已失效。")
         case let .cannotOpen(url, err):
-            return "无法监视放置区目录（\(url.lastPathComponent)，errno \(err)）。"
+            return String(localized: "无法监视放置区目录（\(url.lastPathComponent)，errno \(String(err))）。")
         }
     }
 }

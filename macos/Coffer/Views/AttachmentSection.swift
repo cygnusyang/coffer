@@ -220,7 +220,8 @@ struct AttachmentSection: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
-        panel.message = "选择要添加的附件（单文件上限 100 MiB）"
+        // AppKit 面板文案不走 Localizable 表，在产生点本地化（设计 §5.4）。
+        panel.message = String(localized: "选择要添加的附件（单文件上限 100 MiB）")
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         guard let session = model.session else { return }
 
@@ -307,7 +308,7 @@ struct AttachmentSection: View {
     private func export(_ meta: FfiAttachmentMeta, completion: @escaping (URL) -> Void) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = meta.filename
-        panel.message = "附件将导出为明文文件，请用后删除"
+        panel.message = String(localized: "附件将导出为明文文件，请用后删除")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard let session = model.session else { return }
 

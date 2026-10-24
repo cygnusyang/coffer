@@ -42,11 +42,11 @@ enum DropzoneBookmarkError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .stale:
-            return "放置区授权已失效，请重新授权。"
+            return String(localized: "放置区授权已失效，请重新授权。")
         case .createBookmark:
-            return "无法创建放置区授权凭据，请重试。"
+            return String(localized: "无法创建放置区授权凭据，请重试。")
         case .resolveBookmark:
-            return "无法读取放置区授权凭据，请重新授权。"
+            return String(localized: "无法读取放置区授权凭据，请重新授权。")
         }
     }
 }

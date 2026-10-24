@@ -39,24 +39,26 @@ struct ImportView: View {
 
     /// CSV 格式配置（docs/14 §A P3 §3 逐字对照表）。
     static let importFormatConfig = ImportFormatConfig(
-        title: "导入 CSV（1Password 9 列）",
+        // 配置字段是 String 且由 Text(config.x) / Button(config.x) 消费，Text(String)
+        // 不查表（设计 24 F6）——所以译文在**产生点**取（§5.4），不在使用点。
+        title: String(localized: "导入 CSV（1Password 9 列）"),
         icon: "square.and.arrow.down.on.square",
-        pickTitle: "选择从 1Password 导出的 CSV 文件",
-        pickDescription: "支持 1Password 9 列格式（Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes）",
-        pickButtonLabel: "选择文件…",
+        pickTitle: String(localized: "选择从 1Password 导出的 CSV 文件"),
+        pickDescription: String(localized: "支持 1Password 9 列格式（Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes）"),
+        pickButtonLabel: String(localized: "选择文件…"),
         windowWidth: 520, windowHeight: 460,
         // FRICT-11（AC-2.10.0-FR-3）：预检失败 alert 标题「预检失败」——与其余
         // 三格式一致，不再误用「导入失败」（预检失败时零落库，用户会误以为数据
         // 已写入一半）。
-        precheckErrorAlertTitle: "预检失败",
+        precheckErrorAlertTitle: String(localized: "预检失败"),
         transactionSemantics: .allOrNothing,
-        importingCopy: "正在导入（单事务，全部成功或全部回滚）…",
+        importingCopy: String(localized: "正在导入（单事务，全部成功或全部回滚）…"),
         failureSuffix: "",
-        doneFooter: "所有行已在单事务内写入（全部成功或全部回滚）。",
+        doneFooter: String(localized: "所有行已在单事务内写入（全部成功或全部回滚）。"),
         failureRecovery: .backToPick,
         canChooseDirectories: false,
         allowedContentTypes: [.commaSeparatedText, .plainText, .data],
-        panelMessage: "选择 1Password 导出的 CSV 文件（UTF-8）"
+        panelMessage: String(localized: "选择 1Password 导出的 CSV 文件（UTF-8）")
     )
 
     var body: some View {
@@ -137,21 +139,25 @@ struct ImportView: View {
                     .font(.callout)
 
                     if !report.rowsWithoutTitle.isEmpty {
-                        reportLine("缺标题行（将以「（无标题）」导入）：", report.rowsWithoutTitle)
+                        reportLine(String(localized: "缺标题行（将以「（无标题）」导入）："), report.rowsWithoutTitle)
                     }
                     if !report.rowsWithBadTotp.isEmpty {
-                        reportLine("otpauth 解析失败行（值并入备注，不丢数据）：", report.rowsWithBadTotp)
+                        reportLine(String(localized: "otpauth 解析失败行（值并入备注，不丢数据）："), report.rowsWithBadTotp)
                     }
                     if !report.unmappedColumns.isEmpty {
-                        reportLine("未识别列（值并入对应条目备注）：", report.unmappedColumns)
+                        reportLine(String(localized: "未识别列（值并入对应条目备注）："), report.unmappedColumns)
                     }
                     if !report.formulaLikeCells.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Label("疑似公式前缀单元格（原值保留，仅提醒）", systemImage: "exclamationmark.triangle")
                                 .font(.callout)
                                 .foregroundStyle(.orange)
-                            Text(report.formulaLikeCells.prefix(10).map { "行 \($0.row)｜\($0.column)" }
-                                .joined(separator: "；"))
+                            // 坐标是数据、句式是文案：逐项本地化后再拼接（设计 §5.4
+                            // 「拼接串改单串 + 占位符」），分隔符随生效语言。
+                            Text(report.formulaLikeCells.prefix(10)
+                                .map { String(format: String(localized: "行 %u｜%@"),
+                                              $0.row, $0.column) }
+                                .joined(separator: CopyListSeparator.semicolon))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -176,7 +182,8 @@ struct ImportView: View {
     }
 
     private func reportLine<Items: Sequence>(_ prefix: String, _ items: Items) -> some View {
-        Text(prefix + " " + items.map { "\($0)" }.joined(separator: "、"))
+        // prefix 是文案（调用点已本地化），items 是数据（行号/列名）——§5.5 分界。
+        Text(prefix + " " + items.map { "\($0)" }.joined(separator: CopyListSeparator.comma))
             .font(.caption)
             .foregroundStyle(.secondary)
     }
@@ -195,7 +202,7 @@ struct ImportView: View {
                         step = .done(result, path: path)
                         model.reloadItems()
                     } else {
-                        errorMessage = "会话不存在。"
+                        errorMessage = String(localized: "会话不存在。")
                     }
                 }
             } catch {

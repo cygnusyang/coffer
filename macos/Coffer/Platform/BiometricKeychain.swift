@@ -55,7 +55,8 @@ struct BiometricKeychain {
     /// 解锁认证提示文案（LAContext.localizedReason，与既有中文文案风格一致；
     /// kSecUseOperationPrompt 自 macOS 11 起弃用，改用本字段）。
     /// PL-4 修复后读取由钥匙串自有单次认证发起，本文案即该唯一一次弹窗的提示。
-    static let unlockPrompt = "解锁密码库"
+    /// 本地化在常量求值处（Keychain 弹窗由系统渲染，不做 key 回落）。
+    static let unlockPrompt = String(localized: "解锁密码库")
 
     // MARK: - 生物识别可用性（只检测，不弹窗）
 

@@ -79,12 +79,13 @@ struct UpdateSheet: View {
 
     private var title: String {
         switch effectiveState {
-        case .idle, .checking, .upToDate: return "检查更新"
-        case .updateAvailable: return "发现新版本"
-        case .downloading: return "下载更新"
-        case .downloaded: return "准备安装"
-        case .installing: return "正在安装"
-        case .failed: return "更新失败"
+        // 面板标题是文案且经 Text(title) 消费（String，不查表）→ 在返回值处翻（§5.4）。
+        case .idle, .checking, .upToDate: return String(localized: "检查更新")
+        case .updateAvailable: return String(localized: "发现新版本")
+        case .downloading: return String(localized: "下载更新")
+        case .downloaded: return String(localized: "准备安装")
+        case .installing: return String(localized: "正在安装")
+        case .failed: return String(localized: "更新失败")
         }
     }
 

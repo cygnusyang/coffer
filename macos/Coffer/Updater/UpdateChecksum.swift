@@ -19,9 +19,9 @@ enum UpdateChecksumError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .readFailed(let detail):
-            return "下载包完整性校验失败：无法读取下载文件（\(detail)）。"
+            return String(localized: "下载包完整性校验失败：无法读取下载文件（\(detail)）。")
         case .mismatch:
-            return "下载包完整性校验失败（SHA256 不匹配），已拒绝安装。"
+            return String(localized: "下载包完整性校验失败（SHA256 不匹配），已拒绝安装。")
         }
     }
 }

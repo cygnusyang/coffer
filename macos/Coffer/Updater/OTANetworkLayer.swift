@@ -25,13 +25,13 @@ protocol DataDownloading {
 /// HTTP 非 2xx 响应。
 struct OTAHTTPError: Error, LocalizedError {
     let statusCode: Int
-    var errorDescription: String? { "更新服务器返回 HTTP \(statusCode)。" }
+    var errorDescription: String? { String(localized: "更新服务器返回 HTTP \(String(statusCode))。") }
 }
 
 /// 下载产物落盘失败（临时文件移动失败）。
 struct OTADownloadMoveError: Error, LocalizedError {
     let detail: String
-    var errorDescription: String? { "下载产物保存失败：\(detail)" }
+    var errorDescription: String? { String(localized: "下载产物保存失败：\(detail)") }
 }
 
 // MARK: - 生产网络层
@@ -202,7 +202,7 @@ private final class DownloadTaskDelegate: NSObject,
         } else if let url = savedURL {
             continuation?.resume(returning: url)
         } else {
-            continuation?.resume(throwing: OTADownloadMoveError(detail: "临时文件移动失败"))
+            continuation?.resume(throwing: OTADownloadMoveError(detail: String(localized: "临时文件移动失败")))
         }
     }
 }

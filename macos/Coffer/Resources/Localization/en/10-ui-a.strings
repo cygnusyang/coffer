@@ -1,0 +1,450 @@
+/* 10-ui-a.strings —— impl-ui-a（任务 12）译文分片：核心壳与条目主路径。
+ *
+ * 归属（docs/03-功能设计/24-v2.13.0-多语言-设计.md §8.1）：本组 31 个 View 的用户可见文案。
+ *   键 = 中文原文（逐字节等于源码字面量，D-6），值 = 英文译文（术语按设计 §5.6）。
+ *   插值键按 §5.1 推导：Int/Int64 → %lld，String → %@，Double → %lf；顺序不可重排（G3）。
+ *   字面 % 只在带插值的键里写成 %%；纯文本 100% 保持原样。
+ *
+ * 纪律：
+ *   - 00-common.strings 已收的复用词（保存 / 取消 / 回收站 / 设置 / 历史版本 / 安全体检 /
+ *     新建条目 / 导入 / 导出 / 复制 / 已复制 / 打开 / 添加 / 编辑 / 恢复 / 彻底删除 / 关闭 /
+ *     完成 / 删除 / 好）**不在此重复**——跨分片重复键会让 tools/check_l10n.sh G2 硬失败。
+ *   - 分叉键（同一中文两种英文）在此文件里用注释标明原中文与场景（§4.6）。
+ *   - 不排序：按功能聚簇，便于与源码对照。
+ *   - 编码 UTF-8 无 BOM；一条一行。
+ */
+
+/* 跨组共享键（设计 §8.3：00-common 是唯一归属）：下列中文同时出现在 30-support
+ * （错误/状态类）与本组，按 G2「同键同值也须归一」本片**不重复定义**，当前由
+ * 30-support 提供；若 infra 把它们移入 00-common，两侧都删即可。
+ *   正在打开… / 操作失败 / 新增 / 重复 / 冲突 / 自定义 /
+ *   主密码已重置，条目数据不受影响。请用新密码解锁。
+ */
+
+/* MARK: 主壳：侧栏 / 空态 / 备份横幅 / 上下文快捷键 */
+"距上次备份已超过 %lld 天，建议备份以防数据丢失" = "Last backup was over %lld days ago — back up now to avoid losing data";
+"暂不" = "Not Now";
+"立即备份" = "Back Up Now";
+"全部条目" = "All Items";
+"收藏" = "Favorites";
+"类别" = "Categories";
+"切换密码库…" = "Switch Vault…";
+"密码库" = "Vault";
+"新建" = "New";
+"从 macOS 密码 App…" = "From macOS Passwords…";
+"锁定" = "Lock";
+"选择左侧列表中的条目查看详情" = "Select an item from the list to see its details.";
+"搜索标题、用户名、网址、标签" = "Search titles, usernames, URLs, and tags";
+"暂无条目" = "No Items";
+"新建第一个条目" = "Create Your First Item";
+"导入已有密码…" = "Import Existing Passwords…";
+"暂无收藏" = "No Favorites";
+"该分类暂无条目" = "No Items in This Category";
+"无匹配结果" = "No Matches";
+"换个关键词试试" = "Try a different keyword.";
+"上移选中" = "Move Selection Up";
+"下移选中" = "Move Selection Down";
+"复制选中条目密码" = "Copy Selected Item Password";
+
+/* MARK: 根视图相变（启动 / 致命错误） */
+"无法打开应用" = "Can’t Open Coffer";
+
+/* MARK: 锁定页 */
+"密码库已锁定" = "Vault Locked";
+"主密码" = "Master Password";
+"请输入主密码" = "Enter your master password";
+"正在解锁…（Argon2id 密钥派生约需 1 秒）" = "Unlocking… (Argon2id key derivation takes about a second)";
+"解锁" = "Unlock";
+"使用 Touch ID 解锁" = "Unlock with Touch ID";
+"忘记主密码？" = "Forgot Master Password?";
+"管理密码库…" = "Manage Vaults…";
+"尝试次数过多，%lld 秒后再试" = "Too many attempts. Try again in %lld seconds.";
+
+/* MARK: 设置页（通用 / 剪贴板 / 备份提醒 / 导入 / 生成器 / 数据 / 诊断 / 许可） */
+/* Picker 的 0 档：源码里是 LocalizedStringKey("从不")/("禁用")（三元两句都要查表）。
+ * 注意 G6 抽取器不扫 LocalizedStringKey("…")（见 reviewer H2），这两条靠人工复核兜住。 */
+"从不" = "Never";
+"禁用" = "Off";
+"%lld 分钟" = "%lld minutes";
+"自动锁定" = "Auto-Lock";
+"通用" = "General";
+"空闲超过所选时长后自动锁定密码库；锁定屏幕 / 休眠 / 屏保时立即锁定。" = "Locks the vault after the selected idle time. Locking the screen, sleeping, or starting the screen saver locks it immediately.";
+"%lld 秒" = "%lld seconds";
+"复制后自动清除" = "Clear Clipboard";
+"剪贴板" = "Clipboard";
+"复制的敏感内容在所选时长后自动从剪贴板清除；期间你复制了别的内容则不动。默认 %lld 秒。" = "Copied sensitive content is cleared from the clipboard after the selected time. If you copy something else in between, it is left alone. Default is %lld seconds.";
+"每 %lld 天" = "Every %lld days";
+"备份提醒间隔" = "Backup Reminder Interval";
+"备份提醒" = "Backup Reminders";
+"距上次备份超过所选天数时提醒你备份密码库；选择「禁用」关闭提醒。" = "Remind you to back up once the last backup is older than the selected interval. Choose Off to turn reminders off.";
+"设置放置区…" = "Set Up Dropzone…";
+"移除授权" = "Remove Access";
+"此授权作用于 Coffer 应用全局" = "This access applies to Coffer as a whole";
+"放置区用于自动检测 macOS「密码」App 导出的 CSV；授权只读、可随时撤销。" = "The dropzone detects CSVs exported from the macOS Passwords app. Access is read-only and can be revoked at any time.";
+"生成器默认参数…" = "Generator Defaults…";
+"生成器" = "Generator";
+"设置新建条目时生成器的预填参数（长度 / 字符集 / 密码短语选项）。" = "Set the values the generator starts with for new items (length, character sets, passphrase options).";
+"修改主密码…" = "Change Master Password…";
+"修改主密码只重新封装密码库头部，不重新加密全部条目。" = "Changing the master password only rewraps the vault header; items are not re-encrypted.";
+"数据" = "Data";
+"从备份恢复…" = "Restore from Backup…";
+"审计日志…" = "Audit Log…";
+"诊断信息…" = "Diagnostics…";
+"网络能力自证…" = "Network Self-Check…";
+"诊断与隐私" = "Diagnostics & Privacy";
+"许可…" = "License…";
+"许可" = "License";
+"查看许可状态、激活或申请序列号（开源免费版无需激活）。" = "Check license status, activate, or request a serial number (the open-source edition needs no activation).";
+"未完成设置" = "Setup Incomplete";
+
+/* MARK: 条目详情（字段 / 网址 / 标签 / TOTP / 历史 / Passkey / 元信息 / 操作） */
+"复制到其他库…" = "Copy to Another Vault…";
+"彻底删除「%@」？此操作不可恢复。" = "Permanently delete “%@”? This cannot be undone.";
+"环境容器" = "Environment Container";
+"该类别为只读兜底（v0.1 仅支持登录 / 密码 / 安全笔记 / 信用卡四类编辑）" = "This category is read-only for now (only Login, Password, Secure Note, and Credit Card items can be edited)";
+"字段" = "Fields";
+"网址" = "URLs";
+"主要" = "Primary";
+"标签" = "Tags";
+"一次性密码（TOTP）" = "One-Time Code (TOTP)";
+"%lld 个历史版本 ›" = "%lld versions ›";
+"%lld 个" = "%lld";
+"信息" = "Info";
+"创建时间" = "Created";
+"修改时间" = "Modified";
+"条目 ID" = "Item ID";
+"取消收藏" = "Remove from Favorites";
+"更新密码" = "Update Password";
+"移到回收站" = "Move to Trash";
+
+/* MARK: 条目编辑（表单 / TOTP 三态 / 生成器面板） */
+"标题" = "Title";
+"添加字段" = "Add Field";
+"网址（可选）" = "URL (optional)";
+"环境容器标识，保存时自动保留" = "Environment container tag, kept automatically when you save";
+"标签（逗号分隔）" = "Tags (comma-separated)";
+"工作, 邮箱" = "work, email";
+"无法保存" = "Can’t Save";
+"放弃更改？" = "Discard Changes?";
+"继续编辑" = "Keep Editing";
+"放弃更改" = "Discard Changes";
+"你尚未保存对此条目的更改。" = "You have unsaved changes to this item.";
+"移除" = "Remove";
+"保存时保留现有动态验证码；粘贴新 URI 可替换。" = "The existing one-time code is kept when you save. Paste a new URI to replace it.";
+"保存后移除现有 TOTP" = "Remove the existing TOTP when saving";
+"撤销" = "Undo";
+"otpauth URI（粘贴以替换现有 TOTP）" = "otpauth URI (paste to replace the existing TOTP)";
+"otpauth URI（可选）" = "otpauth URI (optional)";
+"扫码" = "Scan";
+"用相机扫描 TOTP otpauth:// 二维码（FR-5.3）" = "Scan a TOTP otpauth:// QR code with the camera";
+"新建%@" = "New %@";
+"编辑条目" = "Edit Item";
+"未修改" = "Unchanged";
+"生成" = "Generate";
+"不是合法环境变量名" = "Not a valid environment variable name";
+"模式" = "Mode";
+"随机字符" = "Random Characters";
+"密码短语" = "Passphrase";
+"使用" = "Use";
+"长度 %lld" = "Length %lld";
+"数字" = "Digits";
+"小写字母" = "Lowercase Letters";
+"大写字母" = "Uppercase Letters";
+"符号" = "Symbols";
+"排除易混淆字符（iI1loO0…）" = "Exclude Ambiguous Characters (iI1loO0…)";
+"词数 %lld" = "Words %lld";
+"分隔符" = "Separator";
+"连字符（-）" = "Hyphen (-)";
+"句点（.）" = "Period (.)";
+"空格" = "Space";
+"1–3 个字符" = "1–3 characters";
+"词首大写" = "Capitalize Words";
+"末尾追加数字" = "Append a Number";
+
+/* MARK: 字段行（显示 / 隐藏 / 复制 / 放大） */
+"隐藏" = "Hide";
+"显示" = "Show";
+"放大" = "Enlarge";
+"全屏大字号查看" = "View at full size with a larger font";
+
+/* MARK: 回收站（含批量彻底删除的聚合反馈） */
+"回收站为空" = "Trash Is Empty";
+"删除的条目会先移入回收站" = "Deleted items go to the trash first.";
+"清空回收站" = "Empty Trash";
+"彻底删除回收站中的全部 %lld 条条目？此操作不可恢复。" = "Permanently delete all %lld items in the trash? This cannot be undone.";
+"全部彻底删除" = "Delete All Permanently";
+"已彻底删除 %lld 条" = "%lld items deleted permanently";
+"，%lld 条失败" = ", %lld failed";
+"\n「%@」：%@" = "\n“%@”: %@";
+
+/* MARK: 历史版本 */
+"正在加载…" = "Loading…";
+"回滚到版本 %lld？当前状态会先保存为新版本，之后可再次回滚。" = "Roll back to version %lld? The current state is saved as a new version first, so you can roll back again later.";
+"回滚到版本 %lld" = "Roll Back to Version %lld";
+"版本 %lld" = "Version %lld";
+"回滚" = "Roll Back";
+"正在回滚…" = "Rolling Back…";
+"暂无历史版本" = "No Version History";
+"每次修改会留存快照。" = "A snapshot is kept for every change.";
+"内部错误：历史版本需解锁后查看。" = "Internal error: unlock the vault to view version history.";
+"内部错误：历史回滚需解锁后操作。" = "Internal error: unlock the vault to roll back versions.";
+
+/* MARK: 键盘快捷键 */
+"列表操作" = "List";
+"上移 / 下移选中" = "Move selection up / down";
+"搜索框输入名称后回车直接复制" = "Type a name in the search field, then press Return to copy";
+"条目操作" = "Items";
+"复制密码" = "Copy Password";
+"复制用户名" = "Copy Username";
+"复制验证码" = "Copy One-Time Code";
+"锁定 Coffer" = "Lock Coffer";
+"导入 CSV" = "Import CSV";
+"导入 1Password (.1pux)" = "Import 1Password (.1pux)";
+"呼出 / 隐藏主窗口" = "Show / Hide Main Window";
+"键盘快捷键" = "Keyboard Shortcuts";
+
+/* MARK: 首次引导向导（Touch ID / 恢复码两步） */
+"步骤 %lld/2 · %@" = "Step %lld of 2 · %@";
+"启用 Touch ID 解锁？" = "Enable Touch ID Unlocking?";
+"以后锁定密码库时，可用 Touch ID 快速解锁。\n出于安全考虑，主密码不会被保存，需要重新输入一次。" = "After that you can unlock the vault quickly with Touch ID.\nFor security your master password is not stored, so you need to enter it once more.";
+"正在启用…（密钥派生约需 1 秒）" = "Enabling… (key derivation takes about a second)";
+"以后再说（可在安全设置中开启）" = "Not Now (you can enable this later in Security settings)";
+"启用 Touch ID" = "Enable Touch ID";
+"恢复码" = "Recovery Code";
+"生成恢复码？" = "Generate a Recovery Code?";
+"忘记主密码时，可用恢复码重置密码库、找回条目数据。\n恢复码仅显示一次，请抄写并妥善保存。" = "If you forget your master password, a recovery code lets you reset the vault and keep your items.\nThe code is shown only once — write it down and store it safely.";
+"生成恢复码" = "Generate Recovery Code";
+
+/* MARK: 建库 / 新建库 */
+"我的密码库" = "My Vault";
+"创建密码库" = "Create Vault";
+"新建密码库" = "New Vault";
+"库文件保存在本机，主密码是唯一解锁凭据，遗失后无法找回。" = "The vault file stays on this Mac. Your master password is the only way to unlock it — if you lose it, it cannot be recovered.";
+"将在本机新增一座独立密码库，与现有库互不相通；主密码是该库唯一解锁凭据，遗失后无法找回。" = "This adds a separate vault on this Mac that is independent of your existing vaults. Its master password is the only way to unlock it — if you lose it, it cannot be recovered.";
+"库名称" = "Vault Name";
+"再次输入主密码" = "Confirm Master Password";
+"为安全起见，强度达到绿色即可创建密码库。" = "For safety, the strength bar must reach green before you can create the vault.";
+"已有备份？从备份恢复…" = "Already Have a Backup? Restore from Backup…";
+"无法创建" = "Can’t Create Vault";
+"强度不足，建议加长或混入不相关的词" = "Too weak — make it longer or mix in unrelated words";
+"两次输入的主密码不一致。" = "The master passwords don’t match.";
+
+/* MARK: 库切换器 */
+"切换密码库" = "Switch Vault";
+"返回列表" = "Back to List";
+"新建密码库…" = "New Vault…";
+"当前库" = "Current Vault";
+"切换" = "Switch";
+
+/* MARK: 库管理 */
+"管理密码库" = "Manage Vaults";
+"删除…" = "Delete…";
+"删除密码库 %@" = "Delete Vault %@";
+
+/* MARK: 使用入门 */
+"使用入门" = "Getting Started";
+"欢迎使用 Coffer" = "Welcome to Coffer";
+"Coffer 是本地密码管理器：密码只存在本机，不上传到云端、不做同步（软件更新 OTA 除外）。" = "Coffer is a local password manager: passwords live only on this Mac and are never uploaded or synced (app updates over the air are the only exception).";
+"开始使用" = "First Steps";
+"建库：无密码库时首屏点「创建密码库」，设一个强主密码（3 分以上，共 4 分）。" = "Create a vault: with no vault yet, choose Create Vault on the first screen and set a strong master password (3 out of 4 or better).";
+"解锁：每次启动 / 锁定后，在锁定页输入主密码，或用 Touch ID 一键解锁。" = "Unlock: after each launch or lock, enter your master password on the lock screen, or unlock with Touch ID.";
+"新建条目：解锁后点工具栏「新建」或按 ⌘N，填写名称、用户名、密码。" = "New item: once unlocked, choose New in the toolbar or press ⌘N, then fill in the title, username, and password.";
+"日常操作" = "Everyday Use";
+"导入：从其他密码管理器迁入——工具栏「导入」（CSV / 1Password / Bitwarden / OPVault）或 ⌘I / ⌘⇧I。" = "Import: bring data over from another password manager with Import in the toolbar (CSV / 1Password / Bitwarden / OPVault), or press ⌘I / ⌘⇧I.";
+"导出备份：工具栏「导出」（或 ⌘E）生成加密备份文件，建议定期保存到安全位置。" = "Export a backup: Export in the toolbar (or ⌘E) writes an encrypted backup file. Save it somewhere safe on a regular basis.";
+"恢复：换机 / 重装后在首屏点「从备份恢复…」；有既有库时在 设置 → 数据 恢复，锁定态可经「管理密码库…」→「从备份恢复…」直达。" = "Restore: after moving to a new Mac or reinstalling, choose Restore from Backup… on the first screen. With a vault present, restore from Settings → Data; while locked, go to Manage Vaults… → Restore from Backup….";
+"快捷键：全部快捷键见帮助菜单「键盘快捷键…」（含 ⌘⇧C 复制密码、⌘U 复制用户名等）。" = "Shortcuts: see Keyboard Shortcuts… in the Help menu (⌘⇧C copies the password, ⌘U copies the username, and more).";
+"安全" = "Security";
+"Touch ID：在 设置 → 安全 启用后，解锁与跨库复制可免输主密码。" = "Touch ID: once enabled in Settings → Security, you can unlock and copy between vaults without typing your master password.";
+"恢复码：忘记主密码时找回数据的唯一途径——在 设置 → 安全 生成并妥善保存，未雨绸缪。" = "Recovery code: the only way back into your data if you forget the master password. Generate one in Settings → Security and store it safely.";
+"修改主密码：在 设置 → 安全 → 修改主密码…。" = "Change master password: Settings → Security → Change Master Password….";
+"MCP / Agent 协作" = "MCP / Agent Access";
+"让 AI / 自动化安全取用密码：在 设置 → MCP / Agent 协作 开启并注册命令行入口（CLI 与 MCP 均本机运行，数据不出本机）。" = "Let AI tools and automation use passwords safely: turn it on in Settings → MCP / Agent Access and register the command-line entry point. Both the CLI and MCP run locally, so data never leaves this Mac.";
+
+/* MARK: 修改主密码 */
+"修改主密码" = "Change Master Password";
+"修改只重新封装密码库头部，不重新加密全部条目；Argon2id 派生约需 1-2 秒。" = "This only rewraps the vault header; items are not re-encrypted. Argon2id derivation takes 1–2 seconds.";
+"旧密码" = "Current Password";
+"请输入当前主密码" = "Enter your current master password";
+"新密码" = "New Password";
+"至少包含 3 类字符或足够长度" = "Use at least 3 character types or enough length";
+"确认新密码" = "Confirm New Password";
+"再次输入新密码" = "Enter the new password again";
+"两次输入的新密码不一致。" = "The new passwords don’t match.";
+"正在修改…（Argon2id 派生约需 1-2 秒）" = "Changing… (Argon2id derivation takes 1–2 seconds)";
+"主密码已修改" = "Master Password Changed";
+"请使用新密码重新解锁。" = "Unlock again with your new password.";
+
+/* MARK: 更新条目密码 */
+"从剪贴板粘贴" = "Paste from Clipboard";
+"粘贴或手动输入新密码" = "Paste or type a new password";
+"密码强度需达到强或以上。" = "The password must rate Strong or better.";
+"已更新" = "Password Updated";
+"旧版本可在历史中回滚。" = "You can roll back to the old version in version history.";
+"剪贴板中没有可用的文本。" = "The clipboard has no usable text.";
+
+/* MARK: 全屏大字号密码 */
+"复制后按当前清除档位自动清空剪贴板" = "The clipboard is cleared automatically at the current clearing interval";
+
+/* MARK: 跨库复制 */
+"复制到其他库" = "Copy to Another Vault";
+"正在复制到「%@」…" = "Copying to “%@”…";
+"解锁失败" = "Can’t Unlock";
+"将「%@」复制到哪座库？目标库产生新条目，源条目原样保留。" = "Which vault should “%@” be copied to? A new item is created there and the original stays as it is.";
+"没有其他密码库" = "No Other Vaults";
+"可从工具栏库切换器中新建一座库后再复制。" = "Create another vault from the vault switcher in the toolbar, then copy again.";
+"解锁「%@」" = "Unlock “%@”";
+"复制前需解锁目标库；解锁后的会话只在复制期间使用，完成即锁。" = "The target vault must be unlocked first. Its session is used only while copying and is locked as soon as it finishes.";
+"目标库主密码" = "Target Vault Master Password";
+"请输入目标库主密码" = "Enter the target vault’s master password";
+"正在解锁…（密钥派生约需 1 秒）" = "Unlocking… (key derivation takes about a second)";
+"解锁并复制" = "Unlock and Copy";
+"已复制到「%@」" = "Copied to “%@”";
+"源条目原样保留；目标库新条目 UUID：" = "The original item is unchanged. UUID of the new item in the target vault:";
+"解锁密码库「%@」以复制条目" = "Unlock vault “%@” to copy an item";
+"内部错误：目标会话状态缺失，已取消复制。" = "Internal error: the target session is missing, so the copy was cancelled.";
+
+/* MARK: 附件 */
+"附件" = "Attachments";
+"暂无附件" = "No Attachments";
+"打开或保存的附件文件为明文，请用后删除。" = "Attachments are opened or saved as plaintext files. Delete them when you are done.";
+"删除附件" = "Delete Attachment";
+"预览" = "Preview";
+"更多" = "More";
+"保存…" = "Save…";
+"无法预览该附件" = "Can’t Preview This Attachment";
+"可改用「更多 → 保存…」导出后打开。" = "Use More → Save… to export it, then open it.";
+"选择要添加的附件（单文件上限 100 MiB）" = "Choose attachments to add (100 MiB per file)";
+"附件将导出为明文文件，请用后删除" = "The attachment is exported as a plaintext file. Delete it when you are done.";
+
+/* MARK: 密码强度要求说明 */
+"要求：密码强度需达到「强」或以上（zxcvbn 3/4）。建议长度 ≥ 12、混用大小写 / 数字 / 符号，避免常见单词、键盘连续键与个人信息。" = "Requirement: strength must be Strong or better (zxcvbn 3/4). Aim for 12+ characters with mixed case, digits, and symbols, and avoid common words, keyboard runs, and personal details.";
+
+/* MARK: TOTP 扫码 */
+"扫描 TOTP 二维码" = "Scan TOTP QR Code";
+"关闭扫描" = "Close Scanner";
+"正在检查相机…" = "Checking Camera…";
+"正在请求相机权限…" = "Requesting Camera Access…";
+"将 otpauth:// 二维码对准取景框" = "Point the otpauth:// QR code at the frame";
+"识别成功" = "Code Recognized";
+"确认后将该 otpauth URI 填入表单，保存时写入条目。" = "Confirm to fill this otpauth URI into the form; it is saved with the item.";
+"重新扫描" = "Scan Again";
+"使用此 URI" = "Use This URI";
+"不是有效的 otpauth URI：%@" = "Not a valid otpauth URI: %@";
+"仍可手动输入 otpauth:// URI 添加 TOTP。" = "You can still add a TOTP by entering the otpauth:// URI manually.";
+"手动输入" = "Enter Manually";
+"未检测到可用摄像头，请手动输入 otpauth URI。" = "No camera found. Enter the otpauth URI manually.";
+"相机启动失败，请手动输入 otpauth URI。" = "The camera could not start. Enter the otpauth URI manually.";
+"相机权限被拒绝。可在系统设置 → 隐私与安全性 → 相机中允许 Coffer 后重试。" = "Camera access was denied. Allow Coffer in System Settings → Privacy & Security → Camera, then try again.";
+
+/* MARK: 恢复码设置 / 重生成 */
+"恢复码用于忘记主密码时重置密码库；仅在生成时显示一次，请抄写并妥善保存。" = "A recovery code lets you reset the vault if you forget your master password. It is shown only once, so write it down and store it safely.";
+"重新生成恢复码？" = "Generate a New Recovery Code?";
+"重新生成" = "Regenerate";
+"旧恢复码将立即失效，确定重新生成？" = "The old recovery code stops working immediately. Generate a new one anyway?";
+"已启用（恢复码仅在生成时显示一次）" = "Enabled (the code is shown only once)";
+"未启用——忘记主密码时将无法通过恢复码重置。" = "Not enabled — a forgotten master password could not be reset with a recovery code.";
+"重新生成…" = "Regenerate…";
+"生成恢复码…" = "Generate Recovery Code…";
+"重新生成恢复码" = "Regenerate Recovery Code";
+"设置恢复码" = "Set Up Recovery Code";
+"恢复码用于忘记主密码时重置。请抄写并妥善保存。恢复码仅显示一次。" = "A recovery code resets the vault if you forget your master password. Write it down and store it safely. It is shown only once.";
+"重新生成后，旧恢复码将立即失效且无法找回。" = "After regenerating, the old recovery code stops working and cannot be recovered.";
+"开始生成" = "Generate Code";
+"生成恢复码失败，请重试。" = "Could not generate a recovery code. Try again.";
+"抄写并妥善保存恢复码" = "Write Down Your Recovery Code";
+"恢复码仅在生成时显示一次，请立即抄写。忘记主密码时可凭它重置密码库。" = "The code is shown only once, so write it down now. It is what lets you reset the vault if you forget your master password.";
+"已复制（%lld 秒后自动清除）" = "Copied (clears in %lld seconds)";
+"我已抄写保存" = "I’ve Written It Down";
+"确认抄写恢复码" = "Confirm Your Recovery Code";
+"第 %lld 个词" = "Word %lld";
+"请输入该词" = "Enter this word";
+"与恢复码不符，请对照抄写内容再试。" = "That does not match the recovery code. Check what you wrote down and try again.";
+"将重新生成新恢复码，当前显示的恢复码将无法再次查看" = "A new recovery code will be generated and the one shown now cannot be viewed again";
+"确认抄写" = "Confirm";
+"确认主密码" = "Confirm Master Password";
+"将使用你刚输入的主密码完成此设置，恢复码才会启用。" = "Your master password from the previous step is used to finish this setup and enable the recovery code.";
+"出于安全考虑，主密码不会被保存，请重新输入一次以确认身份，之后恢复码才会启用。" = "For security, your master password is not stored. Enter it once more to confirm your identity; then the recovery code is enabled.";
+"改为手动输入主密码" = "Enter Master Password Manually";
+"继续" = "Continue";
+"启用恢复码" = "Enable Recovery Code";
+
+/* MARK: 忘记主密码重置 */
+"忘记主密码" = "Forgot Master Password";
+"可通过生物识别或恢复码重置主密码，条目数据不受影响。" = "Reset the master password with biometrics or a recovery code. Your items are not affected.";
+"正在重置…（Argon2id 派生约需 1-2 秒）" = "Resetting… (Argon2id derivation takes 1–2 seconds)";
+"使用 Touch ID 重置" = "Reset with Touch ID";
+"新主密码" = "New Master Password";
+"请输入新主密码" = "Enter a new master password";
+"用 Touch ID 重置" = "Reset with Touch ID";
+"使用恢复码重置" = "Reset with a Recovery Code";
+"请输入恢复码" = "Enter your recovery code";
+"用恢复码重置" = "Reset with Recovery Code";
+"此密码库未配置生物识别或恢复码，无法在此重置。" = "This vault has no biometrics or recovery code set up, so it cannot be reset here.";
+"用新密码解锁" = "Unlock with New Password";
+"稍后解锁" = "Unlock Later";
+
+/* MARK: 删除密码库多步向导 */
+"删除密码库 · 导出备份" = "Delete Vault · Export Backup";
+"删除密码库" = "Delete Vault";
+"目标：密码库「%@」（%@）" = "Target: vault “%@” (%@)";
+"将永久删除该密码库：库内全部条目、附件将一并永久删除，且无法恢复。" = "This permanently deletes the vault: all of its items and attachments are deleted with it, and they cannot be recovered.";
+"先导出加密备份，再删除（推荐）" = "Export an encrypted backup first, then delete (recommended)";
+"直接删除（不保留备份）" = "Delete directly (keep no backup)";
+"上一步" = "Back";
+"已导出，继续删除" = "Exported — Continue";
+"请输入密码库名称以确认删除：" = "Enter the vault name to confirm:";
+"『%@』（%@）" = "“%@” (%@)";
+"密码库名称" = "Vault Name";
+"与密码库名称不一致，请核对后重试" = "That does not match the vault name. Check it and try again.";
+"确认删除" = "Delete Vault";
+"正在删除密码库…" = "Deleting Vault…";
+"密码库「%@」已删除" = "Vault “%@” Deleted";
+"已切换到密码库「%@」，请输入主密码解锁。" = "Switched to vault “%@”. Enter its master password to unlock.";
+"将回到建立密码库页面。" = "You will be taken back to the vault setup screen.";
+"已删除，列表已刷新。" = "Deleted. The list has been refreshed.";
+
+/* MARK: 去重分类徽章 */
+
+/* MARK: Touch ID 设置节 */
+"当前设备不支持生物识别解锁。" = "This Mac does not support biometric unlocking.";
+"关闭 Touch ID 解锁？" = "Turn Off Touch ID Unlocking?";
+"关闭 Touch ID 解锁" = "Turn Off Touch ID";
+"将删除本机保存的解锁凭据并重写密码库。之后需输入主密码解锁。" = "This deletes the unlock credential stored on this Mac and rewrites the vault. After that you unlock with your master password.";
+"Touch ID 解锁" = "Touch ID Unlocking";
+"生物识别凭据已失效（可能因指纹变更）。重新启用将生成新凭据；在此之前 Touch ID 解锁不可用，请使用主密码解锁。" = "The biometric credential is no longer valid (fingerprints may have changed). Re-enabling creates a new one; until then Touch ID unlocking is unavailable, so use your master password.";
+"Touch ID 只是解锁快捷方式：主密码仍是唯一解锁凭据，遗失后无法找回。" = "Touch ID is only a shortcut: your master password is still the one credential that unlocks the vault, and it cannot be recovered if lost.";
+"已停用——锁定后需输入主密码。" = "Off — you enter your master password after locking.";
+"已启用——锁定时可用 Touch ID 快速解锁。" = "On — unlock quickly with Touch ID when locked.";
+"凭据已失效（需重新启用）。" = "Credential is no longer valid (re-enable it).";
+"启用 Touch ID 解锁" = "Enable Touch ID Unlocking";
+"重新启用" = "Re-enable";
+"出于安全考虑，主密码不会被保存，请重新输入一次以确认身份。" = "For security, your master password is not stored. Enter it once more to confirm your identity.";
+"启用" = "Enable";
+
+/* MARK: 帮助中心 */
+"帮助中心" = "Help Center";
+
+/* MARK: 附件 */
+"删除附件「%@」？附件将从库中永久删除，此操作不可恢复。" = "Delete attachment “%@”? It is permanently removed from the vault. This cannot be undone.";
+
+/* MARK: 恢复码设置 / 重生成 */
+"请在下方输入恢复码第 %@ 个词（恢复码已隐藏，请对照你保存的副本）" = "Enter words %@ of your recovery code below (the code is hidden — compare it with the copy you saved)";
+
+/* MARK: 条目编辑（表单 / TOTP 三态 / 生成器面板） */
+"已有 TOTP（%@ · %lld 位 · %llds）" = "Existing TOTP (%@ · %lld digits · %llds)";
+
+/* MARK: TOTP 扫码 */
+"发行方：%@" = "Issuer: %@";
+"账户：%@" = "Account: %@";
+"位数：%lld 位 · 周期：%lld 秒" = "%lld digits · %lld seconds";
+
+/* MARK: 源码改造新增键（生产点本地化 / 分叉键） */
+/* UpdatePasswordSheet:38 拼接改单串（§5.4 拼接串规则） */
+"当前版本 %@" = "Current version %@";
+/* TotpScanView 预览卡「未提供」兜底值（生产点本地化） */
+"未提供" = "not provided";
+/* 分叉键：侧栏「收藏」=Favorites（名词），详情工具栏=动词（§5.3） */
+"加入收藏" = "Add to Favorites";
+/* Help Center 长文不翻（§5.7），英文界面给一行说明；键即英文原文 */
+"Help content is currently available in Chinese only." = "Help content is currently available in Chinese only.";

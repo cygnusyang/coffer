@@ -145,7 +145,7 @@ struct HistorySheet: View {
         guard let session = model.session else {
             // 解锁态下才可达（入口在详情页），防御性 guard 兜底。
             isLoading = false
-            let errText = "内部错误：历史版本需解锁后查看。"
+            let errText = String(localized: "内部错误：历史版本需解锁后查看。")
             DiagLog.append(errText)
             model.lastErrorMessage = errText
             return
@@ -172,7 +172,7 @@ struct HistorySheet: View {
         isRestoring = true
         defer { isRestoring = false }
         guard let session = model.session else {
-            let errText = "内部错误：历史回滚需解锁后操作。"
+            let errText = String(localized: "内部错误：历史回滚需解锁后操作。")
             DiagLog.append(errText)
             model.lastErrorMessage = errText
             return

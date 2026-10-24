@@ -153,7 +153,8 @@ struct OnboardingWizard: View {
     private var recoveryStep: some View {
         VStack(spacing: 16) {
             if isTwoStep {
-                stepIndicator(number: 2, title: "恢复码")
+                // title 落在键的 %@ 位上，是参数不是骨架：在产生点本地化（§5.4）。
+                stepIndicator(number: 2, title: String(localized: "恢复码"))
             }
 
             Image(systemName: "key.horizontal.fill")

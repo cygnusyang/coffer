@@ -1,0 +1,249 @@
+/* 30-support.strings —— impl-support（任务 14）译文分片：非 View 的全部 String 面。
+ *
+ * 覆盖：Support/（除 LanguagePreference.swift 与错误码表）、Platform/、Updater/、
+ * Dropzone/、AppModel.swift、CofferApp.swift 的 String(localized:) 产生点。
+ * 错误码文案（CoreErrorText / LicenseErrorText）在 40-errors.strings。
+ *
+ * 纪律：键 = 中文原文（逐字节等于源码字面量）；插值键的占位符类型由源码表达式决定——
+ * 本分片只用两种：String 插值 → %@（含错误码 / OSStatus / 退出码，避免数字本地化
+ * 把 1005 写成「1,005」）、Int 插值 → %lld（计数：天数 / 分钟数）。
+ * 术语按设计 §5.6：vault / item / master password / recovery code / dropzone / escrow。
+ */
+
+/* MARK: ErrorPresenter（错误弹窗通用面） */
+
+"无法更新密码。" = "Could not update the password.";
+"内部错误：生物识别密钥长度非法。" = "Internal error: invalid biometric key length.";
+"错误 4001：生物识别解锁不可用（Keychain 异常 %@），请使用主密码解锁。" = "Error 4001: biometric unlock is unavailable (Keychain status %@). Use your master password.";
+"错误 %@：%@" = "Error %@: %@";
+
+/* MARK: TouchIDError（4001 / 4002 冻结文案，docs/08 T03；键含「错误 4001：」前缀） */
+"错误 4001：生物识别解锁不可用（设备不支持或认证未通过），请使用主密码解锁。" = "Error 4001: biometric unlock is unavailable (unsupported device or failed authentication). Use your master password.";
+"错误 4002：生物识别凭据已失效（可能因指纹变更），请使用主密码解锁后在设置中重新启用 Touch ID。" = "Error 4002: biometric credentials are no longer valid (the enrolled fingerprints may have changed). Unlock with your master password, then re-enable Touch ID in Settings.";
+"Touch ID 暂时不可用，请稍后重试或使用主密码解锁。" = "Touch ID is temporarily unavailable. Try again later or use your master password.";
+
+/* MARK: 状态词（TouchIDStatus / McpStatus / McpEscrowStatus 共用同一中文） */
+"已停用" = "Disabled";
+"已启用" = "Enabled";
+"凭据已失效（需重新启用）" = "Credentials expired (re-enable)";
+"就绪" = "Ready";
+"未找到 1Password CLI（op）" = "1Password CLI (op) not found";
+"未找到 coffer 命令" = "coffer command not found";
+"未检测到 1Password 会话" = "No 1Password session detected";
+"未启用 MCP 解锁托管" = "MCP unlock escrow is not enabled";
+"Coffer 自家库" = "Coffer Vault";
+
+/* MARK: 菜单栏（MenuStatusText / StatusItemController） */
+"快速搜索…" = "Quick Search…";
+"锁定全部" = "Lock All Vaults";
+"退出 Coffer" = "Quit Coffer";
+"打开主窗口" = "Open Main Window";
+"打开 %@" = "Open %@";
+
+"未创建密码库" = "No vault yet";
+"已锁定" = "Locked";
+"%@（已锁定）" = "%@ (Locked)";
+"已解锁" = "Unlocked";
+"%@（已解锁）" = "%@ (Unlocked)";
+"启动失败" = "Launch failed";
+
+/* MARK: 解锁提示（Keychain / 生物识别弹窗） */
+"解锁密码库" = "Unlock your vault";
+"验证身份以重置主密码" = "Authenticate to reset the master password";
+
+/* MARK: MCP 解锁托管 Keychain */
+"未找到 MCP 解锁托管凭据（Keychain 项不存在）。" = "MCP unlock escrow credentials not found (the Keychain item is missing).";
+"内部错误：MCP 解锁托管密钥长度非法。" = "Internal error: invalid MCP unlock escrow key length.";
+"MCP 解锁托管 Keychain 操作失败（OSStatus %@）。" = "MCP unlock escrow Keychain operation failed (OSStatus %@).";
+
+/* MARK: 许可状态行（LicenseServicing.displayText） */
+"未激活（全功能免费版）" = "Not activated (full-featured free edition)";
+"试用中，剩余 %lld 天" = "Trial: %lld days left";
+"已激活（许可键 %@）" = "Activated (license key %@)";
+"试用已结束（只读模式）" = "Trial ended (read-only)";
+"许可模块不可用" = "Licensing module unavailable";
+
+/* MARK: 密码强度（PasswordStrength.label） */
+"极弱" = "Very weak";
+"弱" = "Weak";
+"一般" = "Fair";
+"强" = "Strong";
+"极强" = "Very strong";
+
+/* MARK: 条目类别展示名（ItemTemplates，纯派生不落库） */
+/* 分叉键：中文「登录」有两个英文（动词 Log In / 类别 Login），键加限定语，
+ * 中文侧由 defaultValue 承担，界面文案不变（设计 §5.3）。 */
+"登录（类别）" = "Login";
+"密码" = "Password";
+"API 凭据" = "API Credential";
+"服务器" = "Server";
+"数据库" = "Database";
+"信用卡" = "Credit Card";
+"会员" = "Membership";
+"护照" = "Passport";
+"软件许可证" = "Software License";
+"户外许可" = "Outdoor License";
+"安全笔记" = "Secure Note";
+"无线路由器" = "Wi-Fi Router";
+"银行账户" = "Bank Account";
+"驾照" = "Driver's License";
+"身份" = "Identity";
+"奖励计划" = "Rewards Program";
+"文档" = "Document";
+"邮箱账户" = "Email Account";
+"社保号" = "Social Security Number";
+"医疗记录" = "Medical Record";
+"SSH 密钥" = "SSH Key";
+"加密钱包" = "Crypto Wallet";
+"联系人" = "Contact";
+
+/* MARK: 模板字段名（ItemTemplates.fields；新建时落库，之后视为数据） */
+"用户名" = "Username";
+"备注" = "Notes";
+"持卡人" = "Cardholder";
+"卡号" = "Card Number";
+"有效期" = "Expires";
+"安全码" = "Security Code";
+
+/* MARK: 更新密码（UpdatePasswordError） */
+"该条目没有密码字段，无法更新密码。" = "This item has no password field, so its password cannot be updated.";
+"新密码不能为空。" = "The new password cannot be empty.";
+
+/* MARK: 主密码重置（AppModel 固定文案） */
+"重置失败：恢复码无效或密码库数据损坏。" = "Reset failed: the recovery code is invalid or the vault data is corrupted.";
+"重置失败：无法完成身份验证或密码库数据损坏。" = "Reset failed: authentication could not be completed or the vault data is corrupted.";
+
+/* MARK: 更新界面文案（UpdateCopy） */
+"开发构建" = "Development build";
+"检查更新…" = "Check for Updates…";
+"正在检查更新…" = "Checking for updates…";
+"已是最新版本" = "You're up to date";
+"检查更新失败（%@）" = "Update check failed (%@)";
+
+/* MARK: MCP 注册 / 移除（McpRegistrar.errorMessage / removeErrorMessage；注册语境） */
+"已注册到 %@（全局）。" = "Registered with %@ (global).";
+"注册失败：配置不完整，请重新打开设置页重试。" = "Registration failed: the configuration is incomplete. Reopen Settings and try again.";
+"注册失败：未找到 coffer 可执行文件，请重新安装后重试。" = "Registration failed: the coffer executable was not found. Reinstall Coffer and try again.";
+"注册失败：未找到 %@（%@）。请先安装 %@，或用「复制注册命令」手动注册。" = "Registration failed: %@ (%@) was not found. Install %@ first, or use “Copy Registration Command” to register manually.";
+"注册失败：%@ 注册命令超时。请重试，或用「复制注册命令」手动注册。" = "Registration failed: the %@ registration command timed out. Try again, or use “Copy Registration Command” to register manually.";
+"注册失败：%@ 返回错误。请用「复制注册命令」手动注册。" = "Registration failed: %@ returned an error. Use “Copy Registration Command” to register manually.";
+"注册失败：无法清理旧的 coffer 注册项。请用「复制注册命令」手动注册。" = "Registration failed: the previous coffer entry could not be removed. Use “Copy Registration Command” to register manually.";
+"注册失败：%@ 报告成功但未确认到已注册条目。请用「复制注册命令」手动注册。" = "Registration failed: %@ reported success but no registered entry was confirmed. Use “Copy Registration Command” to register manually.";
+"检查注册状态失败：无法读取 %@ 配置。" = "Could not check registration status: unable to read the %@ configuration.";
+"注册未完成：辅助进程未在限定时间内返回结果，请重试。" = "Registration did not finish: the helper process did not return a result in time. Try again.";
+"%@ 不支持自动注册，请用「复制配置」手动添加。" = "%@ does not support automatic registration. Use “Copy Configuration” to add it manually.";
+"请手动编辑配置文件移除 coffer 条目。" = "Remove the coffer entry from the configuration file manually.";
+"可在终端运行 %@ 手动清理。" = "Run %@ in Terminal to clean up manually.";
+"已停用（已从 %@ 移除 coffer 注册项）。" = "Disabled (the coffer entry was removed from %@).";
+"未找到 %@（%@），无法自动移除。" = "Could not find %@ (%@), so it cannot be removed automatically.";
+"自动移除超时。" = "Automatic removal timed out.";
+"未能从 %@ 移除 coffer 注册项。" = "The coffer entry could not be removed from %@.";
+"无法读取 %@ 配置确认移除结果。" = "Unable to read the %@ configuration to confirm the removal.";
+"移除未完成（辅助进程未在限定时间内返回结果）。" = "Removal did not finish (the helper process did not return a result in time).";
+"%@ 不支持自动移除，请手动编辑配置文件移除 coffer 条目。" = "%@ does not support automatic removal. Edit the configuration file to remove the coffer entry manually.";
+"已停用，但需手动清理注册项。" = "Disabled, but the registration entry must be cleaned up manually.";
+"注册失败：未找到注册辅助程序，请重新安装 Coffer 后重试。" = "Registration failed: the registration helper was not found. Reinstall Coffer and try again.";
+"注册失败：无法写入注册配置（%@）。" = "Registration failed: could not write the registration configuration (%@).";
+"注册失败：无法启动注册辅助进程（%@）。" = "Registration failed: could not launch the registration helper (%@).";
+
+/* MARK: 更新（Updater：清单验签 / 端点策略 / 安装 / 网络 / 校验 / 结果回读） */
+"更新清单格式无效，无法验签。" = "The update manifest is malformed and cannot be verified.";
+"更新清单缺少签名，已拒绝。" = "The update manifest has no signature; refused.";
+"更新验签公钥无效。" = "The update verification public key is invalid.";
+"更新清单签名数据无效。" = "The update manifest signature data is invalid.";
+"更新清单签名校验失败，已拒绝安装。" = "The update manifest signature check failed; installation refused.";
+"更新请求必须使用 HTTPS（当前 scheme 为 %@）。" = "Update requests must use HTTPS (the current scheme is %@).";
+"（无 host）" = "(no host)";
+"更新端点 %@ 不在白名单内，已拒绝连接。" = "The update endpoint %@ is not on the allowlist; connection refused.";
+"（无 scheme）" = "(no scheme)";
+"更新包解压失败：%@" = "Failed to extract the update package: %@";
+"更新包内未找到 .app，已拒绝安装。" = "No .app was found in the update package; installation refused.";
+"安装配置写入失败：%@" = "Failed to write the install configuration: %@";
+"启动安装辅助进程失败：%@" = "Failed to launch the install helper: %@";
+"当前运行的应用不是已安装版本（/Applications），请从「应用程序」文件夹中的 Coffer 执行更新。" = "The running app is not the installed copy in /Applications. Start the update from Coffer in your Applications folder.";
+"未找到安装辅助程序 %@" = "Install helper not found: %@";
+"更新服务器返回 HTTP %@。" = "The update server returned HTTP %@.";
+"下载产物保存失败：%@" = "Failed to save the downloaded package: %@";
+"临时文件移动失败" = "could not move the temporary file";
+"无法读取待安装应用的签名信息（OSStatus %@）。" = "Unable to read the code signature of the app to install (OSStatus %@).";
+"验签需求字符串无效（OSStatus %@）。" = "The code-signing requirement string is invalid (OSStatus %@).";
+"应用签名校验失败（OSStatus %@）。" = "The app code signature check failed (OSStatus %@).";
+"无法读取应用签名信息（OSStatus %@）。" = "Unable to read the app code signature (OSStatus %@).";
+"应用签名信息缺少 CDHash，已拒绝安装。" = "The app code signature has no CDHash; installation refused.";
+"应用标识符「%@」与预期 %@ 不符，已拒绝安装。" = "The app identifier “%@” does not match the expected %@; installation refused.";
+"（无）" = "(none)";
+"应用团队 ID「%@」与预期 %@ 不符，已拒绝安装。" = "The app team ID “%@” does not match the expected %@; installation refused.";
+"应用 CDHash 与更新清单不符，已拒绝安装（可能非官方构建）。" = "The app CDHash does not match the update manifest; installation refused (this may not be an official build).";
+"更新包缺少内置安装辅助程序，已拒绝安装。" = "The update package is missing its bundled install helper; installation refused.";
+"内置安装辅助程序验签失败（%@）：%@，已拒绝安装。" = "The bundled install helper failed code signature verification (%@): %@; installation refused.";
+"下载包完整性校验失败：无法读取下载文件（%@）。" = "Integrity check failed: the downloaded file could not be read (%@).";
+"下载包完整性校验失败（SHA256 不匹配），已拒绝安装。" = "Integrity check failed (SHA256 mismatch); installation refused.";
+"更新清单格式无效：%@" = "The update manifest is malformed: %@";
+"更新清单缺少必需字段：%@。" = "The update manifest is missing a required field: %@.";
+"更新清单 schema 版本 %@ 不受支持，已拒绝安装。" = "Update manifest schema version %@ is not supported; installation refused.";
+"更新清单 appId「%@」与本应用不匹配，已拒绝安装。" = "The update manifest appId “%@” does not match this app; installation refused.";
+"字段 %@" = "field %@";
+"更新清单下载地址无效：%@。" = "The update manifest download URL is invalid: %@.";
+"更新清单构建时间无效：%@。" = "The update manifest build time is invalid: %@.";
+"无法读取上次更新的结果，请确认当前应用是否已是最新版本。" = "Unable to read the result of the last update. Check whether the app is already up to date.";
+"上次更新失败（退出码 %@）：%@" = "The last update failed (exit code %@): %@";
+"无法解析版本号「%@」或当前版本「%@」。" = "Could not parse the version “%@” or the current version “%@”.";
+"当前版本（%@）低于该更新的最低版本（%@），无法自动安装。请手动下载最新版本。" = "The current version (%@) is below this update's minimum version (%@), so it cannot be installed automatically. Download the latest version manually.";
+"更新失败：%@" = "Update failed: %@";
+
+/* MARK: 放置区（Dropzone：授权 / 监视 / 导入向导文案 / 相对时间） */
+"放置区授权已失效，请重新授权。" = "The dropzone permission has expired. Grant access again.";
+"无法创建放置区授权凭据，请重试。" = "Could not create the dropzone permission. Try again.";
+"无法读取放置区授权凭据，请重新授权。" = "Could not read the dropzone permission. Grant access again.";
+"无法访问放置区目录（%@），授权可能已失效。" = "Cannot access the dropzone folder (%@). The permission may have expired.";
+"无法监视放置区目录（%@，errno %@）。" = "Cannot watch the dropzone folder (%@, errno %@).";
+"还没看到新导出——请完成 Passwords.app 的保存" = "No new export yet — finish saving in Passwords.app";
+"点按改为跳过" = "tap to skip";
+"点按改为导入" = "tap to import";
+"%@，%@，%@" = "%@, %@, %@";
+
+
+
+"会话不存在。" = "The session does not exist.";
+"刚刚" = "just now";
+"%lld 分钟前" = "%lld min ago";
+"%lld 小时前" = "%lld hr ago";
+"昨天" = "yesterday";
+"%lld 天前" = "%lld days ago";
+/* MARK: SwiftUI 字面量（自动查表；代码零改动，译文仍归本组）——PasskeyRowView */
+/* 签名计数器是 UInt32 → 键里是 %u（不是 %lld）：占位符类型由插值表达式决定，
+ * G3 要求键/值逐字一致，写错会静默回落到中文。 */
+"创建时间 %@ · 签名计数器 %u" = "Created %@ · Signature counter %u";
+"删除 Passkey？此操作不可恢复。" = "Delete this passkey? This cannot be undone.";
+"删除后该网站将无法用此 Passkey 登录" = "After deleting, this website can no longer be signed in to with this passkey.";
+
+/* MARK: SwiftUI 字面量——CofferApp 菜单（CommandMenu / Button / Window 标题）
+ *
+ * 「数据」「锁定 Coffer」「复制密码/用户名/验证码」「从 macOS 密码 App…」与
+ * Views/ShortcutsSheet（impl-ui-a）同串同译文，按设计 §8.3「后加者让位」判给
+ * 先定义的 10-ui-a.strings；这几条属跨组复用，待 infra 移入 00-common。
+ * 本组若发现 G2 报这几条重复，删本组副本即正确处置。 */
+"导入 CSV…" = "Import CSV…";
+"导入 1Password (.1pux)…" = "Import 1Password (.1pux)…";
+"导入 Bitwarden (.json)…" = "Import Bitwarden (.json)…";
+"导入 1Password (OPVault)…" = "Import 1Password (OPVault)…";
+"导出…" = "Export…";
+"设置…" = "Settings…";
+"新建条目…" = "New Item…";
+"关于 Coffer…" = "About Coffer…";
+"键盘快捷键…" = "Keyboard Shortcuts…";
+"使用入门…" = "Getting Started…";
+"帮助中心…" = "Help Center…";
+/* MARK: 子进程 / 嵌套 helper 验签的技术细节（作为 %@ 参数进入上面的错误模板，仍算用户可见） */
+"无法读取签名信息（OSStatus %@）" = "Unable to read the code signature (OSStatus %@)";
+"签名校验失败（OSStatus %@）" = "Code signature check failed (OSStatus %@)";
+"%@ 退出码 %@" = "%@ exited with code %@";
+"%@ 退出码 %@：%@" = "%@ exited with code %@: %@";
+
+/* MARK: helper 结果码 → 原因（UpdaterManager.installFailureReason；helper 无 UI 不翻，见 §7.6） */
+"无法备份当前版本，更新未执行。请确认磁盘空间后重试。" = "Could not back up the current version, so nothing was changed. Check disk space and try again.";
+"更新包未能安装。请重新下载更新包后重试。" = "The update package could not be installed. Download it again and retry.";
+"未能启动新版本。请重新打开 Coffer；若仍无法启动，请从官网重新下载。" = "The new version could not be started. Reopen Coffer; if it still will not start, download it again from the official site.";
+"安装参数无效。请重新下载更新包后重试。" = "The install arguments are invalid. Download the update package again and retry.";
+"更新未能完成。请重新下载更新包后重试。" = "The update could not be completed. Download it again and retry.";
+"退出码 %@" = "Exit code %@";

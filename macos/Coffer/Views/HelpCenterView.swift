@@ -23,6 +23,14 @@ struct HelpCenterView: View {
     var body: some View {
         NavigationStack {
             List {
+                // 帮助正文（HelpCenterContent，3487 字）v2.13.0 不翻（设计 §5.7，登记 P-19.1）：
+                // 英文界面在正文上方用一行说明交代，正文保持中文原样——比「悄悄全是中文」诚实。
+                if LanguagePreference.launchLanguage == .en {
+                    Text("Help content is currently available in Chinese only.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(HelpCenterContent.sections, id: \.title) { section in
                     Section(section.title) {
                         ForEach(section.rows, id: \.self) { row in

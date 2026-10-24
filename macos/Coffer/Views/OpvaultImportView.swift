@@ -70,21 +70,22 @@ struct OpvaultImportView: View {
 
     /// OPVault 格式配置（docs/14 §A P3 §3 逐字对照表）。
     static let importFormatConfig = ImportFormatConfig(
-        title: "导入 1Password（OPVault）",
+        // 配置字段是 String 且由 Text/Button 消费，不查表（设计 24 F6）→ 译文在产生点取（§5.4）。
+        title: String(localized: "导入 1Password（OPVault）"),
         icon: "folder",
-        pickTitle: "选择 1Password OPVault 目录",
-        pickDescription: "OPVault 是 1Password 旧版（vault 格式）的目录归档，需输入 1Password 主密码导入。\n导入为 all-or-nothing：密码错或数据损坏不会写入任何条目。",
-        pickButtonLabel: "选择目录…",
+        pickTitle: String(localized: "选择 1Password OPVault 目录"),
+        pickDescription: String(localized: "OPVault 是 1Password 旧版（vault 格式）的目录归档，需输入 1Password 主密码导入。\n导入为 all-or-nothing：密码错或数据损坏不会写入任何条目。"),
+        pickButtonLabel: String(localized: "选择目录…"),
         windowWidth: 560, windowHeight: 540,
-        precheckErrorAlertTitle: "预检失败",
+        precheckErrorAlertTitle: String(localized: "预检失败"),
         transactionSemantics: .allOrNothing,
-        importingCopy: "正在导入（解密 + 逐条目写入，全部成功或全部回滚）…",
+        importingCopy: String(localized: "正在导入（解密 + 逐条目写入，全部成功或全部回滚）…"),
         failureSuffix: "",
         doneFooter: nil,
         failureRecovery: .backToPassword,
         canChooseDirectories: true,
         allowedContentTypes: [],
-        panelMessage: "选择包含 default/profile.js 的 OPVault 根目录"
+        panelMessage: String(localized: "选择包含 default/profile.js 的 OPVault 根目录")
     )
 
     var body: some View {
@@ -205,7 +206,8 @@ struct OpvaultImportView: View {
                             .foregroundStyle(.secondary)
                     }
                     if !report.otherProfiles.isEmpty {
-                        Text("其他 profile（不导入）：\(report.otherProfiles.joined(separator: "、"))")
+                        // 分隔符随语言：被连的是 profile 名（数据），不能进译表（§5.5）。
+                        Text("其他 profile（不导入）：\(report.otherProfiles.joined(separator: CopyListSeparator.comma))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -259,7 +261,7 @@ struct OpvaultImportView: View {
                     } else {
                         // 会话缺失（理论不可达：入口在解锁区）；无导入发生
                         step = .password(path: path)
-                        model.lastErrorMessage = "会话不存在。"
+                        model.lastErrorMessage = String(localized: "会话不存在。")
                     }
                 }
             } catch {
@@ -304,7 +306,7 @@ struct OpvaultImportView: View {
                         ImportScaffold.failureList(
                             result.report.notImported,
                             id: \.uuid, title: \.title, reason: \.reason,
-                            emptyTitleFallback: "（无标题）"
+                            emptyTitleFallback: String(localized: "（无标题）")
                         )
                     }
                 }

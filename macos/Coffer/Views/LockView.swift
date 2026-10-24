@@ -48,8 +48,16 @@ struct LockView: View {
             Image(systemName: "lock.circle")
                 .font(.system(size: 52))
                 .foregroundStyle(.secondary)
-            Text(model.vaultName.isEmpty ? "密码库已锁定" : model.vaultName)
-                .font(.title2.bold())
+            // 标题可能落到「库名」（数据，永不翻译）或「密码库已锁定」（文案）：拆成两支，
+            // 文案支走 LocalizedStringKey 查表，数据支走 verbatim（v2.13.0 设计 §5.5）。
+            Group {
+                if model.vaultName.isEmpty {
+                    Text("密码库已锁定")
+                } else {
+                    Text(verbatim: model.vaultName)
+                }
+            }
+            .font(.title2.bold())
 
             SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
                 .textFieldStyle(.roundedBorder)

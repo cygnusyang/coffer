@@ -59,21 +59,22 @@ struct PuxImportView: View {
 
     /// 1PUX 格式配置（docs/14 §A P3 §3 逐字对照表）。
     static let importFormatConfig = ImportFormatConfig(
-        title: "导入 1Password（.1pux）",
+        // 配置字段是 String 且由 Text/Button 消费，不查表（设计 24 F6）→ 译文在产生点取（§5.4）。
+        title: String(localized: "导入 1Password（.1pux）"),
         icon: "shippingbox",
-        pickTitle: "选择 1Password 导出的 .1pux 文件",
-        pickDescription: "1PUX 是 1Password 官方导出格式（ZIP 归档），导入为每条目独立事务。",
-        pickButtonLabel: "选择文件…",
+        pickTitle: String(localized: "选择 1Password 导出的 .1pux 文件"),
+        pickDescription: String(localized: "1PUX 是 1Password 官方导出格式（ZIP 归档），导入为每条目独立事务。"),
+        pickButtonLabel: String(localized: "选择文件…"),
         windowWidth: 560, windowHeight: 520,
-        precheckErrorAlertTitle: "预检失败",
+        precheckErrorAlertTitle: String(localized: "预检失败"),
         transactionSemantics: .perItem,
-        importingCopy: "正在导入（每条目独立事务，已完成的条目保留）…",
-        failureSuffix: "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。",
+        importingCopy: String(localized: "正在导入（每条目独立事务，已完成的条目保留）…"),
+        failureSuffix: String(localized: "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。"),
         doneFooter: nil,
         failureRecovery: .backToReport,
         canChooseDirectories: false,
         allowedContentTypes: [.zip, .data],
-        panelMessage: "选择 1Password 导出的 .1pux 文件"
+        panelMessage: String(localized: "选择 1Password 导出的 .1pux 文件")
     )
 
     var body: some View {
@@ -274,7 +275,7 @@ struct PuxImportView: View {
                             trashedCount: 0, passwordHistoryDropped: 0, unmappedValueTypes: [],
                             duplicateDocumentIds: [], notImported: [], warnings: []
                         ), path: lastPath ?? path)
-                        model.lastErrorMessage = "会话不存在。"
+                        model.lastErrorMessage = String(localized: "会话不存在。")
                     }
                 }
             } catch {

@@ -40,10 +40,12 @@ WATCH_SRC="${ROOT_DIR}/macos/Coffer/Dropzone/DirectoryWatching.swift"
 # DropzoneImportContext 协议引用之，harness 编译须含本文件。
 APP_PHASE_SRC="${ROOT_DIR}/macos/Coffer/AppPhase.swift"
 
-# model 依赖的 ErrorPresenter 链（真实实现，非 shim）：ErrorPresenter + 其四
-# 依赖均为 Foundation/Security/LocalAuthentication-only，可 standalone 编译。
+# model 依赖的 ErrorPresenter 链（真实实现，非 shim）：ErrorPresenter + 其依赖
+# 均为 Foundation/Security/LocalAuthentication-only，可 standalone 编译。
+# CoreErrorText（v2.13.0 D-10）：ErrorPresenter 的 1xxx–5xxx 码映射表，零依赖。
 ERROR_PRESENTER_SRC="${ROOT_DIR}/macos/Coffer/Support/ErrorPresenter.swift"
 ERROR_DEPS=(
+  "${ROOT_DIR}/macos/Coffer/Support/CoreErrorText.swift"
   "${ROOT_DIR}/macos/Coffer/Support/TouchIDError.swift"
   "${ROOT_DIR}/macos/Coffer/Support/UpdatePassword.swift"
   "${ROOT_DIR}/macos/Coffer/Support/LicenseError.swift"

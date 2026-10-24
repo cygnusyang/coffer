@@ -142,9 +142,12 @@ struct TotpScanView: View {
                 .font(.headline)
                 .foregroundStyle(.green)
             VStack(alignment: .leading, spacing: 6) {
-                Text(verbatim: "发行方：\(parsed.draft.issuer ?? "未提供")")
-                Text(verbatim: "账户：\(parsed.draft.account ?? "未提供")")
-                Text(verbatim: "位数：\(parsed.draft.digits) 位 · 周期：\(parsed.draft.period) 秒")
+                // 骨架是文案、参数是数据（设计 §5.5）：verbatim 会让英文界面残留中文，
+                // 改普通 Text 后骨架查表、issuer/account 原样代入。digits(UInt8)/
+                // period(UInt32) 显式转 Int，键里才是 %lld（F7 只保证 Int/Int64）。
+                Text("发行方：\(parsed.draft.issuer ?? String(localized: "未提供"))")
+                Text("账户：\(parsed.draft.account ?? String(localized: "未提供"))")
+                Text("位数：\(Int(parsed.draft.digits)) 位 · 周期：\(Int(parsed.draft.period)) 秒")
             }
             .font(.callout)
             .textSelection(.enabled)
@@ -275,7 +278,7 @@ final class QRScanController: NSObject, ObservableObject {
             guard let self, self.active else { return }
             guard let device = AVCaptureDevice.default(for: .video) else {
                 DispatchQueue.main.async {
-                    self.phase = .denied("未检测到可用摄像头，请手动输入 otpauth URI。")
+                    self.phase = .denied(String(localized: "未检测到可用摄像头，请手动输入 otpauth URI。"))
                 }
                 return
             }
@@ -298,13 +301,13 @@ final class QRScanController: NSObject, ObservableObject {
                 self.session.startRunning()
             } catch {
                 DispatchQueue.main.async {
-                    self.phase = .denied("相机启动失败，请手动输入 otpauth URI。")
+                    self.phase = .denied(String(localized: "相机启动失败，请手动输入 otpauth URI。"))
                 }
             }
         }
     }
 
-    private static let noCameraAccessMessage = "相机权限被拒绝。可在系统设置 → 隐私与安全性 → 相机中允许 Coffer 后重试。"
+    private static let noCameraAccessMessage = String(localized: "相机权限被拒绝。可在系统设置 → 隐私与安全性 → 相机中允许 Coffer 后重试。")
 }
 
 // MARK: - QR 识别
@@ -340,7 +343,7 @@ extension QRScanController: AVCaptureMetadataOutputObjectsDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.active else { return }
                 // 拒绝提示不退出（TC-QR-02 Err 分支）；错误码 1012 随消息直出
-                self.rejection = "不是有效的 otpauth URI：\(ErrorPresenter.text(error))"
+                self.rejection = String(localized: "不是有效的 otpauth URI：\(ErrorPresenter.text(error))")
             }
         }
     }

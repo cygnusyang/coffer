@@ -74,7 +74,8 @@ struct RecoveryCodeSettingsSection: View {
     }
 
     /// 状态行说明文案（两态，docs/31 §4.3）。
-    private var statusCaption: String {
+    /// 返回 LocalizedStringKey：调用方是 Text(...)，而 Text(String) 不查表（F6）。
+    private var statusCaption: LocalizedStringKey {
         model.hasRecoveryWrap
             ? "已启用（恢复码仅在生成时显示一次）"
             : "未启用——忘记主密码时将无法通过恢复码重置。"
@@ -185,7 +186,9 @@ struct RecoveryCodeSetupSheet: View {
             Image(systemName: "key")
                 .font(.system(size: 44))
                 .foregroundStyle(.tint)
-            Text(model.hasRecoveryWrap ? "重新生成恢复码" : "设置恢复码")
+            Text(model.hasRecoveryWrap
+                 ? LocalizedStringKey("重新生成恢复码")
+                 : LocalizedStringKey("设置恢复码"))
                 .font(.title3.bold())
             Text("恢复码用于忘记主密码时重置。请抄写并妥善保存。恢复码仅显示一次。")
                 .font(.callout)
@@ -215,7 +218,7 @@ struct RecoveryCodeSetupSheet: View {
         guard let generated = model.generateRecoveryCode() else {
             // 失败（nil）：AppModel 已置 lastErrorMessage；兜底补一条防空白
             if model.lastErrorMessage == nil {
-                model.lastErrorMessage = "生成恢复码失败，请重试。"
+                model.lastErrorMessage = String(localized: "生成恢复码失败，请重试。")
             }
             return
         }
@@ -253,8 +256,8 @@ struct RecoveryCodeSetupSheet: View {
             } label: {
                 Label(
                     showCopied
-                        ? "已复制（\(Int(Self.clipboardClearSecs)) 秒后自动清除）"
-                        : "复制",
+                        ? LocalizedStringKey("已复制（\(Int(Self.clipboardClearSecs)) 秒后自动清除）")
+                        : LocalizedStringKey("复制"),
                     systemImage: "doc.on.doc"
                 )
             }
@@ -422,8 +425,8 @@ struct RecoveryCodeSetupSheet: View {
             // A1（docs/15 §2.2，偏差 D-A1）：向导授权形态文案（复用刚输入的主密码，
             // 非预填、非静默自动提交——显式授权）；手动路径保留现状文案。
             Text(hasAuthorization
-                 ? "将使用你刚输入的主密码完成此设置，恢复码才会启用。"
-                 : "出于安全考虑，主密码不会被保存，请重新输入一次以确认身份，之后恢复码才会启用。")
+                 ? LocalizedStringKey("将使用你刚输入的主密码完成此设置，恢复码才会启用。")
+                 : LocalizedStringKey("出于安全考虑，主密码不会被保存，请重新输入一次以确认身份，之后恢复码才会启用。"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

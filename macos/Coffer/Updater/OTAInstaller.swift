@@ -66,15 +66,15 @@ struct OTAInstaller: Installing {
         var errorDescription: String? {
             switch self {
             case .unzipFailed(let detail):
-                return "更新包解压失败：\(detail)"
+                return String(localized: "更新包解压失败：\(detail)")
             case .appNotFound:
-                return "更新包内未找到 .app，已拒绝安装。"
+                return String(localized: "更新包内未找到 .app，已拒绝安装。")
             case .configWriteFailed(let detail):
-                return "安装配置写入失败：\(detail)"
+                return String(localized: "安装配置写入失败：\(detail)")
             case .helperLaunchFailed(let detail):
-                return "启动安装辅助进程失败：\(detail)"
+                return String(localized: "启动安装辅助进程失败：\(detail)")
             case .launchPathMismatch:
-                return "当前运行的应用不是已安装版本（/Applications），请从「应用程序」文件夹中的 Coffer 执行更新。"
+                return String(localized: "当前运行的应用不是已安装版本（/Applications），请从「应用程序」文件夹中的 Coffer 执行更新。")
             }
         }
     }
@@ -291,7 +291,7 @@ struct OTAInstaller: Installing {
         DiagLog.append("BUG-29：launchViaOpen 进入（helper=\(helper.lastPathComponent)）")
         guard FileManager.default.fileExists(atPath: helper.path) else {
             DiagLog.append("BUG-29：helper bundle 缺失 → helperLaunchFailed")
-            throw InstallError.helperLaunchFailed("未找到安装辅助程序 \(helper.lastPathComponent)")
+            throw InstallError.helperLaunchFailed(String(localized: "未找到安装辅助程序 \(helper.lastPathComponent)"))
         }
         let openArgs = openLaunchArgs(helper: helper, args: args)
         DiagLog.append("BUG-29：执行 open \(openArgs.joined(separator: " "))")
@@ -318,7 +318,9 @@ struct OTAInstaller: Installing {
         guard status == 0 && detail.isEmpty else {
             let suffix = detail.isEmpty ? "（无 stderr 输出）" : "：\(detail)"
             DiagLog.append("BUG-29：open 启动失败（exit \(status)）\(suffix)")
-            throw InstallError.helperLaunchFailed("open 启动安装辅助程序失败（exit \(status)）\(suffix)")
+            // 用户面只给退出码：open 的 stderr 是外部进程原文（不属可译文案），拼进
+            // 本地化句子会让英文界面混入未翻译片段（设计 24 §5.5 文案/数据分界）。
+            throw InstallError.helperLaunchFailed(String(localized: "退出码 \(String(status))"))
         }
         DiagLog.append("BUG-29：open(1) 提交成功（exit 0 无 stderr；helper 已交 LaunchServices，进程归属 launchd）")
     }
@@ -339,10 +341,15 @@ struct OTAInstaller: Installing {
                 data: stderr.fileHandleForReading.readDataToEndOfFile(),
                 encoding: .utf8
             )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let suffix = detail.isEmpty ? "" : "：\(detail)"
+            // 该 description 会作为 detail 进入上游的本地化模板（如「更新包解压失败：%@」），
+            // 属用户可见串；退出码按 String 插值避免「1,005」式分组。
+            let exitText = String(process.terminationStatus)
+            let message = detail.isEmpty
+                ? String(localized: "\(executable) 退出码 \(exitText)")
+                : String(localized: "\(executable) 退出码 \(exitText)：\(detail)")
             throw NSError(
                 domain: "OTAInstaller", code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "\(executable) 退出码 \(process.terminationStatus)\(suffix)"])
+                userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 

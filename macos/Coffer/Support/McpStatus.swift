@@ -83,12 +83,12 @@ enum McpStatus: Equatable {
     /// 状态行短文案（docs/20 §6.1 状态行）。
     var label: String {
         switch self {
-        case .disabled: return "已停用"
-        case .ready: return "就绪"
-        case .notReady(.missingOpBinary): return "未找到 1Password CLI（op）"
-        case .notReady(.missingCofferBinary): return "未找到 coffer 命令"
-        case .notReady(.missingSession): return "未检测到 1Password 会话"
-        case .notReady(.missingEscrow): return "未启用 MCP 解锁托管"
+        case .disabled: return String(localized: "已停用")
+        case .ready: return String(localized: "就绪")
+        case .notReady(.missingOpBinary): return String(localized: "未找到 1Password CLI（op）")
+        case .notReady(.missingCofferBinary): return String(localized: "未找到 coffer 命令")
+        case .notReady(.missingSession): return String(localized: "未检测到 1Password 会话")
+        case .notReady(.missingEscrow): return String(localized: "未启用 MCP 解锁托管")
         }
     }
 }
@@ -139,9 +139,9 @@ enum McpEscrowStatus: Equatable {
     /// 状态行短文案（docs/29 §7.2）。
     var label: String {
         switch self {
-        case .disabled: return "已停用"
-        case .enabled: return "已启用"
-        case .stale: return "凭据已失效（需重新启用）"
+        case .disabled: return String(localized: "已停用")
+        case .enabled: return String(localized: "已启用")
+        case .stale: return String(localized: "凭据已失效（需重新启用）")
         }
     }
 }

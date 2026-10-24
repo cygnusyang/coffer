@@ -319,7 +319,9 @@ struct ItemDetailView: View {
                 Button {
                     tryAction { try model.setFavorite(itemId: details.uuid, favorite: !details.isFavorite) }
                 } label: {
-                    Label(details.isFavorite ? "取消收藏" : "收藏",
+                    // 分叉键（设计 §5.3）：侧栏「收藏」是列表名（Favorites，名词），这里是
+                    // 动作（加入收藏 = Add to Favorites）。中文侧用自然动宾，不用括号限定语。
+                    Label(details.isFavorite ? LocalizedStringKey("取消收藏") : LocalizedStringKey("加入收藏"),
                           systemImage: details.isFavorite ? "star.slash" : "star")
                 }
                 if details.category.isEditable {

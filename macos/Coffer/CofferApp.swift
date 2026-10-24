@@ -408,7 +408,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             !($0 is NSPanel)
                 && $0.sheetParent == nil
                 && $0.identifier?.rawValue != "settings"
-                && $0.title != "设置"
+                // 标题比对也要本地化：Window("设置") 的标题在英文界面是 "Settings"，
+                // 拿中文原文比对会在英文下失配，把设置窗误判成主窗口。
+                && $0.title != String(localized: "设置")
         }
     }
 }

@@ -334,11 +334,15 @@ struct ActiveItemList: View {
         }
     }
 
-    private var navigationTitleText: String {
+    /// 窗口标题：返回 LocalizedStringKey 而非 String——Text(String) / navigationTitle(String)
+    /// 都走 StringProtocol 重载、**不查** Localizable 表（v2.13.0 设计 F6），返回 String 会让
+    /// 英文界面残留中文。空态标题同理（filterEmptyTitle）。
+    private var navigationTitleText: LocalizedStringKey {
         switch model.sidebarFilter {
         case .all: return "全部条目"
         case .favorites: return "收藏"
-        case .category(let category): return category.displayName
+        // 类别展示名在 Support 层产生（已有本地化），这里不再二次查表。
+        case .category(let category): return LocalizedStringKey(category.displayName)
         case .trash: return "回收站"
         }
     }
@@ -392,7 +396,7 @@ struct ActiveItemList: View {
         }
     }
 
-    private var filterEmptyTitle: String {
+    private var filterEmptyTitle: LocalizedStringKey {
         switch model.sidebarFilter {
         case .favorites: return "暂无收藏"
         case .category: return "该分类暂无条目"

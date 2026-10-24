@@ -35,9 +35,16 @@ enum PasswordStrength {
         return min(4, max(0, score))
     }
 
-    /// 强度中文标签（zxcvbn 0–4 与本地粗估共用）。
+    /// 强度标签（zxcvbn 0–4 与本地粗估共用）。键 = 中文原文（D-6），译文在
+    /// Resources/Localization/en/30-support.strings；无 bundle（测试进程）时回落中文。
     static func label(_ score: Int) -> String {
-        let labels = ["极弱", "弱", "一般", "强", "极强"]
+        let labels = [
+            String(localized: "极弱"),
+            String(localized: "弱"),
+            String(localized: "一般"),
+            String(localized: "强"),
+            String(localized: "极强"),
+        ]
         let index = min(4, max(0, score))
         return labels[index]
     }

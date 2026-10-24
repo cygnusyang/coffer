@@ -107,7 +107,8 @@ struct TouchIDSettingsSection: View {
     }
 
     /// 状态行说明文案（三态，docs/08 §7.5）。
-    private var statusCaption: String {
+    /// 返回 LocalizedStringKey：调用方是 Text(...)，String 重载不查表（F6）。
+    private var statusCaption: LocalizedStringKey {
         switch model.touchIDStatus {
         case .disabled:
             return "已停用——锁定后需输入主密码。"
@@ -123,7 +124,9 @@ struct TouchIDSettingsSection: View {
     private var statusActions: some View {
         switch model.touchIDStatus {
         case .disabled, .stale:
-            Button(model.touchIDStatus == .disabled ? "启用 Touch ID 解锁" : "重新启用") {
+            Button(model.touchIDStatus == .disabled
+                   ? LocalizedStringKey("启用 Touch ID 解锁")
+                   : LocalizedStringKey("重新启用")) {
                 showPasswordPrompt = true
             }
             .disabled(model.isBusy || showPasswordPrompt)
@@ -160,7 +163,8 @@ struct TouchIDSettingsSection: View {
         .padding(.vertical, 4)
     }
 
-    private var confirmTitle: String {
+    /// 返回 LocalizedStringKey：调用方是 Button(...)，String 重载不查表（F6）。
+    private var confirmTitle: LocalizedStringKey {
         model.touchIDStatus == .stale ? "重新启用" : "启用"
     }
 

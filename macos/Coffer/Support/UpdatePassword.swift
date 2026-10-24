@@ -24,9 +24,9 @@ enum UpdatePasswordError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingPasswordField:
-            return "该条目没有密码字段，无法更新密码。"
+            return String(localized: "该条目没有密码字段，无法更新密码。")
         case .emptyPassword:
-            return "新密码不能为空。"
+            return String(localized: "新密码不能为空。")
         }
     }
 }

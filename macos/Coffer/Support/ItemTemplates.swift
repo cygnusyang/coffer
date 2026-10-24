@@ -16,32 +16,38 @@ extension FfiItemCategory {
         Self.editableCategories.contains(self)
     }
 
+    /// 类别展示名（纯派生、不落库——文案按设计 §5.5）。
+    ///
+    /// 分叉键例外（设计 §5.3 的同中文异译文制度）：「登录」既是菜单动词
+    /// （00-common 的 "Log In"）又是类别名词（"Login"），同一键无法两译。
+    /// 走 `localized:defaultValue:` 分叉——键为「登录（类别）」，中文侧仍显示
+    /// 「登录」（defaultValue 承担中文回落），**不改中文 UI 文案**（AC-L10N-05）。
     var displayName: String {
         switch self {
-        case .login: return "登录"
-        case .password: return "密码"
-        case .apiCredential: return "API 凭据"
-        case .server: return "服务器"
-        case .database: return "数据库"
-        case .creditCard: return "信用卡"
-        case .membership: return "会员"
-        case .passport: return "护照"
-        case .softwareLicense: return "软件许可证"
-        case .outdoorLicense: return "户外许可"
-        case .secureNote: return "安全笔记"
-        case .wirelessRouter: return "无线路由器"
-        case .bankAccount: return "银行账户"
-        case .driverLicense: return "驾照"
-        case .identity: return "身份"
-        case .rewardProgram: return "奖励计划"
-        case .document: return "文档"
-        case .emailAccount: return "邮箱账户"
-        case .socialSecurityNumber: return "社保号"
-        case .medicalRecord: return "医疗记录"
-        case .sshKey: return "SSH 密钥"
-        case .cryptoWallet: return "加密钱包"
-        case .person: return "联系人"
-        case .custom: return "自定义"
+        case .login: return String(localized: "登录（类别）", defaultValue: "登录")
+        case .password: return String(localized: "密码")
+        case .apiCredential: return String(localized: "API 凭据")
+        case .server: return String(localized: "服务器")
+        case .database: return String(localized: "数据库")
+        case .creditCard: return String(localized: "信用卡")
+        case .membership: return String(localized: "会员")
+        case .passport: return String(localized: "护照")
+        case .softwareLicense: return String(localized: "软件许可证")
+        case .outdoorLicense: return String(localized: "户外许可")
+        case .secureNote: return String(localized: "安全笔记")
+        case .wirelessRouter: return String(localized: "无线路由器")
+        case .bankAccount: return String(localized: "银行账户")
+        case .driverLicense: return String(localized: "驾照")
+        case .identity: return String(localized: "身份")
+        case .rewardProgram: return String(localized: "奖励计划")
+        case .document: return String(localized: "文档")
+        case .emailAccount: return String(localized: "邮箱账户")
+        case .socialSecurityNumber: return String(localized: "社保号")
+        case .medicalRecord: return String(localized: "医疗记录")
+        case .sshKey: return String(localized: "SSH 密钥")
+        case .cryptoWallet: return String(localized: "加密钱包")
+        case .person: return String(localized: "联系人")
+        case .custom: return String(localized: "自定义")
         }
     }
 
@@ -113,30 +119,35 @@ struct TemplateFieldSpec {
 
 enum ItemTemplates {
     /// 返回某类别的模板字段（新建表单的初始字段集）。
+    ///
+    /// 字段名在此处本地化（而非展示时）：它是「新建条目」时写进草稿的**字段名**，
+    /// 英文界面新建的条目应看到 "Username" 而不是「用户名」；一旦落库即为数据，
+    /// 后续不再翻译（设计 §5.5 分界：产物是文案的来源，存量是数据）。
+    /// designation（cardholder / cc-number 等）是持久化值，**严禁翻译**。
     static func fields(for category: FfiItemCategory) -> [TemplateFieldSpec] {
         switch category {
         case .login:
             return [
-                TemplateFieldSpec(name: "用户名", fieldType: .text, designation: .username, required: true),
-                TemplateFieldSpec(name: "密码", fieldType: .concealed, designation: .password, required: true),
-                TemplateFieldSpec(name: "备注", fieldType: .multiline, designation: .notesPlain, required: false),
+                TemplateFieldSpec(name: String(localized: "用户名"), fieldType: .text, designation: .username, required: true),
+                TemplateFieldSpec(name: String(localized: "密码"), fieldType: .concealed, designation: .password, required: true),
+                TemplateFieldSpec(name: String(localized: "备注"), fieldType: .multiline, designation: .notesPlain, required: false),
             ]
         case .password:
             return [
-                TemplateFieldSpec(name: "密码", fieldType: .concealed, designation: .password, required: true),
-                TemplateFieldSpec(name: "备注", fieldType: .multiline, designation: .notesPlain, required: false),
+                TemplateFieldSpec(name: String(localized: "密码"), fieldType: .concealed, designation: .password, required: true),
+                TemplateFieldSpec(name: String(localized: "备注"), fieldType: .multiline, designation: .notesPlain, required: false),
             ]
         case .secureNote:
             return [
-                TemplateFieldSpec(name: "备注", fieldType: .multiline, designation: .notesPlain, required: false),
+                TemplateFieldSpec(name: String(localized: "备注"), fieldType: .multiline, designation: .notesPlain, required: false),
             ]
         case .creditCard:
             return [
-                TemplateFieldSpec(name: "持卡人", fieldType: .text, designation: .other(value: "cardholder"), required: false),
-                TemplateFieldSpec(name: "卡号", fieldType: .text, designation: .other(value: "cc-number"), required: true),
-                TemplateFieldSpec(name: "有效期", fieldType: .monthYear, designation: .other(value: "expiry"), required: false),
-                TemplateFieldSpec(name: "安全码", fieldType: .concealed, designation: .other(value: "cvv"), required: false),
-                TemplateFieldSpec(name: "备注", fieldType: .multiline, designation: .notesPlain, required: false),
+                TemplateFieldSpec(name: String(localized: "持卡人"), fieldType: .text, designation: .other(value: "cardholder"), required: false),
+                TemplateFieldSpec(name: String(localized: "卡号"), fieldType: .text, designation: .other(value: "cc-number"), required: true),
+                TemplateFieldSpec(name: String(localized: "有效期"), fieldType: .monthYear, designation: .other(value: "expiry"), required: false),
+                TemplateFieldSpec(name: String(localized: "安全码"), fieldType: .concealed, designation: .other(value: "cvv"), required: false),
+                TemplateFieldSpec(name: String(localized: "备注"), fieldType: .multiline, designation: .notesPlain, required: false),
             ]
         default:
             return []

@@ -1,0 +1,2 @@
+/* 负向夹具：缺 NSCameraUsageDescription（英文用户将看到中文权限弹窗） */
+"NSMicrophoneUsageDescription" = "Not used.";

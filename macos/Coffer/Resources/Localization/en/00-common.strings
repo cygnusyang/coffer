@@ -1,0 +1,50 @@
+/* 00-common.strings —— 跨组复用条目（全仓唯一归属，只由 impl-infra 维护）。
+ *
+ * 纪律（docs/03-功能设计/24-v2.13.0-多语言-设计.md §4.3 / §8.3）：
+ *   - 键 = 中文原文（逐字节等于源码字面量），值 = 英文译文（术语按设计 §5.6）。
+ *   - 任何组需要「保存」「回收站」这类复用词，先查本文件；已有即复用，不得在
+ *     自己的分片里再定义一遍（跨分片重复键会让 tools/check_l10n.sh G2 硬失败）。
+ *   - 本文件由构建期 cat 合并进 en.lproj/Localizable.strings，产物不入库。
+ *   - 编码 UTF-8 无 BOM；一条一行；分片内允许段注释分组，不排序。
+ */
+
+/* MARK: 通用动词（按钮 / 菜单项，全仓复用） */
+"保存" = "Save";
+"取消" = "Cancel";
+"删除" = "Delete";
+"彻底删除" = "Delete Permanently";
+"关闭" = "Close";
+"完成" = "Done";
+"复制" = "Copy";
+"已复制" = "Copied";
+"打开" = "Open";
+"添加" = "Add";
+"编辑" = "Edit";
+"恢复" = "Restore";
+"导入" = "Import";
+"导出" = "Export";
+"登录" = "Log In";
+
+/* MARK: 导航 / 页面标题（侧栏与窗口标题共用同一中文） */
+"回收站" = "Trash";
+"设置" = "Settings";
+"历史版本" = "Version History";
+"安全体检" = "Security Checkup";
+"新建条目" = "New Item";
+
+/* MARK: 语言选择（Support/LanguagePreference.swift + Views/LanguageSection.swift，impl-infra 独占） */
+"语言" = "Language";
+"跟随系统" = "System";
+"简体中文" = "Chinese, Simplified";
+"需要重新启动" = "Restart Required";
+"语言将在 Coffer 下次启动时生效。" = "The language change takes effect the next time Coffer starts.";
+"好" = "OK";
+
+/* ---- 归属整理（2026-10-24）：跨三组复用，单点在 00-common ---- */
+"正在打开…" = "Opening…";
+"操作失败" = "Operation Failed";
+"新增" = "New";
+"重复" = "Duplicate";
+"冲突" = "Conflict";
+"自定义" = "Custom";
+"主密码已重置，条目数据不受影响。请用新密码解锁。" = "The master password has been reset. Your items are unchanged. Unlock with the new password.";

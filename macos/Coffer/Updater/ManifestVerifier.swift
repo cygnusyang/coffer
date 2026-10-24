@@ -34,15 +34,15 @@ enum ManifestVerifier {
         var errorDescription: String? {
             switch self {
             case .invalidJSON:
-                return "更新清单格式无效，无法验签。"
+                return String(localized: "更新清单格式无效，无法验签。")
             case .missingSignature:
-                return "更新清单缺少签名，已拒绝。"
+                return String(localized: "更新清单缺少签名，已拒绝。")
             case .invalidPublicKey:
-                return "更新验签公钥无效。"
+                return String(localized: "更新验签公钥无效。")
             case .invalidSignatureData:
-                return "更新清单签名数据无效。"
+                return String(localized: "更新清单签名数据无效。")
             case .signatureMismatch:
-                return "更新清单签名校验失败，已拒绝安装。"
+                return String(localized: "更新清单签名校验失败，已拒绝安装。")
             }
         }
     }

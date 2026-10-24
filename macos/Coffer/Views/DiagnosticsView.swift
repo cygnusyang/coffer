@@ -75,7 +75,8 @@ struct DiagnosticsView: View {
     /// Bundle 版本（CFBundleShortVersionString）；非 App bundle 环境（如测试进程）
     /// 取不到 → 「未知」（界面恒有值，不因版本行崩坏诊断页）。
     private static var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? String(localized: "未知")
     }
 
     // MARK: - ② 库诊断摘要（白名单字段；TC-DIAG-01/03/04/06）
@@ -91,7 +92,8 @@ struct DiagnosticsView: View {
                 LabeledContent("库创建时间", value: Self.timestampText(summary.vaultCreatedAt))
                 LabeledContent(
                     "最后备份时间",
-                    value: summary.lastBackupAt.map(Self.timestampText) ?? "从未备份"
+                    value: summary.lastBackupAt.map(Self.timestampText)
+                        ?? String(localized: "从未备份")
                 )
                 LabeledContent("库 UUID 前缀", value: summary.vaultUuidPrefix)
             }

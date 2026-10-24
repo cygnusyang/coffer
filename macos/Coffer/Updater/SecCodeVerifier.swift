@@ -63,26 +63,29 @@ enum SecCodeVerifier {
 
         var errorDescription: String? {
             switch self {
+            // OSStatus / 标识符按 String 插值（%@）：OSStatus 是负数（如 -34018），
+            // 走 %lld 会被数字本地化改写成「-34,018」（实测）。
             case .cannotCreateCode(let status):
-                return "无法读取待安装应用的签名信息（OSStatus \(status)）。"
+                return String(localized: "无法读取待安装应用的签名信息（OSStatus \(String(status))）。")
             case .invalidRequirement(let status):
-                return "验签需求字符串无效（OSStatus \(status)）。"
+                return String(localized: "验签需求字符串无效（OSStatus \(String(status))）。")
             case .signatureInvalid(let status):
-                return "应用签名校验失败（OSStatus \(status)）。"
+                return String(localized: "应用签名校验失败（OSStatus \(String(status))）。")
             case .cannotReadSigningInfo(let status):
-                return "无法读取应用签名信息（OSStatus \(status)）。"
+                return String(localized: "无法读取应用签名信息（OSStatus \(String(status))）。")
             case .missingCdHash:
-                return "应用签名信息缺少 CDHash，已拒绝安装。"
+                return String(localized: "应用签名信息缺少 CDHash，已拒绝安装。")
             case .identifierMismatch(let id):
-                return "应用标识符「\(id)」与预期 \(expectedIdentifier) 不符，已拒绝安装。"
+                return String(localized: "应用标识符「\(id)」与预期 \(SecCodeVerifier.expectedIdentifier) 不符，已拒绝安装。")
             case .teamIDMismatch(let id):
-                return "应用团队 ID「\(id ?? "（无）")」与预期 \(teamID) 不符，已拒绝安装。"
+                let shown = id ?? String(localized: "（无）")
+                return String(localized: "应用团队 ID「\(shown)」与预期 \(SecCodeVerifier.teamID) 不符，已拒绝安装。")
             case .cdHashMismatch:
-                return "应用 CDHash 与更新清单不符，已拒绝安装（可能非官方构建）。"
+                return String(localized: "应用 CDHash 与更新清单不符，已拒绝安装（可能非官方构建）。")
             case .nestedHelperMissing:
-                return "更新包缺少内置安装辅助程序，已拒绝安装。"
+                return String(localized: "更新包缺少内置安装辅助程序，已拒绝安装。")
             case .nestedHelperInvalid(let path, let detail):
-                return "内置安装辅助程序验签失败（\(path)）：\(detail)，已拒绝安装。"
+                return String(localized: "内置安装辅助程序验签失败（\(path)）：\(detail)，已拒绝安装。")
             }
         }
     }
@@ -187,7 +190,8 @@ enum SecCodeVerifier {
         let createStatus = SecStaticCodeCreateWithPath(helper as CFURL, [], &staticCode)
         guard createStatus == errSecSuccess, let code = staticCode else {
             throw VerificationError.nestedHelperInvalid(
-                path: helper.path, detail: "无法读取签名信息（OSStatus \(createStatus)）")
+                path: helper.path,
+                detail: String(localized: "无法读取签名信息（OSStatus \(String(createStatus))）"))
         }
         var requirement: SecRequirement?
         let reqStatus = SecRequirementCreateWithString(
@@ -198,14 +202,16 @@ enum SecCodeVerifier {
         let validityStatus = SecStaticCodeCheckValidity(code, [], req)
         guard validityStatus == errSecSuccess else {
             throw VerificationError.nestedHelperInvalid(
-                path: helper.path, detail: "签名校验失败（OSStatus \(validityStatus)）")
+                path: helper.path,
+                detail: String(localized: "签名校验失败（OSStatus \(String(validityStatus))）"))
         }
         var info: CFDictionary?
         let infoStatus = SecCodeCopySigningInformation(
             code, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
         guard infoStatus == errSecSuccess, let dict = info as? [String: Any] else {
             throw VerificationError.nestedHelperInvalid(
-                path: helper.path, detail: "无法读取签名信息（OSStatus \(infoStatus)）")
+                path: helper.path,
+                detail: String(localized: "无法读取签名信息（OSStatus \(String(infoStatus))）"))
         }
         let identifier = dict[kSecCodeInfoIdentifier as String] as? String ?? ""
         guard expectedHelperIdentifiers.contains(identifier) else {

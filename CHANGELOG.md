@@ -14,6 +14,24 @@ release 中有体现）。
 
 ## [Unreleased]
 
+## v2.13.0 — 2026-10-24
+
+### 新增/变化
+- **多语言（简体中文 + English）**：界面文案全量英文化，语言入口在「设置 → 语言」（跟随系统 / 简体中文 / English），写 App 偏好域 `AppleLanguages`，下一进程生效。
+  - 方案：**中文原文当 key**，只发 `en.lproj`，缺键回落键本身 → 中文侧零迁移、零回归（逐字不变）；资源在 codesign **之前**装配，签名后加资源会 `codesign --verify --strict` 失败。
+  - 译文 **998 条**（00-common 33 / ui-a 356 / ui-b 399 / support 186 / errors 24）+ `InfoPlist.strings`；52 个 View 全覆盖，另含 AppModel / Platform / Updater / Dropzone / 菜单 / 帮助中心长文。
+  - 门禁 `tools/check_l10n.sh` G1–G7：缺键、跨片重复键、占位符类型、未转义 `%`、死键、资源缺失；构建期合并分片（源分片入库、产物生成）。
+  - 错误面：新增 `CoreErrorText`（20 个核心码）+ 复用 LicenseErrorText / TouchIDError；口径 **码优先、原始载荷降为诊断日志**，错误码/OSStatus 一律 `%@`（避免 1005 显示成 1,005）。
+  - 已知限制（显式登记，非缺陷）：导入 / 放置区预检告警整句来自 Rust 侧（39 处 `warnings.push`），本版**不翻**，英文界面这些告警仍为中文；计划 v2.13.1 按「告警码 + 参数」补齐。
+
+### 修复/纪律
+- **BUG-18 核销**：cf-mcp UDS 就绪判据由「socket 文件存在」改为「connect 成功」（`src/uds.rs:481`），8 处连接点接线；6 轮全量 0 flaky。
+- **BUG-19 核销**：`write_stdin_allowing_early_exit` fail-closed 收口（`tests/cli.rs:593`），调用点恢复 `expect`，消除 CI 间歇 BrokenPipe；本地 20/20。
+- **设置窗误判修复**：`CofferApp` 用中文原文 `!= "设置"` 比对窗口标题，英文界面失配会让设置窗被当成主窗口（⌥⌘P 错焦）→ 改 `String(localized:)`。
+- 设计文档 `24-v2.13.0-多语言-设计.md` 按实测修订 4 处：占位符按声明类型（`UInt32→%u` / `UInt64→%llu` / `Int32→%d`）、译文占位符不得重排、码位不用 Int 插值、`String(localized:)` 缺键行为裁定。
+
+---
+
 ### 新增/变化
 - **文档配图全量英文化**：docs/assets 全部 **19 张 SVG** 的中文文案译为英文（约 410 条 `<text>` 标签 + `<title>`/`<desc>` + 注释，统一术语：条目=item / 保险库=vault / 托管=escrow / 放置区=dropzone / 验证码=TOTP 等，代码标识符与 CLI 名不译）；README 首屏架构图、数据流图、密钥层级图随之英文呈现。顺带修 crate-dependency-graph.svg 图例被 cf-domain 卡片遮挡的版式缺陷（图形区整体下移 26px，画布 1000→1026），并按 Chrome 渲染逐图复核无溢出。
 - **仓库可发现性基建**：README 顶部加徽章（license / platform / latest / downloads）、中英切换、架构图（`docs/assets` SVG）；新增 `README.en.md` 全量英文版（Why / Features / Architecture / MCP / CLI 全节）；仓库描述改中英双语 + 19 个 topics + 开启 Discussions + bug/feature Issue 模板（安全缺陷引导走私下渠道）；`docs/02-研发计划与决策/02-版本开发计划.md` §0 速览补齐 v2.8.1~v2.12.1 十一行（r2.38，含 v2.9.0 未发版、v2.12.1 未发版两处事实标注）。

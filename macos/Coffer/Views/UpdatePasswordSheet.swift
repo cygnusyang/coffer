@@ -33,9 +33,11 @@ struct UpdatePasswordSheet: View {
     @State private var showSuccess = false
 
     /// 当前版本时间（「当前版本 2026-09-27」形态；details.updatedAt 为 Unix 秒）。
+    /// v2.13.0：原来是「"当前版本 " + 日期」拼接（§5.4 拼接串），英文语序要靠重排，
+    /// 改成单串 + 占位符；日期是数据，落在 %@ 参数位上。
     private var currentVersionText: String {
         let date = Date(timeIntervalSince1970: TimeInterval(details.updatedAt))
-        return "当前版本 " + date.formatted(date: .abbreviated, time: .omitted)
+        return String(localized: "当前版本 \(date.formatted(date: .abbreviated, time: .omitted))")
     }
 
     /// 强度分（与 PasswordStrengthSection 共用 PasswordStrength.score，不漂移）。
@@ -116,7 +118,7 @@ struct UpdatePasswordSheet: View {
     private func pasteFromClipboard() {
         guard let text = NSPasteboard.general.string(forType: .string),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            pasteError = "剪贴板中没有可用的文本。"
+            pasteError = String(localized: "剪贴板中没有可用的文本。")
             return
         }
         // 站点复制常带尾部换行，trim 掉首尾空白防误存
@@ -129,7 +131,7 @@ struct UpdatePasswordSheet: View {
     private func save() {
         // 门禁已由 canSave（保存按钮禁用）把关，此处防御性兜底。
         guard canSave else {
-            model.lastErrorMessage = "密码强度需达到强或以上。"
+            model.lastErrorMessage = String(localized: "密码强度需达到强或以上。")
             return
         }
         do {

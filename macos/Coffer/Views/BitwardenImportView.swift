@@ -58,21 +58,22 @@ struct BitwardenImportView: View {
 
     /// Bitwarden 格式配置（docs/14 §A P3 §3 逐字对照表）。
     static let importFormatConfig = ImportFormatConfig(
-        title: "导入 Bitwarden（.json）",
+        // 配置字段是 String 且由 Text/Button 消费，不查表（设计 24 F6）→ 译文在产生点取（§5.4）。
+        title: String(localized: "导入 Bitwarden（.json）"),
         icon: "doc.text",
-        pickTitle: "选择 Bitwarden 导出的未加密 JSON 文件",
-        pickDescription: "Bitwarden JSON 是官方导出格式，导入为每条目独立事务。\npasskey（fido2Credentials）导入支持受导出字段形态影响，具体以预检报告为准。",
-        pickButtonLabel: "选择文件…",
+        pickTitle: String(localized: "选择 Bitwarden 导出的未加密 JSON 文件"),
+        pickDescription: String(localized: "Bitwarden JSON 是官方导出格式，导入为每条目独立事务。\npasskey（fido2Credentials）导入支持受导出字段形态影响，具体以预检报告为准。"),
+        pickButtonLabel: String(localized: "选择文件…"),
         windowWidth: 560, windowHeight: 560,
-        precheckErrorAlertTitle: "预检失败",
+        precheckErrorAlertTitle: String(localized: "预检失败"),
         transactionSemantics: .perItem,
-        importingCopy: "正在导入（每条目独立事务，已完成的条目保留）…",
-        failureSuffix: "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。",
+        importingCopy: String(localized: "正在导入（每条目独立事务，已完成的条目保留）…"),
+        failureSuffix: String(localized: "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。"),
         doneFooter: nil,
         failureRecovery: .backToReport,
         canChooseDirectories: false,
         allowedContentTypes: [.json, .plainText, .data],
-        panelMessage: "选择 Bitwarden 导出的未加密 JSON 文件"
+        panelMessage: String(localized: "选择 Bitwarden 导出的未加密 JSON 文件")
     )
 
     var body: some View {
@@ -215,8 +216,11 @@ struct BitwardenImportView: View {
     /// 结构化 kind + reason + item_id 全量直出，程序判定以 kind 为唯一依据
     /// （L-2，reason 仅供人类阅读）。形态与 1PUX/OPVault 未导入清单不同，
     /// 保持格式私有（不进共享 failureList）。
+    /// title 用 LocalizedStringKey 而非 String：Label 的 String 重载**不查表**（设计 24
+    /// F6），形参写成 String 会让这行标题「有译文但不生效」；LocalizedStringKey 才会查表，
+    /// 且缺键时可正常回退到中文原文（§5.4.1）。
     private func failureSection(
-        _ title: String,
+        _ title: LocalizedStringKey,
         failures: [FfiBwPasskeyFailure],
         symbol: String
     ) -> some View {
@@ -248,16 +252,18 @@ struct BitwardenImportView: View {
     }
 
     /// 结构化 kind → 人类可读文案（展示用；分类判定以 kind 枚举为准，非文案）。
+    /// 返回值是**文案**，且被外层插值句 "%@：%@" 拼进句子里——所以必须在返回时
+    /// 本地化（设计 24 §5.4「纯函数返回展示串在返回值处翻」）。
     private static func kindText(_ kind: FfiBwPasskeyFailureKind) -> String {
         switch kind {
-        case .keyAlgorithmMismatch: return "keyAlgorithm 非 ecdsa"
-        case .keyCurveMismatch: return "keyCurve 非 p256"
-        case .missingRpId: return "缺少 rpId"
-        case .invalidCredentialId: return "凭据 ID 非法"
-        case .invalidCounter: return "签名计数器非法"
-        case .missingPrivateKey: return "缺少私钥字段"
-        case .encryptedPrivateKey: return "私钥为加密形态"
-        case .unparseablePrivateKey: return "私钥无法解析为 ES256"
+        case .keyAlgorithmMismatch: return String(localized: "keyAlgorithm 非 ecdsa")
+        case .keyCurveMismatch: return String(localized: "keyCurve 非 p256")
+        case .missingRpId: return String(localized: "缺少 rpId")
+        case .invalidCredentialId: return String(localized: "凭据 ID 非法")
+        case .invalidCounter: return String(localized: "签名计数器非法")
+        case .missingPrivateKey: return String(localized: "缺少私钥字段")
+        case .encryptedPrivateKey: return String(localized: "私钥为加密形态")
+        case .unparseablePrivateKey: return String(localized: "私钥无法解析为 ES256")
         }
     }
 
@@ -286,7 +292,7 @@ struct BitwardenImportView: View {
                             itemsWithPasswordAndPasskey: 0, nonEs256: [], badPasskeys: [],
                             trashedCount: 0, passwordHistoryDropped: 0, warnings: []
                         ), path: lastPath ?? path)
-                        model.lastErrorMessage = "会话不存在。"
+                        model.lastErrorMessage = String(localized: "会话不存在。")
                     }
                 }
             } catch {

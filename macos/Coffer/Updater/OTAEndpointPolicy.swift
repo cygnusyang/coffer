@@ -30,9 +30,11 @@ enum OTAEndpointPolicy {
         var errorDescription: String? {
             switch self {
             case .insecureScheme(let scheme):
-                return "更新请求必须使用 HTTPS（当前 scheme 为 \(scheme)）。"
+                return String(localized: "更新请求必须使用 HTTPS（当前 scheme 为 \(scheme)）。")
             case .hostNotAllowed(let host):
-                return "更新端点 \(host ?? "（无 host）") 不在白名单内，已拒绝连接。"
+                // 缺 host 的兜底词单独成键，避免半句中文混进英文句子
+                let shown = host ?? String(localized: "（无 host）")
+                return String(localized: "更新端点 \(shown) 不在白名单内，已拒绝连接。")
             }
         }
     }
@@ -56,7 +58,7 @@ enum OTAEndpointPolicy {
     /// 校验并抛错（fail-closed）；不通过即拒绝发起连接。
     static func validate(_ url: URL) throws {
         guard url.scheme?.lowercased() == "https" else {
-            throw PolicyError.insecureScheme(url.scheme ?? "（无 scheme）")
+            throw PolicyError.insecureScheme(url.scheme ?? String(localized: "（无 scheme）"))
         }
         guard let host = url.host, isAllowedHost(host) else {
             throw PolicyError.hostNotAllowed(url.host)

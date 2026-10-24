@@ -46,7 +46,9 @@ enum TransactionSemantics {
         case .allOrNothing:
             return ""
         case .perItem:
-            return "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。"
+            // String(localized:)：本值是**文案**而非数据，且由 Text(failureSuffix) 消费——
+            // Text(String) 不查表（设计 24 F6 / §5.4「本地化发生在 String 的产生点」）。
+            return String(localized: "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。")
         }
     }
 }
@@ -64,6 +66,28 @@ enum ImportFailureRecovery {
     case backToReport
     /// 回密码页（重输密码；OPVault）。
     case backToPassword
+}
+
+// MARK: - 数据列表分隔符
+
+/// 数据列表分隔符（中文全角「、」「；」/ 英文半角 ", " "; "）。
+///
+/// 为什么不放进译表：纯符号键违反设计 24 §5.1 规则 4（空串与纯符号不入表）；而被
+/// 连接的**全是数据**——条目名、字段名、列名、目录名——按 §5.5「文案 vs 数据分界」
+/// 绝不能进译表。所以语言差异只能落在拼接处的标点上。
+///
+/// 判据用 LanguagePreference.launchLanguage（与 .lproj 解析同一来源），不用
+/// Locale.current：后者不是本 App 的语言权威（设计 §6.5 的 L1 层）。
+enum CopyListSeparator {
+    /// 并列清单分隔（「条目 A、条目 B」）。
+    static var comma: String {
+        LanguagePreference.launchLanguage == .en ? ", " : "、"
+    }
+
+    /// 同一行内并列短句分隔（「缺标题行；未识别列」）。
+    static var semicolon: String {
+        LanguagePreference.launchLanguage == .en ? "; " : "；"
+    }
 }
 
 // MARK: - 格式配置
@@ -187,7 +211,12 @@ enum ImportScaffold {
     }
 
     /// 统计标签（计数版）。
-    static func statLabel(_ title: String, _ count: UInt32) -> some View {
+    ///
+    /// title 用 LocalizedStringKey 而不是 String：形参写 String 时 Text(title) 走
+    /// Text(String) —— 不查表（设计 24 F6），调用点又没有包 String(localized:) 的话
+    /// 就是典型的「有译文但不生效」。签名定成 LocalizedStringKey 后，调用点直接传中文字面量
+    /// 即可自动查表，谁也漏不了。
+    static func statLabel(_ title: LocalizedStringKey, _ count: UInt32) -> some View {
         VStack(spacing: 2) {
             Text("\(count)").font(.title3.monospacedDigit().bold())
             Text(title).font(.caption).foregroundStyle(.secondary)
@@ -195,12 +224,12 @@ enum ImportScaffold {
     }
 
     /// 统计标签（Int 计数版，经 UInt32 收敛）。
-    static func statLabel(_ title: String, _ count: Int) -> some View {
+    static func statLabel(_ title: LocalizedStringKey, _ count: Int) -> some View {
         statLabel(title, UInt32(max(0, count)))
     }
 
     /// 统计标签（字符串值版，OPVault Profile/KDF 迭代等）。
-    static func statLabel(_ title: String, _ value: String) -> some View {
+    static func statLabel(_ title: LocalizedStringKey, _ value: String) -> some View {
         VStack(spacing: 2) {
             Text(value).font(.title3.monospacedDigit().bold())
             Text(title).font(.caption).foregroundStyle(.secondary)

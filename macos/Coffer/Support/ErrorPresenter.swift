@@ -1,9 +1,12 @@
 // ErrorPresenter.swift —— FFI 错误呈现。
 //
-// 纪律（T05 任务书）：FfiError 的 code + message **直出**给用户，不吞不改
-// （错误文案已在 Rust 层脱敏，docs/07 §4.1）。
+// 纪律（v2.13.0 D-10 收口，docs/03-功能设计/24 §7）：**按 code 出文案，载荷降为日志**。
+// 用户只看码文案（CoreErrorText / LicenseErrorText / TouchIDError），原始 message 只进
+// DiagLog——否则英文界面必然混入 Rust 侧中文载荷（「corrupted container: KDF 参数非法：…」）。
+// 契约回到 core/cf-ffi/src/error.rs:60 注释的原意（message 供日志，UI 按 code 本地化）。
 // 例外（docs/08 T03）：4001/4002 在 docs/03 §12 错误码表中有跨层固定语义，
 // 用规范化中文文案呈现；其中 4002 仅由 Swift 侧产生（docs/08 C-6：Rust 不产生 4002）。
+// 未知码仍直出 code + 载荷（可诊断性优先于语言纯度，设计 §7.5）。
 //
 // TouchIDError 枚举与解锁错误呈现分道 TouchIDUnlockPresentation 已拆至
 // Support/TouchIDError.swift（2026-10-03 PL-5，零 CoreBindings 依赖以独立单测）；
@@ -28,7 +31,7 @@ enum ErrorPresenter {
         case let updateError as UpdatePasswordError:
             // 更新密码 fail-closed 前置（缺密码字段 / 空新密码）——防御性
             // 兜底直出可操作文案（正常流程 UI 已隐藏/禁用入口，见 UpdatePasswordSheet）
-            return updateError.errorDescription ?? "无法更新密码。"
+            return updateError.errorDescription ?? String(localized: "无法更新密码。")
         default:
             return String(describing: error)
         }
@@ -52,12 +55,21 @@ enum ErrorPresenter {
                 if let licenseText = LicenseErrorText.text(forCode: Int(code)) {
                     return licenseText
                 }
-                // 业务错误：code + message 直出（Rust 层已脱敏）
-                return "错误 \(code)：\(message)"
+                // 1xxx–5xxx 业务码：查表出文案，载荷降为诊断日志（设计 §7.5：载荷
+                // 不得进入任何用户可见串）。纯函数映射见 CoreErrorText.swift。
+                if let coreText = CoreErrorText.text(forCode: Int(code)) {
+                    DiagLog.append("FFI 错误 \(code) 原始载荷：\(message)")
+                    return coreText
+                }
+                // 未知码兜底：带原始载荷直出（此时可诊断性优先于语言纯度）。
+                // 码按 String 插值（%@）而非 %lld——Int 插值会走千位分组，
+                // 1005 会显示成「1,005」（实测），错误码不该被本地化改写。
+                return String(localized: "错误 \(String(code))：\(message)")
             }
         case let .InternalPanic(message):
-            // panic 兜底（码 5999）：脱敏摘要直出
-            return "内部错误（5999）：\(message)"
+            // panic 兜底（码 5999）：用户看码文案，脱敏摘要进日志（设计 §7.5）
+            DiagLog.append("FFI panic 原始载荷：\(message)")
+            return CoreErrorText.internalPanic
         }
     }
 
@@ -73,9 +85,10 @@ enum ErrorPresenter {
             // case 显式跳过 lastErrorMessage（空串也会弹空白框，故调用侧不写入）。
             return ""
         case .invalidKeyLength:
-            return "内部错误：生物识别密钥长度非法。"
+            return String(localized: "内部错误：生物识别密钥长度非法。")
         case .unexpected(let status):
-            return "错误 4001：生物识别解锁不可用（Keychain 异常 \(status)），请使用主密码解锁。"
+            // OSStatus 按 String 插值：-25300 若走 %lld 会显示成「-25,300」（实测）
+            return String(localized: "错误 4001：生物识别解锁不可用（Keychain 异常 \(String(status))），请使用主密码解锁。")
         }
     }
 }

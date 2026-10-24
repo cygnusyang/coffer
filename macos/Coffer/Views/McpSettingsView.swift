@@ -119,7 +119,9 @@ struct McpSettingsSection: View {
                 // H3：在飞时禁用总开关（串行通道一次一个 helper 请求；OFF 与在飞注册
                 // 竞态会留下半写配置）。检测（AI 工具行 ⟳）同样受此互斥约束。
                 .disabled(agentTools.busy)
-                .help(agentTools.busy ? "正在处理注册操作，请稍候" : "关闭会移除全部工具的注册项")
+                .help(agentTools.busy
+                      ? String(localized: "正在处理注册操作，请稍候")
+                      : String(localized: "关闭会移除全部工具的注册项"))
                 .onChange(of: enabled) { _, newValue in
                     McpSettings.saveEnabled(newValue)
                     refreshStatus()
@@ -258,9 +260,9 @@ struct McpSettingsSection: View {
     /// 复制不可用的引导文案（区分「未找到 coffer 二进制」与「coffer 分支未开库」）。
     private var copyDisabledHint: String {
         if cofferBinaryPath.isEmpty {
-            return "未找到 coffer 命令（App 包内或 PATH），无法生成注册命令"
+            return String(localized: "未找到 coffer 命令（App 包内或 PATH），无法生成注册命令")
         }
-        return "请先打开密码库后生成注册命令"
+        return String(localized: "请先打开密码库后生成注册命令")
     }
 
     /// 注册命令（单一数据源：预览与复制按钮共用，所见即所得）。
@@ -306,7 +308,7 @@ struct McpSettingsSection: View {
             Button {
                 copyRegisterCommand()
             } label: {
-                Label(copied ? "已复制" : "复制注册命令",
+                Label(copied ? String(localized: "已复制") : String(localized: "复制注册命令"),
                       systemImage: copied ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(.borderedProminent)
@@ -326,7 +328,7 @@ struct McpSettingsSection: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(registerCommand, forType: .string) else {
-            errorMessage = "复制失败：无法写入剪贴板，请重试。"
+            errorMessage = String(localized: "复制失败：无法写入剪贴板，请重试。")
             return
         }
         copied = true
@@ -351,13 +353,13 @@ struct McpSettingsSection: View {
 
     private func linkOnePassword() {
         guard McpStatusProbe.isOpBinaryAvailable() else {
-            errorMessage = "未找到 1Password CLI（op）。请安装 1Password CLI 8+（developer.1password.com/docs/cli）后重新打开本页。"
+            errorMessage = String(localized: "未找到 1Password CLI（op）。请安装 1Password CLI 8+（developer.1password.com/docs/cli）后重新打开本页。")
             return
         }
         if McpStatusProbe.isOpSessionAvailable() {
-            infoMessage = "已检测到 1Password 会话信号。注册命令可被 coffer mcp 使用；如仍未生效，请在终端重新执行 op signin。"
+            infoMessage = String(localized: "已检测到 1Password 会话信号。注册命令可被 coffer mcp 使用；如仍未生效，请在终端重新执行 op signin。")
         } else {
-            infoMessage = "未检测到 1Password 会话。请在终端执行以下命令完成登录后返回本页（或点状态行的刷新）：\n\nop signin\n\n1Password 集成会话由 CLI 维护，App 不保存你的登录令牌。"
+            infoMessage = String(localized: "未检测到 1Password 会话。请在终端执行以下命令完成登录后返回本页（或点状态行的刷新）：\n\nop signin\n\n1Password 集成会话由 CLI 维护，App 不保存你的登录令牌。")
         }
         refreshStatus()
     }
@@ -479,9 +481,9 @@ struct McpSettingsSection: View {
     private var footerText: String {
         switch provider {
         case .op:
-            return "让 Claude Code 等 Agent 通过 MCP 访问 1Password 中的密钥。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；使用前请在终端执行 op signin（coffer 服务器随 App 分发，无需在 PATH 配置）。"
+            return String(localized: "让 Claude Code 等 Agent 通过 MCP 访问 1Password 中的密钥。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；使用前请在终端执行 op signin（coffer 服务器随 App 分发，无需在 PATH 配置）。")
         case .coffer:
-            return "让 Claude Code 等 Agent 通过 MCP 访问本机 Coffer 密码库。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；解锁走 MCP 解锁托管，注册命令不含密码 env。换主密码不影响托管；如需吊销请在本页关闭。"
+            return String(localized: "让 Claude Code 等 Agent 通过 MCP 访问本机 Coffer 密码库。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；解锁走 MCP 解锁托管，注册命令不含密码 env。换主密码不影响托管；如需吊销请在本页关闭。")
         }
     }
 }

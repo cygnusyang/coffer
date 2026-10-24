@@ -89,11 +89,11 @@ struct McpEscrowSettingsSection: View {
     private var statusCaption: String {
         switch model.mcpEscrowStatus {
         case .disabled:
-            return "已停用——coffer MCP 进程解锁本库需主密码。"
+            return String(localized: "已停用——coffer MCP 进程解锁本库需主密码。")
         case .enabled:
-            return "已启用——coffer MCP 进程可免密码解锁本库。"
+            return String(localized: "已启用——coffer MCP 进程可免密码解锁本库。")
         case .stale:
-            return "凭据已失效（需重新启用）。"
+            return String(localized: "凭据已失效（需重新启用）。")
         }
     }
 
@@ -102,7 +102,9 @@ struct McpEscrowSettingsSection: View {
     private var statusActions: some View {
         switch model.mcpEscrowStatus {
         case .disabled, .stale:
-            Button(model.mcpEscrowStatus == .disabled ? "启用 MCP 解锁托管" : "重新启用") {
+            Button(model.mcpEscrowStatus == .disabled
+                   ? String(localized: "启用 MCP 解锁托管")
+                   : String(localized: "重新启用")) {
                 showPasswordPrompt = true
             }
             .disabled(model.isBusy || showPasswordPrompt)
@@ -140,7 +142,8 @@ struct McpEscrowSettingsSection: View {
     }
 
     private var confirmTitle: String {
-        model.mcpEscrowStatus == .stale ? "重新启用" : "启用"
+        model.mcpEscrowStatus == .stale
+            ? String(localized: "重新启用") : String(localized: "启用")
     }
 
     private func cancelPrompt() {

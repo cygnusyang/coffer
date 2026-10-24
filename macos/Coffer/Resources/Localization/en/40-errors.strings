@@ -1,0 +1,46 @@
+/* 40-errors.strings —— impl-support（任务 14）译文分片：错误码文案（设计 §7.4 / D-10）。
+ *
+ * 键 = 中文原文（K1，无插值），值 = 英文译文。契约：Support/CoreErrorText.swift
+ * （1xxx–5xxx + 5999）与 Support/LicenseError.swift（6xxx，键必须与该文件常量逐字
+ * 相等）。用户只看到这里的文案，Rust 侧载荷进 DiagLog / 诊断页（设计 §7.5）。
+ *
+ * 4001 / 4002 不在此表：它们走 docs/08 T03 冻结的 TouchIDError 文案（含「错误 4001：」
+ * 前缀），译文在 30-support.strings——此处放设计 §7.4 表的另一措辞会产生两份同码文案。
+ * 6xxx 的 6003 键以代码为准（代码文案比设计表更长，多了异常退化的引导语）。
+ */
+
+/* MARK: 1xxx 密码库 / 条目 */
+"密码库已锁定，请先解锁。" = "The vault is locked. Unlock it first.";
+"解锁失败：主密码错误或数据已损坏。" = "Unlock failed: wrong master password or corrupted data.";
+"找不到该密码库。" = "Vault not found.";
+"该密码库已存在。" = "This vault already exists.";
+"密码库文件已损坏，无法读取。" = "The vault file is corrupted and cannot be read.";
+"密码库格式版本高于当前应用支持的版本，请升级 Coffer。" = "This vault uses a newer format. Update Coffer to open it.";
+"密钥派生失败，请重试。" = "Key derivation failed. Try again.";
+"加解密失败，请重试。" = "Encryption failed. Try again.";
+"读写密码库文件失败，请检查磁盘空间与权限。" = "Failed to read or write the vault file. Check disk space and permissions.";
+"主密码强度不足，请使用更长或更复杂的密码。" = "The master password is too weak. Use a longer or more complex one.";
+"条目不存在，可能已被删除。" = "The item no longer exists.";
+"输入校验未通过，请检查后重试。" = "Some fields are invalid. Check them and try again.";
+
+/* MARK: 2xxx 导入 / 导出 */
+"无法识别该导入文件的来源格式。" = "Unrecognized import file format.";
+"导入失败。" = "Import failed.";
+"导出失败。" = "Export failed.";
+
+/* MARK: 3xxx TOTP */
+"动态验证码生成失败。" = "Failed to generate the one-time code.";
+
+/* MARK: 4xxx 生物识别（4001 / 4002 见文件头） */
+"恢复码功能不可用。" = "Recovery codes are unavailable.";
+
+/* MARK: 5xxx 通用 IO / panic 兜底 */
+"文件读写失败，请检查路径与权限。" = "File access failed. Check the path and permissions.";
+"参数无效。" = "Invalid argument.";
+"内部错误，请重试；若持续出现请查看诊断信息。" = "Internal error. Try again; if it persists, check Diagnostics.";
+
+/* MARK: 6xxx 许可（键必须与 Support/LicenseError.swift 常量逐字相等） */
+"序列号无效" = "Invalid serial number";
+"试用期已结束，当前处于只读模式。激活后可恢复写入。" = "The trial has ended; the app is read-only. Activate to resume writing.";
+"当前许可状态不允许此操作。许可状态异常已进入只读保护，请重启应用后重试；若问题持续，请重装应用或联系支持。" = "The current license state does not allow this action. The app has switched to read-only protection. Restart Coffer and try again; if the problem persists, reinstall the app or contact support.";
+"许可信息存储暂不可用，请稍后重试。" = "License storage is temporarily unavailable. Try again later.";

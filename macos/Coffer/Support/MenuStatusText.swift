@@ -16,12 +16,15 @@ enum MenuStatusText {
     /// 打开项标题：库名非空且已建库（locked/unlocked）时形如「打开 main（已解锁）」；
     /// booting/noVault/fatal 与库名缺失时退回「打开主窗口」（不展示半生不熟的状态后缀）。
     nonisolated static func openTitle(phase: AppPhase, vaultName: String) -> String {
-        guard !vaultName.isEmpty else { return "打开主窗口" }
+        guard !vaultName.isEmpty else { return String(localized: "打开主窗口") }
         switch phase {
         case .locked, .unlocked:
-            return "打开 " + statusLine(phase: phase, vaultName: vaultName)
+            // 骨架 + 占位符，不用 "打开 " + statusLine 拼接：英文语序需整体重排
+            // （"Open main (Locked)"），拼接会让译文变成 "Open " 硬贴中文残余。
+            // 参数传**已本地化**的 statusLine（本地化发生在 String 产生点，设计 §5.4）。
+            return String(localized: "打开 \(statusLine(phase: phase, vaultName: vaultName))")
         default:
-            return "打开主窗口"
+            return String(localized: "打开主窗口")
         }
     }
 
@@ -29,15 +32,19 @@ enum MenuStatusText {
     nonisolated static func statusLine(phase: AppPhase, vaultName: String) -> String {
         switch phase {
         case .booting:
-            return "正在打开…"
+            return String(localized: "正在打开…")
         case .noVault:
-            return "未创建密码库"
+            return String(localized: "未创建密码库")
         case .locked:
-            return vaultName.isEmpty ? "已锁定" : "\(vaultName)（已锁定）"
+            return vaultName.isEmpty
+                ? String(localized: "已锁定")
+                : String(localized: "\(vaultName)（已锁定）")
         case .unlocked:
-            return vaultName.isEmpty ? "已解锁" : "\(vaultName)（已解锁）"
+            return vaultName.isEmpty
+                ? String(localized: "已解锁")
+                : String(localized: "\(vaultName)（已解锁）")
         case .fatal:
-            return "启动失败"
+            return String(localized: "启动失败")
         }
     }
 }

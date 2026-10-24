@@ -132,11 +132,17 @@ struct SettingsView: View {
         Section {
             Picker(selection: $model.autoLockMinutes) {
                 ForEach(AppModel.autoLockOptions, id: \.self) { minutes in
-                    Text(minutes == 0 ? "从不" : "\(minutes) 分钟").tag(minutes)
+                    Text(minutes == 0 ? LocalizedStringKey("从不") : LocalizedStringKey("\(minutes) 分钟")).tag(minutes)
                 }
             } label: {
                 Label("自动锁定", systemImage: "timer")
             }
+
+            // v2.13.0 语言选择（设计 24 §6.4）：寄生「通用」节、自动锁定之后的第二行，
+            // 不新开第 11 节（DESIGN.md §14 已登记「9 节单长滚动」的 IA 张力）。
+            // UI 实现在 Support 侧的 LanguageSection.swift（infra 归属），本文件只留调用，
+            // 避免同一文件被两组同时改（设计 §8.4 边界 1）。
+            LanguageSection()
         } header: {
             Text("通用")
         } footer: {
@@ -156,7 +162,7 @@ struct SettingsView: View {
         Section {
             Picker(selection: $model.clipboardClearSecs) {
                 ForEach(clipboardClearOptions, id: \.self) { secs in
-                    Text(secs == 0 ? "从不" : "\(secs) 秒").tag(secs)
+                    Text(secs == 0 ? LocalizedStringKey("从不") : LocalizedStringKey("\(secs) 秒")).tag(secs)
                 }
             } label: {
                 Label("复制后自动清除", systemImage: "doc.on.doc")
@@ -175,7 +181,7 @@ struct SettingsView: View {
         Section {
             Picker(selection: $model.backupReminderDays) {
                 ForEach(AppModel.backupReminderOptions, id: \.self) { days in
-                    Text(days == 0 ? "禁用" : "每 \(days) 天").tag(days)
+                    Text(days == 0 ? LocalizedStringKey("禁用") : LocalizedStringKey("每 \(days) 天")).tag(days)
                 }
             } label: {
                 Label("备份提醒间隔", systemImage: "bell")
@@ -198,11 +204,13 @@ struct SettingsView: View {
         Section {
             DropzoneAuthStatusView(
                 status: model.dropzoneAuthStatus,
-                setButtonLabel: "设置放置区…",
+                // 三个入参在该组件里是 String（Text(String) 不查表，设计 F6），
+                // 故在**产生点**本地化（§5.4），不依赖组件内部怎么渲染。
+                setButtonLabel: String(localized: "设置放置区…"),
                 onSet: { model.showImportDropzone = true },
-                secondaryLabel: "移除授权",
+                secondaryLabel: String(localized: "移除授权"),
                 onSecondary: { model.removeDropzoneAuthorization() },
-                scopeNote: "此授权作用于 Coffer 应用全局",
+                scopeNote: String(localized: "此授权作用于 Coffer 应用全局"),
                 compact: true
             )
         } header: {

@@ -64,24 +64,24 @@ struct AboutUpdateView: View {
                         .foregroundStyle(.primary)
                     capabilityRow(
                         icon: "internaldrive",
-                        title: "本地存储 · 零同步",
-                        detail: "密码与全部数据只保存在本机，不上传到云端、不与其他设备同步。")
+                        title: String(localized: "本地存储 · 零同步"),
+                        detail: String(localized: "密码与全部数据只保存在本机，不上传到云端、不与其他设备同步。"))
                     capabilityRow(
                         icon: "wifi.slash",
-                        title: "本地服务 · 数据不出本机",
-                        detail: "本地大模型工具经 CLI / MCP 按需取密；仅软件更新（OTA）联网。")
+                        title: String(localized: "本地服务 · 数据不出本机"),
+                        detail: String(localized: "本地大模型工具经 CLI / MCP 按需取密；仅软件更新（OTA）联网。"))
                     capabilityRow(
                         icon: "touchid",
-                        title: "Touch ID · 恢复码",
-                        detail: "生物识别解锁与忘记密码重置：设置 → 安全。")
+                        title: String(localized: "Touch ID · 恢复码"),
+                        detail: String(localized: "生物识别解锁与忘记密码重置：设置 → 安全。"))
                     capabilityRow(
                         icon: "arrow.counterclockwise",
-                        title: "加密备份 · 恢复",
-                        detail: "解锁后「导出」生成加密备份，换机/重装导回：设置 → 数据。")
+                        title: String(localized: "加密备份 · 恢复"),
+                        detail: String(localized: "解锁后「导出」生成加密备份，换机/重装导回：设置 → 数据。"))
                     capabilityRow(
                         icon: "terminal",
-                        title: "MCP · Agent 协作",
-                        detail: "让 AI / 自动化安全取用密码：设置 → MCP / Agent 协作。")
+                        title: String(localized: "MCP · Agent 协作"),
+                        detail: String(localized: "让 AI / 自动化安全取用密码：设置 → MCP / Agent 协作。"))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -110,6 +110,8 @@ struct AboutUpdateView: View {
     }
 
     /// 自述区能力行：图标 + 标题 + 一句话定位（纯静态文案，无外链/无导航动作）。
+    /// title / detail 是 String 参数（Label(String) / Text(String) 都不查表，设计 24 F6），
+    /// 所以两个调用点各自在产生点本地化（§5.4）。
     private func capabilityRow(icon: String, title: String, detail: String) -> some View {
         VStack(spacing: 2) {
             Label(title, systemImage: icon)

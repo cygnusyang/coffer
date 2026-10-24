@@ -2181,8 +2181,12 @@ do {
             userDefaults: defaults)
         manager.consumePendingInstallResult()
         if case .failed(let msg) = manager.state {
-            check("TC-CONSUME-05", "失败：→ failed（含退出码与文案）",
-                  msg.contains("2") && msg.contains("替换失败"), "msg=\(msg)")
+            // v2.13.0（设计 24 §7.6 / D-10 同口径）：helper 无 UI 且不翻译，它的 message
+            // （此处夹具塞的「替换失败」）只进 DiagLog，**不得**出现在用户可见串里——
+            // 用户看到的是「退出码 + App 侧本地化原因」。英文界面靠这条才不会有中文。
+            check("TC-CONSUME-05", "失败：→ failed（退出码 + App 侧本地化原因，helper 原文不进 UI）",
+                  msg.contains("2") && msg.contains("更新包未能安装") && !msg.contains("替换失败"),
+                  "msg=\(msg)")
         } else {
             check("TC-CONSUME-05", "失败：→ failed（含退出码与文案）", false, "state=\(manager.state)")
         }
@@ -2243,7 +2247,7 @@ do {
     check("TC-CONSUME-12", "result 缺失也清 pending key（幂等起点）",
           defaults12.string(forKey: OTAInstaller.pendingResultPathDefaultsKey) == nil)
 
-    // 失败且 message 为空 → 文案退化为「上次更新失败（退出码 N）。」
+    // 失败且 message 为空 → 仍按码出原因（文案不再依赖 helper 的 message）
     do {
         let defaults = freshDefaults()
         let resultURL = tempRoot.appendingPathComponent("fail-empty.json")
@@ -2256,8 +2260,9 @@ do {
             userDefaults: defaults)
         manager.consumePendingInstallResult()
         if case .failed(let msg) = manager.state {
-            check("TC-CONSUME-13", "失败且 message 为空 → 文案含退出码（「上次更新失败（退出码 3）。」）",
-                  msg.contains("3") && msg.contains("上次更新失败"), "msg=\(msg)")
+            check("TC-CONSUME-13", "失败且 message 为空 → 文案含退出码与码对应原因",
+                  msg.contains("3") && msg.contains("上次更新失败") && msg.contains("未能启动新版本"),
+                  "msg=\(msg)")
         } else {
             check("TC-CONSUME-13", "失败且 message 为空 → 文案含退出码", false, "state=\(manager.state)")
         }

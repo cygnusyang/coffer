@@ -125,7 +125,8 @@ struct RestoreBackupView: View {
         } else {
             panel.allowedContentTypes = [.data]
         }
-        panel.message = "选择加密备份文件（.coffer）"
+        // NSOpenPanel.message 是 AppKit 面，不参与表回落（设计 24 F6 不覆盖 AppKit）。
+        panel.message = String(localized: "选择加密备份文件（.coffer）")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         step = .verifying(path: url.path)
         doVerify(path: url.path)
@@ -231,7 +232,9 @@ struct RestoreBackupView: View {
                     // 专属文案（1004）：解释「同 ID 库已存在」与可操作出路——
                     // UI 无删除库能力（VaultSwitcherView 明示不做，独立设计决策点），
                     // 不引导删除；库已存在即无需恢复，或改选其他备份文件
-                    errText = "错误 1004：工作目录中已存在相同库 ID 的库，本次未做任何改动。若这正是要恢复的库，直接解锁使用即可；若选错了备份文件，请重新选择其他备份。"
+                    // 场景化文案（不是纯 1004 错误码文案）：保留可操作出路，但在产生点本地化
+                    // ——errText 会进 lastErrorMessage → Text(String)，不查表（设计 24 §5.4）。
+                    errText = String(localized: "错误 1004：工作目录中已存在相同库 ID 的库，本次未做任何改动。若这正是要恢复的库，直接解锁使用即可；若选错了备份文件，请重新选择其他备份。")
                 } else {
                     errText = ErrorPresenter.text(error)
                 }
@@ -314,7 +317,8 @@ struct RestoreBackupView: View {
 
     // MARK: - 辅助
 
-    private func statLabel(_ title: String, _ value: String) -> some View {
+    /// title 是文案（LocalizedStringKey → 自动查表），value 是数据（String，永不翻译）。
+    private func statLabel(_ title: LocalizedStringKey, _ value: String) -> some View {
         VStack(spacing: 2) {
             Text(value).font(.title3.monospacedDigit().bold())
             Text(title).font(.caption).foregroundStyle(.secondary)

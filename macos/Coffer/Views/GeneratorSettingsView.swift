@@ -179,7 +179,9 @@ struct GeneratorSettingsView: View {
             Button("另存为默认") { save() }
                 .buttonStyle(.borderedProminent)
             if let outcome = saveOutcome {
-                Text(outcome ? "已保存为默认值。" : "参数无效，未保存。请调整后重试。")
+                Text(outcome
+                     ? String(localized: "已保存为默认值。")
+                     : String(localized: "参数无效，未保存。请调整后重试。"))
                     .font(.caption)
                     .foregroundStyle(outcome ? Color.secondary : Color.red)
             }

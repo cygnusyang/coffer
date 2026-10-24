@@ -103,7 +103,7 @@ final class StatusItemController: NSObject {
         // 快速搜索…：呼出/聚焦主窗口搜索框（research §6 判据①落主窗口聚焦，
         // 不建独立面板）；锁定态可用——窗口内先展示解锁页。keyEquivalent
         // 显示 ⌥⌘P（"p" + [.command, .option]，与 HK-1 全局键位一致）。
-        let search = NSMenuItem(title: "快速搜索…", action: #selector(quickSearch(_:)), keyEquivalent: "p")
+        let search = NSMenuItem(title: String(localized: "快速搜索…"), action: #selector(quickSearch(_:)), keyEquivalent: "p")
         search.keyEquivalentModifierMask = [.command, .option]
         search.target = self
         menu.addItem(search)
@@ -112,13 +112,13 @@ final class StatusItemController: NSObject {
 
         // 锁定全部（docs/15 §3.3.1）：factory 全局锁所有会话 + model.lock()
         // 清 UI 状态与剪贴板；均幂等，锁定态可用
-        let lock = NSMenuItem(title: "锁定全部", action: #selector(lockAll(_:)), keyEquivalent: "")
+        let lock = NSMenuItem(title: String(localized: "锁定全部"), action: #selector(lockAll(_:)), keyEquivalent: "")
         lock.target = self
         menu.addItem(lock)
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "退出 Coffer", action: #selector(quit(_:)), keyEquivalent: "")
+        let quit = NSMenuItem(title: String(localized: "退出 Coffer"), action: #selector(quit(_:)), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
 

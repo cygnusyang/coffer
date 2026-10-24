@@ -237,7 +237,7 @@ struct ExportView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.data]
         panel.nameFieldStringValue = suggestedFileName()
-        panel.message = "选择加密备份文件的保存位置"
+        panel.message = String(localized: "选择加密备份文件的保存位置")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         step = .confirm(path: url.path)
     }
@@ -245,6 +245,16 @@ struct ExportView: View {
     /// 建议文件名：Coffer备份-<库名>-<yyyyMMdd>.coffer；库名取不到用固定前缀。
     /// C8：目标库名 = `targetVaultName ?? model.vaultName`（UDR-1 同名问题：
     /// 向导导出待删库须用待删库名，而非当前库名）。
+    /// 本地化文件名模板（导出建议名）。
+    ///
+    /// 为什么走「查表模板 + String(format:)」：这里的模板是**运行时常量参数**而不是字面量，
+    /// String(localized:) 吃不到字面量以外的入参；先用 String.LocalizationValue(template)
+    /// 查表、再 String(format:) 填值，占位符类型（%@）就显式写在源码里，与 .strings 键逐字
+    /// 对应。两种写法等价，见设计 §5.4.1 规则 2。
+    private static func localizedFileName(_ template: String, _ arguments: CVarArg...) -> String {
+        String(format: String(localized: String.LocalizationValue(template)), arguments: arguments)
+    }
+
     private func suggestedFileName() -> String {
         let formatter = DateFormatter()
         // 固定 en_US_POSIX：文件名时间戳不受用户日历（佛历/和历等）与数字
@@ -254,9 +264,9 @@ struct ExportView: View {
         let stamp = formatter.string(from: Date())
         let name = targetVaultName ?? model.vaultName
         if name.isEmpty {
-            return "Coffer备份-\(stamp).coffer"
+            return Self.localizedFileName("Coffer备份-%@.coffer", stamp)
         }
-        return "Coffer备份-\(name)-\(stamp).coffer"
+        return Self.localizedFileName("Coffer备份-%@-%@.coffer", name, stamp)
     }
 
     // MARK: - ② 确认页（UI 义务，docs/09 §3.1）
@@ -397,7 +407,12 @@ struct ExportView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func statLabel(_ title: String, _ value: String) -> some View {
+    /// 结果页统计标签：标题是**文案**、值是**数据**（文件数 / 字节数等）。
+    ///
+    /// title 必须是 LocalizedStringKey：形参写成 String 时 Text(title) 走 Text(String)
+    /// —— 不查表（设计 24 F6），8 个调用点会「有译文但不生效」，英文界面留着中文标签
+    /// 且无任何报错。value 保持 String（数据，永不翻译，§5.5）。
+    private func statLabel(_ title: LocalizedStringKey, _ value: String) -> some View {
         VStack(spacing: 2) {
             Text(value).font(.title3.monospacedDigit().bold())
             Text(title).font(.caption).foregroundStyle(.secondary)
@@ -430,7 +445,7 @@ struct ExportView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = suggestedCsvFileName()
-        panel.message = "选择 CSV 明文文件的保存位置"
+        panel.message = String(localized: "选择 CSV 明文文件的保存位置")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         csvRiskAcknowledged = false
         csvStep = .riskConfirm(path: url.path)
@@ -445,9 +460,9 @@ struct ExportView: View {
         formatter.dateFormat = "yyyyMMdd"
         let stamp = formatter.string(from: Date())
         if model.vaultName.isEmpty {
-            return "Coffer导出-\(stamp).csv"
+            return Self.localizedFileName("Coffer导出-%@.csv", stamp)
         }
-        return "Coffer导出-\(model.vaultName)-\(stamp).csv"
+        return Self.localizedFileName("Coffer导出-%@-%@.csv", model.vaultName, stamp)
     }
 
     // MARK: CSV ② 强风险页（双门禁①：勾选框）
@@ -599,7 +614,7 @@ struct ExportView: View {
         // 系统按 content type 追加/替换扩展名——.1pux 非注册 UTType
         panel.allowedContentTypes = [.data]
         panel.nameFieldStringValue = suggestedPuxFileName()
-        panel.message = "选择 1PUX 明文文件的保存位置"
+        panel.message = String(localized: "选择 1PUX 明文文件的保存位置")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         puxRiskAcknowledged = false
         puxStep = .riskConfirm(path: url.path)
@@ -614,9 +629,9 @@ struct ExportView: View {
         formatter.dateFormat = "yyyyMMdd"
         let stamp = formatter.string(from: Date())
         if model.vaultName.isEmpty {
-            return "Coffer导出-\(stamp).1pux"
+            return Self.localizedFileName("Coffer导出-%@.1pux", stamp)
         }
-        return "Coffer导出-\(model.vaultName)-\(stamp).1pux"
+        return Self.localizedFileName("Coffer导出-%@-%@.1pux", model.vaultName, stamp)
     }
 
     // MARK: 1PUX ② 强风险页（双门禁①：勾选框；TC-EXP-16）
@@ -750,7 +765,8 @@ struct ExportView: View {
                         Text("降级为文本的字段 \(result.report.degradedFields.count) 个（无 1P 承载码）：")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(result.report.degradedFields.prefix(5).joined(separator: "、"))
+                        // 字段名是数据，分隔符随语言（不能进译表，§5.5）。
+                        Text(result.report.degradedFields.prefix(5).joined(separator: CopyListSeparator.comma))
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                             .lineLimit(2)

@@ -141,7 +141,7 @@ struct LicenseSettingsView: View {
                 Button {
                     copyFingerprint()
                 } label: {
-                    Label(fingerprintCopied ? "已复制" : "复制",
+                    Label(fingerprintCopied ? String(localized: "已复制") : String(localized: "复制"),
                           systemImage: fingerprintCopied ? "checkmark" : "doc.on.doc")
                 }
                 .buttonStyle(.borderless)
@@ -179,7 +179,7 @@ struct LicenseSettingsView: View {
         pasteboard.clearContents()
         let fp = service.machineFingerprint()
         guard !fp.isEmpty, pasteboard.setString(fp, forType: .string) else {
-            errorMessage = "复制失败：无法写入剪贴板，请重试。"
+            errorMessage = String(localized: "复制失败：无法写入剪贴板，请重试。")
             return
         }
         fingerprintCopied = true

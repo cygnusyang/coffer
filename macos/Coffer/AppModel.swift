@@ -1337,14 +1337,15 @@ final class AppModel: ObservableObject {
     /// 密码等其余错误经 ErrorPresenter 直出（可操作的修正引导不能丢）。
     /// 三文案同时供 View 层（RecoveryResetSheet / LockView）引用。
     /// 恢复码重置失败统一文案。
-    nonisolated static let recoveryResetFailedCopy = "重置失败：恢复码无效或密码库数据损坏。"
+    /// 文案在常量求值处本地化（进程内语言固定，D-9 存储形态不变）。
+    nonisolated static let recoveryResetFailedCopy = String(localized: "重置失败：恢复码无效或密码库数据损坏。")
     /// 生物识别重置失败统一文案。
-    nonisolated static let bioResetFailedCopy = "重置失败：无法完成身份验证或密码库数据损坏。"
+    nonisolated static let bioResetFailedCopy = String(localized: "重置失败：无法完成身份验证或密码库数据损坏。")
     /// 主密码重置成功文案（View 层成功视图展示，D-9）。
-    nonisolated static let resetSucceededCopy = "主密码已重置，条目数据不受影响。请用新密码解锁。"
+    nonisolated static let resetSucceededCopy = String(localized: "主密码已重置，条目数据不受影响。请用新密码解锁。")
     /// Touch ID 重置主密码时的生物认证弹窗文案（Keychain 自有单次认证
     /// 的 localizedReason，与解锁「解锁密码库」区分，docs/31 §4.2 B 裁定）。
-    nonisolated static let bioResetAuthPrompt = "验证身份以重置主密码"
+    nonisolated static let bioResetAuthPrompt = String(localized: "验证身份以重置主密码")
 
     /// 重置失败文案映射（纯函数）：1002 → 统一文案（FR-1.4 不可区分纪律）；
     /// 其余（1010 / 4003 / license / Keychain / IO）→ ErrorPresenter 直出。

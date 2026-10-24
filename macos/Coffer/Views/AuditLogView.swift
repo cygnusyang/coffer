@@ -28,15 +28,16 @@ extension FfiAuditEvent {
         // 与绑定 enum 全 case 对齐（无 default：Rust 侧新增变体时此处
         // 编译报错，强制补映射，防止新事件静默显示为原始 case 名）。
         switch self {
-        case .backupExport: return "导出备份"
-        case .backupRestore: return "恢复备份"
-        case .csvExport: return "导出 CSV"
-        case .puxExport: return "导出 1PUX"
-        case .passwordChange: return "修改主密码"
-        case .itemCopy: return "跨库复制"
-        case .passwordResetByBio: return "生物识别重置主密码"
-        case .passwordResetByRecovery: return "恢复码重置主密码"
-        case .recoveryCodeEnabled: return "启用恢复码"
+        // 事件名是**文案**（枚举 → 展示名，不落库，设计 §5.5）：在返回值处翻（§5.4）。
+        case .backupExport: return String(localized: "导出备份")
+        case .backupRestore: return String(localized: "恢复备份")
+        case .csvExport: return String(localized: "导出 CSV")
+        case .puxExport: return String(localized: "导出 1PUX")
+        case .passwordChange: return String(localized: "修改主密码")
+        case .itemCopy: return String(localized: "跨库复制")
+        case .passwordResetByBio: return String(localized: "生物识别重置主密码")
+        case .passwordResetByRecovery: return String(localized: "恢复码重置主密码")
+        case .recoveryCodeEnabled: return String(localized: "启用恢复码")
         }
     }
 
@@ -164,7 +165,7 @@ struct AuditLogView: View {
         // 防御性 guard 兜底（1001 场景不应发生，发生即按错误呈现）。
         guard let session = model.session else {
             isLoading = false
-            let errText = "内部错误：审计日志需解锁后查看。"
+            let errText = String(localized: "内部错误：审计日志需解锁后查看。")
             DiagLog.append(errText)
             model.lastErrorMessage = errText
             return

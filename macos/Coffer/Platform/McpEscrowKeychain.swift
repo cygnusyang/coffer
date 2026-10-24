@@ -40,11 +40,12 @@ enum McpEscrowKeychainError: Error, Equatable {
     var userText: String {
         switch self {
         case .itemNotFound:
-            return "未找到 MCP 解锁托管凭据（Keychain 项不存在）。"
+            return String(localized: "未找到 MCP 解锁托管凭据（Keychain 项不存在）。")
         case .invalidKeyLength:
-            return "内部错误：MCP 解锁托管密钥长度非法。"
+            return String(localized: "内部错误：MCP 解锁托管密钥长度非法。")
         case .unexpected(let status):
-            return "MCP 解锁托管 Keychain 操作失败（OSStatus \(status)）。"
+            // OSStatus 按 String 插值：-34018 若走 %lld 会显示成「-34,018」（实测）
+            return String(localized: "MCP 解锁托管 Keychain 操作失败（OSStatus \(String(status))）。")
         }
     }
 }

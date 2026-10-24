@@ -27,10 +27,12 @@ extension FfiLeakRule {
         // 与绑定 enum 全 case 对齐（无 default：Rust 侧新增变体时此处
         // 编译报错，强制补映射——同 AuditLogView 纪律）。
         switch self {
-        case .dictionaryExact: return "字典精确命中"
-        case .leetNormalized: return "变体变形命中"
-        case .birthdayPattern: return "生日模式"
-        case .keyboardSequence: return "键盘序列"
+        // 枚举 → 展示名是**文案**（不落库，设计 §5.5）；返回值经 Text(String) 消费，
+        // 故在返回值处翻（§5.4）。
+        case .dictionaryExact: return String(localized: "字典精确命中")
+        case .leetNormalized: return String(localized: "变体变形命中")
+        case .birthdayPattern: return String(localized: "生日模式")
+        case .keyboardSequence: return String(localized: "键盘序列")
         }
     }
 }
@@ -39,9 +41,9 @@ extension FfiLeakConfidence {
     /// 置信度中文名（UI 展示用）。
     var displayName: String {
         switch self {
-        case .high: return "高"
-        case .medium: return "中"
-        case .low: return "低"
+        case .high: return String(localized: "高")
+        case .medium: return String(localized: "中")
+        case .low: return String(localized: "低")
         }
     }
 }
@@ -142,14 +144,20 @@ struct HealthCheckView: View {
     private func summaryCard(_ summary: FfiHealthSummary) -> some View {
         Grid(alignment: .center, horizontalSpacing: 12, verticalSpacing: 14) {
             GridRow {
-                summaryCell(summary.duplicateGroupCount, label: "重复组", symbol: "square.on.square")
-                summaryCell(summary.weakUrlCount, label: "弱 URL", symbol: "link")
-                summaryCell(summary.staleCount, label: "陈旧密码", symbol: "clock.arrow.circlepath")
+                summaryCell(summary.duplicateGroupCount,
+                            label: String(localized: "重复组"), symbol: "square.on.square")
+                summaryCell(summary.weakUrlCount,
+                            label: String(localized: "弱 URL"), symbol: "link")
+                summaryCell(summary.staleCount,
+                            label: String(localized: "陈旧密码"), symbol: "clock.arrow.circlepath")
             }
             GridRow {
-                summaryCell(summary.leakSuspectCount, label: "泄露嫌疑", symbol: "exclamationmark.shield")
-                summaryCell(summary.missingTotpCount, label: "无 2FA", symbol: "lock.open")
-                summaryCell(summary.totalFindings, label: "总计", symbol: "list.bullet")
+                summaryCell(summary.leakSuspectCount,
+                            label: String(localized: "泄露嫌疑"), symbol: "exclamationmark.shield")
+                summaryCell(summary.missingTotpCount,
+                            label: String(localized: "无 2FA"), symbol: "lock.open")
+                summaryCell(summary.totalFindings,
+                            label: String(localized: "总计"), symbol: "list.bullet")
             }
         }
         .frame(maxWidth: .infinity)
@@ -193,7 +201,8 @@ struct HealthCheckView: View {
             Section("重复密码") {
                 ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                     // 组行点击跳组内第一个条目。
-                    findingRow(title: group.titles.joined(separator: "、"),
+                    // 条目名是数据、分隔符随语言；caption 是文案（String 参数 → 产生点翻）。
+                    findingRow(title: group.titles.joined(separator: CopyListSeparator.comma),
                                caption: "组内 \(group.itemIds.count) 个条目共用同一密码",
                                symbol: "square.on.square") {
                         if let first = group.itemIds.first {
@@ -266,7 +275,9 @@ struct HealthCheckView: View {
     }
 
     /// 发现行通用样式：图标 + 标题 + 说明 caption，整行可点击跳转。
-    private func findingRow(title: String, caption: String, symbol: String,
+    /// caption 用 LocalizedStringKey：形参写成 String 会让 Text(caption) 走 Text(String)
+    /// —— 不查表（设计 24 F6），5 条发现说明会「有译文但不生效」。title 是条目名 = 数据。
+    private func findingRow(title: String, caption: LocalizedStringKey, symbol: String,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 10) {
@@ -318,7 +329,7 @@ struct HealthCheckView: View {
         // 就地错误态呈现）。
         guard let session = model.session else {
             isLoading = false
-            let errText = "内部错误：安全体检需解锁后查看。"
+            let errText = String(localized: "内部错误：安全体检需解锁后查看。")
             DiagLog.append(errText)
             loadError = errText
             return

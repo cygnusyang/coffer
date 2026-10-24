@@ -22,7 +22,9 @@ struct VaultSetupView: View {
     /// 避免误导用户以为建库会替换当前库。默认 true 保持 noVault 现状路径。
     var isFirstVault: Bool = true
 
-    @State private var name = "我的密码库"
+    /// 默认库名是**默认文案**（用户可改，落库后即成数据）：在产生点本地化，
+    /// 否则英文界面首屏预填中文（设计 §5.4）。
+    @State private var name = String(localized: "我的密码库")
     @State private var password = ""
     @State private var confirm = ""
     @State private var localError: String?
@@ -36,10 +38,13 @@ struct VaultSetupView: View {
                 Image(systemName: "shippingbox.circle.fill")
                     .font(.system(size: 52))
                     .foregroundStyle(.tint)
-                Text(isFirstVault ? "创建密码库" : "新建密码库").font(.title2.bold())
+                // 三元两侧都是文案：String 三元会退化成 StringProtocol 重载（不查表，F6），
+                // 故两侧都显式给 LocalizedStringKey。
+                Text(isFirstVault ? LocalizedStringKey("创建密码库") : LocalizedStringKey("新建密码库"))
+                    .font(.title2.bold())
                 Text(isFirstVault
-                     ? "库文件保存在本机，主密码是唯一解锁凭据，遗失后无法找回。"
-                     : "将在本机新增一座独立密码库，与现有库互不相通；主密码是该库唯一解锁凭据，遗失后无法找回。")
+                     ? LocalizedStringKey("库文件保存在本机，主密码是唯一解锁凭据，遗失后无法找回。")
+                     : LocalizedStringKey("将在本机新增一座独立密码库，与现有库互不相通；主密码是该库唯一解锁凭据，遗失后无法找回。"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -162,7 +167,7 @@ struct VaultSetupView: View {
 
     private func create() {
         guard password == confirm else {
-            localError = "两次输入的主密码不一致。"
+            localError = String(localized: "两次输入的主密码不一致。")
             return
         }
         // 主密码不落状态：拷贝进异步调用后立刻清空本地输入。

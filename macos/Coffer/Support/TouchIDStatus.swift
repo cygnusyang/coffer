@@ -44,9 +44,9 @@ enum TouchIDStatus: Equatable {
     /// 状态行短文案（docs/08 §7.5 状态行）。
     var label: String {
         switch self {
-        case .disabled: return "已停用"
-        case .enabled: return "已启用"
-        case .stale: return "凭据已失效（需重新启用）"
+        case .disabled: return String(localized: "已停用")
+        case .enabled: return String(localized: "已启用")
+        case .stale: return String(localized: "凭据已失效（需重新启用）")
         }
     }
 }

@@ -318,7 +318,9 @@ struct CrossCopySheet: View {
     /// （与 startCopy 同源）；查不到时回退默认提示（Keychain 项仍能定位）。
     private func vaultBiometricReason(for targetUUID: String) -> String {
         let name = model.vaultBriefs.first(where: { $0.vaultUuid == targetUUID })?.displayName
-        return name.map { "解锁密码库「\($0)」以复制条目" } ?? BiometricKeychain.unlockPrompt
+        // Keychain 弹窗（AppKit / 系统面）的 localizedReason 不走 Localizable 表，
+        // 必须在产生点本地化（设计 §5.4 AppKit 行）。
+        return name.map { String(localized: "解锁密码库「\($0)」以复制条目") } ?? BiometricKeychain.unlockPrompt
     }
 
     /// 解锁成功后的公共续段：切复制页 → 慢调用 copyItem → 即锁目标会话。
@@ -326,7 +328,7 @@ struct CrossCopySheet: View {
         guard let src = model.session, let target = targetSession,
               let targetUUID = targetVaultUUID, let brief = model.vaultBriefs.first(where: { $0.vaultUuid == targetUUID })
         else {
-            presentStepError("内部错误：目标会话状态缺失，已取消复制。")
+            presentStepError(String(localized: "内部错误：目标会话状态缺失，已取消复制。"))
             lockTargetSession()
             step = .pickTarget
             return

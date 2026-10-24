@@ -106,36 +106,38 @@ final class McpRegistrar {
         let cli = target?.cliName ?? "claude"
         switch code {
         case .ok:
-            return "已注册到 \(name)（全局）。"
+            return String(localized: "已注册到 \(name)（全局）。")
         case .configInvalid:
-            return "注册失败：配置不完整，请重新打开设置页重试。"
+            return String(localized: "注册失败：配置不完整，请重新打开设置页重试。")
         case .cofferBinaryInvalid:
-            return "注册失败：未找到 coffer 可执行文件，请重新安装后重试。"
+            return String(localized: "注册失败：未找到 coffer 可执行文件，请重新安装后重试。")
         case .claudeNotFound:
-            return "注册失败：未找到 \(name)（\(cli)）。请先安装 \(name)，或用「复制注册命令」手动注册。"
+            return String(localized: "注册失败：未找到 \(name)（\(cli)）。请先安装 \(name)，或用「复制注册命令」手动注册。")
         case .claudeTimeout:
-            return "注册失败：\(name) 注册命令超时。请重试，或用「复制注册命令」手动注册。"
+            return String(localized: "注册失败：\(name) 注册命令超时。请重试，或用「复制注册命令」手动注册。")
         case .claudeAddFailed:
-            return "注册失败：\(name) 返回错误。请用「复制注册命令」手动注册。"
+            return String(localized: "注册失败：\(name) 返回错误。请用「复制注册命令」手动注册。")
         case .claudeRemoveFailed:
-            return "注册失败：无法清理旧的 coffer 注册项。请用「复制注册命令」手动注册。"
+            return String(localized: "注册失败：无法清理旧的 coffer 注册项。请用「复制注册命令」手动注册。")
         case .notRegistered:
-            return "注册失败：\(name) 报告成功但未确认到已注册条目。请用「复制注册命令」手动注册。"
+            return String(localized: "注册失败：\(name) 报告成功但未确认到已注册条目。请用「复制注册命令」手动注册。")
         case .checkFailed:
-            return "检查注册状态失败：无法读取 \(name) 配置。"
+            return String(localized: "检查注册状态失败：无法读取 \(name) 配置。")
         case .resultWriteFailed:
-            return "注册未完成：辅助进程未在限定时间内返回结果，请重试。"
+            return String(localized: "注册未完成：辅助进程未在限定时间内返回结果，请重试。")
         case .targetUnsupported:
-            return "\(name) 不支持自动注册，请用「复制配置」手动添加。"
+            return String(localized: "\(name) 不支持自动注册，请用「复制配置」手动添加。")
         }
     }
 
     /// 手动清理命令展示串（移除失败的下一步指引；argv 形状硬编码且无值注入）。
     static func manualCleanupCommand(target: McpAgentTarget) -> String {
         guard let cliName = target.cliName, let args = target.removeArgs() else {
-            return "请手动编辑配置文件移除 coffer 条目。"
+            return String(localized: "请手动编辑配置文件移除 coffer 条目。")
         }
-        return "可在终端运行 " + ([cliName] + args).joined(separator: " ") + " 手动清理。"
+        // 命令串是**数据**（粘到终端要能原样执行），只有骨架是文案（设计 §5.5）
+        let command = ([cliName] + args).joined(separator: " ")
+        return String(localized: "可在终端运行 \(command) 手动清理。")
     }
 
     /// 移除语境错误码 → 用户可读文案（开关 OFF 自动移除失败时展示，lead 裁定
@@ -146,23 +148,26 @@ final class McpRegistrar {
         let name = target?.displayName ?? "Claude Code"
         let cli = target?.cliName ?? "claude"
         let cleanup = manualCleanupCommand(target: target ?? .claudeCode)
+        // 与 errorMessage（注册语境）分离：同一 code 在两套语义下文案不同。
+        // 拼接保持 "+"：cleanup 是**独立的完整句子**（不是句内参数），两句拼接
+        // 在中英两种语序下都成立，不需要占位符重排。
         switch code {
         case .ok:
-            return "已停用（已从 \(name) 移除 coffer 注册项）。"
+            return String(localized: "已停用（已从 \(name) 移除 coffer 注册项）。")
         case .claudeNotFound:
-            return "未找到 \(name)（\(cli)），无法自动移除。" + cleanup
+            return String(localized: "未找到 \(name)（\(cli)），无法自动移除。") + cleanup
         case .claudeTimeout:
-            return "自动移除超时。" + cleanup
+            return String(localized: "自动移除超时。") + cleanup
         case .claudeRemoveFailed:
-            return "未能从 \(name) 移除 coffer 注册项。" + cleanup
+            return String(localized: "未能从 \(name) 移除 coffer 注册项。") + cleanup
         case .checkFailed:
-            return "无法读取 \(name) 配置确认移除结果。" + cleanup
+            return String(localized: "无法读取 \(name) 配置确认移除结果。") + cleanup
         case .resultWriteFailed:
-            return "移除未完成（辅助进程未在限定时间内返回结果）。" + cleanup
+            return String(localized: "移除未完成（辅助进程未在限定时间内返回结果）。") + cleanup
         case .targetUnsupported:
-            return "\(name) 不支持自动移除，请手动编辑配置文件移除 coffer 条目。"
+            return String(localized: "\(name) 不支持自动移除，请手动编辑配置文件移除 coffer 条目。")
         default:
-            return "已停用，但需手动清理注册项。" + cleanup
+            return String(localized: "已停用，但需手动清理注册项。") + cleanup
         }
     }
 
@@ -182,13 +187,13 @@ final class McpRegistrar {
         var errorDescription: String? {
             switch self {
             case .helperMissing:
-                return "注册失败：未找到注册辅助程序，请重新安装 Coffer 后重试。"
+                return String(localized: "注册失败：未找到注册辅助程序，请重新安装 Coffer 后重试。")
             case .configWriteFailed(let detail):
-                return "注册失败：无法写入注册配置（\(detail)）。"
+                return String(localized: "注册失败：无法写入注册配置（\(detail)）。")
             case .helperLaunchFailed(let detail):
-                return "注册失败：无法启动注册辅助进程（\(detail)）。"
+                return String(localized: "注册失败：无法启动注册辅助进程（\(detail)）。")
             case .resultTimeout:
-                return "注册未完成：辅助进程未在限定时间内返回结果，请重试。"
+                return String(localized: "注册未完成：辅助进程未在限定时间内返回结果，请重试。")
             }
         }
     }
@@ -349,8 +354,11 @@ final class McpRegistrar {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let status = process.terminationStatus
         guard status == 0 && detail.isEmpty else {
-            let suffix = detail.isEmpty ? "（无 stderr 输出）" : "：\(detail)"
-            throw RegistrarError.helperLaunchFailed("open 启动注册辅助进程失败（exit \(status)）\(suffix)")
+            // 用户面只给退出码：open 的 stderr 是外部进程原文（不属可译文案），拼进
+            // 本地化句子会让英文界面混入未翻译片段（设计 24 §5.5 文案/数据分界）；
+            // 完整 stderr 仍落诊断日志可查。
+            DiagLog.append("McpRegistrar：open 启动失败（exit \(status)）：\(detail)")
+            throw RegistrarError.helperLaunchFailed(String(localized: "退出码 \(String(status))"))
         }
     }
 }

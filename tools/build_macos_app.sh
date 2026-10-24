@@ -161,6 +161,37 @@ BUILD_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
 if [[ -f "${SRC_DIR}/Resources/Coffer.icns" ]]; then
   cp "${SRC_DIR}/Resources/Coffer.icns" "${APP_DIR}/Contents/Resources/Coffer.icns"
 fi
+
+# ---- 3.4/4 装配本地化资源（en.lproj，签名前）----
+# v2.13.0（docs/03-功能设计/24-v2.13.0-多语言-设计.md §4.4 / D-7 / D-8）：译文必须在
+# 本步装配，**不能放到 4/4 codesign 之后**——设计 F5 实测：签名后再加资源，
+# codesign --verify --strict 由 exit 0 变成 "a sealed resource is missing or invalid"
+# （资源随签名被封存，事后写入即视为篡改）。故顺序是硬约束：
+#   组装 bundle → 3.4 装配译文 → 3.5/3.6/3.7 嵌套 bundle 签名 → 4/4 外层签名。
+step "3.4/4 装配本地化资源（en.lproj，签名前）"
+"${SCRIPT_DIR}/check_l10n.sh" || die "本地化门禁失败（缺分片 / 重复键 / 占位符不匹配 / 未转义 %）。"
+bash "${SCRIPT_DIR}/build_l10n_resources.sh" "${APP_DIR}" || die "本地化资源装配失败。"
+
+# 产物断言（设计 D-7）：拷贝路径写错不会报错，只会让英文界面全中文——静默失败
+# 必须由构建拦住，不能靠人看。
+[[ -d "${APP_DIR}/Contents/Resources/en.lproj" ]] \
+  || die "en.lproj 目录未装配：${APP_DIR}/Contents/Resources/en.lproj"
+[[ -s "${APP_DIR}/Contents/Resources/en.lproj/Localizable.strings" ]] \
+  || die "en.lproj/Localizable.strings 缺失或为空。"
+[[ -s "${APP_DIR}/Contents/Resources/en.lproj/InfoPlist.strings" ]] \
+  || die "en.lproj/InfoPlist.strings 缺失或为空（英文界面权限弹窗会显示中文）。"
+# D-7 三条 plist 事实：① 保留 CFBundleDevelopmentRegion=zh_CN（F3：删了它，日法用户
+# 回退**英文**而非中文）；② **不声明** CFBundleLocalizations（F4：与 .lproj 同时
+# 声明会让本地化列表出现重复项）；③ 不建 zh-Hans.lproj（中文由 key 回落承担）。
+DEV_REGION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDevelopmentRegion' "${APP_DIR}/Contents/Info.plist" 2>/dev/null || true)"
+[[ "${DEV_REGION}" == "zh_CN" ]] \
+  || die "产物 Info.plist 的 CFBundleDevelopmentRegion 应为 zh_CN，实际「${DEV_REGION}」（F3：删了它日法用户会回退英文）。"
+if /usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations' "${APP_DIR}/Contents/Info.plist" >/dev/null 2>&1; then
+  die "产物 Info.plist 不得声明 CFBundleLocalizations（F4：与 .lproj 同时声明会产生重复本地化项）。"
+fi
+[[ ! -d "${APP_DIR}/Contents/Resources/zh-Hans.lproj" ]] \
+  || die "不应存在 zh-Hans.lproj（D-7 A：中文由 key 回落承担，只发 en）。"
+
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 
 # ---- 3.5/4 coffer CLI 构建 + 装配 + 签名（v2.2.0 G5，D-6）----

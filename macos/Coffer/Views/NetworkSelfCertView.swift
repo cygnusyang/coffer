@@ -61,10 +61,9 @@ struct NetworkSelfCertView: View {
                 Image(systemName: "network.slash")
                     .foregroundStyle(.green)
             }
-            Text("Coffer 的密码库与全部数据只保存在本机，不上传到任何云端。"
-                 + "Rust 核心与其依赖图零网络（可用 tools/check_no_network.sh 自证）；"
-                 + "应用层唯一联网例外是软件更新（OTA）——仅按白名单地址访问更新服务器，"
-                 + "不发送任何密码库数据。以下命令可自行验证，步骤可复现。")
+            // 设计 24 §5.4：Text 的 "+" 拼接会退化成 Text(String)（不查表），
+            // 所以合并成单个字面量恢复 LocalizedStringKey 语义。
+            Text("Coffer 的密码库与全部数据只保存在本机，不上传到任何云端。Rust 核心与其依赖图零网络（可用 tools/check_no_network.sh 自证）；应用层唯一联网例外是软件更新（OTA）——仅按白名单地址访问更新服务器，不发送任何密码库数据。以下命令可自行验证，步骤可复现。")
         }
     }
 
@@ -72,16 +71,14 @@ struct NetworkSelfCertView: View {
 
     private var staticSection: some View {
         Section("静态自证（构建产物）") {
-            stepRow(1, "检查沙盒权限声明：")
-            commandText("codesign -d --entitlements - <Coffer.app 路径>")
-            stepRow(nil, "输出中最多允许出现一项网络权限：com.apple.security.network.client"
-                     + "（软件更新豁免）；不得出现 network.server 或其他任何 "
-                     + "com.apple.security.network.* 键。")
-            stepRow(2, "检查动态链接的框架：")
+            stepRow(1, String(localized: "检查沙盒权限声明："))
+            // 命令串里的 <Coffer.app 路径> 是要人工替换的占位符（不是可执行内容），
+            // 属于文案而非数据 → 也进译表。
+            commandText(String(localized: "codesign -d --entitlements - <Coffer.app 路径>"))
+            stepRow(nil, String(localized: "输出中最多允许出现一项网络权限：com.apple.security.network.client（软件更新豁免）；不得出现 network.server 或其他任何 com.apple.security.network.* 键。"))
+            stepRow(2, String(localized: "检查动态链接的框架："))
             commandText("otool -L <Coffer.app>/Contents/MacOS/Coffer")
-            stepRow(nil, "输出中不应链接第三方网络库；系统框架 CFNetwork 属预期——"
-                     + "仅被软件更新（OTA）模块经 URLSession 使用，不应出现独立的 "
-                     + "Network.framework。")
+            stepRow(nil, String(localized: "输出中不应链接第三方网络库；系统框架 CFNetwork 属预期——仅被软件更新（OTA）模块经 URLSession 使用，不应出现独立的 Network.framework。"))
         }
     }
 
@@ -89,11 +86,11 @@ struct NetworkSelfCertView: View {
 
     private var runtimeSection: some View {
         Section("运行时自证（0 socket）") {
-            stepRow(1, "启动 Coffer 后查看进程 ID：")
+            stepRow(1, String(localized: "启动 Coffer 后查看进程 ID："))
             commandText("pgrep -x Coffer")
-            stepRow(2, "检查该进程的 TCP/UDP 连接（-a 限定只查该进程）：")
+            stepRow(2, String(localized: "检查该进程的 TCP/UDP 连接（-a 限定只查该进程）："))
             commandText("lsof -nP -iTCP -iUDP -a -p <pid>")
-            stepRow(nil, "输出应为空，即无任何网络连接——软件更新（OTA）下载进行中除外。")
+            stepRow(nil, String(localized: "输出应为空，即无任何网络连接——软件更新（OTA）下载进行中除外。"))
         }
     }
 
@@ -103,8 +100,7 @@ struct NetworkSelfCertView: View {
         Section("依赖图自证（源码仓库）") {
             Text("在 Coffer 源码仓库执行：")
             commandText("cd core && cargo tree --workspace -e normal")
-            Text("依赖中不应出现 reqwest / hyper / tokio(net) 等网络 crate；"
-                 + "仓库内 tools/check_no_network.sh 自动断言此项。")
+            Text("依赖中不应出现 reqwest / hyper / tokio(net) 等网络 crate；仓库内 tools/check_no_network.sh 自动断言此项。")
         }
     }
 
@@ -138,7 +134,8 @@ struct NetworkSelfCertView: View {
                 copyCommand(command)
             } label: {
                 Label(
-                    copiedCommand == command ? "已复制" : "复制",
+                    copiedCommand == command
+                        ? String(localized: "已复制") : String(localized: "复制"),
                     systemImage: copiedCommand == command ? "checkmark" : "doc.on.doc")
                     .font(.caption)
                     .frame(minWidth: 44)

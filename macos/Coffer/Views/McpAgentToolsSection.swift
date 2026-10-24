@@ -236,7 +236,7 @@ final class McpAgentToolCenter: ObservableObject {
             return
         }
         for target in McpAgentTarget.autoRegisterTargets {
-            states[target] = .failed("工具探测失败，请点刷新重试")
+            states[target] = .failed(String(localized: "工具探测失败，请点刷新重试"))
         }
     }
 
@@ -322,7 +322,8 @@ final class McpAgentToolCenter: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return }
             states[target] = .failed(
-                failureText(error, fallback: "检查注册状态失败：无法读取 \(target.displayName) 配置。")
+                failureText(error, fallback: String(format: String(localized: "检查注册状态失败：无法读取 %@ 配置。"),
+                                                     target.displayName))
             )
         }
     }
@@ -348,7 +349,7 @@ final class McpAgentToolCenter: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return false }
             states[target] = .failed(
-                failureText(error, fallback: "注册失败，请重试或用「复制命令」手动注册。")
+                failureText(error, fallback: String(localized: "注册失败，请重试或用「复制命令」手动注册。"))
             )
             return false
         }
@@ -373,7 +374,8 @@ final class McpAgentToolCenter: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return false }
             states[target] = .failed(
-                failureText(error, fallback: "移除失败，请重试。" + McpRegistrar.manualCleanupCommand(target: target))
+                failureText(error, fallback: String(localized: "移除失败，请重试。")
+                    + McpRegistrar.manualCleanupCommand(target: target))
             )
             return false
         }
@@ -486,7 +488,9 @@ struct McpAgentToolsSection: View {
             // 检测本身不受总开关 / 会话限制（STD-05），但 helper 串行是一次一个请求，
             // 在飞时禁用（H3：避免与在飞注册撞固定名 config/result）。
             .disabled(center.busy)
-            .help(center.busy ? "正在处理注册操作，请稍候" : "重新检测工具与注册状态")
+            .help(center.busy
+                  ? String(localized: "正在处理注册操作，请稍候")
+                  : String(localized: "重新检测工具与注册状态"))
             .accessibilityLabel("重新检测工具与注册状态")
         }
     }
@@ -591,7 +595,7 @@ struct McpAgentToolsSection: View {
                     .disabled(!canOperate)
                 }
                 if presentation.showsCopy {
-                    Button(copiedTarget == target ? "已复制" : copyTitle(for: target)) {
+                    Button(copiedTarget == target ? String(localized: "已复制") : copyTitle(for: target)) {
                         copyCommand(for: target)
                     }
                     .buttonStyle(.borderless)
@@ -640,14 +644,14 @@ struct McpAgentToolsSection: View {
                 Text(target.displayName)
                     .font(.callout)
                 Text(target.isAutoRegister
-                     ? "未安装，安装后点刷新"
-                     : "仅手动配置，复制后粘贴到该工具的 MCP 配置中")
+                     ? String(localized: "未安装，安装后点刷新")
+                     : String(localized: "仅手动配置，复制后粘贴到该工具的 MCP 配置中"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
-            Button(copiedTarget == target ? "已复制" : copyTitle(for: target)) {
+            Button(copiedTarget == target ? String(localized: "已复制") : copyTitle(for: target)) {
                 copyCommand(for: target)
             }
             .buttonStyle(.borderless)
@@ -655,15 +659,19 @@ struct McpAgentToolsSection: View {
             .disabled(cofferBinaryPath.isEmpty || model.vaultDirPath.isEmpty)
         }
         .accessibilityElement(children: .combine)
+        // 三元里的字面量各自成键：占位符位是数据（工具名），后缀是文案（设计 §5.4）。
+        // 用「显式模板 + String(format:)」：占位符类型（%@）直接写在源码里，与 .strings 键
+        // 逐字对应，不必按插值表达式反推类型（Int / UInt32 / UInt64 → %lld / %u / %llu，
+        // 见 §4 规则 2）。与纯插值写法等价，见设计 §5.4.1 规则 2。
         .accessibilityLabel(target.isAutoRegister
-                            ? "\(target.displayName)，未安装"
-                            : "\(target.displayName)，仅手动配置")
+                            ? String(format: String(localized: "%@，未安装"), target.displayName)
+                            : String(format: String(localized: "%@，仅手动配置"), target.displayName))
     }
 
     // MARK: - 行呈现派生
 
     /// 清理动作标题（与 H2 的 canCleanup 门控配对，避免两处字面量漂移）。
-    private static let cleanupActionTitle = "再次清理"
+    private static let cleanupActionTitle = String(localized: "再次清理")
 
     /// 行呈现（图标 / 颜色 / 状态词 / 次文案 / 可用动作），单点派生避免各处散落分支。
     private struct RowPresentation {
@@ -681,8 +689,8 @@ struct McpAgentToolsSection: View {
         if !center.helperAvailable {
             return RowPresentation(
                 icon: "questionmark.circle", color: .secondary,
-                statusWord: "无法读取注册状态",
-                detail: "注册组件不可用，重装 Coffer 后重新检测；期间可复制命令手动配置",
+                statusWord: String(localized: "无法读取注册状态"),
+                detail: String(localized: "注册组件不可用，重装 Coffer 后重新检测；期间可复制命令手动配置"),
                 showsCopy: true, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         }
@@ -690,16 +698,16 @@ struct McpAgentToolsSection: View {
             // 探测失败：installed 为空不代表未安装，必须显式落「未知」。
             return RowPresentation(
                 icon: "questionmark.circle", color: .secondary,
-                statusWord: "探测失败",
-                detail: "工具探测失败，请点刷新重试",
+                statusWord: String(localized: "探测失败"),
+                detail: String(localized: "工具探测失败，请点刷新重试"),
                 showsCopy: true, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         }
         if !center.installed.contains(target) {
             return RowPresentation(
                 icon: "circle.dashed", color: .secondary,
-                statusWord: "未安装",
-                detail: "安装后点刷新",
+                statusWord: String(localized: "未安装"),
+                detail: String(localized: "安装后点刷新"),
                 showsCopy: true, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         }
@@ -707,26 +715,28 @@ struct McpAgentToolsSection: View {
         case .idle:
             return RowPresentation(
                 icon: "circle", color: .secondary,
-                statusWord: masterEnabled ? "未检查" : "未启用",
-                detail: masterEnabled ? "点右上角刷新检查注册状态" : "打开「启用 MCP 服务器」后自动注册",
+                statusWord: masterEnabled ? String(localized: "未检查") : String(localized: "未启用"),
+                detail: masterEnabled
+                    ? String(localized: "点右上角刷新检查注册状态")
+                    : String(localized: "打开「启用 MCP 服务器」后自动注册"),
                 showsCopy: true, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         case .checking:
             return RowPresentation(
                 icon: nil, color: .secondary,
-                statusWord: "正在检查注册状态…", detail: "",
+                statusWord: String(localized: "正在检查注册状态…"), detail: "",
                 showsCopy: false, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         case .registering:
             return RowPresentation(
                 icon: nil, color: .secondary,
-                statusWord: "正在注册…", detail: "",
+                statusWord: String(localized: "正在注册…"), detail: "",
                 showsCopy: false, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         case .removing:
             return RowPresentation(
                 icon: nil, color: .secondary,
-                statusWord: "正在移除注册项…", detail: "",
+                statusWord: String(localized: "正在移除注册项…"), detail: "",
                 showsCopy: false, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         case .registered(let registeredDir):
@@ -734,19 +744,22 @@ struct McpAgentToolsSection: View {
             return RowPresentation(
                 icon: mismatched ? "exclamationmark.triangle" : "checkmark.circle",
                 color: mismatched ? .orange : .green,
-                statusWord: mismatched ? "已注册到其他库" : "已注册",
+                statusWord: mismatched
+                    ? String(localized: "已注册到其他库") : String(localized: "已注册"),
                 detail: mismatched
-                    ? "注册目录与当前密码库不一致：\(registeredDir ?? "")"
-                    : "可经 MCP 访问本机密码库",
+                    ? String(format: String(localized: "注册目录与当前密码库不一致：%@"),
+                             registeredDir ?? "")
+                    : String(localized: "可经 MCP 访问本机密码库"),
                 showsCopy: true, showsRepair: false, repairTitle: nil, showsUpdate: mismatched
             )
         case .notRegistered:
             return RowPresentation(
                 icon: "circle", color: .secondary,
-                statusWord: masterEnabled ? "未注册" : "未启用",
+                statusWord: masterEnabled
+                    ? String(localized: "未注册") : String(localized: "未启用"),
                 detail: masterEnabled
-                    ? "打开开关即自动注册"
-                    : "打开「启用 MCP 服务器」后自动注册",
+                    ? String(localized: "打开开关即自动注册")
+                    : String(localized: "打开「启用 MCP 服务器」后自动注册"),
                 showsCopy: true, showsRepair: false, repairTitle: nil, showsUpdate: false
             )
         case .failed(let message):
@@ -757,9 +770,12 @@ struct McpAgentToolsSection: View {
             let retryPossible = wantsEnabled && masterEnabled
             return RowPresentation(
                 icon: "exclamationmark.triangle", color: .orange,
-                statusWord: wantsEnabled ? "注册失败" : "移除失败", detail: message,
+                statusWord: wantsEnabled
+                    ? String(localized: "注册失败") : String(localized: "移除失败"),
+                detail: message,
                 showsCopy: true, showsRepair: true,
-                repairTitle: retryPossible ? "重试注册" : Self.cleanupActionTitle,
+                repairTitle: retryPossible
+                    ? String(localized: "重试注册") : Self.cleanupActionTitle,
                 showsUpdate: false
             )
         }
@@ -808,12 +824,14 @@ struct McpAgentToolsSection: View {
 
     /// 开关禁用原因（VoiceOver / 悬停提示）。
     private func toggleHelp(for target: McpAgentTarget) -> String {
-        if !masterEnabled { return "打开「启用 MCP 服务器」后可用" }
-        if !center.helperAvailable { return "注册组件不可用，仅支持复制命令" }
-        if center.busy { return "正在处理上一个操作，请稍候" }
-        if model.vaultDirPath.isEmpty { return "请先打开密码库" }
-        if !center.installed.contains(target) { return "未检测到 \(target.displayName)，安装后点刷新" }
-        return "注册到该 AI 工具"
+        if !masterEnabled { return String(localized: "打开「启用 MCP 服务器」后可用") }
+        if !center.helperAvailable { return String(localized: "注册组件不可用，仅支持复制命令") }
+        if center.busy { return String(localized: "正在处理上一个操作，请稍候") }
+        if model.vaultDirPath.isEmpty { return String(localized: "请先打开密码库") }
+        if !center.installed.contains(target) {
+            return String(format: String(localized: "未检测到 %@，安装后点刷新"), target.displayName)
+        }
+        return String(localized: "注册到该 AI 工具")
     }
 
     /// 失败行动作：按钮标题即动作（「重试注册」= 注册，「再次清理」= 移除），
@@ -841,9 +859,9 @@ struct McpAgentToolsSection: View {
     private func copyTitle(for target: McpAgentTarget) -> String {
         switch target {
         case .claudeCode, .codeBuddy, .codex, .geminiCLI, .cursor, .vscode:
-            return "复制命令"
+            return String(localized: "复制命令")
         case .windsurf, .zed:
-            return "复制配置"
+            return String(localized: "复制配置")
         }
     }
 
@@ -852,13 +870,14 @@ struct McpAgentToolsSection: View {
         let command = target.copyCommand(vaultDir: model.vaultDirPath,
                                         cofferBinaryPath: cofferBinaryPath)
         guard !command.isEmpty else {
-            errorMessage = "无法生成 \(target.displayName) 的配置：未找到 coffer 命令或密码库目录。"
+            errorMessage = String(format: String(localized: "无法生成 %@ 的配置：未找到 coffer 命令或密码库目录。"),
+                                  target.displayName)
             return
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(command, forType: .string) else {
-            errorMessage = "复制失败：无法写入剪贴板，请重试。"
+            errorMessage = String(localized: "复制失败：无法写入剪贴板，请重试。")
             return
         }
         copiedTarget = target

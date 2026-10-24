@@ -23,7 +23,7 @@ enum McpProvider: String, CaseIterable, Equatable {
     var displayName: String {
         switch self {
         case .op: return "1Password CLI"
-        case .coffer: return "Coffer 自家库"
+        case .coffer: return String(localized: "Coffer 自家库")
         }
     }
 

@@ -96,12 +96,14 @@ struct TrashListView: View {
 
     /// 聚合反馈文案（纯函数，D-8.2）：全成功「已彻底删除 N 条」；有失败追加
     /// 失败数与逐条原因。
+    /// v2.13.0：三处拼接改为「单串 + 占位符」并在产生点本地化（设计 §5.4）——
+    /// 拼接后的 String 到了 View 里只会走 Text(String)，不再查表，晚一步就救不回来。
     static func purgeSummaryText(succeeded: Int, failures: [(title: String, reason: String)]) -> String {
-        var text = "已彻底删除 \(succeeded) 条"
+        var text = String(localized: "已彻底删除 \(succeeded) 条")
         if !failures.isEmpty {
-            text += "，\(failures.count) 条失败"
+            text += String(localized: "，\(failures.count) 条失败")
             for failure in failures {
-                text += "\n「\(failure.title)」：\(failure.reason)"
+                text += String(localized: "\n「\(failure.title)」：\(failure.reason)")
             }
         }
         return text

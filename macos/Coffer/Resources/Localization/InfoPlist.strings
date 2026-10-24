@@ -1,0 +1,7 @@
+/* InfoPlist.strings（en）—— 系统弹窗文案（设计 §4.5 G4）。
+ *
+ * 系统权限弹窗由系统进程渲染，**不参与 Localizable 表回落**：缺这条时英文用户
+ * 看到的是中文权限说明（无法靠 key 回落救回）。故 G4 硬门禁要求本文件存在、
+ * lint 通过且含 NSCameraUsageDescription。
+ */
+"NSCameraUsageDescription" = "Scans TOTP otpauth:// QR codes to quickly add one-time codes to items.";

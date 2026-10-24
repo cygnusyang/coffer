@@ -41,11 +41,11 @@ enum LicenseErrorText {
     /// 6001 统一文案（单一来源）：序列号验证的全部失败原因合并为同一文案
     /// （FR-15.6 不可区分纪律）。`text(forCode: 6001)` 映射与
     /// `LicenseActivationError.userText` 均经此常量取文案，杜绝重复字面量。
-    static let serialInvalid = "序列号无效"
+    static let serialInvalid = String(localized: "序列号无效")
     /// 6004 统一文案（单一来源）：许可信息存储暂不可用（docs/03 §14.8），
     /// 可稍后重试。`text(forCode: 6004)` 映射与
     /// `LicenseActivationError.userText` 均经此常量取文案，杜绝重复字面量。
-    static let storageUnavailable = "许可信息存储暂不可用，请稍后重试。"
+    static let storageUnavailable = String(localized: "许可信息存储暂不可用，请稍后重试。")
 
     /// 6xxx 码 → 规范化中文文案；非 6xxx 返回 nil（调用方走默认直出）。
     static func text(forCode code: Int) -> String? {
@@ -55,10 +55,10 @@ enum LicenseErrorText {
             return serialInvalid
         case 6002:
             // 试用到期只读：引导去激活（正常路径，§14.5）
-            return "试用期已结束，当前处于只读模式。激活后可恢复写入。"
+            return String(localized: "试用期已结束，当前处于只读模式。激活后可恢复写入。")
         case 6003:
             // 门禁异常退化：引导重启 / 重装，仍异常再联系支持（§14.5）
-            return "当前许可状态不允许此操作。许可状态异常已进入只读保护，请重启应用后重试；若问题持续，请重装应用或联系支持。"
+            return String(localized: "当前许可状态不允许此操作。许可状态异常已进入只读保护，请重启应用后重试；若问题持续，请重装应用或联系支持。")
         case 6004:
             // 许可信息存储暂不可用（§14.8）：可稍后重试
             return storageUnavailable

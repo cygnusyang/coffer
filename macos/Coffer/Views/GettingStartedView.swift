@@ -58,52 +58,54 @@ struct GettingStartedView: View {
 
     private var introSection: some View {
         section(
-            title: "欢迎使用 Coffer",
+            title: String(localized: "欢迎使用 Coffer"),
             rows: [
-                "Coffer 是本地密码管理器：密码只存在本机，不上传到云端、不做同步（软件更新 OTA 除外）。",
+                String(localized: "Coffer 是本地密码管理器：密码只存在本机，不上传到云端、不做同步（软件更新 OTA 除外）。"),
             ])
     }
 
     private var createSection: some View {
         section(
-            title: "开始使用",
+            title: String(localized: "开始使用"),
             rows: [
-                "建库：无密码库时首屏点「创建密码库」，设一个强主密码（3 分以上，共 4 分）。",
-                "解锁：每次启动 / 锁定后，在锁定页输入主密码，或用 Touch ID 一键解锁。",
-                "新建条目：解锁后点工具栏「新建」或按 ⌘N，填写名称、用户名、密码。",
+                String(localized: "建库：无密码库时首屏点「创建密码库」，设一个强主密码（3 分以上，共 4 分）。"),
+                String(localized: "解锁：每次启动 / 锁定后，在锁定页输入主密码，或用 Touch ID 一键解锁。"),
+                String(localized: "新建条目：解锁后点工具栏「新建」或按 ⌘N，填写名称、用户名、密码。"),
             ])
     }
 
     private var everydaySection: some View {
         section(
-            title: "日常操作",
+            title: String(localized: "日常操作"),
             rows: [
-                "导入：从其他密码管理器迁入——工具栏「导入」（CSV / 1Password / Bitwarden / OPVault）或 ⌘I / ⌘⇧I。",
-                "导出备份：工具栏「导出」（或 ⌘E）生成加密备份文件，建议定期保存到安全位置。",
-                "恢复：换机 / 重装后在首屏点「从备份恢复…」；有既有库时在 设置 → 数据 恢复，锁定态可经「管理密码库…」→「从备份恢复…」直达。",
-                "快捷键：全部快捷键见帮助菜单「键盘快捷键…」（含 ⌘⇧C 复制密码、⌘U 复制用户名等）。",
+                String(localized: "导入：从其他密码管理器迁入——工具栏「导入」（CSV / 1Password / Bitwarden / OPVault）或 ⌘I / ⌘⇧I。"),
+                String(localized: "导出备份：工具栏「导出」（或 ⌘E）生成加密备份文件，建议定期保存到安全位置。"),
+                String(localized: "恢复：换机 / 重装后在首屏点「从备份恢复…」；有既有库时在 设置 → 数据 恢复，锁定态可经「管理密码库…」→「从备份恢复…」直达。"),
+                String(localized: "快捷键：全部快捷键见帮助菜单「键盘快捷键…」（含 ⌘⇧C 复制密码、⌘U 复制用户名等）。"),
             ])
     }
 
     private var safetySection: some View {
         section(
-            title: "安全",
+            title: String(localized: "安全"),
             rows: [
-                "Touch ID：在 设置 → 安全 启用后，解锁与跨库复制可免输主密码。",
-                "恢复码：忘记主密码时找回数据的唯一途径——在 设置 → 安全 生成并妥善保存，未雨绸缪。",
-                "修改主密码：在 设置 → 安全 → 修改主密码…。",
+                String(localized: "Touch ID：在 设置 → 安全 启用后，解锁与跨库复制可免输主密码。"),
+                String(localized: "恢复码：忘记主密码时找回数据的唯一途径——在 设置 → 安全 生成并妥善保存，未雨绸缪。"),
+                String(localized: "修改主密码：在 设置 → 安全 → 修改主密码…。"),
             ])
     }
 
     private var mcpSection: some View {
         section(
-            title: "MCP / Agent 协作",
+            title: String(localized: "MCP / Agent 协作"),
             rows: [
-                "让 AI / 自动化安全取用密码：在 设置 → MCP / Agent 协作 开启并注册命令行入口（CLI 与 MCP 均本机运行，数据不出本机）。",
+                String(localized: "让 AI / 自动化安全取用密码：在 设置 → MCP / Agent 协作 开启并注册命令行入口（CLI 与 MCP 均本机运行，数据不出本机）。"),
             ])
     }
 
     /// 分组小节：标题 + 多行指引（纯静态文案，无富文本/外链）。
+    /// title / rows 都是 String（ForEach 需要 Hashable 的 id: \.self），因此本地化
+    /// 发生在**调用点**（String(localized:)），不是这里——Text(String) 不查表（F6）。
     private func section(title: String, rows: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)

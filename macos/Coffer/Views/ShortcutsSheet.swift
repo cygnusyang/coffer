@@ -63,7 +63,9 @@ struct ShortcutsSheet: View {
 
     /// 单行快捷键条目：动作名左对齐 + 键位右对齐等宽字体（对齐 macOS
     /// 快捷键面板两列排版）。
-    private func row(_ action: String, _ keys: String) -> some View {
+    /// action 是文案（走查表），keys 是键位串（数据，保持原样）。
+    /// 入参用 LocalizedStringKey 而不是 String：Text(String) 不查 Localizable 表（F6）。
+    private func row(_ action: LocalizedStringKey, _ keys: String) -> some View {
         HStack {
             Text(action)
             Spacer()

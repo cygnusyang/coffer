@@ -35,15 +35,15 @@ enum LicenseStatus: Equatable {
     var displayText: String {
         switch self {
         case .unactivated:
-            return "未激活（全功能免费版）"
+            return String(localized: "未激活（全功能免费版）")
         case .trial(let remainingDays):
-            return "试用中，剩余 \(remainingDays) 天"
+            return String(localized: "试用中，剩余 \(remainingDays) 天")
         case .active(let serialMasked):
-            return "已激活（许可键 \(serialMasked)）"
+            return String(localized: "已激活（许可键 \(serialMasked)）")
         case .expired:
-            return "试用已结束（只读模式）"
+            return String(localized: "试用已结束（只读模式）")
         case .unavailable:
-            return "许可模块不可用"
+            return String(localized: "许可模块不可用")
         }
     }
 }

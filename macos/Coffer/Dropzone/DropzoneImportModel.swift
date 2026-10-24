@@ -235,7 +235,9 @@ final class DropzoneImportModel: ObservableObject {
             directoryCandidates = all
             let fresh = all.filter { !$0.isIgnored }
             if fresh.isEmpty {
-                if foreground { waitingHint = "还没看到新导出——请完成 Passwords.app 的保存" }
+                if foreground {
+                    waitingHint = String(localized: "还没看到新导出——请完成 Passwords.app 的保存")
+                }
                 step = .waiting
                 return
             }
@@ -353,15 +355,18 @@ final class DropzoneImportModel: ObservableObject {
 
     /// D-8.4 VO：徽章 label 含当前态 + 动作（「重复，点按改为导入」）。
     func previewRowLabel(_ row: FfiDropzoneRow) -> String {
-        let action = includedLineNos.contains(row.lineNo) ? "点按改为跳过" : "点按改为导入"
-        return "\(categoryName(row.category))，\(row.title)，\(action)"
+        let action = includedLineNos.contains(row.lineNo)
+            ? String(localized: "点按改为跳过")
+            : String(localized: "点按改为导入")
+        // 骨架 + 三个占位符：分类与动作是文案、条目名是数据（设计 §5.5）
+        return String(localized: "\(categoryName(row.category))，\(row.title)，\(action)")
     }
 
     func categoryName(_ category: FfiDedupCategory) -> String {
         switch category {
-        case .new: return "新增"
-        case .duplicate: return "重复"
-        case .conflict: return "冲突"
+        case .new: return String(localized: "新增")
+        case .duplicate: return String(localized: "重复")
+        case .conflict: return String(localized: "冲突")
         }
     }
 
@@ -394,7 +399,7 @@ final class DropzoneImportModel: ObservableObject {
                         self.step = .done(result, path: path, skippedDuplicates: skipped)
                         self.context?.reloadItems()
                     } else {
-                        self.step = .importFailed(path: path, error: "会话不存在。")
+                        self.step = .importFailed(path: path, error: String(localized: "会话不存在。"))
                     }
                 }
             } catch {
@@ -432,11 +437,11 @@ final class DropzoneImportModel: ObservableObject {
 
     func relativeTime(_ date: Date) -> String {
         let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "刚刚" }
-        if seconds < 3600 { return "\(seconds / 60) 分钟前" }
-        if seconds < 86_400 { return "\(seconds / 3600) 小时前" }
-        if Calendar.current.isDateInYesterday(date) { return "昨天" }
-        return "\(seconds / 86_400) 天前"
+        if seconds < 60 { return String(localized: "刚刚") }
+        if seconds < 3600 { return String(localized: "\(seconds / 60) 分钟前") }
+        if seconds < 86_400 { return String(localized: "\(seconds / 3600) 小时前") }
+        if Calendar.current.isDateInYesterday(date) { return String(localized: "昨天") }
+        return String(localized: "\(seconds / 86_400) 天前")
     }
 
     // MARK: - 辅助

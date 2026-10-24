@@ -211,7 +211,7 @@ enum UpdateCopy {
     static func buildTimeText(_ raw: String?) -> String {
         guard let raw,
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return "开发构建"
+            return String(localized: "开发构建")
         }
         return raw
     }
@@ -227,7 +227,8 @@ enum UpdateCopy {
     /// 的，但是要给出错误码，不用给出大段的错误信息」）；完整错误仍只进 DiagLog
     /// （checkNetworkFailureLogLine）。供 UpdateSheet failedContent 呈现 + 重试。
     static func checkNetworkFailureMessage() -> String {
-        "检查更新失败（\(checkNetworkErrorCode)）"
+        // 错误码（OTA-E-2001）按 String 插值 → %@：码不该被数字本地化改写
+        String(localized: "检查更新失败（\(checkNetworkErrorCode)）")
     }
 
     /// BUG-23：manifest 拉取层网络失败 → 落 DiagLog 的诊断行——含错误码、完整 NSError
@@ -251,15 +252,15 @@ enum UpdateCopy {
     /// 关于页「检查更新…」按钮标题：纯文案入口。BUG-24 复测裁定：检查阶段静默，
     /// 按钮不消费 updater state、无原位进度条——区别于 checkingFeedbackText，
     /// 不存在「按钮文案 → 进行中反馈」的切换。
-    static let checkButtonTitle = "检查更新…"
+    static let checkButtonTitle = String(localized: "检查更新…")
 
     /// UpdateSheet `.checking` 呈现的进行中文案。检查结果一律经 UpdateSheet 呈现
     /// （About 静默；UpdateSheet 呈现正在检查 / 已是最新 / 下载进度），单一事实源。
-    static let checkingFeedbackText = "正在检查更新…"
+    static let checkingFeedbackText = String(localized: "正在检查更新…")
 
     /// UpdateSheet `.upToDate` 呈现文案：无新版本 → 告诉用户当前是最新版本
     /// （BUG-24 复测裁定：upToDate 呈现设计不动）。
-    static let upToDateText = "已是最新版本"
+    static let upToDateText = String(localized: "已是最新版本")
 
     // MARK: - 检查触发呈现计划（BUG-24 复测「sheet 延迟呈现修正」，2026-10-14）
 

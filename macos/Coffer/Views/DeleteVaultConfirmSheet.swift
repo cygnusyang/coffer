@@ -91,7 +91,8 @@ struct DeleteVaultConfirmSheet: View {
         .padding()
     }
 
-    private var stepTitle: String {
+    /// 返回 LocalizedStringKey：调用方是 Text(...)，String 重载不查表（F6）。
+    private var stepTitle: LocalizedStringKey {
         switch step {
         case .export: return "删除密码库 · 导出备份"
         default: return "删除密码库"
@@ -131,7 +132,7 @@ struct DeleteVaultConfirmSheet: View {
         .padding()
     }
 
-    private func radioRow(_ value: Method, _ label: String) -> some View {
+    private func radioRow(_ value: Method, _ label: LocalizedStringKey) -> some View {
         Button {
             method = value
         } label: {
@@ -261,7 +262,7 @@ struct DeleteVaultConfirmSheet: View {
     /// / 删非当前库「已删除，列表已刷新」（`.sessionUnchanged`，无落位文案，
     /// lead 裁定，docs/17 §3.3）。deleteVault 只返回实际发生切换的落位，
     /// 故 switchedToMostRecent 恒对应「已切换」。
-    private func landingFeedback(_ landing: AppModel.DeleteVaultLanding) -> String {
+    private func landingFeedback(_ landing: AppModel.DeleteVaultLanding) -> LocalizedStringKey {
         switch landing {
         case .switchedToMostRecent(let brief):
             return "已切换到密码库「\(brief.displayName)」，请输入主密码解锁。"

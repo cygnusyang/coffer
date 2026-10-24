@@ -187,7 +187,9 @@ struct ItemEditView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.badge.checkmark")
                         .foregroundStyle(.secondary)
-                    Text(verbatim: "已有 TOTP（\(Self.algoLabel(meta.algo)) · \(meta.digits) 位 · \(meta.period)s）")
+                    // 骨架是文案、参数是数据（设计 §5.5）：不能 verbatim，否则英文界面残留中文。
+                    // digits(UInt8)/period(UInt32) 显式转 Int，保证键里是 %lld（F7 只保证 Int/Int64）。
+                    Text("已有 TOTP（\(Self.algoLabel(meta.algo)) · \(Int(meta.digits)) 位 · \(Int(meta.period))s）")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -245,7 +247,9 @@ struct ItemEditView: View {
 
     private var header: some View {
         HStack {
-            Text(existingDetails == nil ? "新建\(category.displayName)" : "编辑条目")
+            Text(existingDetails == nil
+                 ? LocalizedStringKey("新建\(category.displayName)")
+                 : LocalizedStringKey("编辑条目"))
                 .font(.headline)
             Spacer()
         }
@@ -638,7 +642,8 @@ struct EditFieldRowView: View {
                 }
             case .concealed:
                 HStack {
-                    SecureField(row.name, text: $row.value, prompt: Text(row.unchanged ? "未修改" : ""))
+                    SecureField(row.name, text: $row.value,
+                                prompt: Text(row.unchanged ? LocalizedStringKey("未修改") : LocalizedStringKey("")))
                         .onChange(of: row.value) { _, newValue in
                             // 与 buildDraft 的 unchanged 契约：unchanged==true 的行在保存时
                             // 经 getFieldValue 取回旧值，row.value 会被覆盖丢弃。因此：

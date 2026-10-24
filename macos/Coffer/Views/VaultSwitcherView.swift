@@ -29,11 +29,12 @@ struct VaultSwitcherView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(showSetup ? "新建密码库" : "切换密码库").font(.headline)
+                // 两侧都是文案，显式 LocalizedStringKey（String 三元不查表，F6）。
+                Text(showSetup ? LocalizedStringKey("新建密码库") : LocalizedStringKey("切换密码库")).font(.headline)
                 Spacer()
                 // 显式关闭出口（docs/07 §2.4）：列表模式关闭 sheet；建库
                 // 模式退回库列表（同一按钮承担「返回」职责，Esc 同效）。
-                Button(showSetup ? "返回列表" : "关闭") {
+                Button(showSetup ? LocalizedStringKey("返回列表") : LocalizedStringKey("关闭")) {
                     if showSetup {
                         showSetup = false
                     } else {

@@ -55,9 +55,9 @@ enum UpdateInfoError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidDownloadURL(let url):
-            return "更新清单下载地址无效：\(url)。"
+            return String(localized: "更新清单下载地址无效：\(url)。")
         case .invalidBuildTime(let time):
-            return "更新清单构建时间无效：\(time)。"
+            return String(localized: "更新清单构建时间无效：\(time)。")
         }
     }
 }
@@ -307,13 +307,16 @@ final class UpdaterManager: ObservableObject {
         guard let data = try? Data(contentsOf: resultURL),
               let result = try? JSONDecoder().decode(OTAInstaller.InstallResult.self, from: data) else {
             // result 文件缺失/损坏 → fail-closed（清理 pending，下次启动不再重复）
-            state = .failed("无法读取上次更新的结果，请确认当前应用是否已是最新版本。")
+            state = .failed(String(localized: "无法读取上次更新的结果，请确认当前应用是否已是最新版本。"))
             return
         }
         guard result.success else {
-            state = .failed(result.message.isEmpty
-                ? "上次更新失败（退出码 \(result.code)）。"
-                : "上次更新失败（退出码 \(result.code)）：\(result.message)")
+            // helper 无 UI 且不翻（设计 24 §7.6）：它的 message 是中文原文，直接拼进
+            // 用户可见串会让英文界面出现整句中文。故原文只进诊断日志，用户看「退出码 +
+            // App 侧本地化原因」（同 D-10「码优先、载荷降日志」口径）。
+            DiagLog.append("上次更新失败（code=\(result.code)）：\(result.message)")
+            let reason = Self.installFailureReason(forCode: Int(result.code))
+            state = .failed(String(localized: "上次更新失败（退出码 \(String(result.code))）：\(reason)"))
             return
         }
         // 成功：删除 helper 留下的备份（当前运行中的已是新版本），静默不打扰。
@@ -351,13 +354,13 @@ final class UpdaterManager: ObservableObject {
     /// 版本比较 → 状态迁移（纯逻辑，便于理解/测试）。
     private func resolveCheckOutcome(manifest: UpdateManifest, info: UpdateInfo) {
         guard let order = VersionCompare.compare(currentVersion, manifest.version) else {
-            state = .failed("无法解析版本号「\(manifest.version)」或当前版本「\(currentVersion)」。")
+            state = .failed(String(localized: "无法解析版本号「\(manifest.version)」或当前版本「\(currentVersion)」。"))
             return
         }
         switch order {
         case .ascending:
             if VersionCompare.isBelow(currentVersion, minimum: manifest.minimumVersion) {
-                state = .failed("当前版本（\(currentVersion)）低于该更新的最低版本（\(manifest.minimumVersion)），无法自动安装。请手动下载最新版本。")
+                state = .failed(String(localized: "当前版本（\(currentVersion)）低于该更新的最低版本（\(manifest.minimumVersion)），无法自动安装。请手动下载最新版本。"))
             } else {
                 state = .updateAvailable(info)
             }
@@ -366,8 +369,32 @@ final class UpdaterManager: ObservableObject {
         }
     }
 
+    /// helper 结果码 → 本地化失败原因（docs/35 §6.4 冻结码：0 成功 / 1 备份 /
+    /// 2 替换 / 3 重启 / 4 用法）。
+    ///
+    /// 为什么按码而不按 helper 的 message：helper 是独立 bundle、无 UI，按设计 24 §7.6
+    /// 不翻译；它的 message 是中文原文，拼进 UI 就是「英文界面说中文」。码→文案的口径因此
+    /// 必须收在 App 侧（与 CoreErrorText 同一条纪律）。未收录码给通用句，不猜具体原因。
+    static func installFailureReason(forCode code: Int) -> String {
+        switch code {
+        case 1:
+            return String(localized: "无法备份当前版本，更新未执行。请确认磁盘空间后重试。")
+        case 2:
+            return String(localized: "更新包未能安装。请重新下载更新包后重试。")
+        case 3:
+            return String(localized: "未能启动新版本。请重新打开 Coffer；若仍无法启动，请从官网重新下载。")
+        case 4:
+            return String(localized: "安装参数无效。请重新下载更新包后重试。")
+        default:
+            return String(localized: "更新未能完成。请重新下载更新包后重试。")
+        }
+    }
+
     /// 错误 → 用户可见文案（LocalizedError 优先）。
     static func userMessage(from error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? "更新失败：\(error)"
+        // String(describing:) 显式转 String：Error 不是插值支持类型，直接插会落到
+        // 不可控的格式推导（本地化键必须确定是 %@）。
+        (error as? LocalizedError)?.errorDescription
+            ?? String(localized: "更新失败：\(String(describing: error))")
     }
 }

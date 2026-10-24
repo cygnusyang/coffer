@@ -1,0 +1,472 @@
+/* 20-ui-b.strings —— impl-ui-b（任务 13）译文分片：导出 / 导入四向导 / 恢复 / 放置区 /
+ * 更新 / 关于 / 诊断 / MCP / 许可 / 审计 / 生成器默认参数 / 安全体检。
+ *
+ * 纪律（docs/03-功能设计/24-v2.13.0-多语言-设计.md）：
+ *   - 键 = 中文原文（逐字节等于源码字面量），值 = 英文译文（术语按 §5.6）。
+ *   - 复用词（保存/取消/导入/关闭/完成/复制/已复制/好/导出/安全体检…）已在
+ *     00-common.strings，本文件**不重复定义**（跨分片重复键会让 G2 硬失败）。
+ *   - 与本组 21 个 View 共用的词（主密码 / 密码库 / 附件 / 许可 / 自定义 / 数字 …
+ *     共 36 条，含生成器与放置区统计词）已**单点归属**给先落地的分片（10-ui-a /
+ *     30-support），本文件不再重复——G2 要求「同键同值也只许一处」。这类词的正确
+ *     归宿是 00-common（跨组复用），已报 infra/lead 迁移，迁移后三组各删自己那份。
+ *   - 插值键按 §4 推导：Int/Int64/UInt → %lld，String → %@，Double → %lf；
+ *     顺序即参数序（G3 硬校验）。
+ *   - 同一中文不同英文才分叉（§5.3）；本组暂无必然分叉项。
+ *   - 分叉/特例注释写在对应条目上方，说明原中文与场景。
+ *   - 编码 UTF-8 无 BOM；一条一行；不排序，按功能聚簇。
+ *
+ * 未收录（有意）：
+ *   - 「会话不存在」= FfiError 的 message 载荷（只进日志/诊断，设计 §7.5）；
+ *   - 「1PUX 导入后抽样拉取失败：%@」= DiagLog 诊断串（同上，日志面保持单一形态）。
+ */
+
+/* ========== ExportView（导出：加密备份 / CSV 明文 / 1PUX 明文三向导） ========== */
+
+"加密备份" = "Encrypted Backup";
+"CSV 明文" = "CSV (plaintext)";
+"1PUX 明文" = "1PUX (plaintext)";
+"正在导出密码库：『%@』（%@）" = "Exporting vault “%@” (%@)";
+"将密码库导出为加密备份文件" = "Export the vault as an encrypted backup file";
+"备份是整个库的加密归档，可用于跨设备迁移与灾后恢复。" = "A backup is an encrypted archive of the whole vault, for migrating between devices and recovering after a disaster.";
+"选择导出位置…" = "Choose Export Location…";
+"选择加密备份文件的保存位置" = "Choose where to save the encrypted backup";
+"Coffer备份-%@.coffer" = "Coffer Backup-%@.coffer";
+"Coffer备份-%@-%@.coffer" = "Coffer Backup-%@-%@.coffer";
+"确认导出" = "Confirm Export";
+"备份文件为加密归档，非明文，但可被暴力破解，请妥善保管。" = "The backup is an encrypted archive, not plaintext, but it can still be brute-forced. Keep it safe.";
+"导出到所选位置" = "Export to Chosen Location";
+"正在导出加密备份…" = "Exporting encrypted backup…";
+"导出完成" = "Export Complete";
+"导出后自检未通过" = "Post-export self-check failed";
+"备份文件可能不完整或已损坏，请勿依赖该文件，建议重新导出到其他位置。" = "The backup file may be incomplete or corrupted. Do not rely on it — export again to a different location.";
+"文件数" = "Files";
+"大小" = "Size";
+"在 Finder 中显示" = "Show in Finder";
+"将密码库导出为 CSV 明文文件" = "Export the vault as a plaintext CSV file";
+"所有条目（含密码、TOTP 密钥）将以不加密的 CSV 写入磁盘。" = "All items (including passwords and TOTP secrets) will be written to disk as an unencrypted CSV.";
+"选择 CSV 明文文件的保存位置" = "Choose where to save the plaintext CSV file";
+"Coffer导出-%@.csv" = "Coffer Export-%@.csv";
+"Coffer导出-%@-%@.csv" = "Coffer Export-%@-%@.csv";
+"高风险操作" = "High-Risk Action";
+"导出文件为明文，包含全部密码。" = "The exported file is plaintext and contains every password.";
+"所有条目（含密码、TOTP 密钥）将以不加密的 CSV 写入磁盘，任何能读取该文件的程序或人都能获取全部凭据。" = "All items (including passwords and TOTP secrets) will be written to disk as an unencrypted CSV. Any program or person able to read that file can obtain every credential.";
+"我已知晓风险，确认导出明文文件" = "I understand the risk and want to export a plaintext file";
+"导出明文文件" = "Export Plaintext File";
+"再次确认：写出明文 CSV？" = "Confirm again: write a plaintext CSV?";
+"正在导出 CSV 明文…" = "Exporting plaintext CSV…";
+"导出文件为明文，包含全部密码，请立即删除源明文文件。" = "The exported file is plaintext and contains every password. Delete the exported file as soon as possible.";
+"写入条数" = "Items Written";
+"回收站跳过" = "Trash Skipped";
+"将密码库导出为 1Password 1PUX 明文文件" = "Export the vault as a plaintext 1Password 1PUX file";
+"1PUX 是 1Password 官方导出格式，本文件为不加密的明文归档，\n包含全部密码与 TOTP 密钥。" = "1PUX is 1Password's official export format. This file is an unencrypted plaintext archive\ncontaining every password and TOTP secret.";
+"选择 1PUX 明文文件的保存位置" = "Choose where to save the plaintext 1PUX file";
+"Coffer导出-%@.1pux" = "Coffer Export-%@.1pux";
+"Coffer导出-%@-%@.1pux" = "Coffer Export-%@-%@.1pux";
+"1PUX 归档为明文 JSON，包含全部密码、TOTP 密钥与附件，任何能读取该文件的程序或人都能获取全部凭据。" = "The 1PUX archive is plaintext JSON containing every password, TOTP secret, and attachment. Any program or person able to read that file can obtain every credential.";
+"再次确认：写出明文 1PUX？" = "Confirm again: write a plaintext 1PUX?";
+"正在导出 1PUX 明文…" = "Exporting plaintext 1PUX…";
+"Passkey 跳过" = "Passkeys Skipped";
+"Passkey 不随 1PUX 导出，请用加密备份迁移。" = "Passkeys are not included in 1PUX exports. Use the encrypted backup to migrate them.";
+"非 SHA-1 TOTP %llu 个：经本仓回环按 SHA-1 降级，第三方工具按其算法参数解读不受影响。" = "%llu non-SHA-1 TOTP entries: downgraded to SHA-1 on this app's round-trip; third-party tools read their own algorithm parameters and are unaffected.";
+"降级为文本的字段 %lld 个（无 1P 承载码）：" = "%lld fields downgraded to text (no 1Password field code):";
+"等 %lld 个" = "and %lld more";
+
+/* ========== ImportView（CSV 导入） + ImportWizardShell（共享壳/脚手架） ========== */
+
+"导入 CSV（1Password 9 列）" = "Import CSV (1Password 9-column)";
+"选择从 1Password 导出的 CSV 文件" = "Choose a CSV file exported from 1Password";
+"支持 1Password 9 列格式（Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes）" = "Supports the 1Password 9-column format (Title / Website / Username / Password /\nOne-time password / Favorite status / Archived status / Tags / Notes)";
+"选择文件…" = "Choose File…";
+"预检失败" = "Precheck Failed";
+"正在导入（单事务，全部成功或全部回滚）…" = "Importing (single transaction — all or nothing)…";
+"所有行已在单事务内写入（全部成功或全部回滚）。" = "All rows were written in a single transaction (all or nothing).";
+"选择 1Password 导出的 CSV 文件（UTF-8）" = "Choose the CSV file exported from 1Password (UTF-8)";
+"该 CSV 含明文密码，建议导入完成后立即删除源文件。" = "This CSV contains plaintext passwords. Delete the source file as soon as the import finishes.";
+"预检报告" = "Precheck Report";
+"数据行" = "Data Rows";
+"可导入" = "Importable";
+"跳过空行" = "Empty Rows Skipped";
+"缺标题行（将以「（无标题）」导入）：" = "Rows without a title (imported as “(Untitled)”):";
+"otpauth 解析失败行（值并入备注，不丢数据）：" = "Rows with unparsable otpauth (values merged into notes, nothing lost):";
+"未识别列（值并入对应条目备注）：" = "Unrecognized columns (values merged into the item's notes):";
+"疑似公式前缀单元格（原值保留，仅提醒）" = "Cells that look like formula prefixes (values kept as-is; warning only)";
+"行 %u｜%@" = "row %u, column %@";
+"重新选择" = "Choose Again";
+"导入 %u 条" = "Import %u";
+"\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。" = "\nNote: each item is imported in its own transaction. Some items may already be imported — retrying will create duplicates.";
+"导入完成：新建 %u 条条目" = "Import complete: %u new items";
+
+/* ========== BitwardenImportView ========== */
+
+"导入 Bitwarden（.json）" = "Import Bitwarden (.json)";
+"选择 Bitwarden 导出的未加密 JSON 文件" = "Choose the unencrypted JSON file exported from Bitwarden";
+"Bitwarden JSON 是官方导出格式，导入为每条目独立事务。\npasskey（fido2Credentials）导入支持受导出字段形态影响，具体以预检报告为准。" = "Bitwarden JSON is the official export format; each item is imported in its own transaction.\nPasskey (fido2Credentials) import support depends on the shape of the exported fields — see the precheck report for specifics.";
+"正在导入（每条目独立事务，已完成的条目保留）…" = "Importing (each item in its own transaction; items already done are kept)…";
+"总条目" = "Total Items";
+"Passkey 总数" = "Total Passkeys";
+"可导入 Passkey" = "Importable Passkeys";
+"含密码且含 Passkey 的条目 %u 条（密码原样保留）" = "%u items have both a password and a passkey (passwords kept as-is)";
+"回收站 %u 条" = "%u in Trash";
+"丢弃密码历史 %u 条" = "%u password histories dropped";
+"非 ES256 Passkey %lld 个（不导入）" = "%lld non-ES256 passkeys (not imported)";
+"无法导入的 Passkey %lld 个（跳过该行，不丢条目）" = "%lld passkeys could not be imported (row skipped, no item lost)";
+"条目 ID %@" = "Item ID %@";
+"keyAlgorithm 非 ecdsa" = "keyAlgorithm is not ecdsa";
+"keyCurve 非 p256" = "keyCurve is not p256";
+"缺少 rpId" = "missing rpId";
+"凭据 ID 非法" = "invalid credential ID";
+"签名计数器非法" = "invalid signature counter";
+"缺少私钥字段" = "missing private key field";
+"私钥为加密形态" = "private key is encrypted";
+"私钥无法解析为 ES256" = "private key cannot be parsed as ES256";
+"本次导入 Passkey %u 个" = "%u passkeys imported";
+
+/* ========== OpvaultImportView ========== */
+
+"导入 1Password（OPVault）" = "Import 1Password (OPVault)";
+"选择 1Password OPVault 目录" = "Choose the 1Password OPVault folder";
+"OPVault 是 1Password 旧版（vault 格式）的目录归档，需输入 1Password 主密码导入。\n导入为 all-or-nothing：密码错或数据损坏不会写入任何条目。" = "OPVault is 1Password's legacy (vault format) folder archive; importing it requires the 1Password master password.\nThe import is all-or-nothing: a wrong password or corrupted data writes no items at all.";
+"选择目录…" = "Choose Folder…";
+"正在导入（解密 + 逐条目写入，全部成功或全部回滚）…" = "Importing (decrypt + write items; all succeed or all roll back)…";
+"选择包含 default/profile.js 的 OPVault 根目录" = "Choose the OPVault root folder containing default/profile.js";
+"输入 1Password 主密码" = "Enter the 1Password master password";
+"1Password 主密码" = "1Password Master Password";
+"请输入 OPVault 主密码" = "Enter the OPVault master password";
+"结构预检不校验密码是否正确（见下一步），密码用于导入时解密条目。" = "The structure precheck does not verify the password (that happens in the next step); the password is used to decrypt items during the import.";
+"预检" = "Precheck";
+"结构预检" = "Structure Precheck";
+"结构预检未验证密码：仅检查目录结构与 profile 元数据；条目数、分类分布等完整报告需导入后才能呈现（密码是否正确也在此步无法得知）。" = "The structure precheck does not verify the password: it only inspects the folder structure and profile metadata. A full report (item counts, category distribution) can only be produced after the import — whether the password is correct also cannot be known at this step.";
+"KDF 迭代" = "KDF Iterations";
+"band 文件" = "band Files";
+"密码提示：%@" = "Password hint: %@";
+"其他 profile（不导入）：%@" = "Other profiles (not imported): %@";
+"检测到附件 %u 个，本版 out-of-scope，导入时跳过并计数。" = "Found %u attachments. Out of scope for this version — skipped during the import and counted.";
+"返回改密码" = "Back to Password";
+"开始导入" = "Start Import";
+"附件 %u 个已跳过（本版不导入）。" = "%u attachments skipped (not imported in this version).";
+"回收站条目 %u 条（按归档态导入）。" = "%u trashed items (imported in archived state).";
+"未导入 %lld 条" = "%lld not imported";
+"（无标题）" = "(Untitled)";
+
+/* ========== PuxImportView ========== */
+
+"导入 1Password（.1pux）" = "Import 1Password (.1pux)";
+"选择 1Password 导出的 .1pux 文件" = "Choose the .1pux file exported from 1Password";
+"1PUX 是 1Password 官方导出格式（ZIP 归档），导入为每条目独立事务。" = "1PUX is 1Password's official export format (a ZIP archive); each item is imported in its own transaction.";
+"附件数" = "Attachments";
+"检测到 Passkey %u 个" = "%u passkeys detected";
+"等 %lld 类" = "and %lld more categories";
+"抽样核对 · 共 %u 条，随机抽 %lld 条" = "Sample check · %u items in total, %lld sampled at random";
+"可回到主列表核对完整内容" = "Return to the main list to verify the full contents";
+"本次导入零信息损失，可安全删除源文件" = "This import lost no information — the source file is safe to delete";
+"建议保留源文件" = "Keep the source file for now";
+
+/* ========== RestoreBackupView ========== */
+
+"从备份恢复" = "Restore from Backup";
+"未找到恢复的库" = "Restored Vault Not Found";
+"请重新启动应用后在新库列表中选择。" = "Restart the app and select it from the vault list.";
+"从加密备份文件恢复密码库" = "Restore a vault from an encrypted backup file";
+"恢复将在工作目录中重建该库，需用该库的主密码解锁。" = "Restore rebuilds the vault in the working folder; unlock it with that vault's master password.";
+"选择备份文件…" = "Choose Backup File…";
+"选择加密备份文件（.coffer）" = "Choose the encrypted backup file (.coffer)";
+"正在校验备份文件…" = "Verifying the backup file…";
+"确认恢复" = "Confirm Restore";
+"库 ID" = "Vault ID";
+"格式版本" = "Format Version";
+"恢复将在工作目录创建该库；若工作目录已存在相同 ID 的库，恢复将失败。" = "Restore creates the vault in the working folder; if a vault with the same ID already exists there, the restore fails.";
+"开始恢复" = "Start Restore";
+"正在恢复密码库…（解包写入工作目录，请勿退出应用）" = "Restoring the vault… (unpacking into the working folder — do not quit the app)";
+"错误 1004：工作目录中已存在相同库 ID 的库，本次未做任何改动。若这正是要恢复的库，直接解锁使用即可；若选错了备份文件，请重新选择其他备份。" = "Error 1004: a vault with the same ID already exists in the working folder. Nothing was changed. If this is the vault you meant to restore, just unlock it; if you picked the wrong backup file, choose another one.";
+"恢复完成" = "Restore Complete";
+"已恢复库 %@（%llu 个文件）。" = "Restored vault %@ (%llu files).";
+"请用该库的主密码解锁。" = "Unlock it with that vault's master password.";
+
+/* ========== DropzoneImportView / DropzoneAuthStatusView / DropzoneWatchStatusBadge（放置区） ========== */
+
+"从 macOS 密码 App 导入" = "Import from macOS Passwords";
+"从 macOS 密码 App 导入你的钥匙串密码" = "Import your keychain passwords from macOS Passwords";
+"这是 macOS 系统密码 App 唯一官方导出方式。选一个放置区目录，把导出文件放进去，剩下的交给 Coffer。" = "This is the only official export path of the macOS Passwords app. Pick a dropzone folder, put the export file in it, and Coffer handles the rest.";
+"放置区目录（建议：如 ~/Downloads/coffer-import）" = "Dropzone folder (suggested: e.g. ~/Downloads/coffer-import)";
+"选择放置区目录…" = "Choose Dropzone Folder…";
+"授权后 Coffer 将对该目录只读访问，仅用于检测新导出 CSV；本地读取、零网络、可随时在设置中撤销。" = "Once authorized, Coffer gets read-only access to this folder, used only to detect newly exported CSV files. Local reads only, no network, revocable in Settings at any time.";
+"Coffer 将获得对所选目录的只读访问，用于自动检测新的密码导出 CSV。仅本地读取、零网络、可随时在『系统设置 › 隐私与安全性 › 文件与文件夹』或本应用内撤销授权。" = "Coffer will get read-only access to the chosen folder to detect newly exported password CSV files. Local reads only, no network. Revoke at any time in System Settings › Privacy & Security › Files and Folders, or in this app.";
+"无法设置放置区授权" = "Could not Set Up Dropzone Access";
+"重试" = "Retry";
+"监视仅在向导打开期间进行；关闭后再打开会自动补扫新文件。" = "Watching happens only while this wizard is open; reopening it rescans for new files.";
+"重新授权…" = "Re-authorize…";
+"① 打开 macOS 密码 App" = "① Open the macOS Passwords app";
+"打开 macOS 密码 App" = "Open the macOS Passwords app";
+"② 「文件」→「导出所有密码」→ 通过验证（Touch ID / 设备密码）" = "② File → Export All Passwords → authenticate (Touch ID / device passcode)";
+"③ 保存位置选此目录 → 存储" = "③ Choose this folder as the destination → Save";
+"第②步必须由你手动完成（苹果要求），Coffer 无法代替。" = "Step ② must be done by hand (Apple's requirement); Coffer cannot do it for you.";
+"需要 macOS 14 或更高版本（Passwords.app 不可用）。" = "Requires macOS 14 or later (the Passwords app is unavailable).";
+"无法打开 macOS 密码 App，请在访达中手动打开。" = "Could not open the macOS Passwords app. Open it manually in Finder.";
+"已忽略" = "Ignored";
+"（无法解析，已忽略）" = "(Unparsable — ignored)";
+"取消忽略" = "Un-ignore";
+"放置区检测到导出文件，选择一个：" = "The dropzone has export files — pick one:";
+"此文件与上次导入一致，继续将全部作为新增。" = "This file matches the last import. Continuing will add everything as new items.";
+"忽略所选（不再提示）" = "Ignore Selected (don't ask again)";
+"预检所选" = "Precheck Selected";
+"已导入过" = "Already imported";
+"新" = "New";
+"%@，已导入过" = "%@, already imported";
+"%@，新文件" = "%@, new file";
+"正在分析 %@（只读，不写入）…" = "Analyzing %@ (read-only, nothing written)…";
+"无法解析该文件" = "Could not Parse This File";
+"重新预检" = "Precheck Again";
+"忽略此文件（不再提示）" = "Ignore This File (don't ask again)";
+"来源" = "Source";
+"密码库为空，全部 %u 条将作为新增导入" = "The vault is empty. All %u rows will be imported as new items";
+"冲突条目（%u）——用户名或网址不同，请确认" = "Conflicting items (%u) — username or website differs, please review";
+"不会覆盖库内已有条目；被跳过的条目可在导入后手动核对" = "Existing items in the vault are never overwritten; skipped items can be reviewed manually after the import";
+"返回" = "Back";
+"重复条目（%u）" = "Duplicate items (%u)";
+"跳过（默认）" = "Skip (default)";
+"全部导入（新建不覆盖）" = "Import All (create new, never overwrite)";
+"全部导入" = "Import All";
+"跳过" = "Skip";
+"若某条目密码已更新，可切换『全部导入』（新建不覆盖，不覆盖库内已有条目）" = "If an item's password has changed, switch to Import All (creates new items, never overwrites existing ones)";
+"已选" = "Included";
+"导入失败" = "Import Failed";
+"返回等待" = "Back to Waiting";
+"已从放置区导入 %u 条条目。CSV 含明文密码，仅在本地读取解析、不写入日志、不离开本机（零网络承诺）。建议导入完成后立即在访达中删除源文件。" = "Imported %u items from the dropzone. The CSV contained plaintext passwords; it was read and parsed locally only, never logged, and never left this Mac (zero-network promise). Delete the source file in Finder as soon as possible.";
+"重复 %u 条被跳过，未改动。" = "%u duplicates were skipped and left untouched.";
+"若某条目密码已更新，可重新导入并切换『全部导入』。" = "If an item's password has changed, import again and switch to Import All.";
+"未设置放置区" = "No Dropzone Configured";
+"授权后 Coffer 将自动检测该目录中的新导出 CSV。" = "Once authorized, Coffer will automatically detect new export CSVs in this folder.";
+"放置区目录" = "Dropzone Folder";
+"放置区授权已失效" = "Dropzone Access Expired";
+"该路径当前不可用：%@" = "This path is currently unavailable: %@";
+"正在监视 %@ · 未检测到新导出" = "Watching %@ · no new export detected";
+"正在监视 %@" = "Watching %@";
+
+/* ========== McpSettingsView / McpAgentToolsSection / McpEscrowSettingsSection（MCP 面） ========== */
+
+"关闭「启用 MCP 服务器」？" = "Turn off Enable MCP Server?";
+"关闭并移除注册" = "Turn Off and Remove Registration";
+"将从以下工具移除 coffer 注册项：%@。移除后这些工具不再能经 MCP 访问本机密码库。MCP 解锁托管保持开启，不受影响。" = "The coffer registration will be removed from these tools: %@. Afterwards they can no longer reach this vault over MCP. MCP unlock escrow stays enabled and is unaffected.";
+"启用 MCP 服务器" = "Enable MCP Server";
+"正在处理注册操作，请稍候" = "Registration is in progress, please wait";
+"关闭会移除全部工具的注册项" = "Turning this off removes the registration from every tool";
+"数据源" = "Data Source";
+"默认保险库" = "Default Vault";
+"可选，例如 Personal" = "Optional, e.g. Personal";
+"密码库目录" = "Vault Folder";
+"请先打开密码库" = "Open a vault first";
+"未找到 coffer 命令（App 包内或 PATH），无法生成注册命令" = "The coffer command was not found (app bundle or PATH), so the registration command cannot be generated";
+"请先打开密码库后生成注册命令" = "Open a vault first, then generate the registration command";
+"复制注册命令" = "Copy Registration Command";
+"未配置 vault，命令将省略 --vault" = "No vault configured — the command will omit --vault";
+"复制失败：无法写入剪贴板，请重试。" = "Copy failed: could not write to the clipboard. Try again.";
+"链接 1Password…" = "Link 1Password…";
+"未找到 1Password CLI（op）。请安装 1Password CLI 8+（developer.1password.com/docs/cli）后重新打开本页。" = "1Password CLI (op) was not found. Install 1Password CLI 8+ (developer.1password.com/docs/cli) and reopen this page.";
+"已检测到 1Password 会话信号。注册命令可被 coffer mcp 使用；如仍未生效，请在终端重新执行 op signin。" = "A 1Password session signal was detected. The registration command can be used by coffer mcp; if it still does not work, run op signin again in Terminal.";
+"未检测到 1Password 会话。请在终端执行以下命令完成登录后返回本页（或点状态行的刷新）：\n\nop signin\n\n1Password 集成会话由 CLI 维护，App 不保存你的登录令牌。" = "No 1Password session detected. Run the command below in Terminal, then come back to this page (or click Refresh in the status row):\n\nop signin\n\nThe 1Password session is maintained by the CLI; this app never stores your login token.";
+"状态" = "Status";
+"刷新状态" = "Refresh Status";
+"查看使用记录" = "View Usage Log";
+"审计记录格式待定（D-3）" = "Audit format still to be decided (D-3)";
+"让 Claude Code 等 Agent 通过 MCP 访问 1Password 中的密钥。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；使用前请在终端执行 op signin（coffer 服务器随 App 分发，无需在 PATH 配置）。" = "Let agents such as Claude Code reach secrets in 1Password over MCP. The MCP server runs as a separate coffer process (the app does not embed one); run op signin in Terminal before use (the coffer server ships with the app, no PATH setup needed).";
+"让 Claude Code 等 Agent 通过 MCP 访问本机 Coffer 密码库。MCP 服务器由独立的 coffer 进程运行（主 App 不内置服务器）；解锁走 MCP 解锁托管，注册命令不含密码 env。换主密码不影响托管；如需吊销请在本页关闭。" = "Let agents such as Claude Code reach this Coffer vault over MCP. The MCP server runs as a separate coffer process (the app does not embed one); unlocking uses MCP unlock escrow, and the registration command contains no password env. Changing the master password does not affect escrow; turn it off on this page to revoke.";
+"工具探测失败，请点刷新重试" = "Tool detection failed. Click Refresh to try again";
+"注册失败，请重试或用「复制命令」手动注册。" = "Registration failed. Try again, or use Copy Command to register manually.";
+"移除失败，请重试。" = "Removal failed. Try again.";
+"注册组件不可用，仅支持复制命令" = "The registration helper is unavailable; only Copy Command works";
+"AI 工具" = "AI Tools";
+"重新检测工具与注册状态" = "Re-detect tools and registration status";
+"未检测到 AI 工具" = "No AI tools detected";
+"安装 Claude Code、CodeBuddy 或 Codex 后重新检测，即可一键注册；其他工具可手动复制配置。" = "Install Claude Code, CodeBuddy, or Codex and re-detect to register with one click; other tools can be configured by copying the snippet.";
+"重新检测" = "Detect Again";
+"%@ 注册开关" = "%@ registration toggle";
+"更新为当前库" = "Update to Current Vault";
+"其他工具（%lld）" = "Other tools (%lld)";
+"未安装，安装后点刷新" = "Not installed — install it, then click Refresh";
+"仅手动配置，复制后粘贴到该工具的 MCP 配置中" = "Manual setup only — copy and paste into this tool's MCP configuration";
+"%@，未安装" = "%@, not installed";
+"%@，仅手动配置" = "%@, manual setup only";
+"再次清理" = "Clean Up Again";
+"无法读取注册状态" = "Cannot read registration status";
+"注册组件不可用，重装 Coffer 后重新检测；期间可复制命令手动配置" = "The registration helper is unavailable. Reinstall Coffer and detect again; meanwhile you can copy the command and configure manually";
+"探测失败" = "Detection failed";
+"未安装" = "Not installed";
+"安装后点刷新" = "Install it, then click Refresh";
+"未启用" = "Disabled";
+"未检查" = "Not checked";
+"点右上角刷新检查注册状态" = "Click Refresh at the top right to check registration status";
+"打开「启用 MCP 服务器」后自动注册" = "Registers automatically once Enable MCP Server is on";
+"正在检查注册状态…" = "Checking registration status…";
+"正在注册…" = "Registering…";
+"正在移除注册项…" = "Removing registration…";
+"已注册" = "Registered";
+"已注册到其他库" = "Registered to another vault";
+"注册目录与当前密码库不一致：%@" = "Registered folder differs from the current vault: %@";
+"可经 MCP 访问本机密码库" = "This vault is reachable over MCP";
+"未注册" = "Not registered";
+"打开开关即自动注册" = "Turn the switch on to register";
+"注册失败" = "Registration failed";
+"移除失败" = "Removal failed";
+"重试注册" = "Retry Registration";
+"打开「启用 MCP 服务器」后可用" = "Available once Enable MCP Server is on";
+"正在处理上一个操作，请稍候" = "The previous operation is still running, please wait";
+"未检测到 %@，安装后点刷新" = "%@ not detected — install it, then click Refresh";
+"注册到该 AI 工具" = "Register with this AI tool";
+"复制命令" = "Copy Command";
+"复制配置" = "Copy Configuration";
+"无法生成 %@ 的配置：未找到 coffer 命令或密码库目录。" = "Could not generate the %@ configuration: the coffer command or the vault folder was not found.";
+"MCP 解锁托管" = "MCP Unlock Escrow";
+"MCP 解锁托管凭据已失效（Keychain 条目缺失）。重新启用将重派生同一托管密钥并覆盖（幂等）；在此之前 coffer MCP 进程无法免密码解锁本库。" = "The MCP unlock escrow credential is invalid (Keychain entry missing). Re-enabling derives the same escrow key again and overwrites it (idempotent); until then the coffer MCP process cannot unlock this vault without a password.";
+"让 coffer MCP 进程在本机免密码解锁本库。密钥只存本机钥匙串（不随 iCloud 同步）；换主密码不影响托管，如需吊销请在本页关闭。" = "Let the coffer MCP process unlock this vault on this Mac without a password. The key is stored only in the local Keychain (not synced via iCloud); changing the master password does not affect escrow — turn it off on this page to revoke.";
+"关闭 MCP 解锁托管？" = "Turn off MCP unlock escrow?";
+"关闭 MCP 解锁托管" = "Turn Off MCP Unlock Escrow";
+"将删除本机钥匙串中的托管凭据并重写密码库头部。之后 coffer MCP 进程无法免密码解锁本库。" = "This deletes the escrow credential from the local Keychain and rewrites the vault header. Afterwards the coffer MCP process cannot unlock this vault without a password.";
+"已停用——coffer MCP 进程解锁本库需主密码。" = "Disabled — the coffer MCP process needs the master password to unlock this vault.";
+"已启用——coffer MCP 进程可免密码解锁本库。" = "Enabled — the coffer MCP process can unlock this vault without a password.";
+"启用 MCP 解锁托管" = "Enable MCP Unlock Escrow";
+
+/* ========== LicenseSettingsView ========== */
+
+"本构建不含许可模块（全功能免费版）" = "This build has no license module (all features free)";
+"当前构建为开源免费版本，全部功能可用，无需激活。" = "This build is the open-source free edition: every feature works, no activation needed.";
+"许可状态" = "License Status";
+
+/* ========== LicenseSettingsView（续） ========== */
+
+"序列号" = "Serial Number";
+"粘贴或拖入 .cofferlicense 文件中的序列号。" = "Paste or drag in the serial number from a .cofferlicense file.";
+"激活" = "Activate";
+"激活失败时仅提示「序列号无效」（不可区分失败原因，FR-15.6）；序列号只在激活时使用，不会被保存或写入日志。" = "On failure the app only says “Invalid serial number” (failure causes are indistinguishable, FR-15.6). The serial number is used only for activation — never stored, never written to logs.";
+"机器指纹" = "Machine Fingerprint";
+"申请序列号时，把本机指纹提供给签发方。" = "Give this machine fingerprint to the issuer when requesting a serial number.";
+
+/* ========== AuditLogView（审计事件展示名 + 列表态） ========== */
+
+"导出备份" = "Export Backup";
+"恢复备份" = "Restore Backup";
+"导出 CSV" = "Export CSV";
+"导出 1PUX" = "Export 1PUX";
+"跨库复制" = "Copy Across Vaults";
+"生物识别重置主密码" = "Reset Master Password with Biometrics";
+"恢复码重置主密码" = "Reset Master Password with Recovery Code";
+"审计日志" = "Audit Log";
+"暂无审计事件" = "No audit events yet";
+"导出备份、修改主密码等操作会记录在此。" = "Actions such as exporting a backup or changing the master password are recorded here.";
+"内部错误：审计日志需解锁后查看。" = "Internal error: the audit log requires an unlocked vault.";
+
+/* ========== DiagnosticsView（诊断信息） ========== */
+
+"正在读取…" = "Reading…";
+"诊断信息" = "Diagnostics";
+"版本" = "Version";
+"App 版本" = "App Version";
+"库格式版本" = "Vault Format Version";
+"未知" = "Unknown";
+"条目数" = "Items";
+"库创建时间" = "Vault Created";
+"最后备份时间" = "Last Backup";
+"从未备份" = "Never backed up";
+"库 UUID 前缀" = "Vault UUID Prefix";
+"诊断数据不可用：需解锁密码库后才能读取。" = "Diagnostic data is unavailable: unlock the vault to read it.";
+
+/* ========== NetworkSelfCertView（网络能力自证） ========== */
+
+"网络能力自证" = "Network Self-Certification";
+"数据都在本机，不上传云端" = "All data stays on this Mac — nothing is uploaded";
+"Coffer 的密码库与全部数据只保存在本机，不上传到任何云端。Rust 核心与其依赖图零网络（可用 tools/check_no_network.sh 自证）；应用层唯一联网例外是软件更新（OTA）——仅按白名单地址访问更新服务器，不发送任何密码库数据。以下命令可自行验证，步骤可复现。" = "Coffer's vault and all of its data are stored only on this Mac and uploaded to no cloud. The Rust core and its dependency graph make no network calls (verifiable with tools/check_no_network.sh). The only network exception in the app layer is software update (OTA), which contacts update servers on an allowlist only and never sends vault data. The commands below let you verify this yourself; the steps are reproducible.";
+"静态自证（构建产物）" = "Static Proof (build artifacts)";
+"检查沙盒权限声明：" = "Check the sandbox entitlements:";
+"codesign -d --entitlements - <Coffer.app 路径>" = "codesign -d --entitlements - <path to Coffer.app>";
+"输出中最多允许出现一项网络权限：com.apple.security.network.client（软件更新豁免）；不得出现 network.server 或其他任何 com.apple.security.network.* 键。" = "The output may contain at most one network entitlement: com.apple.security.network.client (the software update exemption). network.server and any other com.apple.security.network.* key must not appear.";
+"检查动态链接的框架：" = "Check dynamically linked frameworks:";
+"输出中不应链接第三方网络库；系统框架 CFNetwork 属预期——仅被软件更新（OTA）模块经 URLSession 使用，不应出现独立的 Network.framework。" = "The output should show no third-party network library. The system framework CFNetwork is expected — it is used only by the software update (OTA) module via URLSession; a standalone Network.framework should not appear.";
+"运行时自证（0 socket）" = "Runtime Proof (0 sockets)";
+"启动 Coffer 后查看进程 ID：" = "Start Coffer, then look up its process ID:";
+"检查该进程的 TCP/UDP 连接（-a 限定只查该进程）：" = "Check that process's TCP/UDP connections (-a limits the query to that process):";
+"输出应为空，即无任何网络连接——软件更新（OTA）下载进行中除外。" = "The output should be empty, i.e. no network connections at all — except while a software update (OTA) download is in progress.";
+"依赖图自证（源码仓库）" = "Dependency Proof (source repository)";
+"在 Coffer 源码仓库执行：" = "Run this in the Coffer source repository:";
+"依赖中不应出现 reqwest / hyper / tokio(net) 等网络 crate；仓库内 tools/check_no_network.sh 自动断言此项。" = "No network crates such as reqwest / hyper / tokio(net) should appear among the dependencies; tools/check_no_network.sh in the repository asserts this automatically.";
+"复制整条命令；<…> 占位符在终端中替换为实际路径/进程 ID" = "Copies the whole command; replace the <…> placeholders in Terminal with the real path / process ID";
+
+/* ========== AboutUpdateSection（关于面板 + 能力自述） ========== */
+
+"版本 %@" = "Version %@";
+"编译时间 %@" = "Build time %@";
+"了解 Coffer" = "Get to Know Coffer";
+"本地存储 · 零同步" = "Local storage · zero sync";
+"密码与全部数据只保存在本机，不上传到云端、不与其他设备同步。" = "Passwords and all other data stay on this Mac: never uploaded to a cloud, never synced to other devices.";
+"本地服务 · 数据不出本机" = "Local services · data never leaves this Mac";
+"本地大模型工具经 CLI / MCP 按需取密；仅软件更新（OTA）联网。" = "Local LLM tools fetch secrets on demand over CLI / MCP; only software update (OTA) goes online.";
+"Touch ID · 恢复码" = "Touch ID · recovery code";
+"生物识别解锁与忘记密码重置：设置 → 安全。" = "Biometric unlock and forgotten-password reset: Settings → Security.";
+"加密备份 · 恢复" = "Encrypted backup · restore";
+"解锁后「导出」生成加密备份，换机/重装导回：设置 → 数据。" = "After unlocking, Export creates an encrypted backup; import it back when switching or reinstalling: Settings → Data.";
+"MCP · Agent 协作" = "MCP · Agent Access";
+"让 AI / 自动化安全取用密码：设置 → MCP / Agent 协作。" = "Let AI and automation use secrets safely: Settings → MCP / Agent Access.";
+"关于 Coffer" = "About Coffer";
+
+/* ========== UpdateSheet（更新面板） ========== */
+
+"安装更新" = "Install Update";
+"安装" = "Install";
+"Coffer 将退出并更新到新版本，完成后自动重新打开。" = "Coffer will quit, install the new version, and reopen automatically when finished.";
+"检查更新" = "Check for Updates";
+"发现新版本" = "Update Available";
+"下载更新" = "Download Update";
+"准备安装" = "Ready to Install";
+"正在安装" = "Installing";
+"更新失败" = "Update Failed";
+"尚未检查更新。" = "No update check yet.";
+"Coffer 不会在后台自动检查更新，点「检查更新」手动检查。" = "Coffer never checks for updates in the background. Click Check for Updates to check manually.";
+"发现新版本 %@" = "Update available: %@";
+"此更新包含安全修复，建议尽快安装。" = "This update includes security fixes — install it soon.";
+"已下载并验证，准备安装。" = "Downloaded and verified — ready to install.";
+"正在安装…" = "Installing…";
+"Coffer 将退出并更新，请稍候重新打开。" = "Coffer will quit and install the update. Reopen it in a moment.";
+"恢复显示跳过的更新" = "Show Skipped Updates Again";
+"跳过此版本" = "Skip This Version";
+"下载…" = "Download…";
+"安装更新…" = "Install Update…";
+
+/* ========== GeneratorSettingsView（生成器默认参数） ========== */
+
+"生成器默认参数" = "Generator Defaults";
+"放弃" = "Discard";
+"至少启用一个字符集，否则视为非法参数（与密码生成器 1012 校验同语义）。" = "Enable at least one character set, otherwise the parameters are invalid (same rule as password generator error 1012).";
+"分隔符需为 1–3 个可打印字符；词数 3–10。" = "The separator must be 1–3 printable characters; word count 3–10.";
+"另存为默认" = "Save as Default";
+"已保存为默认值。" = "Saved as the default.";
+"参数无效，未保存。请调整后重试。" = "Invalid parameters — nothing saved. Adjust them and try again.";
+"保存后，新建条目的生成器将用这些参数预填；也可随时回到本页改回。" = "Once saved, the generator for new items is prefilled with these parameters. Come back to this page any time to change them.";
+
+/* ========== HealthCheckView（安全体检） ========== */
+
+"字典精确命中" = "Dictionary match";
+"变体变形命中" = "Leet-variant match";
+"生日模式" = "Birthday pattern";
+"键盘序列" = "Keyboard sequence";
+"高" = "High";
+"中" = "Medium";
+"低" = "Low";
+"正在体检…" = "Running checkup…";
+"体检加载失败" = "Checkup Failed to Load";
+"泄露检测为离线启发式（本地字典/规则），不覆盖真实泄露事件——零网络原则" = "Leak detection is an offline heuristic (local dictionary and rules) and does not cover real breach events — the zero-network principle";
+"重复组" = "Duplicate groups";
+"弱 URL" = "Weak URLs";
+"陈旧密码" = "Stale passwords";
+"泄露嫌疑" = "Leak suspects";
+"无 2FA" = "No 2FA";
+"总计" = "Total";
+"未发现安全问题" = "No security issues found";
+"各类启发式检查均未命中，建议定期回来看看。" = "No heuristic check matched anything. Worth checking back regularly.";
+"重复密码" = "Duplicate passwords";
+"组内 %lld 个条目共用同一密码" = "%lld items in this group share one password";
+"URL 使用 http:// 明文协议" = "URL uses the plaintext http:// scheme";
+"%lld 天未改" = "Unchanged for %lld days";
+"%@ · 置信度%@" = "%@ · confidence %@";
+"无 2FA 提示" = "Missing 2FA";
+"未配置两步验证（TOTP）" = "Two-factor authentication (TOTP) is not configured";
+"内部错误：安全体检需解锁后查看。" = "Internal error: the security checkup requires an unlocked vault.";
+/* C1 修复（2026-10-24 review）：includedLineNos.count 是 Int（%lld），与 UInt32 站点的 %u 版本并存 */
+"导入 %lld 条" = "Import %lld";

@@ -47,13 +47,13 @@ struct UpdateManifest: Codable, Equatable {
         var errorDescription: String? {
             switch self {
             case .invalidJSON(let detail):
-                return "更新清单格式无效：\(detail)"
+                return String(localized: "更新清单格式无效：\(detail)")
             case .missingField(let key):
-                return "更新清单缺少必需字段：\(key)。"
+                return String(localized: "更新清单缺少必需字段：\(key)。")
             case .unsupportedSchemaVersion(let v):
-                return "更新清单 schema 版本 \(v) 不受支持，已拒绝安装。"
+                return String(localized: "更新清单 schema 版本 \(String(v)) 不受支持，已拒绝安装。")
             case .wrongAppId(let id):
-                return "更新清单 appId「\(id)」与本应用不匹配，已拒绝安装。"
+                return String(localized: "更新清单 appId「\(id)」与本应用不匹配，已拒绝安装。")
             }
         }
     }
@@ -90,7 +90,7 @@ struct UpdateManifest: Codable, Equatable {
         case .typeMismatch(_, let context),
              .dataCorrupted(let context):
             let path = context.codingPath.map { $0.stringValue }.joined(separator: ".")
-            return .invalidJSON(path.isEmpty ? "\(error)" : "字段 \(path)")
+            return .invalidJSON(path.isEmpty ? "\(error)" : String(localized: "字段 \(path)"))
         @unknown default:
             return .invalidJSON("\(error)")
         }

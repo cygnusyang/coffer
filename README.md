@@ -1,5 +1,12 @@
 # Coffer
 
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
+[![Latest release](https://img.shields.io/github/v/release/cygnusyang/coffer)](https://github.com/cygnusyang/coffer/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/cygnusyang/coffer/total)](https://github.com/cygnusyang/coffer/releases)
+
+**中文** · [English](README.en.md)
+
 **数据不出本机的密码管理器**：密码、密钥、凭据只存本地，不上传云端（仅软件更新 OTA 联网；可审计验证，NFR-SEC-07）。另提供本机 MCP 服务器，供 Claude Code、Codex 等本地大模型工具按需取密——数据同样不出本机。
 
 - 仓库：<https://github.com/cygnusyang/coffer> · 许可证：AGPL-3.0
@@ -21,6 +28,12 @@ _最后更新：2026-10-24（来源：GitHub Release 资产累计下载次数，
 | **总计** | — | **1** | **5** | **6** |
 
 <!-- downloads:end -->
+
+## 架构
+
+![分层架构](docs/assets/layered-architecture.svg)
+
+Rust 核心（`core/`）负责加密、存储与 MCP 面；SwiftUI（`macos/`）是 App 外壳；所有触碰密钥的操作都留在核心进程内。另见[数据流](docs/assets/data-flow.svg)、[密钥层级](docs/assets/key-hierarchy-overview.svg)。
 
 ## 快速开始
 

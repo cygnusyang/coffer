@@ -15,6 +15,7 @@ release 中有体现）。
 ## [Unreleased]
 
 ### 新增/变化
+- **仓库可发现性基建**：README 顶部加徽章（license / platform / latest / downloads）、中英切换、架构图（`docs/assets` SVG）；新增 `README.en.md` 全量英文版（Why / Features / Architecture / MCP / CLI 全节）；仓库描述改中英双语 + 19 个 topics + 开启 Discussions + bug/feature Issue 模板（安全缺陷引导走私下渠道）；`docs/02-研发计划与决策/02-版本开发计划.md` §0 速览补齐 v2.8.1~v2.12.1 十一行（r2.38，含 v2.9.0 未发版、v2.12.1 未发版两处事实标注）。
 - **README 下载量统计表（自动刷新）**：README 新增「下载」节，表格由 `tools/update_download_stats.py` 从 GitHub Release 资产 `download_count` 生成（版本 / 发布时间 / DMG 新装 / ZIP OTA / 合计 + 总计行），`.github/workflows/download-stats.yml` 每周一 + 每次 Release 发布后自动刷新并提交（无变化不提交）。口径为**累计下载次数**，含 OTA 自动更新，不等于去重用户数；按天 / 按地区拆分 GitHub 不提供，故不做。不涉 App 可交付行为，版本号不动。
 
 ## v2.12.1 — 2026-10-24

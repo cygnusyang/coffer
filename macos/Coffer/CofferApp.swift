@@ -130,6 +130,16 @@ struct CofferMainApp: App {
                 Button("新建条目…") { model.pendingNewCategory = .login }
                     .keyboardShortcut("n", modifiers: .command)
                     .disabled(model.phase != .unlocked)
+                // issue #2：删除是一等操作，文件菜单必须给出与「新建条目…」（⌘N）对称的
+                // 入口；此前只有详情页工具栏的图标按钮，用户找不到就判定「无法删除」。
+                Divider()
+                Button("移到回收站") {
+                    guard let id = model.selectedItemID else { return }
+                    do { try model.deleteItem(itemId: id, hard: false) }
+                    catch { model.handleFfiError(error) }
+                }
+                .keyboardShortcut(.delete, modifiers: .command)
+                .disabled(model.phase != .unlocked || model.selectedItemID == nil)
                 Button("锁定 Coffer") { model.lock() }
                     .keyboardShortcut("l", modifiers: .command)
                     .disabled(model.phase != .unlocked)

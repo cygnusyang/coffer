@@ -298,6 +298,26 @@ struct ActiveItemList: View {
                     }
                 }
                 .tag(summary.uuid)
+                // issue #2：列表行此前没有任何删除入口（只有详情页工具栏的图标按钮），
+                // 右键打开只剩「复制到其他库…」，用户因此判定「条目无法删除」。
+                // 这里补标准入口：非回收站 → 移到回收站；回收站 → 恢复。
+                .contextMenu {
+                    if model.sidebarFilter == .trash {
+                        Button {
+                            do { try model.restoreItem(itemId: summary.uuid) }
+                            catch { model.handleFfiError(error) }
+                        } label: {
+                            Label("恢复", systemImage: "arrow.uturn.backward")
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            do { try model.deleteItem(itemId: summary.uuid, hard: false) }
+                            catch { model.handleFfiError(error) }
+                        } label: {
+                            Label("移到回收站", systemImage: "trash")
+                        }
+                    }
+                }
             }
         }
         .overlay {

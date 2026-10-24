@@ -82,6 +82,19 @@ struct ItemDetailView: View {
                 } label: {
                     Label("复制到其他库…", systemImage: "doc.on.doc")
                 }
+                // issue #2：右键菜单此前只有「复制到其他库…」，用户据此判定无法删除；
+                // 与工具栏「移到回收站」同语义，给到右键这条更直觉的路径。
+                Button(role: .destructive) {
+                    tryAction { try model.deleteItem(itemId: details.uuid, hard: false) }
+                } label: {
+                    Label("移到回收站", systemImage: "trash")
+                }
+            } else {
+                Button {
+                    tryAction { try model.restoreItem(itemId: details.uuid) }
+                } label: {
+                    Label("恢复", systemImage: "arrow.uturn.backward")
+                }
             }
         }
         .task {

@@ -54,7 +54,7 @@ if [ -z "$TAG" ]; then
     exit 2
 fi
 if ! printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-    fail "① tag 形态非法：$TAG（期望 vX.Y.Z）"
+    fail "① tag 形态非法：${TAG}（期望 vX.Y.Z）"
     VERSION=""
 else
     VERSION="${TAG#v}"
@@ -124,9 +124,9 @@ if [ -f "$PROFILE" ]; then
             if [ -z "$EXP_EPOCH" ]; then
                 warn "⑤ 无法解析过期时间：$EXP"
             elif [ "$EXP_EPOCH" -le "$NOW_EPOCH" ]; then
-                fail "⑤ provisioning profile 已过期：$EXP（重跑 tools/make_provisioning_profile.sh）"
+                fail "⑤ provisioning profile 已过期：${EXP}（重跑 tools/make_provisioning_profile.sh）"
             elif [ $((EXP_EPOCH - NOW_EPOCH)) -lt 172800 ]; then
-                warn "⑤ provisioning profile 剩余不足 48h：$EXP（BUG-27 纪律，先刷新再发版）"
+                warn "⑤ provisioning profile 剩余不足 48h：${EXP}（BUG-27 纪律，先刷新再发版）"
             else
                 pass "⑤ provisioning profile 有效期至 $EXP"
             fi
@@ -136,7 +136,7 @@ if [ -f "$PROFILE" ]; then
     fi
     rm -f "$TMP_PLIST"
 else
-    warn "⑤ 未找到 profile：$PROFILE（CI 会注入；本地发版前需生成）"
+    warn "⑤ 未找到 profile：${PROFILE}（CI 会注入；本地发版前需生成）"
 fi
 
 # ⑥ OTA 公钥一致性
@@ -164,7 +164,7 @@ log "$OTA_OUT"
 case "$OTA_RC" in
     0) pass "⑦ OTA host 白名单通过" ;;
     2) warn "⑦ OTA 源目录缺失，白名单检查跳过（rc=2）" ;;
-    *) fail "⑦ OTA host 白名单失败（rc=$OTA_RC）" ;;
+    *) fail "⑦ OTA host 白名单失败（rc=${OTA_RC}）" ;;
 esac
 
 # ⑧ 文档事实
@@ -207,7 +207,7 @@ if [ "$WITH_GATE" -eq 1 ]; then
     if [ "$GATE_RC" -eq 0 ]; then
         pass "⑩ 全量门禁通过"
     else
-        fail "⑩ 全量门禁失败（rc=$GATE_RC）"
+        fail "⑩ 全量门禁失败（rc=${GATE_RC}）"
     fi
 fi
 

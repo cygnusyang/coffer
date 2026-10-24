@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SWIFT_HELPER="${SCRIPT_DIR}/derive_update_public_key.swift"
 
 if [ ! -f "$SWIFT_HELPER" ]; then
-    echo "ERROR: 缺少 helper：$SWIFT_HELPER（应随本脚本同在 tools/ 下）" >&2
+    echo "ERROR: 缺少 helper：${SWIFT_HELPER}（应随本脚本同在 tools/ 下）" >&2
     exit 1
 fi
 

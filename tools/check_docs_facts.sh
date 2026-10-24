@@ -152,7 +152,7 @@ check_ota() {
     case "$rc" in
         0) pass "⑤ OTA host 白名单通过" ;;
         2) warn "⑤ OTA 源目录缺失，白名单检查跳过（rc=2）" ;;
-        *) fail "⑤ OTA host 白名单失败（rc=$rc）：$(echo "$out" | tail -1)" ;;
+        *) fail "⑤ OTA host 白名单失败（rc=${rc}）：$(echo "$out" | tail -1)" ;;
     esac
 }
 

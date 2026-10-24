@@ -2,7 +2,7 @@
 # run_mcp_smoke.sh —— `coffer mcp` 端到端冒烟（docs/20 §3/§5，G-G）。
 #
 # 构建 `coffer` bin → spawn `coffer mcp --provider op`（fake op fixture 驱动，D-2
-# 缺省已翻转为 coffer、需 $COFFER_VAULT_DIR，冒烟显式选 op 保自包含）→ 握手 +
+# 缺省已翻转为 coffer、需 ${COFFER_VAULT_DIR}，冒烟显式选 op 保自包含）→ 握手 +
 # tools/call → 断言：
 #   - stdout 永为协议帧（§3.1：首帧是 JSON-RPC 2.0，含 serverInfo.name=coffer）；
 #   - tools/call 往返返回 fixture secret 名（§3.3），且 stdout **无明文值**（§3.5-1）；

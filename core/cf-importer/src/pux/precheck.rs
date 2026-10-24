@@ -17,6 +17,7 @@ use cf_domain::CfError;
 
 use super::mapping::{map_item, ItemMapSignals, MapOutcome, PuxItemModel};
 use super::parser::PuxArchive;
+use crate::warning;
 
 /// 预检报告（docs/09 v0.3.0 冻结字段集）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -246,8 +247,9 @@ pub fn analyze(archive: &mut PuxArchive) -> Result<PuxAnalysis, CfError> {
         ));
     }
     if password_history_dropped > 0 {
-        warnings.push(format!(
-            "丢弃 {password_history_dropped} 条密码历史（cf 历史表语义不同构，FR-2.9）"
+        warnings.push(warning::encode(
+            warning::PASSWORD_HISTORY_DROPPED,
+            &[password_history_dropped.to_string()],
         ));
     }
     if trashed_count > 0 {

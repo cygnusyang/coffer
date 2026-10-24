@@ -194,7 +194,7 @@ struct BitwardenImportView: View {
                     }
 
                     ForEach(report.warnings, id: \.self) { warning in
-                        Label(warning, systemImage: "info.circle")
+                        Label(ImportWarningText.text(for: warning), systemImage: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

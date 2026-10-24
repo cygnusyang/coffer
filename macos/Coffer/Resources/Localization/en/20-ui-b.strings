@@ -96,6 +96,21 @@
 "\n注意：导入为每条目独立事务，部分条目可能已导入，重试将重复新建。" = "\nNote: each item is imported in its own transaction. Some items may already be imported — retrying will create duplicates.";
 "导入完成：新建 %u 条条目" = "Import complete: %u new items";
 
+/* ========== ImportWarningText（导入告警：码 + 参数 → 文案，BUG-35 第一阶段） ========== *
+ *
+ * 参数是数据（行号 / 列名 / 计数），一律 %@（core 侧统一按字符串编码，不分 %u / %lld）。
+ * 键 = 中文原文，与 core 旧直出句逐字一致；英文可调整词序，但**占位符数量与类型不得变**（G3）。
+ */
+
+"第 %@ 行：缺失 Title，导入时以「%@」兜底" = "Row %@: Title is missing — “%@” will be used on import";
+"第 %@ 行：One-time password 无法解析，原始值已并入备注，该行仍导入" = "Row %@: the One-time password could not be parsed; the original value was merged into Notes and the row is still imported";
+"第 %@ 行：%@ 值不是 true/false，按 false 处理" = "Row %@: %@ is not true/false — treated as false";
+"第 %@ 行：数据比表头多 %@ 列，多出的非空值已并入备注" = "Row %@: %@ more columns than the header; the extra non-empty values were merged into Notes";
+"第 %@ 行：列「%@」的值以公式前缀字符（= + - @ Tab）开头，若导出为 CSV 时将被转义（导入保留原值）" = "Row %@: the value in column “%@” starts with a formula prefix character (= + - @ Tab) and will be escaped if exported to CSV (the value is kept as-is on import)";
+"检测到 %@ 个重复标题（涉及 %@ 行），导入将全部新建，不做去重" = "Found %@ duplicate titles (%@ rows involved) — all will be imported as new items, no deduplication";
+"丢弃 %@ 条密码历史（cf 历史表语义不同构，FR-2.9）" = "Dropped %@ password history entries (the cf history table has different semantics, FR-2.9)";
+"第 %@ 行：One-time password 无法解析（%@），原始值已并入备注，该行仍导入" = "Row %@: the One-time password could not be parsed (%@); the original value was merged into Notes and the row is still imported";
+
 /* ========== BitwardenImportView ========== */
 
 "导入 Bitwarden（.json）" = "Import Bitwarden (.json)";

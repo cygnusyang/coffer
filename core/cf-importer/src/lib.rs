@@ -71,6 +71,7 @@ pub mod opvault;
 pub mod precheck;
 pub mod pux;
 pub mod risk;
+pub mod warning;
 
 pub use bitwarden::{
     BwImportResult, BwItemModel, BwPasskeyFailure, BwPasskeyFailureKind, BwPasskeyModel,

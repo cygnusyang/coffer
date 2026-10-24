@@ -217,7 +217,7 @@ struct OpvaultImportView: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(report.warnings, id: \.self) { warning in
-                        Label(warning, systemImage: "exclamationmark.triangle")
+                        Label(ImportWarningText.text(for: warning), systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -312,7 +312,7 @@ struct OpvaultImportView: View {
                 }
 
                 ForEach(result.report.warnings, id: \.self) { warning in
-                    Label(warning, systemImage: "info.circle")
+                    Label(ImportWarningText.text(for: warning), systemImage: "info.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

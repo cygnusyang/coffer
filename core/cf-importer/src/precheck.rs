@@ -22,6 +22,7 @@ use cf_domain::CfError;
 
 use crate::csv::mapping::{self, ImportModel};
 use crate::csv::parser;
+use crate::warning;
 
 /// 预检报告（最小形态，字段与 docs/07 §3.3 的结构体逐项一致）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -98,43 +99,53 @@ fn analyze_parsed(parsed: parser::ParsedCsv) -> Result<CsvAnalysis, CfError> {
         *title_counts.entry(model.title.clone()).or_insert(0) += 1;
         report.valid_rows += 1;
 
+        // 告警只产出「码 + 参数」，句子由 Swift 侧 ImportWarningText 本地化
+        // （BUG-35 第一阶段；码表见 crate::warning）。
         if signals.no_title {
             report.rows_without_title.push(row.line_no);
-            report.warnings.push(format!(
-                "第 {} 行：缺失 Title，导入时以「{}」兜底",
-                row.line_no,
-                mapping::FALLBACK_TITLE
+            report.warnings.push(warning::encode(
+                warning::MISSING_TITLE,
+                &[row.line_no.to_string(), mapping::FALLBACK_TITLE.to_owned()],
             ));
         }
 
         if signals.bad_totp {
             report.rows_with_bad_totp.push(row.line_no);
-            report.warnings.push(format!(
-                "第 {} 行：One-time password 无法解析（{}），原始值已并入备注，该行仍导入",
-                row.line_no,
-                signals.bad_totp_reason.as_deref().unwrap_or("原因未知")
+            report.warnings.push(warning::encode(
+                warning::TOTP_UNPARSED_DETAIL,
+                &[
+                    row.line_no.to_string(),
+                    signals
+                        .bad_totp_reason
+                        .as_deref()
+                        .unwrap_or("原因未知")
+                        .to_owned(),
+                ],
             ));
         }
 
         for col in signals.invalid_bool_columns {
-            report.warnings.push(format!(
-                "第 {} 行：{col} 值不是 true/false，按 false 处理",
-                row.line_no
+            report.warnings.push(warning::encode(
+                warning::BOOL_INVALID,
+                &[row.line_no.to_string(), col.to_owned()],
             ));
         }
 
         if signals.ragged_extra_count > 0 {
-            report.warnings.push(format!(
-                "第 {} 行：数据比表头多 {} 列，多出的非空值已并入备注",
-                row.line_no, signals.ragged_extra_count
+            report.warnings.push(warning::encode(
+                warning::EXTRA_COLUMNS,
+                &[
+                    row.line_no.to_string(),
+                    signals.ragged_extra_count.to_string(),
+                ],
             ));
         }
 
         for (line, col) in &signals.formula_cells {
             report.formula_like_cells.push((*line, col.clone()));
-            report.warnings.push(format!(
-                "第 {line} 行：列「{col}」的值以公式前缀字符（= + - @ Tab）开头，\
-                 若导出为 CSV 时将被转义（导入保留原值）"
+            report.warnings.push(warning::encode(
+                warning::FORMULA_PREFIX,
+                &[line.to_string(), col.clone()],
             ));
         }
 
@@ -145,8 +156,9 @@ fn analyze_parsed(parsed: parser::ParsedCsv) -> Result<CsvAnalysis, CfError> {
     let dup_titles = title_counts.values().filter(|&&c| c > 1).count();
     if dup_titles > 0 {
         let dup_rows: u32 = title_counts.values().filter(|&&c| c > 1).sum();
-        report.warnings.push(format!(
-            "检测到 {dup_titles} 个重复标题（涉及 {dup_rows} 行），导入将全部新建，不做去重"
+        report.warnings.push(warning::encode(
+            warning::DUPLICATE_TITLES,
+            &[dup_titles.to_string(), dup_rows.to_string()],
         ));
     }
 

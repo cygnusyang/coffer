@@ -1887,7 +1887,11 @@ EXIT=124   # timeout 3s：常驻等待 stdin，符合预期
 **根因**：v2.13.0 只对 CfError 码做映射（D-10），预检告警既非日志也非 CfError，属设计真空档；`Text(String)` 不查表。
 **影响面**：英文界面导入/放置区告警；中文界面不变。
 **修复路径**：告警改为「码 + 参数」契约，Swift 侧按码出文案（cf-importer FFI 契约变更，需单独版本承载）。
-**状态**：🟡 非目标（v2.13.0 显式登记 + CHANGELOG 写明），目标版本 **v2.13.1**。
+**状态**：🟡 **第一阶段已修（v2.13.3）**，剩余待第二阶段。
+
+**v2.13.3 已覆盖**（CSV / 放置区 8 类、10 个生成点）：缺失 Title / TOTP 无法解析（两档）/ 布尔列非法 / 多出列 / 公式前缀 / 重复标题 / 密码历史丢弃。实现为「码 + 参数」编码（core/cf-importer/src/warning.rs，code|param1|param2 + 转义），Swift 侧 Support/ImportWarningText.swift 按码取本地化模板，未知码原样回退；FFI 契约不变（warnings 仍 Vec<String>）。
+
+**仍未覆盖（第二阶段）**：① Bitwarden / OPVault / PUX 的 mapping 逐条目告警 29 处；② 放置区 row.conflictNote。两者英文界面仍显示中文。
 
 ## BUG-36（✅ 已修复，v2.13.1 真机核销发现）：设置页「内容 460 光但窗口沿用旧 900pt」→ 卡片居中、两侧大片空白
 

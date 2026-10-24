@@ -249,10 +249,17 @@ fn 文件内重名入告警() {
         &format!("{CSV_HEADER}\nGitHub,https://a.example,u1,pw1,,,,\nGitHub,https://b.example,u2,pw2,,,,\n"),
     );
     let a = analyze_dropzone(&path, &st).unwrap();
-    assert!(
-        a.warnings
-            .iter()
-            .any(|w| w.contains("重复标题") || w.contains("重名")),
+    // 告警 = 码 + 参数（文案在 Swift 侧，BUG-35 第一阶段）
+    let dup: Option<Vec<String>> = a
+        .warnings
+        .iter()
+        .find_map(|w| match cf_importer::warning::decode(w) {
+            Some((code, params)) if code == cf_importer::warning::DUPLICATE_TITLES => Some(params),
+            _ => None,
+        });
+    assert_eq!(
+        dup,
+        Some(vec!["1".to_owned(), "2".to_owned()]),
         "文件内重名须入 warnings，实际 {warnings:?}",
         warnings = a.warnings
     );

@@ -12,6 +12,17 @@ release 中有体现）。
 
 ---
 
+## v2.13.3 — 2026-10-25
+
+### 修复/纪律
+- **BUG-35 第一阶段：导入 / 放置区预检告警英文化**。此前 37 处告警都是 Rust 侧 `format!` 出的中文整句，经 FFI 原样进 `Label(warning)`，英文界面必现中文（v2.13.0 的显式非目标）。本版把 **CSV / 放置区**这 10 个生成点改成「码 + 参数」编码（`code|param1|param2`，`core/cf-importer/src/warning.rs` 负责转义与编解码），由 Swift 侧 `ImportWarningText` 按码取本地化模板渲染，**未知码原样回退**（保证其余 importer 不受影响）。
+  - 覆盖 8 类：缺失 Title / TOTP 无法解析（两档）/ 布尔列非法 / 多出列 / 公式前缀 / 重复标题 / 密码历史丢弃；中文模板与 Rust 原句逐字一致，语义与行号零变化。
+  - 未改 FFI 契约（`warnings` 仍是 `Vec<String>`），避免 uniffi 绑定重生成；新增 Rust 6 条编解码单测 + Swift 16 条文案断言。
+  - 测试入口收口：`run_core_error_text_tests.sh` 与新增的 `run_import_warning_text_tests.sh` 一并挂进 `tools/run_l10n_tests.sh`，消灭「有 harness 没人跑」。
+  - **仍为中文（第二阶段）**：Bitwarden / OPVault / PUX 的 mapping 逐条目告警（29 处），以及放置区的 `conflictNote`（与库内同名条目用户名不同）。
+
+---
+
 ## v2.13.2 — 2026-10-25
 
 ### 修复/纪律

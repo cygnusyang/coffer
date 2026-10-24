@@ -19,6 +19,7 @@ use cf_domain::CfError;
 
 use super::mapping::{map_export, BwItemModel};
 use super::parser;
+use crate::warning;
 
 /// 预检报告（docs/17 §4.2 冻结语义）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -95,8 +96,9 @@ pub fn analyze(export: &parser::BwExport) -> Result<BwAnalysis, CfError> {
         models.push(model);
     }
     if password_history_dropped > 0 {
-        warnings.push(format!(
-            "丢弃 {password_history_dropped} 条密码历史（cf 历史表语义不同构，FR-2.9）"
+        warnings.push(warning::encode(
+            warning::PASSWORD_HISTORY_DROPPED,
+            &[password_history_dropped.to_string()],
         ));
     }
 

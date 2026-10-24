@@ -10,7 +10,7 @@ use cf_domain::field::Designation;
 use cf_domain::item::ItemState;
 use cf_domain::secret::SecretString;
 use cf_importer::{
-    import_csv, import_csv_with_options, precheck_csv, CsvImportResult, ImportOptions,
+    import_csv, import_csv_with_options, precheck_csv, warning, CsvImportResult, ImportOptions,
 };
 use cf_store::{ItemListFilter, ItemRow, ItemStore};
 
@@ -209,10 +209,27 @@ fn 公式前缀原样入库且告警命中() {
             (3u32, "username".to_owned()),
         ]
     );
-    assert!(report
+    // 告警 = 码 + 参数（文案在 Swift 侧，BUG-35 第一阶段）
+    let formula: Vec<(String, String)> = report
         .warnings
         .iter()
-        .all(|w| w.contains("公式前缀") || w.contains("导出")));
+        .filter_map(|w| match warning::decode(w) {
+            Some((code, params)) if code == warning::FORMULA_PREFIX => Some((
+                params.first().cloned().unwrap_or_default(),
+                params.get(1).cloned().unwrap_or_default(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        formula,
+        vec![
+            ("2".to_owned(), "username".to_owned()),
+            ("2".to_owned(), "notes".to_owned()),
+            ("3".to_owned(), "username".to_owned()),
+        ],
+        "公式前缀告警与 formula_like_cells 逐项对应"
+    );
 
     let mut st = store();
     import_csv(&fixture("formula_prefix.csv"), &mut st).unwrap();
@@ -246,7 +263,18 @@ fn 坏otpauth不丢数据且行号准确() {
         "文件行号：表头为第 1 行"
     );
     assert_eq!(report.valid_rows, 4);
-    assert!(report.warnings.iter().any(|w| w.contains("第 3 行")));
+    // 坏 otpauth 告警带行号（参数序：行号、脱敏原因）
+    let totp_lines: Vec<String> = report
+        .warnings
+        .iter()
+        .filter_map(|w| match warning::decode(w) {
+            Some((code, params)) if code == warning::TOTP_UNPARSED_DETAIL => {
+                params.first().cloned()
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(totp_lines, vec!["3".to_owned(), "4".to_owned(), "5".to_owned()]);
 
     let mut st = store();
     let result = import_csv(&fixture("bad_otpauth.csv"), &mut st).unwrap();
@@ -410,10 +438,16 @@ fn 无效utf8文件被拒() {
 fn 重名仅告警全部新建() {
     let mut st = store();
     let report = precheck_csv(&fixture("duplicate_titles.csv")).unwrap();
-    assert!(report
+    // 告警 = 码 + 参数（文案在 Swift 侧，BUG-35 第一阶段）：参数 = 重复标题数、涉及行数
+    let dup: Vec<String> = report
         .warnings
         .iter()
-        .any(|w| w.contains("重复标题") && w.contains("全部新建")));
+        .find_map(|w| match warning::decode(w) {
+            Some((code, params)) if code == warning::DUPLICATE_TITLES => Some(params),
+            _ => None,
+        })
+        .expect("重名须入 warnings（全部新建，不做去重）");
+    assert_eq!(dup, vec!["1".to_owned(), "3".to_owned()]);
     assert_eq!(report.valid_rows, 3);
 
     let result = import_csv(&fixture("duplicate_titles.csv"), &mut st).unwrap();

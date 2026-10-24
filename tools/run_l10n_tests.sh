@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # run_l10n_tests.sh —— 多语言基础设施测试入口（v2.13.0）。
 #
-# 两段，缺一不可：
+# 四段，缺一不可：
 #   1. Swift 纯逻辑单测（macos/Tests/LocalizationTests/main.swift + Support/
 #      LanguagePreference.swift）：偏好读取优先级 / L1 回退链 / 原子往返。
-#   2. 门禁夹具负向用例（fixtures/）：.strings 解析与占位符校验在 tools/check_l10n.sh
+#   2. 文案表单测（run_core_error_text_tests.sh / run_import_warning_text_tests.sh）：
+#      「码 → 文案」映射表本身（漏码 / 串位 / 解码失败），与 3 的资源格式门禁互补——
+#      门禁只看 .strings 的占位符形状，看不出码表缺项。挂在这里是为了让聚合入口
+#      跑到它们（BUG-35 收口：避免「有 harness 没人跑」）。
+#   3. 门禁夹具负向用例（fixtures/）：.strings 解析与占位符校验在 tools/check_l10n.sh
 #      里（python3 实现，不进 Swift 侧重写一遍）。每类错误都必须 exit 非 0——
 #      占位符写错在运行时**全部静默**（设计 F8），门禁报不出来等于没做。
 #
@@ -38,8 +42,19 @@ else
   fail "swiftc 编译 LocalizationTests"
 fi
 
-# ---- 2. 门禁夹具（负向用例必须红，正向用例必须绿）----
-printf '\n== 2. check_l10n.sh 夹具用例 ==\n'
+# ---- 2. 文案表单测（独立 swiftc 编译，零 FFI 依赖）----
+printf '\n== 2. 文案表单测（CoreErrorText / ImportWarningText）==\n'
+for runner in run_core_error_text_tests.sh run_import_warning_text_tests.sh; do
+  if out="$(bash "${SCRIPT_DIR}/${runner}" 2>&1)"; then
+    pass "${runner}（$(printf '%s' "${out}" | tail -n 1)）"
+  else
+    fail "${runner}"
+    printf '%s\n' "${out}" | sed 's/^/      /'
+  fi
+done
+
+# ---- 3. 门禁夹具（负向用例必须红，正向用例必须绿）----
+printf '\n== 3. check_l10n.sh 夹具用例 ==\n'
 
 # expect_case <说明> <夹具目录> <期望退出码> <输出必须包含的片段>
 expect_case() {
@@ -77,8 +92,8 @@ expect_case "未转义 % 必须失败"  unescaped-percent   1 "未转义百分�
 expect_case "合法译文必须通过"   valid               0 "硬门禁全绿"
 expect_case "缺 InfoPlist 相机文案必须失败" missing-camera 1 "NSCameraUsageDescription"
 
-# ---- 3. 真实译表（仓库内 en 分片）必须通过 ----
-printf '\n== 3. 仓库真实译表 ==\n'
+# ---- 4. 真实译表（仓库内 en 分片）必须通过 ----
+printf '\n== 4. 仓库真实译表 ==\n'
 if out="$("${SCRIPT_DIR}/check_l10n.sh" 2>&1)"; then
   pass "仓库译表通过全量门禁（G1–G5）"
 else

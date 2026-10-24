@@ -42,7 +42,7 @@ use cf_store::{ItemListFilter, ItemStore};
 
 use crate::csv::mapping::{self, ImportModel};
 use crate::csv::parser;
-use crate::{import_models, CsvImportResult, ImportOptions};
+use crate::{import_models, warning, CsvImportResult, ImportOptions};
 
 /// 规范化三元组 `(Title, Username, URL)`（URL 为 [`normalize_dedup_url`] 的 host）。
 type DedupTriple = (String, Option<String>, Option<String>);
@@ -246,38 +246,43 @@ fn analyze_parsed(
         analysis.valid_rows += 1;
 
         // 告警（镜像 precheck.rs 既有语义，见 docs/07 §3.2）
+        //
+        // 文案不在这里拼：core 只产出「码 + 参数」（[warning]），中文/英文句子由
+        // Swift 侧 ImportWarningText 按码本地化（BUG-35 第一阶段）。
         if signals.no_title {
-            analysis.warnings.push(format!(
-                "第 {} 行：缺失 Title，导入时以「{}」兜底",
-                row.line_no,
-                mapping::FALLBACK_TITLE
+            analysis.warnings.push(warning::encode(
+                warning::MISSING_TITLE,
+                &[row.line_no.to_string(), mapping::FALLBACK_TITLE.to_owned()],
             ));
         }
         if signals.bad_totp {
             // M-3 脱敏（dev-reviewer 2026-10-16）：`bad_totp_reason` 可能回显原始
             // otpauth URI / 参数片段（如「period 参数无效：{v}」），TOTP secret 同属
-            // 凭据（R2 精神同等适用）——warnings 只留脱敏摘要 + 行号，不含原值。
-            analysis.warnings.push(format!(
-                "第 {} 行：One-time password 无法解析，原始值已并入备注，该行仍导入",
-                row.line_no
-            ));
+            // 凭据（R2 精神同等适用）——warnings 只留脱敏摘要 + 行号，不含原值
+            // （故此处不带 reason 参数，与 precheck.rs 的带原因版本是两个码）。
+            analysis
+                .warnings
+                .push(warning::encode(warning::TOTP_UNPARSED, &[row.line_no.to_string()]));
         }
         for col in signals.invalid_bool_columns {
-            analysis.warnings.push(format!(
-                "第 {} 行：{col} 值不是 true/false，按 false 处理",
-                row.line_no
+            analysis.warnings.push(warning::encode(
+                warning::BOOL_INVALID,
+                &[row.line_no.to_string(), col.to_owned()],
             ));
         }
         if signals.ragged_extra_count > 0 {
-            analysis.warnings.push(format!(
-                "第 {} 行：数据比表头多 {} 列，多出的非空值已并入备注",
-                row.line_no, signals.ragged_extra_count
+            analysis.warnings.push(warning::encode(
+                warning::EXTRA_COLUMNS,
+                &[
+                    row.line_no.to_string(),
+                    signals.ragged_extra_count.to_string(),
+                ],
             ));
         }
         for (line, col) in &signals.formula_cells {
-            analysis.warnings.push(format!(
-                "第 {line} 行：列「{col}」的值以公式前缀字符（= + - @ Tab）开头，\
-                 若导出为 CSV 时将被转义（导入保留原值）"
+            analysis.warnings.push(warning::encode(
+                warning::FORMULA_PREFIX,
+                &[line.to_string(), col.clone()],
             ));
         }
 
@@ -307,8 +312,9 @@ fn analyze_parsed(
     let dup_titles = title_counts.values().filter(|&&c| c > 1).count();
     if dup_titles > 0 {
         let dup_rows: u32 = title_counts.values().filter(|&&c| c > 1).sum();
-        analysis.warnings.push(format!(
-            "检测到 {dup_titles} 个重复标题（涉及 {dup_rows} 行），导入将全部新建，不做去重"
+        analysis.warnings.push(warning::encode(
+            warning::DUPLICATE_TITLES,
+            &[dup_titles.to_string(), dup_rows.to_string()],
         ));
     }
 
@@ -619,6 +625,18 @@ mod tests {
         assert_eq!(repos.totp.totp_uuids_for_item(uuid).unwrap().len(), 1);
     }
 
+    /// 按码取某条告警的参数表（告警只产出「码 + 参数」，文案在 Swift 侧，
+    /// BUG-35 第一阶段——故断言比较码 + 参数，而非句子）。
+    fn warn_params(warnings: &[String], code: &str) -> Vec<String> {
+        warnings
+            .iter()
+            .find_map(|w| match warning::decode(w) {
+                Some((c, params)) if c == code => Some(params),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("缺少 {code} 告警：{warnings:?}"))
+    }
+
     /// 文件内重名：沿用既有警告语义，导入全部新建不做去重
     #[test]
     fn 文件内重名警告() {
@@ -631,8 +649,11 @@ mod tests {
         );
         let f = write_csv(csv);
         let analysis = analyze_dropzone(f.path(), &st).unwrap();
-        assert!(analysis.warnings.iter().any(|w| w.contains("重复标题")));
-        assert!(analysis.warnings.iter().any(|w| w.contains("涉及 3 行")));
+        assert_eq!(
+            warn_params(&analysis.warnings, warning::DUPLICATE_TITLES),
+            vec!["1".to_owned(), "3".to_owned()],
+            "1 个重复标题涉及 3 行"
+        );
     }
 
     /// 既有警告语义复用：缺 Title 兜底、坏 otpauth 并入备注、行仍有效
@@ -648,8 +669,17 @@ mod tests {
         );
         let f = write_csv(csv);
         let analysis = analyze_dropzone(f.path(), &st).unwrap();
-        assert!(analysis.warnings.iter().any(|w| w.contains("缺失 Title")));
-        assert!(analysis.warnings.iter().any(|w| w.contains("One-time password 无法解析")));
+        assert_eq!(
+            warn_params(&analysis.warnings, warning::MISSING_TITLE),
+            vec![
+                "2".to_owned(),
+                crate::csv::mapping::FALLBACK_TITLE.to_owned()
+            ]
+        );
+        assert_eq!(
+            warn_params(&analysis.warnings, warning::TOTP_UNPARSED),
+            vec!["2".to_owned()]
+        );
         assert!(
             analysis.warnings.iter().all(|w| !w.contains("BAD!!") && !w.contains("secret=")),
             "warnings 不得含原始 otpauth/secret 片段（M-3 脱敏）：{warnings:?}",
@@ -673,12 +703,13 @@ mod tests {
         );
         let f = write_csv(csv);
         let analysis = analyze_dropzone(f.path(), &st).unwrap();
+        let params = warn_params(&analysis.warnings, warning::TOTP_UNPARSED);
+        assert_eq!(params, vec!["2".to_owned()], "脱敏摘要只带行号：{params:?}");
         let warn = analysis
             .warnings
             .iter()
-            .find(|w| w.contains("无法解析"))
+            .find(|w| w.contains(warning::TOTP_UNPARSED))
             .expect("须有 OTP 解析失败告警");
-        assert!(warn.contains("第 2 行"), "脱敏摘要须带行号：{warn}");
         assert!(
             !warn.contains("abcSECRETMARKER") && !warn.contains("otpauth://") && !warn.contains("secret"),
             "warnings 不得含原始 URI/参数/secret 片段：{warn}"

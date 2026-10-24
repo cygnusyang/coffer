@@ -22,7 +22,7 @@ use cf_domain::item::ItemState;
 use cf_domain::secret::SecretString;
 use cf_importer::csv::parser::{parse_csv, MAX_ROWS};
 use cf_importer::{
-    analyze_csv, import_csv, import_models, precheck_csv, CsvImportResult, ImportModel,
+    analyze_csv, import_csv, import_models, precheck_csv, warning, CsvImportResult, ImportModel,
     ImportOptions,
 };
 use cf_store::{ItemListFilter, ItemRow, ItemStore};
@@ -324,10 +324,24 @@ fn 公式注入真实攻击向量原值保留且告警() {
         vec![(2, "username"), (2, "notes"), (3, "username"), (3, "Evil")],
         "Username / Notes / 未映射列告警，Password 不告警"
     );
-    assert!(
-        report.warnings.iter().any(|w| w.contains("公式前缀")),
-        "warnings 应包含公式前缀提示：{:?}",
-        report.warnings
+    // 告警 = 码 + 参数（文案在 Swift 侧，BUG-35 第一阶段）：逐单元格一条，
+    // 参数 = (行号, 列名)
+    let formula: Vec<(String, String)> = report
+        .warnings
+        .iter()
+        .filter_map(|w| match warning::decode(w) {
+            Some((code, params)) if code == warning::FORMULA_PREFIX => Some((
+                params.first().cloned().unwrap_or_default(),
+                params.get(1).cloned().unwrap_or_default(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        formula.len(),
+        4,
+        "公式前缀单元格须逐个告警：{warnings:?}",
+        warnings = report.warnings
     );
 
     // 导入后逐字节读回：库内存的必须是危险原串（不修改原值裁定）

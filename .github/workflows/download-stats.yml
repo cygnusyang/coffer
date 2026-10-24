@@ -1,0 +1,51 @@
+# download-stats.yml —— README「下载量」表格自动刷新。
+#
+# 用户需求（2026-10-24）：「在 GitHub 中加一张用户下载的数据表」，口径为
+# GitHub Release 资产累计下载次数（GitHub 不提供按天/按地区/去重用户数，
+# traffic API 仅 14 天且需 owner token，故不做）。
+#
+# 触发：每周一 03:17 UTC 定时 + 手动 workflow_dispatch + 每次 Release 发布后。
+# 行为：跑 tools/update_download_stats.py 就地刷新 README 表格；无变化不提交。
+#
+# 注意：GITHUB_TOKEN 提交不会触发其他 workflow（GitHub 设计如此），本工作流也
+# 不需要被自己触发；下载计数由 GitHub 维护，与本仓提交无关。
+
+name: Download Stats
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: download-stats
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 生成下载量表
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/update_download_stats.py --file README.md
+
+      - name: 提交表格变化
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "下载量无变化，跳过提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "chore(docs): 刷新 README 下载量统计（自动）"
+          git push

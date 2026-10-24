@@ -14,6 +14,9 @@ release 中有体现）。
 
 ## [Unreleased]
 
+### 新增/变化
+- **README 下载量统计表（自动刷新）**：README 新增「下载」节，表格由 `tools/update_download_stats.py` 从 GitHub Release 资产 `download_count` 生成（版本 / 发布时间 / DMG 新装 / ZIP OTA / 合计 + 总计行），`.github/workflows/download-stats.yml` 每周一 + 每次 Release 发布后自动刷新并提交（无变化不提交）。口径为**累计下载次数**，含 OTA 自动更新，不等于去重用户数；按天 / 按地区拆分 GitHub 不提供，故不做。不涉 App 可交付行为，版本号不动。
+
 ## v2.12.1 — 2026-10-24
 
 ### 修复/纪律

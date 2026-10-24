@@ -4,6 +4,24 @@
 
 - 仓库：<https://github.com/cygnusyang/coffer> · 许可证：AGPL-3.0
 
+## 下载
+
+安装包见 [Releases](https://github.com/cygnusyang/coffer/releases/latest)：`Coffer-vX.Y.Z.dmg`（新装）、`Coffer-vX.Y.Z.zip`（OTA 自动更新使用，勿手工解压覆盖）。
+
+下表由 CI 每周自动刷新（`tools/update_download_stats.py`）。口径是 **GitHub 资产累计下载次数**，含 OTA 自动更新，不等于去重用户数。
+
+<!-- downloads:start（由 tools/update_download_stats.py 自动生成，勿手改） -->
+
+_最后更新：2026-10-24（来源：GitHub Release 资产累计下载次数，含 OTA 自动更新）_
+
+| 版本 | 发布时间 | DMG（新装） | ZIP（OTA 更新） | 合计 |
+| --- | --- | ---: | ---: | ---: |
+| v2.12.0 | 2026-10-22 | 1 | 1 | 2 |
+| v2.11.0 | 2026-10-18 | 0 | 4 | 4 |
+| **总计** | — | **1** | **5** | **6** |
+
+<!-- downloads:end -->
+
 ## 快速开始
 
 ### 构建 App（macOS）

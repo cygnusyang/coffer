@@ -428,16 +428,24 @@ if not resources_only:
         globpart, pattern = body.split(":", 1)
         exempt_pairs.append((globpart.strip(), pattern.strip()))
 
-    def is_exempt(relpath, key):
+    def is_exempt(relpath, key, raw=None):
+        # H2 修复：l10n_exceptions.txt 文件头约定「模式填源码字面量原文」，
+        # 而匹配侧历史上只比归一化后的 `%?` 形式 —— 照文件头写的人会被当成没写。
+        # 现在两者都认：先比原文，再比归一化形式。
         for globpart, pattern in exempt_pairs:
             if not fnmatch.fnmatch(relpath, globpart):
                 continue
-            if pattern == "*" or pattern == key:
+            if pattern == "*" or pattern == key or (raw is not None and pattern == raw):
                 return True
         return False
 
+    # 抽取面（H2 修复）：
+    #   - 加左边界 (?<![A-Za-z0-9_]) —— 否则 `statLabel("…")` 会被 `Label` 分支子串命中，
+    #     制造「已覆盖」的假绿（v2.13.1 审查中 statLabel 家族就栽在这条）。
+    #   - 补 LocalizedStringKey / LabeledContent / ProgressView / Section / confirmationDialog：
+    #     这几个入口此前完全不被抽取，导致 H1 的 4 条缺键只能靠人工发现。
     LITERAL_PATTERNS = [
-        re.compile(r'(?:Text|Button|Label|Toggle)\s*\(\s*"((?:[^"\\]|\\.)*)"'),
+        re.compile(r'(?<![A-Za-z0-9_])(?:Text|Button|Label|Toggle|LabeledContent|ProgressView|Section|LocalizedStringKey|confirmationDialog)\s*\(\s*"((?:[^"\\]|\\.)*)"'),
         re.compile(r'String\s*\(\s*localized:\s*"((?:[^"\\]|\\.)*)"'),
         re.compile(r'\.(?:navigationTitle|help|alert)\s*\(\s*"((?:[^"\\]|\\.)*)"'),
     ]
@@ -452,12 +460,13 @@ if not resources_only:
                 for m in pat.finditer(line):
                     lit = m.group(1)
                     key = lit.replace('\\"', '"').replace("\\\\", "\\")
+                    raw_key = key          # 例外文件里的「源码字面量原文」形式
                     key = re.sub(r"\\\([^)]*\)", "%?", key)
                     if not key.strip():
                         continue
                     if not re.search(r"[\u4e00-\u9fff]", key):
                         continue   # 已是英文/符号，不需要翻译
-                    if key in allow_keys or is_exempt(rel, key):
+                    if key in allow_keys or is_exempt(rel, key, raw_key):
                         continue
                     candidates.setdefault(key, "%s:%d" % (rel, lineno))
 

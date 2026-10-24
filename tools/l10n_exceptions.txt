@@ -16,3 +16,14 @@
 # ---- 已知不翻（设计 §5.7 裁定：3487 字长文不在操作路径阻断面，v2.14.0 或用户
 #      要求英文帮助时回填，登记 P-19.1）----
 Views/HelpCenterContent.swift:* # §5.7 v2.13.0 不翻长文，英文界面顶部给一行说明（P-19.1）
+
+# ---- 反向覆盖检查（tools/l10n_reverse_check.sh）命中的 3 条：确认为「非语言内容」，不是漏翻 ----
+Updater/OTAInstaller.swift:（无 stderr 输出） # 诊断日志拼接片段（进 DiagLog），用户不可见
+Support/ItemStore.swift:会话不存在 # FfiError 载荷（D-10 后只进日志/诊断页），非 UI 文案
+Support/UpdateCopy.swift:\(checkNetworkErrorCode) 更新检查网络失败（\(url.absoluteString)： # 诊断日志行构造器，参数是错误码与 URL
+Dropzone/DropzoneImportModel.swift:会话不存在 # FfiError 载荷（同 ItemStore），D-10 后只进日志
+Support/UpdateCopy.swift:\(checkNetworkErrorCode) 更新检查网络失败（\(url.absoluteString)）： # 诊断日志行构造器（DiagLog），参数为错误码与 URL
+Views/BitwardenImportView.swift:会话不存在 # FfiError 1001 载荷（D-10 后只进日志），非 UI 文案
+Views/OpvaultImportView.swift:会话不存在 # 同上
+Views/PuxImportView.swift:会话不存在 # 同上
+Views/ImportView.swift:会话不存在 # 同上

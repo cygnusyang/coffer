@@ -1,53 +1,53 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="760" height="640" viewBox="0 0 760 640" role="img" aria-labelledby="title desc">
-<title id="title">条目查询流程（含解密）</title>
-<desc id="desc">打开条目列表后，cf-ffi 调 list_items，cf-session 强制 require_unlocked 门禁，cf-store 按索引列查询 enc_title，逐行解密后组装 ItemSummary 返回。</desc>
+<title id="title">Item Query Flow (with decryption)</title>
+<desc id="desc">When the item list opens, cf-ffi calls list_items; cf-session enforces the require_unlocked gate; cf-store queries enc_title from indexed columns, decrypts row by row and assembles ItemSummary.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>
 <rect width="760" height="640" rx="20" fill="#f8fafc"/>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
-<text x="40" y="49" font-size="28" fill="#0f172a" font-weight="700">条目查询流程（含解密）</text>
-<text x="40" y="78" font-size="16" fill="#64748b">列表页只需标题、不解密全部字段 · 按需解密是「逐字段加密」方案的核心优势</text>
+<text x="40" y="49" font-size="28" fill="#0f172a" font-weight="700">Item Query Flow (with decryption)</text>
+<text x="40" y="78" font-size="16" fill="#64748b">List view needs only titles · on-demand decryption is the core win of per-field encryption</text>
 
-<!-- ===== 步骤 1 ===== -->
+<!-- ===== Step 1 ===== -->
 <text x="150" y="132" font-size="14" fill="#475569" text-anchor="end" font-weight="700">UI</text>
 <rect x="160" y="110" width="560" height="56" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
-<text x="180" y="144" font-size="15" fill="#0f172a" font-weight="600">打开条目列表</text>
+<text x="180" y="144" font-size="15" fill="#0f172a" font-weight="600">Open the item list</text>
 <path d="M 440 166 V 188" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
 
-<!-- ===== 步骤 2 ===== -->
+<!-- ===== Step 2 ===== -->
 <text x="150" y="210" font-size="14" fill="#065f46" text-anchor="end" font-weight="700">cf-ffi</text>
 <rect x="160" y="188" width="560" height="56" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
 <text x="180" y="222" font-size="15" fill="#0f172a" font-weight="600">list_items(vault_id, filter?, sort?, page?)</text>
 <path d="M 440 244 V 266" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
 
-<!-- ===== 步骤 3（门禁） ===== -->
+<!-- ===== Step 3 (gate) ===== -->
 <text x="150" y="288" font-size="14" fill="#92400e" text-anchor="end" font-weight="700">cf-session</text>
 <rect x="160" y="266" width="560" height="56" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
 <rect x="646" y="256" width="74" height="20" rx="6" fill="#f59e0b"/>
-<text x="683" y="270" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">Rust 门禁</text>
+<text x="683" y="270" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">Rust gate</text>
 <text x="180" y="300" font-size="15" fill="#0f172a" font-weight="600">require_unlocked()</text>
 <path d="M 440 322 V 344" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
 
-<!-- ===== 步骤 4 ===== -->
+<!-- ===== Step 4 ===== -->
 <text x="150" y="366" font-size="14" fill="#1e40af" text-anchor="end" font-weight="700">cf-store</text>
 <rect x="160" y="344" width="560" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
 <text x="180" y="371" font-size="14" fill="#0f172a" font-weight="600">SELECT uuid, category, updated_at, enc_title</text>
-<text x="180" y="391" font-size="13" fill="#1e40af">FROM items WHERE …（只取索引列，不取字段明细）</text>
+<text x="180" y="391" font-size="13" fill="#1e40af">FROM items WHERE … (index columns only, no field payload)</text>
 <path d="M 440 400 V 422" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
 
-<!-- ===== 步骤 5（关键转换点） ===== -->
+<!-- ===== Step 5 (key step) ===== -->
 <text x="150" y="444" font-size="14" fill="#1e40af" text-anchor="end" font-weight="700">cf-crypto</text>
 <rect x="160" y="422" width="560" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
 <rect x="646" y="412" width="74" height="20" rx="6" fill="#f59e0b"/>
-<text x="683" y="426" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">关键转换点</text>
-<text x="180" y="456" font-size="15" fill="#0f172a" font-weight="600">逐行解密 enc_title（用 meta_kek 或 item_kek）</text>
+<text x="683" y="426" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="700">Key step</text>
+<text x="180" y="456" font-size="15" fill="#0f172a" font-weight="600">Decrypt enc_title row by row (with meta_kek or item_kek)</text>
 <path d="M 440 478 V 500" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
 
-<!-- ===== 步骤 6（结果） ===== -->
-<text x="150" y="522" font-size="14" fill="#0f172a" text-anchor="end" font-weight="700">结果</text>
+<!-- ===== Step 6 (result) ===== -->
+<text x="150" y="522" font-size="14" fill="#0f172a" text-anchor="end" font-weight="700">Result</text>
 <rect x="160" y="500" width="560" height="56" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.4"/>
-<text x="180" y="534" font-size="15" fill="#0f172a" font-weight="600">组装 ItemSummary 列表返回</text>
+<text x="180" y="534" font-size="15" fill="#0f172a" font-weight="600">Assemble and return the ItemSummary list</text>
 
-<!-- 底注 -->
-<text x="40" y="588" font-size="14" fill="#64748b">性能考量：1000 条目列表只需 1000 次小规模 AEAD 解密（约数微秒级），无需全库解密——这是「逐字段加密 + 按需解密」的核心优势。</text>
+<!-- footnote -->
+<text x="40" y="588" font-size="14" fill="#64748b">Performance: a 1000-item list needs 1000 small AEAD decrypts (microseconds each), no full-vault decrypt.</text>
 </g>
 </svg>

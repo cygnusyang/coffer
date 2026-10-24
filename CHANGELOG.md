@@ -15,6 +15,7 @@ release 中有体现）。
 ## [Unreleased]
 
 ### 新增/变化
+- **文档配图全量英文化**：docs/assets 全部 **19 张 SVG** 的中文文案译为英文（约 410 条 `<text>` 标签 + `<title>`/`<desc>` + 注释，统一术语：条目=item / 保险库=vault / 托管=escrow / 放置区=dropzone / 验证码=TOTP 等，代码标识符与 CLI 名不译）；README 首屏架构图、数据流图、密钥层级图随之英文呈现。顺带修 crate-dependency-graph.svg 图例被 cf-domain 卡片遮挡的版式缺陷（图形区整体下移 26px，画布 1000→1026），并按 Chrome 渲染逐图复核无溢出。
 - **仓库可发现性基建**：README 顶部加徽章（license / platform / latest / downloads）、中英切换、架构图（`docs/assets` SVG）；新增 `README.en.md` 全量英文版（Why / Features / Architecture / MCP / CLI 全节）；仓库描述改中英双语 + 19 个 topics + 开启 Discussions + bug/feature Issue 模板（安全缺陷引导走私下渠道）；`docs/02-研发计划与决策/02-版本开发计划.md` §0 速览补齐 v2.8.1~v2.12.1 十一行（r2.38，含 v2.9.0 未发版、v2.12.1 未发版两处事实标注）。
 - **README 下载量统计表（自动刷新）**：README 新增「下载」节，表格由 `tools/update_download_stats.py` 从 GitHub Release 资产 `download_count` 生成（版本 / 发布时间 / DMG 新装 / ZIP OTA / 合计 + 总计行），`.github/workflows/download-stats.yml` 每周一 + 每次 Release 发布后自动刷新并提交（无变化不提交）。口径为**累计下载次数**，含 OTA 自动更新，不等于去重用户数；按天 / 按地区拆分 GitHub 不提供，故不做。不涉 App 可交付行为，版本号不动。
 

@@ -1,26 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="1000" viewBox="0 0 1660 1000" role="img" aria-labelledby="title desc">
-<title id="title">Coffer 核心工作区 crate 依赖图</title>
-<desc id="desc">Coffer 15 个 crate 的直接依赖关系图，依赖方向自右向左，全部单向。数据实测自各 crate Cargo.toml 的 dependencies 段。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="1026" viewBox="0 0 1660 1026" role="img" aria-labelledby="title desc">
+<title id="title">Coffer Core Workspace — crate Dependency Graph</title>
+<desc id="desc">Direct dependency graph of the 15 Coffer crates: edges point right to left and are all one-way. Measured from the [dependencies] section of each crate's Cargo.toml.</desc>
 <defs>
 <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker>
 <marker id="arrd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker>
 </defs>
-<rect width="1660" height="1000" rx="20" fill="#f8fafc"/>
+<rect width="1660" height="1026" rx="20" fill="#f8fafc"/>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
-<text x="40" y="49" font-size="28" fill="#0f172a" font-weight="700">Coffer 核心工作区 · crate 直接依赖图</text>
-<text x="40" y="78" font-size="16" fill="#64748b">40 条直接依赖边（36 实线 + 4 条 feature 门控虚线），方向自右向左（依赖 → 被依赖），全部单向、无环 · 实测自各 crate Cargo.toml [dependencies]（2026-10-17）</text>
+<text x="40" y="49" font-size="28" fill="#0f172a" font-weight="700">Coffer Core Workspace · crate Direct Dependency Graph</text>
+<text x="40" y="78" font-size="16" fill="#64748b">40 direct edges (36 solid + 4 feature-gated dashed), right to left (dependent → dependency), all one-way, acyclic · measured from each crate's Cargo.toml [dependencies] (2026-10-17)</text>
 
-<!-- 图例 -->
-<rect x="40" y="96" width="1580" height="40" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<rect x="60" y="106" width="18" height="18" rx="4" fill="#f5f3ff" stroke="#7c3aed"/><text x="84" y="120" font-size="14" fill="#334155">领域层</text>
-<rect x="160" y="106" width="18" height="18" rx="4" fill="#eff6ff" stroke="#2563eb"/><text x="184" y="120" font-size="14" fill="#334155">基础设施层</text>
-<rect x="290" y="106" width="18" height="18" rx="4" fill="#fffbeb" stroke="#d97706"/><text x="314" y="120" font-size="14" fill="#334155">应用服务层</text>
-<rect x="420" y="106" width="18" height="18" rx="4" fill="#ecfdf5" stroke="#059669"/><text x="444" y="120" font-size="14" fill="#334155">绑定层 / 对外边界</text>
-<rect x="620" y="106" width="18" height="18" rx="4" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="644" y="120" font-size="14" fill="#334155">测试支持 / 占位</text>
-<line x1="800" y1="115" x2="850" y2="115" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrd)"/><text x="860" y="120" font-size="14" fill="#334155">虚线边 = feature 门控依赖（cf-mcp 的 coffer-store / pro）</text>
-<text x="1580" y="121" font-size="14" fill="#94a3b8" text-anchor="end">箭头：A → B 表示 A 依赖 B</text>
-
-<!-- ===== 依赖边（先画，压在盒子下面） ===== -->
+<g transform="translate(0,26)">
+<!-- ===== dependency edges (drawn first, under the boxes) ===== -->
 <g fill="none" stroke="#94a3b8" stroke-width="1.5" opacity="0.55" marker-end="url(#arr)">
 <!-- cf-format → cf-crypto -->
 <path d="M 330 288 L 250 288"/>
@@ -64,11 +55,11 @@
 <!-- cf-testkit -->
 <path d="M 600 716 C 440 660, 340 220, 250 158"/>
 <path d="M 600 728 C 460 680, 370 360, 250 298"/>
-<!-- cf-mcp（实线：默认路径） -->
+<!-- cf-mcp (solid: default path) -->
 <path d="M 870 576 C 600 520, 400 220, 250 158"/>
 <path d="M 870 588 C 660 610, 460 590, 250 570"/>
 </g>
-<!-- cf-mcp feature 门控虚线边（coffer-store / pro） -->
+<!-- cf-mcp feature-gated dashed edges (coffer-store / pro) -->
 <g fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.7" marker-end="url(#arrd)">
 <path d="M 930 560 C 920 460, 1040 360, 1060 292"/>
 <path d="M 870 596 C 600 560, 420 360, 250 300"/>
@@ -76,100 +67,110 @@
 <path d="M 870 612 C 640 680, 460 710, 250 706"/>
 </g>
 
-<!-- ===== crate 盒子 ===== -->
-<!-- 领域层 -->
+<!-- ===== crate boxes ===== -->
+<!-- domain tier -->
 <g>
-<rect x="60" y="120" width="190" height="56" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.6"/>
+<rect x="60" y="112" width="190" height="56" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.6"/>
 <text x="155" y="144" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-domain</text>
-<text x="155" y="166" font-size="12.5" fill="#4c1d95" text-anchor="middle">领域模型 · 22 类模板 · 校验</text>
+<text x="155" y="166" font-size="12.5" fill="#4c1d95" text-anchor="middle">Domain model · 22 templates</text>
 </g>
-<!-- 基础设施层（叶） -->
+<!-- infrastructure (leaves) -->
 <g>
 <rect x="60" y="260" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="155" y="284" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-crypto</text>
-<text x="155" y="306" font-size="12.5" fill="#1e40af" text-anchor="middle">KDF · AEAD · HKDF · 清零</text>
+<text x="155" y="306" font-size="12.5" fill="#1e40af" text-anchor="middle">KDF · AEAD · HKDF · zeroize</text>
 </g>
 <g>
 <rect x="60" y="400" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="155" y="424" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-totp</text>
-<text x="155" y="446" font-size="12.5" fill="#1e40af" text-anchor="middle">RFC 6238 门面（SHA-1）</text>
+<text x="155" y="446" font-size="12.5" fill="#1e40af" text-anchor="middle">RFC 6238 facade (SHA-1)</text>
 </g>
 <g>
 <rect x="60" y="540" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="155" y="564" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-uds-sys</text>
-<text x="155" y="586" font-size="12.5" fill="#1e40af" text-anchor="middle">UDS peer 凭据 · 唯一 unsafe 面</text>
+<text x="155" y="586" font-size="12.5" fill="#1e40af" text-anchor="middle">UDS peer creds · only unsafe</text>
 </g>
 <g>
 <rect x="60" y="680" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="155" y="704" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-escrow-keychain</text>
-<text x="155" y="726" font-size="12.5" fill="#1e40af" text-anchor="middle">Keychain GenericPassword 只读</text>
+<text x="155" y="726" font-size="12.5" fill="#1e40af" text-anchor="middle">Keychain GenericPassword · RO</text>
 </g>
-<!-- 基础设施层（中列） -->
+<!-- infrastructure (middle column) -->
 <g>
 <rect x="330" y="260" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="425" y="284" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-format</text>
-<text x="425" y="306" font-size="12.5" fill="#1e40af" text-anchor="middle">容器头读写 · 版本识别 · 原子写</text>
+<text x="425" y="306" font-size="12.5" fill="#1e40af" text-anchor="middle">Header I/O · atomic writes</text>
 </g>
 <g>
 <rect x="330" y="400" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="425" y="424" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-audit</text>
-<text x="425" y="446" font-size="12.5" fill="#1e40af" text-anchor="middle">zxcvbn 强度 · 密码生成</text>
+<text x="425" y="446" font-size="12.5" fill="#1e40af" text-anchor="middle">zxcvbn strength · generator</text>
 </g>
 <g>
 <rect x="330" y="680" width="190" height="56" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 3"/>
 <text x="425" y="704" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-module-a</text>
-<text x="425" y="726" font-size="12.5" fill="#475569" text-anchor="middle">占位</text>
+<text x="425" y="726" font-size="12.5" fill="#475569" text-anchor="middle">placeholder</text>
 </g>
-<!-- 基础设施层（第三列） -->
+<!-- infrastructure (third column) -->
 <g>
 <rect x="600" y="190" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="695" y="214" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-store</text>
-<text x="695" y="236" font-size="12.5" fill="#1e40af" text-anchor="middle">SQLite · 字段级加密 · 事务</text>
+<text x="695" y="236" font-size="12.5" fill="#1e40af" text-anchor="middle">SQLite · field encryption</text>
 </g>
 <g>
-<rect x="600" y="360" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+<rect x="592" y="360" width="206" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="695" y="384" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-importer</text>
-<text x="695" y="406" font-size="12.5" fill="#1e40af" text-anchor="middle">CSV / 1PUX / BW JSON / OPVault · 放置区</text>
+<text x="695" y="406" font-size="12.5" fill="#1e40af" text-anchor="middle">CSV/1PUX/BW/OPVault · dropzone</text>
 </g>
 <g>
 <rect x="600" y="530" width="190" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
 <text x="695" y="554" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-exporter</text>
-<text x="695" y="576" font-size="12.5" fill="#1e40af" text-anchor="middle">加密备份包 · CSV · 1PUX 导出</text>
+<text x="695" y="576" font-size="12.5" fill="#1e40af" text-anchor="middle">Encrypted backup · CSV · 1PUX</text>
 </g>
 <g>
 <rect x="600" y="700" width="190" height="56" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 3"/>
 <text x="695" y="724" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-testkit</text>
-<text x="695" y="746" font-size="12.5" fill="#475569" text-anchor="middle">夹具 · 合成样本（占位）</text>
+<text x="695" y="746" font-size="12.5" fill="#475569" text-anchor="middle">Fixtures · synthetic (stub)</text>
 </g>
-<!-- 应用服务层 -->
+<!-- app services -->
 <g>
 <rect x="870" y="240" width="190" height="56" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
 <text x="965" y="264" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-session</text>
-<text x="965" y="286" font-size="12.5" fill="#92400e" text-anchor="middle">会话 · 用例编排 · 权限门禁</text>
+<text x="965" y="286" font-size="12.5" fill="#92400e" text-anchor="middle">Session · orchestration · gates</text>
 </g>
-<!-- 绑定层 -->
+<!-- binding layer -->
 <g>
 <rect x="1140" y="240" width="190" height="56" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.6"/>
 <text x="1235" y="264" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-ffi</text>
-<text x="1235" y="286" font-size="12.5" fill="#065f46" text-anchor="middle">UniFFI 唯一对外边界</text>
+<text x="1235" y="286" font-size="12.5" fill="#065f46" text-anchor="middle">UniFFI sole external boundary</text>
 </g>
 <g>
 <rect x="870" y="560" width="190" height="56" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.6"/>
 <text x="965" y="584" font-size="17" fill="#0f172a" font-weight="700" text-anchor="middle">cf-mcp</text>
-<text x="965" y="606" font-size="12.5" fill="#065f46" text-anchor="middle">MCP 凭据网关 · coffer CLI</text>
+<text x="965" y="606" font-size="12.5" fill="#065f46" text-anchor="middle">MCP cred gateway · coffer CLI</text>
 </g>
-<!-- vendor license 注记 -->
+<!-- vendor license note -->
 <g>
 <rect x="1410" y="200" width="220" height="150" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
 <text x="1520" y="228" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">core/vendor/license/</text>
 <text x="1520" y="256" font-size="12.5" fill="#475569" text-anchor="middle">cf-license · cf-keychain · cf-assemble</text>
-<text x="1520" y="280" font-size="12.5" fill="#475569" text-anchor="middle">官方许可模块（vendored 闭源）</text>
-<text x="1520" y="304" font-size="12.5" fill="#475569" text-anchor="middle">cf-ffi feature official-license 门控</text>
-<text x="1520" y="328" font-size="12.5" fill="#475569" text-anchor="middle">默认不进构建图（TC-BLD-02）</text>
+<text x="1520" y="280" font-size="12.5" fill="#475569" text-anchor="middle">Official license module (vendored)</text>
+<text x="1520" y="304" font-size="12.5" fill="#475569" text-anchor="middle">cf-ffi feature official-license gate</text>
+<text x="1520" y="328" font-size="12.5" fill="#475569" text-anchor="middle">Not in default build (TC-BLD-02)</text>
 </g>
 
-<!-- 底注 -->
-<text x="40" y="940" font-size="14" fill="#64748b">阅读顺序：cf-ffi（UI 绑定）与 cf-mcp（CLI / MCP 网关，独立进程）是两条对外边界；cf-session 编排；左端 cf-domain / cf-crypto / cf-totp / cf-uds-sys / cf-escrow-keychain 无任何内部依赖。</text>
-<text x="40" y="962" font-size="14" fill="#94a3b8">注意：cf-ffi 除 cf-session 外还直连 cf-domain / cf-crypto / cf-store / cf-format / cf-audit / cf-importer / cf-exporter（类型与错误映射所需）；cf-mcp 默认 feature（coffer-store + pro）经虚线引入 cf-session / cf-crypto / cf-audit / cf-escrow-keychain。单向性未破坏，出入详见 docs/01-需求与架构/06-架构总览与模块设计.md §3.4。</text>
+<!-- footnotes -->
+<text x="40" y="940" font-size="14" fill="#64748b">Reading order: cf-ffi (UI binding) and cf-mcp (CLI / MCP gateway, separate process) are the two outward boundaries; cf-session orchestrates; cf-domain / cf-crypto / cf-totp / cf-uds-sys / cf-escrow-keychain have no internal deps.</text>
+<text x="40" y="962" font-size="14" fill="#94a3b8">Note: cf-ffi also links directly to cf-domain/cf-crypto/cf-store/cf-format/cf-audit/cf-importer/cf-exporter; cf-mcp's feature-gated deps add cf-session/cf-crypto/cf-audit/cf-escrow-keychain. One-way intact; see architecture overview §3.4.</text>
 </g>
+</g>
+<!-- legend -->
+<rect x="40" y="96" width="1580" height="40" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<rect x="60" y="98" width="18" height="18" rx="4" fill="#f5f3ff" stroke="#7c3aed"/><text x="84" y="112" font-size="14" fill="#334155">Domain</text>
+<rect x="160" y="98" width="18" height="18" rx="4" fill="#eff6ff" stroke="#2563eb"/><text x="184" y="112" font-size="14" fill="#334155">Infrastructure</text>
+<rect x="290" y="98" width="18" height="18" rx="4" fill="#fffbeb" stroke="#d97706"/><text x="314" y="112" font-size="14" fill="#334155">App services</text>
+<rect x="420" y="98" width="18" height="18" rx="4" fill="#ecfdf5" stroke="#059669"/><text x="444" y="112" font-size="14" fill="#334155">Binding / boundary</text>
+<rect x="620" y="98" width="18" height="18" rx="4" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="644" y="112" font-size="14" fill="#334155">Test support / stub</text>
+<line x1="800" y1="115" x2="850" y2="115" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrd)"/><text x="860" y="112" font-size="14" fill="#334155">Dashed = feature-gated dep (cf-mcp: coffer-store / pro)</text>
+<text x="1580" y="121" font-size="14" fill="#94a3b8" text-anchor="end">Arrow: A → B means A depends on B</text>
 </svg>

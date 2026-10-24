@@ -5,7 +5,7 @@
     "direction" : "forward",
     "id" : "37DA250E-F22E-46BD-BC47-42F3868C569E",
     "title" : "Coffer",
-    "updatedAt" : "2026-10-24T18:06:34Z"
+    "updatedAt" : "2026-10-24T18:32:01Z"
   },
   "resources" : [
 
@@ -189,7 +189,7 @@
       "priority" : "normal",
       "progress" : 0,
       "schedulingPolicy" : "asap",
-      "status" : "pending",
+      "status" : "done",
       "tags" : [
         "debt"
       ],

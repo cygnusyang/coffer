@@ -1,0 +1,199 @@
+{
+  "formatVersion" : 1,
+  "project" : {
+    "createdAt" : "2026-10-24T16:40:08Z",
+    "direction" : "forward",
+    "id" : "37DA250E-F22E-46BD-BC47-42F3868C569E",
+    "title" : "Coffer",
+    "updatedAt" : "2026-10-24T16:40:29Z"
+  },
+  "resources" : [
+
+  ],
+  "tasks" : [
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 2,
+      "id" : "CB29FC0F-DF44-4517-95F2-BF4739F4E59A",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "high",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "growth"
+      ],
+      "title" : "补 README 截图与 GIF（主窗 \/ 条目详情 \/ 设置 + 15s 动图）"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 3,
+      "id" : "D0A3CCD8-F255-4BBF-850B-7FF85D7338B9",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "high",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "distribution"
+      ],
+      "title" : "Developer ID 证书 + 公证（解 Gatekeeper 右键打开）"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 1,
+      "id" : "C125B9B6-D355-485D-BA87-D446A1B35B56",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "low",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "growth"
+      ],
+      "title" : "README 加 CI 徽章 + social preview 图 + good first issue 标签"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 2,
+      "id" : "3B7C73C9-FF59-4149-B624-4052603175DF",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "low",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "debt"
+      ],
+      "title" : "H2：check_l10n 抽取面盲区 + 反向覆盖脚本落库"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 1,
+      "id" : "822E7781-DBB3-4A8A-88C0-080D9384BA41",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "low",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "qa"
+      ],
+      "title" : "Dynamic Type accessibility5 真机核销（设置页）"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+        {
+          "lagDays" : 0,
+          "predecessorID" : "D0A3CCD8-F255-4BBF-850B-7FF85D7338B9",
+          "type" : "fs"
+        }
+      ],
+      "effortHours" : 2,
+      "id" : "D9DAF165-CB61-442D-B4E9-1AE02545C20F",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "normal",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "distribution"
+      ],
+      "title" : "Homebrew Cask 上架（依赖公证）"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 2,
+      "id" : "D2B6EF17-718D-46E0-8EA0-8E62FDEE4E06",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "normal",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "docs"
+      ],
+      "title" : "docs 英文导览页（docs\/README.en.md，每篇一句话）"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 1,
+      "id" : "8902B91F-EF6D-4E0D-BAAC-E1D376C5D2DC",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "normal",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "growth"
+      ],
+      "title" : "MCP 目录收录（mcp.so \/ awesome-mcp-servers \/ Smithery）"
+    },
+    {
+      "assignments" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "effortHours" : 3,
+      "id" : "3B1C56EE-D6AA-4E2F-9F2D-47FA8DC47788",
+      "kind" : "task",
+      "notes" : "",
+      "priority" : "normal",
+      "progress" : 0,
+      "schedulingPolicy" : "asap",
+      "status" : "pending",
+      "tags" : [
+        "debt"
+      ],
+      "title" : "BUG-35：Rust 侧导入\/放置区告警整句 i18n（v2.13.2 目标）"
+    }
+  ]
+}

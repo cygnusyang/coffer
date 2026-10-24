@@ -35,3 +35,11 @@ Do not create an Agent Team for:
 - single-file fixes
 - simple questions
 - strongly sequential tasks
+
+## 版本与 CHANGELOG（本仓落地）
+
+修 bug 的提交 = **代码修复 + 版本号 PATCH + CHANGELOG 条目**，三件事同一个提交完成（详见全局规则「版本与 CHANGELOG：修 bug 必须升版本」）。
+
+- 版本号**单源**：`macos/Coffer/Info.plist` 的 `CFBundleShortVersionString`，三位 `MAJOR.MINOR.PATCH`；release 流水线只认它，不手改构建产物。
+- 每个版本在 `CHANGELOG.md` 顶部新增 `## vX.Y.Z — YYYY-MM-DD` 段（新版本在 `## [Unreleased]` 之下），条目写「现象 + 根因 + 修复 + 验证证据 + 影响面」。
+- 分级：仅缺陷修复 → PATCH；新增能力 → MINOR；破坏性变更（argv / 配置 schema / OTA 契约）→ MAJOR。

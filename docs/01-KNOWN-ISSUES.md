@@ -1888,3 +1888,13 @@ EXIT=124   # timeout 3s：常驻等待 stdin，符合预期
 **影响面**：英文界面导入/放置区告警；中文界面不变。
 **修复路径**：告警改为「码 + 参数」契约，Swift 侧按码出文案（cf-importer FFI 契约变更，需单独版本承载）。
 **状态**：🟡 非目标（v2.13.0 显式登记 + CHANGELOG 写明），目标版本 **v2.13.1**。
+
+## BUG-36（✅ 已修复，v2.13.1 真机核销发现）：设置页「内容 460 光但窗口沿用旧 900pt」→ 卡片居中、两侧大片空白
+
+**现象**：v2.13.1 紧凑化把内容宽度固定为 460pt，但设置窗口沿用上一会话保存的 900×450 尺寸 → 卡片列居中，左右各 ~220pt 空洞，观感**比改造前更松**。
+**根因**：`Window("设置", id: "settings")` 未声明 `defaultSize` / `windowResizability`，SwiftUI 恢复历史 frame；内容只约束了自己，没有约束窗口。
+**影响面**：所有曾把设置窗拉宽过的用户（升级后首开即复现）；新装用户不受影响。
+**修复**：`CofferApp` 的 settings Window 加 `.defaultSize(width: SettingsMetrics.windowWidth, height: 680)` + `.windowResizability(.contentSize)`；真机复测窗口宽度收敛为 **460**。
+**核销**：commit 见 v2.13.1 批次；真机实测 `System Events` 取窗口尺寸 = 460×450（修复前 900×450）；截图 `/tmp/set-zh-4.png`。
+**状态**：✅ 已修复（未流出）。
+

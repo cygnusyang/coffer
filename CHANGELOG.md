@@ -12,31 +12,30 @@ release 中有体现）。
 
 ---
 
-## [Unreleased]
-
 ## v2.13.0 — 2026-10-24
 
 ### 新增/变化
-- **多语言（简体中文 + English）**：界面文案全量英文化，语言入口在「设置 → 语言」（跟随系统 / 简体中文 / English），写 App 偏好域 `AppleLanguages`，下一进程生效。
-  - 方案：**中文原文当 key**，只发 `en.lproj`，缺键回落键本身 → 中文侧零迁移、零回归（逐字不变）；资源在 codesign **之前**装配，签名后加资源会 `codesign --verify --strict` 失败。
-  - 译文 **998 条**（00-common 33 / ui-a 356 / ui-b 399 / support 186 / errors 24）+ `InfoPlist.strings`；52 个 View 全覆盖，另含 AppModel / Platform / Updater / Dropzone / 菜单 / 帮助中心长文。
-  - 门禁 `tools/check_l10n.sh` G1–G7：缺键、跨片重复键、占位符类型、未转义 `%`、死键、资源缺失；构建期合并分片（源分片入库、产物生成）。
-  - 错误面：新增 `CoreErrorText`（20 个核心码）+ 复用 LicenseErrorText / TouchIDError；口径 **码优先、原始载荷降为诊断日志**，错误码/OSStatus 一律 `%@`（避免 1005 显示成 1,005）。
-  - 已知限制（显式登记，非缺陷）：导入 / 放置区预检告警整句来自 Rust 侧（39 处 `warnings.push`），本版**不翻**，英文界面这些告警仍为中文；计划 v2.13.1 按「告警码 + 参数」补齐。
+- **多语言（简体中文 + English）**：界面文案全量英文化，语言入口在「设置 → 语言」（跟随系统 / 简体中文 / English），写 App 偏好域 `AppleLanguages`，**下一进程生效**。
+  - 方案：**中文原文当 key**，只发 `en.lproj`，缺键回落键本身 → 中文侧零迁移；资源在 codesign **之前**装配（签名后加资源会破 `codesign --verify --strict`）。
+  - 译文 **998 条**（00-common 33 / ui-a 356 / ui-b 399 / support 186 / errors 24）+ `InfoPlist.strings`；覆盖 52 个 View 与非视图层（AppModel / Platform / Updater / Dropzone / 菜单 / 帮助中心章节标题）。**帮助中心正文按设计 §5.7 明确不翻**（仅加一行英文说明 banner）。
+  - 门禁 `tools/check_l10n.sh`：**G1–G5 硬门禁**（缺键 / 跨片重复键 / 占位符类型 / 未转义 `%` / 死键）+ **G6/G7 软报**（源码覆盖统计 / 分片条目统计）；构建期合并源分片，产物不入库。
+  - 错误面：新增 `CoreErrorText`（20 个核心码）+ 复用 LicenseErrorText / TouchIDError；**已知码按码出文案、原始载荷入诊断日志；未知码保留 `code + 载荷` 兜底**（可诊断性优先，并非一律不显示载荷）。错误码 / OSStatus 一律 `%@`（Int 插值会把 1005 写成 1,005）。
+  - 工程/文档随发：docs/assets 19 张 SVG 全量英文化；README 徽章 + 中英切换 + `README.en.md` + 架构图；README 下载量统计表（CI 每周自动刷新）。
+- **中文可见文案仅 3 类变化**（L10N-05「中文零回归」的完整例外清单）：① 已知核心错误码弹窗（`错误 1005：corrupted container: KDF 参数非法：…` → `密码库文件已损坏，无法读取。`）；② 更新失败收尾（`…更新安装失败：更新包签名校验未通过，未做任何修改。` → `…更新包未能安装。请重新下载更新包后重试。`）；③ 安装/注册辅助进程失败的「退出码 N」提示。其余中文逐字不变，未知码文案不变。
+- 已知限制（显式登记，非缺陷）：导入 / 放置区预检告警整句来自 Rust 侧（40 处 `warnings.push` 中 39 处含中文），经 `Text/Label(warning)` 直出导入页，**本版不翻**；计划 v2.13.1 按「告警码 + 参数」补齐。验收判据已为其开例外。
 
 ### 修复/纪律
 - **BUG-18 核销**：cf-mcp UDS 就绪判据由「socket 文件存在」改为「connect 成功」（`src/uds.rs:481`），8 处连接点接线；6 轮全量 0 flaky。
 - **BUG-19 核销**：`write_stdin_allowing_early_exit` fail-closed 收口（`tests/cli.rs:593`），调用点恢复 `expect`，消除 CI 间歇 BrokenPipe；本地 20/20。
 - **设置窗误判修复**：`CofferApp` 用中文原文 `!= "设置"` 比对窗口标题，英文界面失配会让设置窗被当成主窗口（⌥⌘P 错焦）→ 改 `String(localized:)`。
-- 设计文档 `24-v2.13.0-多语言-设计.md` 按实测修订 4 处：占位符按声明类型（`UInt32→%u` / `UInt64→%llu` / `Int32→%d`）、译文占位符不得重排、码位不用 Int 插值、`String(localized:)` 缺键行为裁定。
+- 设计文档按实施期实测修订 5 处：占位符按声明类型（`UInt32→%u` / `UInt64→%llu` / `Int32→%d`）、译文占位符不得重排、码位不用 Int 插值、`String(localized:)` 回落行为（**真插值才代入**；手写 `%-spec` 的无插值字面量等价于 `NSLocalizedString`）、字段名创建时本地化并落库（`designation` 才是语义锚点）。
+
+### 验证
+- 16 个 macOS harness **673 passed / 0 failed**；`cargo test -p cf-mcp` 两轮各 **373 passed / 0 failed** 无 flaky；全 App `swiftc -typecheck` 108 文件 **0 error / 0 warning**；完整 `build_macos_app.sh` 通过且 `codesign --verify --strict` valid。
+- 运行时取证（真 .app + 998 键表）：en 下 `%lld` / `%u` / `%@` / 无插值四类均正确渲染，CoreErrorText 6 码全英文；`-AppleLanguages '(ja)'` 回落中文；全仓 **1150 个可判定占位符站点 0 类型违规**。
+- 真机 AX 英文扫描**阻塞**：本机 0 codesigning identity，未做。
 
 ---
-
-### 新增/变化
-- **文档配图全量英文化**：docs/assets 全部 **19 张 SVG** 的中文文案译为英文（约 410 条 `<text>` 标签 + `<title>`/`<desc>` + 注释，统一术语：条目=item / 保险库=vault / 托管=escrow / 放置区=dropzone / 验证码=TOTP 等，代码标识符与 CLI 名不译）；README 首屏架构图、数据流图、密钥层级图随之英文呈现。顺带修 crate-dependency-graph.svg 图例被 cf-domain 卡片遮挡的版式缺陷（图形区整体下移 26px，画布 1000→1026），并按 Chrome 渲染逐图复核无溢出。
-- **仓库可发现性基建**：README 顶部加徽章（license / platform / latest / downloads）、中英切换、架构图（`docs/assets` SVG）；新增 `README.en.md` 全量英文版（Why / Features / Architecture / MCP / CLI 全节）；仓库描述改中英双语 + 19 个 topics + 开启 Discussions + bug/feature Issue 模板（安全缺陷引导走私下渠道）；`docs/02-研发计划与决策/02-版本开发计划.md` §0 速览补齐 v2.8.1~v2.12.1 十一行（r2.38，含 v2.9.0 未发版、v2.12.1 未发版两处事实标注）。
-- **README 下载量统计表（自动刷新）**：README 新增「下载」节，表格由 `tools/update_download_stats.py` 从 GitHub Release 资产 `download_count` 生成（版本 / 发布时间 / DMG 新装 / ZIP OTA / 合计 + 总计行），`.github/workflows/download-stats.yml` 每周一 + 每次 Release 发布后自动刷新并提交（无变化不提交）。口径为**累计下载次数**，含 OTA 自动更新，不等于去重用户数；按天 / 按地区拆分 GitHub 不提供，故不做。不涉 App 可交付行为，版本号不动。
-
 ## v2.12.1 — 2026-10-24
 
 ### 修复/纪律

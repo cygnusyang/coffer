@@ -27,7 +27,7 @@ command -v swiftc >/dev/null 2>&1 || { printf 'ERROR: 未找到 swiftc，请安�
 printf '== 1. Swift 纯逻辑单测（LanguagePreference）==\n'
 ARCH="$(uname -m)"
 OUT_DIR="$(mktemp -d)"
-trap 'rm -rf "${OUT_DIR}"' EXIT
+trap 'rm -r "${OUT_DIR}"' EXIT
 
 if swiftc -O -swift-version 5 -target "${ARCH}-apple-macos14.0" \
     "${ROOT_DIR}/macos/Coffer/Support/LanguagePreference.swift" \
@@ -54,7 +54,7 @@ expect_case() {
   else
     rc=$?
   fi
-  rm -rf "${work}"
+  rm -r "${work}"
 
   if [[ "${rc}" -ne "${want_rc}" ]]; then
     fail "${name}：期望 exit ${want_rc}，实得 ${rc}"

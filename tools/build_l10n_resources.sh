@@ -72,7 +72,7 @@ plutil -lint "${TMP_FILE}" >/dev/null \
   || die "合并后的 Localizable.strings 未通过 plutil -lint（分片单独合法但合并结果非法）。"
 
 # ---- 4. 落盘（先清旧目录：删分片后旧产物若残留，会留下已不存在的译文）----
-rm -rf "${DEST_DIR}"
+[[ -e "${DEST_DIR}" ]] && rm -r "${DEST_DIR}"
 mkdir -p "${DEST_DIR}"
 cp "${TMP_FILE}" "${DEST_DIR}/Localizable.strings" || die "写入 en.lproj/Localizable.strings 失败。"
 cp "${INFO_SRC}" "${DEST_DIR}/InfoPlist.strings" || die "拷贝 InfoPlist.strings 失败。"

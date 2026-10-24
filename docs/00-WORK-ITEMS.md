@@ -11,8 +11,8 @@
 
 | ID | 类型 | 标题 | Owner | 状态 | files 范围 | 判据/锚点 | 关闭证据 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| BUG-18 | BUG | cf-mcp uds 并行执行偶发 Connection refused（测试基建） | — | pending | core/cf-mcp/src/uds.rs | docs/01-KNOWN-ISSUES.md §BUG-18 | — |
-| BUG-19 | BUG | set_password_usage_errors_exit_4 CI 间歇 BrokenPipe（测试基建） | — | pending | core/cf-mcp/src/cli.rs | docs/01-KNOWN-ISSUES.md §BUG-19 | — |
+| BUG-18 | BUG | cf-mcp uds 并行执行偶发 Connection refused（测试基建） | — | done | core/cf-mcp/src/uds.rs | docs/01-KNOWN-ISSUES.md §BUG-18 | v2.13.0 批次；connect_ready 就绪判据 + connect_ready_survives_bind_listen_window 用例；6 轮 373 passed/0 failed |
+| BUG-19 | BUG | set_password_usage_errors_exit_4 CI 间歇 BrokenPipe（测试基建） | — | done | core/cf-mcp/src/cli.rs | docs/01-KNOWN-ISSUES.md §BUG-19 | v2.13.0 批次；write_stdin_allowing_early_exit + 正反例两用例；本地 20/20、373×2 无 flaky |
 | BUG-21 | BUG | UpdateTests 三项依赖 Developer ID 签名产物（环境项） | — | accepted | macos/CofferTests/ | docs/01-KNOWN-ISSUES.md §BUG-21 | 目标版本：随 Developer ID 签名线恢复 |
 | TASK-1 | TASK | run_gate.sh 增量门禁（--changed） | lead | done | tools/run_gate.sh | docs/00-协作适配.md §2 | docs-only 1s 通过 /tmp/gate-docsonly4.log；全量对照 1451/0/10 build=OK；假 cargo exit=2、非法 BASE exit=2（/tmp/gate-negative4.log）；--print-crates 反依赖闭包 cf-mcp→5 crate |
 | TASK-2 | TASK | workitem.py conflicts 并行冲突判定 | lead | done | tools/workitem.py | - | conflicts 正负例 /tmp/wi-evidence2.log：词中通配 CONFLICT、同 owner 不冲突、accepted/blocked claim 拒绝 exit=1；/tmp/wi-evidence.log 串行组 6 对冲突 |
@@ -21,6 +21,7 @@
 | TASK-5 | TASK | DESIGN.md 登记 MCP 工具行组件与本节变更 | ui-standard | done | docs/DESIGN.md | DESIGN.md §11 组件库条目 + §16 变更登记 | docs/DESIGN.md §11.1 MCP 工具行 + D-7.2a + D-5.5 + D-11.7/11.8 + D-13.6，§16 登记，§17 计数 64 |
 | BUG-33 | BUG | MCP 托管解锁恒失败：CLI 读旧 Keychain access group、App 写新组 | dev-coder-mcp | done | core/cf-mcp/src/provider/escrow.rs | docs/01-KNOWN-ISSUES.md §BUG-33 | v2.11.1 真机核销：coffer mcp 输出 vault unlocked via MCP keychain escrow；19 passed/0 failed/1 ignored；reviewer Approve；/Applications 2.11.1 已安装（签名 Apple Development A6DS985SJJ） |
 | TASK-6 | TASK | 多 AI 工具注册 P0（Claude Code / CodeBuddy / Codex 自动注册） | dev-coder-backend | done | macos/Coffer/McpRegisterHelper/McpAgentTarget.swift,macos/Coffer/McpRegisterHelper/McpRegisterSpec.swift,macos/Coffer/McpRegisterHelper/RegisterRequest.swift,macos/Coffer/McpRegisterHelper/main.swift,macos/Coffer/Support/McpRegistrar.swift,tools/build_macos_app.sh | docs/03-功能设计/23-v2.12.0-多AI工具注册-设计.md §10 UX-01~UX-36 | v2.12.0 已实现并安装：198 tests passed；build EXIT=0；真机 probe 检出 claude-code/codebuddy（codex 未安装）；/Applications 2.12.0 签名校验通过；reviewer 复审 Approve（H1/H2/H3/M1/M2 全 PASS） |
+| TASK-7 | TASK | v2.13.0 多语言（zh-Hans + en） | lead | done | macos/Coffer/**, tools/*l10n*, docs/03-功能设计/24-*.md, docs/04-测试与验收/22-*.md | docs/03-功能设计/24-v2.13.0-多语言-设计.md + docs/04-测试与验收/22-v2.13.0-多语言-验收判据.md | 998 条译文 / 52 View 全覆盖；check_l10n G1–G5 绿；16 harness 673 passed；全 App typecheck 0 诊断；完整 build + codesign --verify --strict 通过；真机 AX 英文扫描阻塞（0 codesigning identity） |
 
 ## 维护
 

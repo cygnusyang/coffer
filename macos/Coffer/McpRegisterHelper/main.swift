@@ -266,6 +266,41 @@ func resolveCLIPath(named name: String, shellTimeout: TimeInterval = resolveCLIT
     return path
 }
 
+// MARK: - 子进程 PATH（#1：脚本型 CLI 的解释器不在 helper 的 PATH 里）
+
+/// 读 CLI 首行 shebang（IO：前 512 字节足够覆盖 shebang 行）；不可读 / 非文本 → nil。
+func shebangLine(atPath path: String) -> String? {
+    guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+    defer { try? handle.close() }
+    guard let data = try? handle.read(upToCount: 512),
+          let text = String(data: data, encoding: .utf8) else { return nil }
+    return text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        .first.map(String.init)
+}
+
+/// 目标 CLI spawn 环境：继承当前 env，PATH 前置其 shebang 解释器目录。
+///
+/// #1 修复点：helper 继承的是 App 经过 open 传下来的**精简 PATH**，脚本型 CLI
+/// （`#!/usr/bin/env node`）会因找不到解释器 127；这里按 CLI 首行解析出解释器
+/// 名称，复用 resolveCLIPath 拿绝对路径，把其所在目录前置进子进程 PATH。原生
+/// 二进制（无 shebang / 绝对路径解释器）不受影响，PATH 仅补系统默认兜底。
+func cliSpawnEnvironment(executablePath: String) -> [String: String] {
+    var environment = ProcessInfo.processInfo.environment
+    var prepend: [String] = []
+    if let line = shebangLine(atPath: executablePath),
+       let interpreter = SpawnEnvironment.envInterpreterName(fromShebangLine: line) {
+        if let interpreterPath = resolveCLIPath(named: interpreter) {
+            prepend.append((interpreterPath as NSString).deletingLastPathComponent)
+            log("解释器 \(interpreter) 命中: \(interpreterPath)（PATH 前置其目录）")
+        } else {
+            log("解释器 \(interpreter) 未解析到绝对路径（PATH 走系统默认兜底）")
+        }
+    }
+    environment["PATH"] = SpawnEnvironment.commandPATH(current: environment["PATH"],
+                                                       prepending: prepend)
+    return environment
+}
+
 // MARK: - 进程 spawn（argv 数组直传，超时 terminate）
 
 /// spawn 结果（status<0 表示 spawn 本身失败；output 合并 stdout/stderr）。
@@ -277,10 +312,12 @@ struct SpawnResult {
 
 /// 以 argv 数组直传 spawn（**无 shell 拼接**——config 里的 vaultDir / 二进制路径
 /// 永远只是 argv 元素，路径含空格/引号安全）。超时 → terminate 后返回 timedOut=true。
-func runProcess(executablePath: String, arguments: [String], timeout: TimeInterval) -> SpawnResult {
+func runProcess(executablePath: String, arguments: [String], timeout: TimeInterval,
+                environment: [String: String]? = nil) -> SpawnResult {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executablePath)
     process.arguments = arguments
+    if let environment { process.environment = environment }
     let outPipe = Pipe()
     let errPipe = Pipe()
     process.standardOutput = outPipe
@@ -375,7 +412,8 @@ func runRemove(target: McpAgentTarget, cliPath: String) -> McpRegisterResult? {
     }
     let hint = manualCleanupHint(target: target)
     log("spawn \(target.displayName) 移除命令（argv 直传，固定形状）")
-    let result = runProcess(executablePath: cliPath, arguments: args, timeout: spawnTimeout)
+    let result = runProcess(executablePath: cliPath, arguments: args, timeout: spawnTimeout,
+                            environment: cliSpawnEnvironment(executablePath: cliPath))
     if result.timedOut {
         log("\(target.displayName) 移除命令超时（\(Int(spawnTimeout))s）")
         return McpRegisterResult(success: false, code: .claudeTimeout,
@@ -443,7 +481,8 @@ func performRegister(config: McpRegisterRequest) -> McpRegisterResult {
     // 命令结构单源（McpAgentTarget，App/helper 共享编译），argv 数组直传（无 shell
     // 拼接）；config 只传 vaultDir/二进制两个值，argv 不经 config 传递（无注入面）。
     log("spawn \(target.displayName) 注册命令（argv 直传，vaultDir=\(vaultDir)）")
-    let result = runProcess(executablePath: cliPath, arguments: addArgs, timeout: spawnTimeout)
+    let result = runProcess(executablePath: cliPath, arguments: addArgs, timeout: spawnTimeout,
+                            environment: cliSpawnEnvironment(executablePath: cliPath))
     if result.timedOut {
         log("\(target.displayName) 注册命令超时（\(Int(spawnTimeout))s）")
         return McpRegisterResult(success: false, code: .claudeTimeout,

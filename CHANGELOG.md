@@ -14,6 +14,13 @@ release 中有体现）。
 
 ## [Unreleased]
 
+## v2.12.1 — 2026-10-24
+
+### 修复/纪律
+- **#1（S2）CodeBuddy 自动注册恒失败**（Issue #1；开关 ON 报「注册失败：无法清理旧的 coffer 注册项」）：helper 由沙盒 App 经 `open` 拉起，继承的是精简 PATH；`codebuddy` 是 `#!/usr/bin/env node` 脚本，spawn 时 `env: node: No such file or directory` → status 127，upsert 的移除步与 add 步全数失败（Claude Code 为原生 Mach-O，故同一开关正常）。修复：spawn 目标 CLI 前读其首行 shebang，若为 `/usr/bin/env <interp>` 则复用 `resolveCLIPath` 解析解释器绝对路径，把该目录**前置**进子进程 PATH 并补系统默认目录兜底（register / remove 两条路径同改，命令形状与 argv 直传安全契约不变）。新增 `SpawnEnvironment` 纯函数（shebang 解析 / PATH 去重保序）+ 8 条单测，`run_mcp_registrar_tests.sh` 208 passed / 0 failed；helper typecheck 通过，注入 PATH 后 `codebuddy mcp --help` 由 127 → exit 0。影响面：CodeBuddy 及任何脚本型（`#!/usr/bin/env …`）CLI 的自动注册/移除。
+
+---
+
 ## v2.12.0 — 2026-10-22
 
 ### 新增/变化

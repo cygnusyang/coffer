@@ -674,6 +674,33 @@ check(allCodesWithTarget.allSatisfy { !McpRegistrar.errorMessage(for: $0, target
 check(allCodesWithTarget.allSatisfy { !McpRegistrar.removeErrorMessage(for: $0, target: .codex).isEmpty },
       "SAFE：全部 code 在 Codex 语境有非空移除文案")
 
+// ---- 13. SPAWN：脚本型 CLI 解释器 PATH 注入（#1）----
+
+check(SpawnEnvironment.envInterpreterName(fromShebangLine: "#!/usr/bin/env node") == "node",
+      "SPAWN：#!/usr/bin/env node → 解释器名 node")
+check(SpawnEnvironment.envInterpreterName(fromShebangLine: "#!/usr/bin/env -S node --no-warnings") == "node",
+      "SPAWN：env -S 变体跳过选项取 node")
+check(SpawnEnvironment.envInterpreterName(fromShebangLine: "#!/usr/bin/env node\r") == "node",
+      "SPAWN：CRLF 行尾不影响解析")
+check(SpawnEnvironment.envInterpreterName(fromShebangLine: "#!/opt/homebrew/bin/node") == nil,
+      "SPAWN：绝对路径解释器不注入（内核直接 exec）")
+check(SpawnEnvironment.envInterpreterName(fromShebangLine: "#!/bin/sh") == nil,
+      "SPAWN：sh 脚本不注入（无 env 间接层）")
+check(SpawnEnvironment.envInterpreterName(fromShebangLine: "") == nil,
+      "SPAWN：空行 / 无 shebang（Mach-O 原生）→ nil")
+
+let injectedPATH = SpawnEnvironment.commandPATH(current: "/usr/bin:/bin",
+                                                prepending: ["/Users/me/.local/bin"])
+check(injectedPATH.hasPrefix("/Users/me/.local/bin:/usr/bin:/bin"),
+      "SPAWN：解释器目录前置，现有 PATH 顺序保留")
+check(injectedPATH.contains("/opt/homebrew/bin") && injectedPATH.hasSuffix("/sbin"),
+      "SPAWN：系统默认目录兜底（Homebrew 前缀 + /sbin）")
+let dedupPATH = SpawnEnvironment.commandPATH(current: "/usr/bin:/bin", prepending: ["/usr/bin"])
+check(dedupPATH.split(separator: ":").filter { $0 == "/usr/bin" }.count == 1,
+      "SPAWN：重复目录去重（前置优先，保序）")
+check(SpawnEnvironment.commandPATH(current: nil, prepending: []).hasPrefix("/opt/homebrew/bin:/usr/local/bin:/usr/bin"),
+      "SPAWN：无现有 PATH 时回落系统默认集")
+
 // ---- 摘要 ----
 print("----------------------------------------")
 print("McpRegistrarTests: \(passed) passed, \(failed) failed")

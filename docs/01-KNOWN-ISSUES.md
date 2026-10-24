@@ -1871,3 +1871,20 @@ EXIT=124   # timeout 3s：常驻等待 stdin，符合预期
 **回归用例**：`docs/04-测试与验收/20-v2.11.1-BUG-33-回归用例.md`（8 用例 TC-B33-01~08 + 4 门禁/走查；01~06 已核销，07/08 未覆盖如上）。
 
 
+
+## BUG-34（✅ 已修复，v2.13.0 发版前拦截）：英文界面「导入 N 条」按钮回退中文
+
+**现象**：`DropzoneImportView.swift:494` 的 `Button("导入 \(importModel.includedLineNos.count) 条")` 中 `includedLineNos` 是 `Set<UInt32>`，但 `.count` 是 **Int**，推导键为 `导入 %lld 条`；合并表里只有 UInt32 站点用的 `导入 %u 条` → 查表 MISS，英文界面显示中文。
+**根因**：键的占位符类型必须按**表达式声明类型**推导（`.count` → Int）；G3 只校验「键↔值占位符一致」，不看源码类型，抓不到跨类型错配。
+**影响面**：英文界面放置区导入按钮；中文界面不受影响。
+**修复**：`20-ui-b.strings` 增 `"导入 %lld 条" = "Import %lld";`（`%u` 版本继续服务 `ImportView.swift:177` / `BitwardenImportView.swift:208` 两处 UInt32 站点）。commit 2c9bd79。
+**核销**：dev-reviewer 发版前审查 CRITICAL C1 发现；修复后 `check_l10n.sh` G1–G5 绿；回归 673 passed / 0 failed。
+**状态**：✅ 已修复（未流出到任何发布版）。
+
+## BUG-35（🟡 显式非目标，v2.13.1）：Rust 侧导入/放置区预检告警整句直出，英文界面仍为中文
+
+**现象**：导入向导的 `Label(warning…)` / `Text(warning)` 直接渲染 Rust 载荷，39 处中文 `warnings.push`（cf-importer/src/{dropzone,precheck,bitwarden/*,opvault/*,pux/*}），如「第 12 行：缺失 Title，导入时以「x」兜底」。
+**根因**：v2.13.0 只对 CfError 码做映射（D-10），预检告警既非日志也非 CfError，属设计真空档；`Text(String)` 不查表。
+**影响面**：英文界面导入/放置区告警；中文界面不变。
+**修复路径**：告警改为「码 + 参数」契约，Swift 侧按码出文案（cf-importer FFI 契约变更，需单独版本承载）。
+**状态**：🟡 非目标（v2.13.0 显式登记 + CHANGELOG 写明），目标版本 **v2.13.1**。

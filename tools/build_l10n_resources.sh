@@ -75,6 +75,8 @@ plutil -lint "${TMP_FILE}" >/dev/null \
 [[ -e "${DEST_DIR}" ]] && rm -r "${DEST_DIR}"
 mkdir -p "${DEST_DIR}"
 cp "${TMP_FILE}" "${DEST_DIR}/Localizable.strings" || die "写入 en.lproj/Localizable.strings 失败。"
+# 产物权限统一 644：mktemp 出来的源文件是 0600，装进 bundle 后非本用户不可读（reviewer M6）
+chmod 644 "${DEST_DIR}/Localizable.strings"
 cp "${INFO_SRC}" "${DEST_DIR}/InfoPlist.strings" || die "拷贝 InfoPlist.strings 失败。"
 
 ENTRY_COUNT="$(grep -c '^[[:space:]]*\"' "${DEST_DIR}/Localizable.strings" || true)"

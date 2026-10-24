@@ -127,6 +127,20 @@ check("AppLanguage 三态齐全（Picker 顺序：跟随系统/简体中文/Engl
 check("displayName 均非空",
       AppLanguage.allCases.allSatisfy { !$0.displayName.isEmpty })
 
+
+// MARK: - H4：F11 的可测哨兵（app 域才算显式，全局域不算）
+
+check("显式 app 域 [en] → .en",
+      LanguagePreference.explicitLanguage(appDomain: ["AppleLanguages": ["en"]]) == .en)
+check("显式 app 域 [zh-Hans] → .zhHans",
+      LanguagePreference.explicitLanguage(appDomain: ["AppleLanguages": ["zh-Hans"]]) == .zhHans)
+check("app 域无 AppleLanguages → nil（跟随系统）",
+      LanguagePreference.explicitLanguage(appDomain: ["Other": 1]) == nil)
+check("app 域为 nil → nil（即使系统/全局域是 en，也不算显式选择）",
+      LanguagePreference.explicitLanguage(appDomain: nil) == nil)
+check("显式但不受支持的语言 [ja] → nil（回落跟随系统，而非误判为某语言）",
+      LanguagePreference.explicitLanguage(appDomain: ["AppleLanguages": ["ja"]]) == nil)
+
 // MARK: - 汇总
 
 print("----")

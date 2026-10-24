@@ -162,7 +162,7 @@ enum LanguagePreference {
     /// 用 persistentDomain 是硬要求（F11）：只有它能区分「显式写了 en」与「没写过、
     /// 全局域恰好是 en」。
     static var current: AppLanguage {
-        resolve(explicitLanguages: explicitAppDomainLanguages())
+        explicitLanguage(appDomain: explicitAppDomainDictionary()) ?? .system
     }
 
     /// 本次进程启动时实际生效的语言（快照常量）。
@@ -192,10 +192,22 @@ enum LanguagePreference {
         return requiresRestart(from: launchLanguage, to: language)
     }
 
-    /// 读 app 域里的 AppleLanguages（没写过 → nil）。
-    private static func explicitAppDomainLanguages() -> [String]? {
+
+    /// 纯函数（H4 修复）：从**app 偏好域**解析「用户显式选择」的语言；未显式设置 → nil。
+    ///
+    /// F11 的可测边界就在这里：只有 app 域算显式，全局域（系统设置写的
+    /// AppleLanguages）**不算**——系统语言由系统自己兑现，App 只需「跟随」。
+    /// 因此 `UserDefaults.standard.object(forKey:)` 那种读法会读到全局域，把
+    /// 「系统是 en」误判成「用户选了 en」，本函数是它的替身且可被单测直接打。
+    static func explicitLanguage(appDomain: [String: Any]?) -> AppLanguage? {
+        guard let raw = appDomain?[appleLanguagesKey] as? [String] else { return nil }
+        let resolved = resolve(explicitLanguages: raw)
+        return resolved == .system ? nil : resolved
+    }
+    /// 读 app 域字典（没写过 / 无 bundle id → nil）。纯函数的输入源。
+    private static func explicitAppDomainDictionary() -> [String: Any]? {
         guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
-        return UserDefaults.standard.persistentDomain(forName: bundleID)?[appleLanguagesKey] as? [String]
+        return UserDefaults.standard.persistentDomain(forName: bundleID)
     }
 
     /// 写 app 域（F9 的实测路径：CFPreferencesSetAppValue + Synchronize）。

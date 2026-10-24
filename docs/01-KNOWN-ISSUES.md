@@ -1260,59 +1260,68 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 
 ---
 
-## BUG-18（🟡 顺延登记）：cf-mcp `uds.rs` 并行执行偶发 `Connection refused`——socket 先连后 bind 竞态（测试基建，非生产代码）
+## BUG-18（✅ 已核销）：cf-mcp `uds.rs` 并行执行偶发 `Connection refused`——就绪判据误用「文件存在」，踩中 bind→listen 窗口（测试基建，非生产代码）
 
 **登记日期**：2026-10-10
 **发现环境**：v2.8.1 dev-reviewer 轮（MCP username 出参审查批），`cargo test -p cf-mcp --no-fail-fast` 并行下 3 处红（uds.rs:613/:815/:847），隔离重跑 15/15 全绿——预存 flaky，与该轮改动无关
 **分级**：S4 / P3 / 来源版本 v2.8.1（审查轮实证，产生时间更早）/ 发现版本 v2.8.1
-**状态**：🟡 顺延登记——仅测试并行调度竞态，非安全、非生产回归；全量门禁按隔离重跑口径处置（与 W-HIGH-1 后「配对 flaky 隔离重跑」同款纪律）
-**核销记录**：—（修复时回填：uds.rs 测试 socket bind/ready 同步机制 + 回归证据）
-**证据**：dev-reviewer 轮实测（2026-10-10）：`cargo test -p cf-mcp --no-fail-fast` → 174 passed / 3 failed（均为 `Connection refused`）；`cargo test -p cf-mcp uds`（隔离）→ 15 passed / 0 failed
+**状态**：✅ 已核销（2026-10-24，测试基建去竞态；非安全、非生产回归）——**修复完成，提交待发版批次**（工作树 `core/cf-mcp/src/uds.rs`）
+**核销记录**：修复完成，提交待发版批次。**根因精确化（决定性）**：`std::os::unix::net::UnixListener::bind` 内部顺序为 `socket()` → `bind()` → `listen()`——`bind()` 一返回 socket 文件即已落盘，但 `listen()` 尚未调用，此刻 `connect` **恒** `ECONNREFUSED`（不是「文件还没出现」）；夹具以 `path.exists()` 判就绪（旧 `wait_for_socket`）必然踩这个极窄窗口，并行调度放大命中率 → 偶发红、隔离必绿。**修复**：删除「文件存在即就绪」的 `wait_for_socket` + 「单点重试」`connect_with_retry` 双 helper，统一为 `connect_ready`（就绪判据 = `connect` 成功，5 s 内 20 ms 轮询），8 处客户端连接点全部改用它（含陈旧 socket 重绑路径）；就绪判据自此与真实客户端一致——只关心能否连上，不关心文件是否可见。**新增测试**：`uds::tests::connect_ready_survives_bind_listen_window`（确定性锁死：用「bind 后立即 drop」把 bind→listen 窗口终态固定下来，先断言该状态下 `connect` 必 `ConnectionRefused`＝旧判据的失败模式，再断言监听者延迟 100 ms 就绪时 `connect_ready` 仍拿到**可读写**连接）。**RED 证据**：把 `connect_ready` 临时换回旧语义（`exists` → 单次 `connect`）→ 该用例 `0.00 s` 确定性失败：`client must connect: Os { code: 61, kind: ConnectionRefused, message: "Connection refused" }`。**GREEN / 6 轮实测**：`cd core && cargo test -p cf-mcp --no-fail-fast` 连跑 **6 轮**（3 轮前台记录 + 3 轮独立后台批次，两份日志逐轮一致）→ 每轮 13 个 test target 全绿、39 次 `test result: ok`，`373 passed / 0 failed / 1 ignored`；原三处红点 `uds_rejects_non_spawner_peer` / `uds_idle_read_timeout_disconnects` / `uds_idle_timeout_resets_on_valid_frame` 均绿。隔离对照 `cargo test -p cf-mcp --lib uds::` → `16 passed / 0 failed`（原 15 + 新增 1）。**残留 flaky**：0（6 轮全量无任何 `Connection refused`）
+**证据**：dev-reviewer 轮实测（2026-10-10）：`cargo test -p cf-mcp --no-fail-fast` → 174 passed / 3 failed（均为 `Connection refused`）；`cargo test -p cf-mcp uds`（隔离）→ 15 passed / 0 failed。**v2.8.1 源码复核（2026-10-24）**：三处失败行 `git show v2.8.1:core/cf-mcp/src/uds.rs` 分别为 :613 / :815 / :847，形态一致＝`assert!(wait_for_socket(&path, Duration::from_secs(5))); let conn = Conn::connect(&path).expect("client must connect");`（:613 `uds_rejects_non_spawner_peer`、:815 `uds_idle_read_timeout_disconnects`、:847 `uds_idle_timeout_resets_on_valid_frame`）——与上述根因一一对应
 
 ### 现象（预期/实际 分行写）
 
 - 预期：uds.rs 全部用例在任何并行度下稳定通过。
 - 实际：多测试并行时偶发 `Connection refused`——client 在 server 端 `bind`（或 listen 就绪）前发起 connect，竞态失败。
 
-### 根因（已实证）
+### 根因（已实证，2026-10-24 精确化）
 
-uds.rs 测试夹具对 socket 文件就绪无同步原语（bind 完成与 client connect 之间无 barrier/retry），并行调度下暴露窗口。
+**不是「文件还没出现」，而是「文件已出现、listen 还未生效」**。`UnixListener::bind` 内部是 `socket()` → `bind()` → `listen()` 三步：`bind()` 成功即创建 socket 文件，`listen()` 在其后若干微秒才完成；这期间对端 `connect` 得到 `ECONNREFUSED`。测试夹具的就绪判据是 `path.exists()`（`wait_for_socket`），于是「文件存在」被误判为「可连接」，紧接着的 `Conn::connect(...).expect("client must connect")` 就落进该窗口 → 偶发红；隔离运行时调度压力小、窗口命中率趋零 → 必绿。旧注释「bind 后连接，避免竞态」正是把「文件出现」当成了「bind 完成」，掩盖了 listen 这一层。
 
-### 修复路径
+### 修复路径（已实施）
 
-测试侧组内去并行化或就绪探测（retry connect / poll socket 存在），对齐 BUG-15「组内顺序断言去序化」先例；本版不修，顺延。
+测试侧，判据从「文件存在」改为「**connect 成功**」：`connect_ready(path)` 以 20 ms 轮询在 5 s 内重试 connect，覆盖 bind→listen 窗口与陈旧 socket 重绑窗口；8 处客户端连接点（`uds_run_full_handshake_single_connect` / `uds_rejects_non_spawner_peer` / `uds_tools_before_challenge_rejected` / `uds_stale_socket_is_rebound` / `uds_idle_read_timeout_disconnects` / `uds_idle_timeout_resets_on_valid_frame` / `uds_handshake_inactivity_times_out` / `uds_active_session_not_timed_out`）统一改用该 helper。不做组内串行化——串行化只能压低命中率，不能消除窗口。
 
 ### 复现与诊断
 
-`cargo test -p cf-mcp --no-fail-fast`（全量并行）多次执行观察偶发红；隔离 `cargo test -p cf-mcp uds` 稳定绿即为该竞态指纹。
+**确定性复现**（无需并行、无需多次重跑）：`{ let l = UnixListener::bind(&path)?; drop(l); }` 即构造出 bind→listen 窗口的等价终态 → `Conn::connect(&path)` 恒 `ConnectionRefused`；由新用例 `uds::tests::connect_ready_survives_bind_listen_window` 锁死。原指纹仍有效：`cargo test -p cf-mcp --no-fail-fast`（全量并行）多次执行观察偶发红；隔离 `cargo test -p cf-mcp --lib uds::` 稳定绿。
 
 ---
 
-## BUG-19（🟡 顺延登记）：cf-mcp cli.rs `set_password_usage_errors_exit_4` CI 间歇 BrokenPipe——子进程早退与 stdin 写入竞态（测试基建，非生产代码）
+## BUG-19（✅ 已核销）：cf-mcp cli.rs `set_password_usage_errors_exit_4` CI 间歇 BrokenPipe——子进程早退与 stdin 写入竞态（测试基建，非生产代码）
 
 **登记日期**：2026-10-10
 **发现环境**：v2.8.1 发版轮 Rust CI（run 38050858490 / 38050813998，`cf-mcp/tests/cli.rs:633` `write stdin payload: BrokenPipe`）；同日代码树等价 run（11:42Z，含全部 v2.8.1 代码）绿、本地 macOS 门禁 1376/0/10 绿——**预存 flaky**，与 v2.8.1 改动无关
 **分级**：S4 / P3 / 来源版本 v2.8.1（发版轮实证，产生时间更早）/ 发现版本 v2.8.1
-**状态**：🟡 顺延登记——纯 CI Linux runner 环境竞态，非安全、非生产回归；处置 = 重跑/重标定，与 BUG-18 同款测试基建顺延
-**核销记录**：—（修复时回填：stdin 写入重试/进程退出同步 + CI 复跑证据）
-**证据**：Rust workflow 历史（2026-10-10）：纯 docs 提交 07:24Z 红、11:42Z（含 v2.8.1 全部代码）绿、12:07/12:08Z（Info.plist+CHANGELOG only）红——失败与提交内容无关，随调度波动
+**状态**：✅ 已核销（2026-10-24，测试基建时序收口；非安全、非生产回归）——**修复完成，提交待发版批次**（工作树 `core/cf-mcp/tests/cli.rs`）
+**核销记录**：修复完成，提交待发版批次。**现状复核**：`d357df0`（v2.11.0）已把写入改成 `let _ = si.write_all(..)` 消掉了 CI 红，但那是**无条件吞掉**一切写入失败（fail-open——真实管道故障、部分写同样被掩盖），与「容忍子进程早退」不是同一语义。**修复（fail-closed，断言语义不削弱）**：新增 `write_stdin_allowing_early_exit`——只在「`BrokenPipe` ∧ 子进程确已在 2 s 宽限内退出（`try_wait` 有界轮询，不读管道以免先 wait 后 drain 死锁）」时放行；其余情形（`BrokenPipe` 但进程仍存活、任何其它 IO 错误）一律返回 `Err`，调用点恢复 `.expect("write stdin payload")`（与 CI 日志原始信息一致，失败可定位）。**新增测试**：`write_stdin_allows_epipe_after_child_exit`（正例：`sh -c exit 4` 子进程退出后再写 payload——以「子进程已退出」为同步点消除调度依赖，写入**必** `EPIPE`，须放行）、`write_stdin_rejects_epipe_while_child_alive`（反例：子进程 `exec 0<&-; : > marker; sleep 30` —— 关 stdin 后落标记文件并存活，写入**必** `EPIPE` 且进程在，须报错）。**RED 证据**：把 helper 临时退回「不区分 EPIPE」的旧实现 → 正例 `0.01 s` 确定性失败：`Err(Os { code: 32, kind: BrokenPipe, message: "Broken pipe" })`。**20 次实测**：`for i in $(seq 1 20); do cargo test -p cf-mcp --test cli set_password_usage_errors_exit_4 -- --exact; done` → `PASS=20 FAIL=0`；6 轮全量 `cargo test -p cf-mcp --no-fail-fast`（3 前台 + 3 独立后台批次）→ 每轮 `373 passed / 0 failed / 1 ignored`。**残留 flaky**：0（本机 macOS 20/20；Linux CI 复跑待发版批次回填）
+**证据**：Rust workflow 历史（2026-10-10）：纯 docs 提交 07:24Z 红、11:42Z（含 v2.8.1 全部代码）绿、12:07/12:08Z（Info.plist+CHANGELOG only）红——失败与提交内容无关，随调度波动。**本地代码复核（2026-10-24）**：`d357df0` 为「吞掉 EPIPE」中间态（`let _ = si.write_all`），本次改为 fail-closed 收口
 
 ### 现象（预期/实际 分行写）
 
 - 预期：cli.rs 全部用例在 CI 稳定通过。
 - 实际：`set_password_usage_errors_exit_4` 偶发 BrokenPipe——测试进程向已退出子进程的 stdin 写 payload，管道破裂。
 
-### 根因（已实证）
+### 根因（已实证，2026-10-24 精确化）
 
-`set-password` 用法错误路径在子进程未读 stdin 前即退出（exit 4 快速路径），测试写 stdin 无同步/重试，CI 调度抖动下暴露窗口（本机 macOS 未复现）。
+`set-password` 的**参数校验快路径**（未知 flag / `--id` 非 UUID → exit 4）在**读 stdin 之前**就结束进程；测试在 spawn 之后立刻 `write_all` payload，两者并发。子进程先退出时管道读端已关，父进程 write 得到 `EPIPE`（`BrokenPipe`，errno 32）。macOS 上父子进程调度差通常让 write 先完成、且 pipe 缓冲（64 KiB ≫ 17 B payload）足以吞下，故本机不复现；Linux CI runner 调度抖动下写后才退出 → 偶发红。**与 BUG-18 同源**：都是「把事件顺序当成了确定事实」——BUG-18 假设「文件存在 ⇒ 可连接」，本缺陷假设「spawn 完 ⇒ stdin 可写」。
 
-### 修复路径
+### 修复路径（已实施）
 
-测试侧：写 stdin 前探测子进程存活或改用先收集再断言的进程组写法（对齐 BUG-15/BUG-18 去竞态先例）；本版不修，顺延。
+测试侧 fail-closed 收口（`core/cf-mcp/tests/cli.rs`）：`write_stdin_allowing_early_exit(child, payload)` 区分三类结果——
+
+| 写结果 | 子进程状态 | 判定 |
+| --- | --- | --- |
+| 成功 | 任意 | `Ok` |
+| `BrokenPipe` | 2 s 宽限内确已退出（`try_wait` 有界轮询） | `Ok`（预期时序：快路径早退） |
+| `BrokenPipe` | 仍存活 / 未退出 | `Err`（管道被意外关闭，不可掩盖） |
+| 其它 IO 错误 | 任意 | `Err`（不静默吞） |
+
+调用点保留 `.expect("write stdin payload")` —— 放行只发生在「子进程确已退出」这一**可核验事实**上，而非 `let _ =` 式无条件丢弃；行为断言（exit 4 / stderr 文案）本就由下游出口码检查锁定，未削弱。不用「先 wait 再 drain」写法：那会让仍在写 stdout 的存活子进程阻塞在满管道上死锁。
 
 ### 复现与诊断
 
-CI Linux runner 重复跑 Rust workflow 观察偶发红；同树重跑绿即为该竞态指纹。
+**确定性复现**（无需 CI、无需重跑）：`sh -c "exit 4"` 子进程退出后再写 payload，写入**必**得 `EPIPE`——由 `write_stdin_allows_epipe_after_child_exit` 锁死；反向情形（子进程 `exec 0<&-; : > marker; sleep 30` 关 stdin 后存活）由 `write_stdin_rejects_epipe_while_child_alive` 锁死。`cargo test -p cf-mcp --test cli write_stdin` 即可复验两条判据（2 passed / 0 failed）。原指纹仍有效：CI Linux runner 重复跑 Rust workflow 观察偶发红、同树重跑绿。
 
 ---
 

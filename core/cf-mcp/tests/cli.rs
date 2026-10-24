@@ -555,6 +555,122 @@ fn run_with_secret_works_end_to_end_through_stdio() {
 
 // ------------------------------------------------------------ set-password（docs/34 §5，FR-18.2）
 
+/// 子进程早退竞态的等待上限（BUG-19）：EPIPE 后子进程须在此窗口内完成退出，
+/// 否则写入失败按真错误上报（fail-closed，不无限等待）。
+const STDIN_EPIPE_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// 有界等待子进程退出：只 `try_wait`，不读管道——避免「先 wait 后 drain」把
+/// 子进程堵在 stdout 管道上。
+fn child_exits_within(child: &mut Child, timeout: std::time::Duration) -> std::io::Result<bool> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// 向子进程 stdin 写满载荷（随后 `drop` 关闭管道 → 被测进程读到 EOF）。
+///
+/// BUG-19 竞态：`set-password` 的用法错误快路径（未知 flag / `--id` 非 UUID
+/// → exit 4）在**读 stdin 之前**就退出；CI 调度抖动下 write 与子进程退出并发，
+/// 管道读端已关 → `EPIPE`（BrokenPipe；macOS 缓冲时序下少见）。
+///
+/// 判据 **fail-closed**——只放行「已确证子进程退出」的 BrokenPipe：
+///
+/// | 写结果 | 子进程状态 | 判定 |
+/// | --- | --- | --- |
+/// | `BrokenPipe` | 已在宽限期内退出 | 预期时序，放行（`Ok`） |
+/// | `BrokenPipe` | 仍存活 | 管道被意外关闭 → `Err` |
+/// | 其它 IO 错误 | 任意 | `Err`（不静默吞） |
+///
+/// 既不无条件吞掉写入失败（旧实现 `let _ = write_all(..)` 会把真实管道故障
+/// 一并掩盖），也不恢复成裸 `.expect()`（那正是 BUG-19 的 CI 间歇红）。
+fn write_stdin_allowing_early_exit(child: &mut Child, payload: &str) -> std::io::Result<()> {
+    let mut si = child.stdin.take().expect("stdin pipe");
+    match si.write_all(payload.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+            if child_exits_within(child, STDIN_EPIPE_EXIT_GRACE)? {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "stdin pipe closed while child still running",
+                ))
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// BUG-19 确定性锁死（正例）：子进程在读 stdin 前退出 → 写入必得 EPIPE，
+/// helper 须放行。裸 `.expect("write stdin payload")` 实现此处必 panic。
+#[test]
+fn write_stdin_allows_epipe_after_child_exit() {
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 4"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn early-exit child");
+    // 同步点：等子进程真正退出（管道读端随之关闭）——后续写入必 EPIPE，
+    // 与调度抖动无关，故本用例确定性可复现。
+    assert!(
+        child_exits_within(&mut child, std::time::Duration::from_secs(5)).expect("try_wait"),
+        "子进程须在 5 s 内退出"
+    );
+    let r = write_stdin_allowing_early_exit(&mut child, "payload");
+    assert!(
+        r.is_ok(),
+        "子进程已退出后的 EPIPE 属预期时序，须放行（fail-closed 只拒存活进程）: {r:?}"
+    );
+}
+
+/// BUG-19 确定性锁死（反例 / fail-closed）：EPIPE 但子进程**仍存活** → 必须
+/// 上报错误。管道被意外关闭不可被「容忍早退」的逻辑顺手掩盖。
+#[test]
+fn write_stdin_rejects_epipe_while_child_alive() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock before unix epoch")
+        .as_nanos();
+    let marker = std::env::temp_dir().join(format!(
+        "cf-cli-stdin-marker-{}-{nanos}",
+        std::process::id()
+    ));
+    // 子进程主动关闭 stdin 后落标记文件并继续存活＝「读端已关、进程在」。
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(format!("exec 0<&-; : > '{}'; sleep 30", marker.display()))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn live child with closed stdin");
+
+    // 同步点：标记文件出现＝子进程已关闭 stdin 且仍活着。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline && !marker.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(marker.exists(), "子进程须先关闭 stdin 并落标记文件");
+
+    let r = write_stdin_allowing_early_exit(&mut child, "payload");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&marker);
+    assert!(
+        r.is_err(),
+        "子进程仍存活时的 EPIPE 不得放行（fail-closed）: {r:?}"
+    );
+}
+
 /// 带 stdin 载荷运行 `coffer`（写入后关闭 stdin 触发 EOF），收集完整输出。
 #[cfg(feature = "coffer-store")]
 fn run_coffer_with_stdin(args: &[&str], envs: &[(&str, &str)], stdin: &str) -> Output {
@@ -568,14 +684,7 @@ fn run_coffer_with_stdin(args: &[&str], envs: &[(&str, &str)], stdin: &str) -> O
         cmd.env(k, v);
     }
     let mut child = cmd.spawn().expect("spawn coffer binary");
-    {
-        let mut si = child.stdin.take().expect("stdin pipe");
-        // 写入容忍 EPIPE：被测 CLI 走参数校验失败快路径时（如 --user 空值
-        // exit 4）可能在读取 stdin 前退出，Linux 下 write 与子进程退出竞态
-        // 命中 BrokenPipe（CI 首跑实证 flake；macOS 缓冲时序侥幸通过）。快路径
-        // 的行为断言由下游出口码/输出检查锁定，此处写入失败属预期时序。
-        let _ = si.write_all(stdin.as_bytes());
-    }
+    write_stdin_allowing_early_exit(&mut child, stdin).expect("write stdin payload");
     child.wait_with_output().expect("collect output")
 }
 

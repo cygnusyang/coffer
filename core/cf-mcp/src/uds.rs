@@ -466,28 +466,31 @@ mod tests {
         .expect("default logger must construct")
     }
 
-    /// 等待 socket 文件出现（run 线程 bind 后连接，避免竞态）。
-    fn wait_for_socket(path: &Path, timeout: Duration) -> bool {
-        let deadline = SystemTime::now() + timeout;
-        while SystemTime::now() < deadline {
-            if path.exists() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        false
-    }
-
-    /// 轮询直到连接成功（陈旧 socket 重绑场景：文件 exists 但连不上，须等重绑）。
-    fn connect_with_retry(path: &Path, timeout: Duration) -> Option<Conn> {
-        let deadline = SystemTime::now() + timeout;
+    /// 连接被测服务：**就绪判据 = `connect` 成功**，不是 socket 文件存在。
+    ///
+    /// BUG-18 根因：std 的 `UnixListener::bind` 内部顺序是 `socket()` →
+    /// `bind()` → `listen()`——`bind()` 一返回 socket 文件即已落盘，但
+    /// `listen()` 尚未调用，此刻 `connect` 得到 `ECONNREFUSED`。夹具若以
+    /// `path.exists()` 判就绪（旧 `wait_for_socket`），就会在这个极窄窗口里
+    /// 发起连接；并行调度抖动放大窗口命中率 → 偶发 `Connection refused`、
+    /// 隔离重跑必绿。
+    ///
+    /// 就绪探针改为「连不上就重试」：覆盖 bind→listen 窗口与陈旧 socket
+    /// 重绑窗口（文件存在但连不上），判据与真实客户端一致——客户端只关心
+    /// 能否连上，不关心文件是否可见。
+    fn connect_ready(path: &Path) -> Conn {
+        let deadline = SystemTime::now() + Duration::from_secs(5);
         while SystemTime::now() < deadline {
             if let Ok(c) = Conn::connect(path) {
-                return Some(c);
+                return c;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        None
+        panic!(
+            "client must connect within 5s（就绪判据 = connect 成功，非文件存在；socket file exists = {}）: {}",
+            path.exists(),
+            path.display()
+        );
     }
 
     /// 轮询直到 socket 文件出现且权限 == 期望（`bind` 先以 umask 默认建文件、
@@ -503,6 +506,63 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    /// BUG-18 确定性锁死：**socket 文件存在 ≠ 可连接**。
+    ///
+    /// std 的 `UnixListener::bind` 内部是 `socket()` → `bind()` → `listen()`：
+    /// bind 成功后文件已落盘、listen 尚未调用。本用例用「bind 后立即 drop」把该
+    /// 窗口的**终态**固定下来（文件在、无监听者），不依赖任何时序抖动：
+    ///
+    /// 1. **根因证据**：该状态下 `Conn::connect` 恒 `ConnectionRefused`——旧夹具
+    ///    只判 `path.exists()`，此时已返回「就绪」，随后的 `Conn::connect` 即
+    ///    BUG-18 的偶发红；
+    /// 2. **修复证据**：同一状态下监听者延迟就绪（复刻 `bind()` 的陈旧 socket
+    ///    重绑路径），[`connect_ready`] 须等到**真能读写**才返回。
+    #[test]
+    fn connect_ready_survives_bind_listen_window() {
+        let path = uds_path("ready");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+        // bind→listen 窗口的等价终态：socket 文件已落盘、无监听者。
+        {
+            let listener = UnixListener::bind(&path).expect("bind probe socket");
+            drop(listener);
+        }
+        assert!(path.exists(), "socket 文件须已落盘（bind 生效、listen 未生效）");
+
+        // 1) 根因证据：文件存在也连不上（旧判据的唯一失败模式，确定性可复现）。
+        let refused = Conn::connect(&path).expect_err("bound-but-unlistened socket must refuse");
+        assert_eq!(
+            refused.kind(),
+            std::io::ErrorKind::ConnectionRefused,
+            "bind 后未 listen 的连接须恒 ConnectionRefused: {refused}"
+        );
+
+        // 2) 监听者 100 ms 后就绪：删除陈旧文件 + 重绑（对齐 run_with_config 的
+        //    陈旧 socket 重绑路径），并把连接上的首字节回传，证明连接可用。
+        let path_for_listener = path.clone();
+        let listener_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = fs::remove_file(&path_for_listener);
+            let listener = UnixListener::bind(&path_for_listener).expect("rebind as live listener");
+            let (mut accepted, _) = listener.accept().expect("accept probe connection");
+            let mut buf = [0u8; 1];
+            accepted.read_exact(&mut buf).expect("read probe byte");
+            buf[0]
+        });
+        let mut conn = connect_ready(&path);
+        conn.write_all(b"7").expect("write probe byte");
+        conn.flush().expect("flush probe byte");
+        let got = listener_thread
+            .join()
+            .expect("listener thread must not panic");
+        assert_eq!(
+            got, b'7',
+            "connect_ready 须返回真正可读写的连接，而不是「文件存在」即视为就绪"
+        );
+
+        drop(conn);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
@@ -553,7 +613,7 @@ mod tests {
             "socket 文件须在超时内出现且权限收敛到 0600"
         );
 
-        let mut conn = Conn::connect(&path).expect("client must connect");
+        let mut conn = connect_ready(&path);
         // initialize + challenge 回显。
         writeln!(
             conn,
@@ -609,8 +669,7 @@ mod tests {
         let path_for_thread = path.clone();
         let handle = std::thread::spawn(move || run(&path_for_thread, &mut logger, server));
 
-        assert!(wait_for_socket(&path, Duration::from_secs(5)));
-        let mut conn = Conn::connect(&path).expect("client must connect");
+        let mut conn = connect_ready(&path);
         writeln!(
             conn,
             r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"{CHALLENGE_PARAM}":"unit-challenge"}}}}"#
@@ -657,8 +716,7 @@ mod tests {
         let path_for_thread = path.clone();
         let handle = std::thread::spawn(move || run(&path_for_thread, &mut logger, server));
 
-        assert!(wait_for_socket(&path, Duration::from_secs(5)));
-        let mut conn = Conn::connect(&path).expect("client must connect");
+        let mut conn = connect_ready(&path);
         writeln!(conn, r#"{{"jsonrpc":"2.0","id":1,"method":"tools/list"}}"#)
             .expect("write tools/list before initialize");
         conn.flush().expect("flush");
@@ -699,8 +757,7 @@ mod tests {
         let handle = std::thread::spawn(move || run(&path_for_thread, &mut logger, server));
 
         // 陈旧 socket 连不上（ECONNREFUSED）→ 轮询直到重绑后可连。
-        let conn = connect_with_retry(&path, Duration::from_secs(5))
-            .expect("must connect to rebound socket");
+        let conn = connect_ready(&path);
         conn.shutdown(std::net::Shutdown::Write)
             .expect("shutdown write");
         drop(conn);
@@ -810,9 +867,8 @@ mod tests {
             run_with_config(&path_for_thread, &mut logger, server, config)
         });
 
-        assert!(wait_for_socket(&path, Duration::from_secs(5)));
         // 连接保持打开但不发数据——idle 超时触发点（drop 会触发 EOF 干净退出，非本判据）。
-        let _conn = Conn::connect(&path).expect("client must connect");
+        let _conn = connect_ready(&path);
 
         assert!(
             wait_thread_finished(&handle, Duration::from_secs(5)),
@@ -843,8 +899,7 @@ mod tests {
             run_with_config(&path_for_thread, &mut logger, server, config)
         });
 
-        assert!(wait_for_socket(&path, Duration::from_secs(5)));
-        let mut conn = Conn::connect(&path).expect("client must connect");
+        let mut conn = connect_ready(&path);
 
         // 总时长 > 超时窗、帧间隔 < 超时值——会话须存活。
         let deadline = SystemTime::now() + timeout * 3;
@@ -894,8 +949,7 @@ mod tests {
             run_with_config(&path_for_thread, &mut logger, server, config)
         });
 
-        assert!(wait_for_socket(&path, Duration::from_secs(5)));
-        let _conn = Conn::connect(&path).expect("client must connect");
+        let _conn = connect_ready(&path);
         // 只连接、不发数据（不完成握手）→ 超时窗内须断开。
         assert!(
             wait_thread_finished(&handle, Duration::from_secs(5)),
@@ -921,8 +975,7 @@ mod tests {
             run_with_config(&path_for_thread, &mut logger, server, config)
         });
 
-        assert!(wait_for_socket(&path, Duration::from_secs(5)));
-        let mut conn = Conn::connect(&path).expect("client must connect");
+        let mut conn = connect_ready(&path);
 
         // 真实握手：initialize 回显 challenge。
         writeln!(

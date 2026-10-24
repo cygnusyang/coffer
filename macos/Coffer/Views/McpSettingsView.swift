@@ -69,7 +69,7 @@ struct McpSettingsSection: View {
 
     var body: some View {
         Group {
-            mainSection
+            mainCard
 
             // MCP 解锁托管（docs/29 §7.2）：coffer 分支专用——escrow 是 coffer
             // 自家库的免密码解锁通道，op 分支无此语义。
@@ -112,9 +112,45 @@ struct McpSettingsSection: View {
         }
     }
 
-    /// 主节（开关 / provider / vault / 命令 / 状态；docs/29 §7.1 分支）。
-    private var mainSection: some View {
-        Section {
+    /// 主节卡片（开关 / provider / vault / 命令 / 状态；docs/29 §7.1 分支）。
+    ///
+    /// v2.13.1（设计 25 §4.2 G3）：容器 `Section` → `SettingsCard`，行包
+    /// `SettingsRow`——**只改容器与几何**，行序 / 绑定 / 动作与改造前逐项对应
+    /// （验收判据 E 组「控件数量与顺序零变化」）。行高取 `SettingsMetrics`
+    /// （单行 32 / 动作行 36 / 双行 44），末行不画发丝线。
+    private var mainCard: some View {
+        // footer 由 provider 运行时分支（String(localized:) 取值），此处转成
+        // SettingsCard 的 LocalizedStringKey 入参：键仍是同一中文字面量，译文
+        // 解析路径与 `Text(footerText)` 完全一致（不新增文案，l10n 零影响）。
+        SettingsCard("MCP / Agent 协作", footer: LocalizedStringKey(footerText)) {
+            masterToggleRow
+            providerRow
+            vaultRow
+            // 注册命令必须绑定单一 target（docs/23 §4.1）：coffer 分支取消全局
+            // 「复制注册命令」行，复制入口下沉到每个工具行；op 分支保持原样。
+            if provider == .op {
+                commandPreviewRow
+                copyButtonRow
+                linkButtonRow
+            }
+            statusRow
+            if provider == .coffer {
+                McpAgentToolsSection(
+                    center: agentTools,
+                    masterEnabled: enabled,
+                    cofferBinaryPath: cofferBinaryPath
+                )
+            }
+            usageLogRow
+        }
+    }
+
+    // MARK: - 总开关行（docs/20 §6.1，持久化到 UserDefaults）
+
+    /// 「启用 MCP 服务器」总开关行。单行高 32（设计 25 §2.1 #7）。
+    /// 行为与改造前完全一致（在飞禁用 / 落态走 enabled 的 onChange 单一路径）。
+    private var masterToggleRow: some View {
+        SettingsRow {
             Toggle("启用 MCP 服务器", isOn: masterEnabledBinding)
                 // H3：在飞时禁用总开关（串行通道一次一个 helper 请求；OFF 与在飞注册
                 // 竞态会留下半写配置）。检测（AI 工具行 ⟳）同样受此互斥约束。
@@ -140,29 +176,6 @@ struct McpSettingsSection: View {
                         }
                     }
                 }
-
-            providerRow
-            vaultRow
-            // 注册命令必须绑定单一 target（docs/23 §4.1）：coffer 分支取消全局
-            // 「复制注册命令」行，复制入口下沉到每个工具行；op 分支保持原样。
-            if provider == .op {
-                commandPreviewRow
-                copyButtonRow
-                linkButtonRow
-            }
-            statusRow
-            if provider == .coffer {
-                McpAgentToolsSection(
-                    center: agentTools,
-                    masterEnabled: enabled,
-                    cofferBinaryPath: cofferBinaryPath
-                )
-            }
-            usageLogRow
-        } header: {
-            Text("MCP / Agent 协作")
-        } footer: {
-            Text(footerText)
         }
     }
 
@@ -171,9 +184,9 @@ struct McpSettingsSection: View {
     /// Provider 以下拉呈现：op / coffer 均可选（docs/29 §7.1 取消灰态）；
     /// 切换即触发状态重算（provider 分流见 McpStatus.resolve）。
     private var providerRow: some View {
-        HStack {
+        SettingsRow {
             Text("数据源")
-            Spacer()
+        } control: {
             Menu {
                 ForEach(McpProvider.allCases, id: \.self) { option in
                     Button {
@@ -208,29 +221,36 @@ struct McpSettingsSection: View {
     ///     则提示「请先打开密码库」（docs/29 §7.1）。
     @ViewBuilder
     private var vaultRow: some View {
+        // 两分支都用自由布局而非「标签 + 控件」分栏形态：op 分支的 TextField 与
+        // coffer 分支的路径文本都需按行宽自适应（分栏形态给控件加 fixedSize，
+        // 长路径会被压缩 → 违反 D-19.6 不截断）。行序与内容零变化。
         switch provider {
         case .op:
-            HStack {
-                Text("默认保险库")
-                TextField("可选，例如 Personal", text: $vaultName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 240)
-                    .onChange(of: vaultName) { _, newValue in
-                        McpSettings.saveVaultName(newValue)
-                    }
+            SettingsRow {
+                HStack(spacing: SettingsMetrics.labelControlGap) {
+                    Text("默认保险库")
+                    TextField("可选，例如 Personal", text: $vaultName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 240)
+                        .onChange(of: vaultName) { _, newValue in
+                            McpSettings.saveVaultName(newValue)
+                        }
+                }
             }
         case .coffer:
-            HStack {
-                Text("密码库目录")
-                Spacer()
-                if canBuildCofferCommand {
-                    Text(model.vaultDirPath)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                } else {
-                    Text("请先打开密码库")
-                        .foregroundStyle(.secondary)
+            SettingsRow {
+                HStack(spacing: SettingsMetrics.labelControlGap) {
+                    Text("密码库目录")
+                    Spacer(minLength: SettingsMetrics.labelControlGap)
+                    if canBuildCofferCommand {
+                        Text(model.vaultDirPath)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    } else {
+                        Text("请先打开密码库")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -288,38 +308,46 @@ struct McpSettingsSection: View {
     /// 会话时显示引导文案）。
     @ViewBuilder
     private var commandPreviewRow: some View {
-        if !canCopyRegisterCommand {
-            Text(copyDisabledHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } else {
-            Text(registerCommand)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        // 动作行高 36（设计 25 §2.1 #8）：命令块按行宽换行、不截断（D-5.5 ≤3 行）。
+        SettingsRow(minHeight: SettingsMetrics.rowHeightAction) {
+            if !canCopyRegisterCommand {
+                Text(copyDisabledHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(registerCommand)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
         }
     }
 
     /// 一键复制按钮（docs/20 §6.1 / §5.4；未找到 coffer 二进制 / coffer 无
     /// 会话时禁用）。
     private var copyButtonRow: some View {
-        HStack {
-            Button {
-                copyRegisterCommand()
-            } label: {
-                Label(copied ? String(localized: "已复制") : String(localized: "复制注册命令"),
-                      systemImage: copied ? "checkmark" : "doc.on.doc")
+        SettingsRow(minHeight: SettingsMetrics.rowHeightAction) {
+            HStack(spacing: SettingsMetrics.labelControlGap) {
+                Button {
+                    copyRegisterCommand()
+                } label: {
+                    Label(copied ? String(localized: "已复制") : String(localized: "复制注册命令"),
+                          systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canCopyRegisterCommand)
+                // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
+                if provider == .op && !McpSettings.hasConfiguredVault(vaultName) {
+                    // 未配置 vault → 命令省略 --vault（§5.2 缺省 = $COFFER_OP_VAULT）
+                    Text("未配置 vault，命令将省略 --vault")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canCopyRegisterCommand)
-            if provider == .op && !McpSettings.hasConfiguredVault(vaultName) {
-                // 未配置 vault → 命令省略 --vault（§5.2 缺省 = $COFFER_OP_VAULT）
-                Text("未配置 vault，命令将省略 --vault")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
         }
     }
 
@@ -344,10 +372,15 @@ struct McpSettingsSection: View {
     /// op 相关前置只 op 分支消费）；本版不内嵌交互式登录（op signin 需 TTY，
     /// 且登录令牌属敏感材料，即用即弃不落 App——docs/20 §6.3）。
     private var linkButtonRow: some View {
-        Button {
-            linkOnePassword()
-        } label: {
-            Label("链接 1Password…", systemImage: "link")
+        SettingsRow(minHeight: SettingsMetrics.rowHeightAction) {
+            Button {
+                linkOnePassword()
+            } label: {
+                Label("链接 1Password…", systemImage: "link")
+            }
+            // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+            .frame(minHeight: SettingsMetrics.minimumHitTarget)
+            .contentShape(Rectangle())
         }
     }
 
@@ -368,25 +401,34 @@ struct McpSettingsSection: View {
 
     /// 状态行：就绪度 + 手动刷新（op signin 在终端完成后无需重开设置页即可刷新）。
     private var statusRow: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: statusIcon)
-                .foregroundStyle(statusColor)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("状态").font(.headline)
-                Text(status.label)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        // 双行行高 44（设计 25 §2.1 #9）：图标 + 两行文本 + 行尾刷新。
+        SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine) {
+            HStack(alignment: .top, spacing: SettingsMetrics.labelControlGap) {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("状态").font(.headline)
+                    Text(status.label)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: SettingsMetrics.labelControlGap)
+                Button {
+                    refreshStatus()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        // 命中区 ≥28×28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                        // 宽也要给——纯图标墨迹仅 13–16pt，只加 minHeight 会让可点矩形
+                        // 仍是细条（reviewer H1）。
+                        .frame(minWidth: SettingsMetrics.minimumHitTarget,
+                               minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .disabled(!enabled)
+                .help("刷新状态")
             }
-            Spacer()
-            Button {
-                refreshStatus()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .disabled(!enabled)
-            .help("刷新状态")
         }
     }
 
@@ -442,17 +484,24 @@ struct McpSettingsSection: View {
     /// ——本版做禁用态占位（UI 骨架），格式落定 + 落盘后由 op 集成组
     /// （docs/20 §9 G-C/G-G）接入只读读取，本入口随之放开。
     private var usageLogRow: some View {
-        HStack {
-            Button {
-                // 预留：D-3 落定后打开只读审计视图（audit JSONL tail，脱敏）
-            } label: {
-                Label("查看使用记录", systemImage: "list.bullet.rectangle")
+        // 本节最后一行：不画发丝线（否则卡片底边内侧多一条线，设计 25 §4.1）。
+        SettingsRow(minHeight: SettingsMetrics.rowHeightAction, showsDivider: false) {
+            HStack(spacing: SettingsMetrics.labelControlGap) {
+                Button {
+                    // 预留：D-3 落定后打开只读审计视图（audit JSONL tail，脱敏）
+                } label: {
+                    Label("查看使用记录", systemImage: "list.bullet.rectangle")
+                }
+                .disabled(true) // 审计 JSONL（docs/20 §4.6 方案 A / D-3）落定后放开
+                // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
+                Spacer(minLength: 0)
+                Text("审计记录格式待定（D-3）")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .disabled(true) // 审计 JSONL（docs/20 §4.6 方案 A / D-3）落定后放开
-            Spacer()
-            Text("审计记录格式待定（D-3）")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 

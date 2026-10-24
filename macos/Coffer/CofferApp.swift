@@ -189,6 +189,11 @@ struct CofferMainApp: App {
             SettingsWindowHost()
                 .environmentObject(model)
         }
+        // BUG-36（v2.13.1 真机核销发现）：设置页内容固定 460pt，但窗口沿用旧会话保存的
+        // 900pt 尺寸 → 卡片居中、两侧出现大片空白（比改造前更差）。窗口尺寸改为跟随内容，
+        // 并把默认尺寸对齐 SettingsMetrics，避免「内容窄、窗口宽」的结构性错配。
+        .defaultSize(width: SettingsMetrics.windowWidth, height: 680)
+        .windowResizability(.contentSize)
 
         // 菜单栏常驻（FR-13.3）已迁往 Platform/StatusItemController.swift
         // （v0.5.0 PL-6：NSStatusItem 取代 MenuBarExtra，菜单结构与语义一致）。

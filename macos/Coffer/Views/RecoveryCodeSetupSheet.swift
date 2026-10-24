@@ -26,6 +26,11 @@
 // 反馈：enable 失败（1002 密码错 / 数据损坏）经 lastErrorMessage →
 // ffiErrorAlert 弹窗呈现，本 sheet 保留可重试（与 VaultBioEnableOfferView
 // 三分支一致；错误文案不可区分纪律由 ErrorPresenter 统一保证）。
+//
+// v2.13.1（docs/03-功能设计/25-v2.13.1-设置页紧凑化-设计.md §4.2）：仅
+// RecoveryCodeSettingsSection 的容器 Section → SettingsCard、行 → SettingsRow
+// （SettingsStyle.swift）。两态文案、按钮、确认对话框与 sheet 流程未动；
+// RecoveryCodeSetupSheet 是独立 sheet，宽度与容器不在本版范围（设计 §2.3 非目标）。
 
 import AppKit
 import SwiftUI
@@ -41,21 +46,26 @@ struct RecoveryCodeSettingsSection: View {
     @State private var showRegenerateConfirm = false
 
     var body: some View {
-        Section {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("恢复码").font(.headline)
-                    Text(statusCaption)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+        // v2.13.1（设计 25 §4.2）：Section → SettingsCard、行 → SettingsRow。
+        // 页头 / 页脚文案、两态文案、按钮与确认 / sheet 流程**一律未动**
+        // （判据 INV-SET-2 / INV-SET-3）。单行卡，故行尾不画发丝线。
+        SettingsCard(
+            "恢复码",
+            footer: "恢复码用于忘记主密码时重置密码库；仅在生成时显示一次，请抄写并妥善保存。"
+        ) {
+            SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine, showsDivider: false) {
+                // 双行行（标题 + 状态说明 + 右侧动作）：行高下限 44（D-11.4）。
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("恢复码").font(.headline)
+                        Text(statusCaption)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    statusActions
                 }
-                Spacer()
-                statusActions
             }
-        } header: {
-            Text("恢复码")
-        } footer: {
-            Text("恢复码用于忘记主密码时重置密码库；仅在生成时显示一次，请抄写并妥善保存。")
         }
         .confirmationDialog(
             "重新生成恢复码？",
@@ -82,14 +92,21 @@ struct RecoveryCodeSettingsSection: View {
     }
 
     /// 按态渲染的操作按钮（docs/31 §4.3）。
+    ///
+    /// v2.13.1：命中区按 D-20.7 硬下限 28 扩（`frame(minHeight:)` + `contentShape`），
+    /// 不改视觉尺寸；取 `SettingsMetrics.minimumHitTarget` 而非裸数字（INV-SET-5）。
     @ViewBuilder
     private var statusActions: some View {
         if model.hasRecoveryWrap {
             Button("重新生成…") { showRegenerateConfirm = true }
                 .disabled(model.isBusy)
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
         } else {
             Button("生成恢复码…") { showSetup = true }
                 .disabled(model.isBusy)
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
         }
     }
 }

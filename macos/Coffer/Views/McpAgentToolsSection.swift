@@ -436,23 +436,29 @@ struct McpAgentToolsSection: View {
     @ScaledMetric(relativeTo: .callout) private var iconSlotWidth: CGFloat = 16
 
     var body: some View {
+        // v2.13.1（设计 25 §4.2 G5/G3）：本子块寄生父节 MCP 卡片内，故不新开卡片，
+        // 只把各块包成 `SettingsRow`（行高 32 / 36 / 44，见 SettingsMetrics）。
+        // 行序、控件与动作零变化（验收判据 E 组逐节清点）。
         Group {
             headerRow
 
             if !center.helperAvailable {
-                Label("注册组件不可用，仅支持复制命令", systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                bannerRow {
+                    Label("注册组件不可用，仅支持复制命令", systemImage: "exclamationmark.triangle")
+                }
             } else if center.probeFailed {
                 // M2：探测失败必须显式提示，不得静默按「未安装」渲染。
-                Label("工具探测失败，请点刷新重试", systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                bannerRow {
+                    Label("工具探测失败，请点刷新重试", systemImage: "exclamationmark.triangle")
+                }
             }
 
             if showsEmptyState {
                 // 一个都没装：主组位置显示空态（docs/23 §5.3），工具行退到折叠组。
-                emptyState
+                // D-7.2a：空态自身不再包卡片（此处只是行容器）。
+                SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine) {
+                    emptyState
+                }
             } else {
                 // 行序固定不重排（docs/23 §4.1）：未安装的行留在原位显示「未安装」，
                 // 开关禁用但复制入口可用——不让行在会话中途迁移位置。
@@ -476,22 +482,43 @@ struct McpAgentToolsSection: View {
     /// 子标题「AI 工具」+ 恒可用刷新（docs/23 §4.1 STD-05：检测不因总开关 / 无会话
     /// / 辅助程序缺失而禁用——否则用户失败后失去唯一自救路径）。
     private var headerRow: some View {
-        HStack {
-            Text("AI 工具").font(.headline)
-            Spacer()
-            Button {
-                center.refresh()
-            } label: {
-                Image(systemName: "arrow.clockwise")
+        // 子标题行：动作行高 36（含恒可用刷新入口）。
+        SettingsRow(minHeight: SettingsMetrics.rowHeightAction) {
+            HStack(spacing: SettingsMetrics.labelControlGap) {
+                Text("AI 工具").font(.headline)
+                Spacer(minLength: SettingsMetrics.labelControlGap)
+                Button {
+                    center.refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        // 命中区 ≥28×28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                        // 宽也要给——纯图标墨迹仅 13–16pt，只加 minHeight 会让可点矩形
+                        // 仍是细条（reviewer H1）。
+                        .frame(minWidth: SettingsMetrics.minimumHitTarget,
+                               minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                // 检测本身不受总开关 / 会话限制（STD-05），但 helper 串行是一次一个请求，
+                // 在飞时禁用（H3：避免与在飞注册撞固定名 config/result）。
+                .disabled(center.busy)
+                .help(center.busy
+                      ? String(localized: "正在处理注册操作，请稍候")
+                      : String(localized: "重新检测工具与注册状态"))
+                .accessibilityLabel("重新检测工具与注册状态")
             }
-            .buttonStyle(.borderless)
-            // 检测本身不受总开关 / 会话限制（STD-05），但 helper 串行是一次一个请求，
-            // 在飞时禁用（H3：避免与在飞注册撞固定名 config/result）。
-            .disabled(center.busy)
-            .help(center.busy
-                  ? String(localized: "正在处理注册操作，请稍候")
-                  : String(localized: "重新检测工具与注册状态"))
-            .accessibilityLabel("重新检测工具与注册状态")
+        }
+    }
+
+    /// 节内横幅行（辅助程序缺失 / 探测失败）：单行高 32，长文案按行宽换行不截断。
+    ///
+    /// 文案在调用点以 Label 字面量传入（不在此处拼 LocalizedStringKey），
+    /// 保证 l10n 抽取器仍能按 Label(…) 命中该键（v2.13.0 双语门禁口径）。
+    private func bannerRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        SettingsRow {
+            content()
+                .font(.callout)
+                .foregroundStyle(.orange)
         }
     }
 
@@ -521,38 +548,46 @@ struct McpAgentToolsSection: View {
     /// .body，D-11.2；状态词不截断，D-11.8）。
     private func autoTargetRow(_ target: McpAgentTarget) -> some View {
         let presentation = presentation(for: target)
-        return HStack(alignment: .top, spacing: 8) {
-            statusIconSlot(presentation)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(target.displayName)
-                        .font(.body)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                    Text(presentation.statusWord)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(1)
+        // 双行行高 44（设计 25 §2.1 #9）：图标 + 名称/状态词 + 次文案 + 行尾开关。
+        // 内容更高时按内容增高（minHeight 是下限，不是定高，D-20.4）。
+        return SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine) {
+            HStack(alignment: .top, spacing: SettingsMetrics.labelControlGap) {
+                statusIconSlot(presentation)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: SettingsMetrics.labelControlGap) {
+                        Text(target.displayName)
+                            .font(.body)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                        // 状态词不压缩（TC-SET-46）：保持 fixedSize + 高布局优先级，
+                        // 长状态词（en「Registered to another vault」）仍完整显示。
+                        Text(presentation.statusWord)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(1)
+                    }
+                    if !presentation.detail.isEmpty {
+                        Text(presentation.detail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .help(presentation.detail)
+                    }
+                    actionsRow(target, presentation: presentation)
                 }
-                if !presentation.detail.isEmpty {
-                    Text(presentation.detail)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .help(presentation.detail)
-                }
-                actionsRow(target, presentation: presentation)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityLabel(for: target, presentation: presentation))
+                // 名称区与开关之间的最小间距保留 12（TC-SET-46 的宽度预算按此计算，
+                // 与本版无关，不为「凑 8 节奏」而收窄）。
+                Spacer(minLength: 12)
+                Toggle("", isOn: intentBinding(for: target))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!canToggle(target))
+                    .help(toggleHelp(for: target))
+                    .accessibilityLabel("\(target.displayName) 注册开关")
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(accessibilityLabel(for: target, presentation: presentation))
-            Spacer(minLength: 12)
-            Toggle("", isOn: intentBinding(for: target))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(!canToggle(target))
-                .help(toggleHelp(for: target))
-                .accessibilityLabel("\(target.displayName) 注册开关")
         }
     }
 
@@ -573,10 +608,14 @@ struct McpAgentToolsSection: View {
     }
 
     /// 行内动作（≤2 个，.borderless + .controlSize(.small)，D-11.5）。
+    ///
+    /// 每个小按钮的命中区扩到 ≥`minimumHitTarget`（28pt，设计 25 §2.2 / D-20.7）：
+    /// 只加 `.frame(minHeight:)` + `.contentShape`，**不改视觉尺寸**（字号与
+    /// controlSize 原样），故判据 B 组「不因紧凑化变小」成立。
     @ViewBuilder
     private func actionsRow(_ target: McpAgentTarget, presentation: RowPresentation) -> some View {
         if presentation.showsCopy || presentation.showsRepair || presentation.showsUpdate {
-            HStack(spacing: 8) {
+            HStack(spacing: SettingsMetrics.labelControlGap) {
                 if presentation.showsRepair, let title = presentation.repairTitle {
                     // H2：清理（再次清理/再次移除）不走授权链，总开关 OFF 时仍可用；
                     // 重试注册属于授权动作，仍需总开关 ON。
@@ -584,6 +623,8 @@ struct McpAgentToolsSection: View {
                         .buttonStyle(.borderless)
                         .controlSize(.small)
                         .disabled(title == Self.cleanupActionTitle ? !canCleanup : !canOperate)
+                        .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
                 }
                 if presentation.showsUpdate {
                     Button("更新为当前库") {
@@ -593,6 +634,8 @@ struct McpAgentToolsSection: View {
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .disabled(!canOperate)
+                    .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                    .contentShape(Rectangle())
                 }
                 if presentation.showsCopy {
                     Button(copiedTarget == target ? String(localized: "已复制") : copyTitle(for: target)) {
@@ -601,6 +644,8 @@ struct McpAgentToolsSection: View {
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .disabled(cofferBinaryPath.isEmpty || model.vaultDirPath.isEmpty)
+                    .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                    .contentShape(Rectangle())
                 }
             }
         }
@@ -623,40 +668,49 @@ struct McpAgentToolsSection: View {
     }
 
     private var otherToolsGroup: some View {
-        DisclosureGroup(isExpanded: $showOthers) {
-            ForEach(otherTargets, id: \.self) { target in
-                otherToolRow(target)
+        // 折叠组整体是一行（标题 + 展开箭头）；展开后的成员各自仍是一行，
+        // 故内层继续走 SettingsRow，仅末行不画发丝线（与外层行的线重叠）。
+        SettingsRow(minHeight: SettingsMetrics.rowHeightAction) {
+            DisclosureGroup(isExpanded: $showOthers) {
+                ForEach(Array(otherTargets.enumerated()), id: \.element) { index, target in
+                    otherToolRow(target, showsDivider: index < otherTargets.count - 1)
+                }
+            } label: {
+                Text("其他工具（\(otherTargets.count)）")
+                    .font(.callout)
             }
-        } label: {
-            Text("其他工具（\(otherTargets.count)）")
-                .font(.callout)
         }
     }
 
-    /// 折叠组行：无开关（无授权面），只有复制入口。
-    private func otherToolRow(_ target: McpAgentTarget) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "circle.dashed")
-                .foregroundStyle(.secondary)
-                .frame(width: iconSlotWidth)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(target.displayName)
-                    .font(.callout)
-                Text(target.isAutoRegister
-                     ? String(localized: "未安装，安装后点刷新")
-                     : String(localized: "仅手动配置，复制后粘贴到该工具的 MCP 配置中"))
-                    .font(.caption)
+    /// 折叠组行：无开关（无授权面），只有复制入口。双行行高 44（图标 + 两行文本）。
+    private func otherToolRow(_ target: McpAgentTarget, showsDivider: Bool) -> some View {
+        SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine, showsDivider: showsDivider) {
+            HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.labelControlGap) {
+                Image(systemName: "circle.dashed")
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .frame(width: iconSlotWidth)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(target.displayName)
+                        .font(.callout)
+                    Text(target.isAutoRegister
+                         ? String(localized: "未安装，安装后点刷新")
+                         : String(localized: "仅手动配置，复制后粘贴到该工具的 MCP 配置中"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Button(copiedTarget == target ? String(localized: "已复制") : copyTitle(for: target)) {
+                    copyCommand(for: target)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(cofferBinaryPath.isEmpty || model.vaultDirPath.isEmpty)
+                // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 8)
-            Button(copiedTarget == target ? String(localized: "已复制") : copyTitle(for: target)) {
-                copyCommand(for: target)
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .disabled(cofferBinaryPath.isEmpty || model.vaultDirPath.isEmpty)
         }
         .accessibilityElement(children: .combine)
         // 三元里的字面量各自成键：占位符位是数据（工具名），后缀是文案（设计 §5.4）。

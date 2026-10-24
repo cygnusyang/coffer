@@ -39,35 +39,21 @@ struct McpEscrowSettingsSection: View {
     @State private var isEnabling = false
 
     var body: some View {
-        Section {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("MCP 解锁托管").font(.headline)
-                    Text(statusCaption)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                statusActions
-            }
+        // v2.13.1（设计 25 §4.2 G3）：容器 `Section` → `SettingsCard`，行包
+        // `SettingsRow`——只改容器与几何，三态与确认行的行为逐项不变。
+        SettingsCard(
+            "MCP 解锁托管",
+            footer: "让 coffer MCP 进程在本机免密码解锁本库。密钥只存本机钥匙串（不随 iCloud 同步）；换主密码不影响托管，如需吊销请在本页关闭。"
+        ) {
+            statusRow
 
             if showPasswordPrompt {
                 passwordPromptRow
             }
 
             if model.mcpEscrowStatus == .stale {
-                // stale 态说明（docs/29 §5.2：Keychain 项缺失 → 引导重新启用）
-                Label(
-                    "MCP 解锁托管凭据已失效（Keychain 条目缺失）。重新启用将重派生同一托管密钥并覆盖（幂等）；在此之前 coffer MCP 进程无法免密码解锁本库。",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.callout)
-                .foregroundStyle(.orange)
+                staleNoticeRow
             }
-        } header: {
-            Text("MCP 解锁托管")
-        } footer: {
-            Text("让 coffer MCP 进程在本机免密码解锁本库。密钥只存本机钥匙串（不随 iCloud 同步）；换主密码不影响托管，如需吊销请在本页关闭。")
         }
         .onAppear { model.refreshMcpEscrowStatus() }
         .ffiErrorAlert($model.lastErrorMessage)
@@ -85,6 +71,44 @@ struct McpEscrowSettingsSection: View {
         }
     }
 
+    // MARK: - 行（v2.13.1 设计 25 §4.2 G3：容器改写，内容与行序不变）
+
+    /// 状态行（标题 + 状态说明 + 右端操作）：双行行高 44（设计 25 §2.1 #9）。
+    ///
+    /// 发丝线只在后面还有行时画——末行画线会在卡片底边内侧多出一条线。
+    private var statusRow: some View {
+        SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine, showsDivider: hasRowsAfterStatus) {
+            HStack(alignment: .top, spacing: SettingsMetrics.labelControlGap) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MCP 解锁托管").font(.headline)
+                    Text(statusCaption)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: SettingsMetrics.labelControlGap)
+                statusActions
+            }
+        }
+    }
+
+    /// 状态行之后是否还有行（确认行 / stale 说明）——决定状态行是否画发丝线。
+    private var hasRowsAfterStatus: Bool {
+        showPasswordPrompt || model.mcpEscrowStatus == .stale
+    }
+
+    /// stale 态说明（docs/29 §5.2：Keychain 项缺失 → 引导重新启用）。
+    /// 本节末行，不画发丝线。
+    private var staleNoticeRow: some View {
+        SettingsRow(showsDivider: false) {
+            Label(
+                "MCP 解锁托管凭据已失效（Keychain 条目缺失）。重新启用将重派生同一托管密钥并覆盖（幂等）；在此之前 coffer MCP 进程无法免密码解锁本库。",
+                systemImage: "exclamationmark.triangle"
+            )
+            .font(.callout)
+            .foregroundStyle(.orange)
+        }
+    }
+
     /// 状态行说明文案（三态，docs/29 §7.2）。
     private var statusCaption: String {
         switch model.mcpEscrowStatus {
@@ -98,6 +122,11 @@ struct McpEscrowSettingsSection: View {
     }
 
     /// 按态渲染的操作按钮（docs/29 §5.2 生命周期）。
+    ///
+    /// 命中区按 D-20.7 硬下限 28 扩（`frame(minHeight:)` + `contentShape`），
+    /// **不改视觉尺寸**——与镜像实现 TouchIDSettingsSection 的 statusActions 逐项
+    /// 对齐（reviewer H2：两节同一交互不得行为分叉）。取
+    /// `SettingsMetrics.minimumHitTarget` 而非裸数字（INV-SET-5 几何常量单源）。
     @ViewBuilder
     private var statusActions: some View {
         switch model.mcpEscrowStatus {
@@ -108,37 +137,50 @@ struct McpEscrowSettingsSection: View {
                 showPasswordPrompt = true
             }
             .disabled(model.isBusy || showPasswordPrompt)
+            .frame(minHeight: SettingsMetrics.minimumHitTarget)
+            .contentShape(Rectangle())
         case .enabled:
             Button("关闭 MCP 解锁托管", role: .destructive) {
                 showDisableConfirm = true
             }
             .disabled(model.isBusy)
+            .frame(minHeight: SettingsMetrics.minimumHitTarget)
+            .contentShape(Rectangle())
         }
     }
 
     // MARK: - 主密码确认行（D-6）
 
+    /// 主密码确认行（D-6）：行内联展开，不与错误弹窗争层（见文件头教训）。
     private var passwordPromptRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("出于安全考虑，主密码不会被保存，请重新输入一次以确认身份。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            HStack {
-                SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-                    .onSubmit(confirmEnable)
-                if isEnabling {
-                    ProgressView().controlSize(.small)
+        // 发丝线只在后面还有 stale 说明时画（本节末行画线会多出一条）。
+        SettingsRow(minHeight: SettingsMetrics.rowHeightTwoLine,
+                    showsDivider: model.mcpEscrowStatus == .stale) {
+            VStack(alignment: .leading, spacing: SettingsMetrics.labelControlGap) {
+                Text("出于安全考虑，主密码不会被保存，请重新输入一次以确认身份。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 220)
+                        .onSubmit(confirmEnable)
+                    if isEnabling {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                    Button("取消", role: .cancel) { cancelPrompt() }
+                        .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
+                    Button(confirmTitle) { confirmEnable() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(password.isEmpty || isEnabling)
+                        .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
                 }
-                Spacer()
-                Button("取消", role: .cancel) { cancelPrompt() }
-                Button(confirmTitle) { confirmEnable() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(password.isEmpty || isEnabling)
             }
         }
-        .padding(.vertical, 4)
     }
 
     private var confirmTitle: String {

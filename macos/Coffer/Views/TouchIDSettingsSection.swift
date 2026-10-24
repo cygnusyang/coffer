@@ -22,6 +22,11 @@
 // 呈现细节：主密码确认采用**内联展开**而非嵌套 sheet——错误弹窗（alert）在
 // macOS 上无法叠在已呈现的 sheet 之上，内联行让 1002 / Keychain 失败的反馈
 // 与确认输入同处一层，避免双重呈现冲突。
+//
+// v2.13.1（docs/03-功能设计/25-v2.13.1-设置页紧凑化-设计.md §4.2）：容器由
+// `Section` 改为 `SettingsCard`、行改为 `SettingsRow`（SettingsStyle.swift）。
+// 三态渲染、按钮文案、确认流程与错误分支**一律未动**，只换容器与留白
+// （判据 INV-SET-2：控件数量 / 顺序 / 绑定 / 动作零变化）。
 
 import SwiftUI
 
@@ -48,9 +53,11 @@ struct TouchIDSettingsSection: View {
                 // 兜底分支：无 Touch ID 设备直接打开设置页时给出说明。
                 // header 用「安全」而非原「Touch ID 解锁」：对齐统一设置页的
                 // 节结构命名（本节位于「④ 安全」下），有意变更非笔误。
-                Section("安全") {
-                    Label("当前设备不支持生物识别解锁。", systemImage: "touchid")
-                        .foregroundStyle(.secondary)
+                SettingsCard("安全") {
+                    SettingsRow(showsDivider: false) {
+                        Label("当前设备不支持生物识别解锁。", systemImage: "touchid")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -74,16 +81,32 @@ struct TouchIDSettingsSection: View {
 
     @ViewBuilder
     private var touchIDSection: some View {
-        Section {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Touch ID 解锁").font(.headline)
-                    Text(statusCaption)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+        // v2.13.1（设计 25 §4.2 G2）：Section → SettingsCard、行 → SettingsRow。
+        // 页头 / 页脚文案与顺序原样（判据 INV-SET-3）；只是节距与行高改由
+        // SettingsStyle 的几何契约承担。
+        //
+        // 发丝线按「是否还有后续行」逐行判定：条件行（内联确认 / stale 说明）
+        // 收尾时，最后一行不画线，避免卡底内侧多出一条（SettingsRow 契约）。
+        SettingsCard(
+            "安全",
+            footer: "Touch ID 只是解锁快捷方式：主密码仍是唯一解锁凭据，遗失后无法找回。"
+        ) {
+            SettingsRow(
+                minHeight: SettingsMetrics.rowHeightTwoLine,
+                showsDivider: showPasswordPrompt || model.touchIDStatus == .stale
+            ) {
+                // 双行行（图标 + 两行文本 + 开关），行高下限 44（D-11.4 双行态）。
+                // alignment: .top 保持现状：两行文本与右侧动作按钮顶对齐。
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Touch ID 解锁").font(.headline)
+                        Text(statusCaption)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    statusActions
                 }
-                Spacer()
-                statusActions
             }
 
             if showPasswordPrompt {
@@ -92,17 +115,15 @@ struct TouchIDSettingsSection: View {
 
             if model.touchIDStatus == .stale {
                 // stale 态说明（docs/08 §4.1：指纹集变更 → 引导重新启用）
-                Label(
-                    "生物识别凭据已失效（可能因指纹变更）。重新启用将生成新凭据；在此之前 Touch ID 解锁不可用，请使用主密码解锁。",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.callout)
-                .foregroundStyle(.orange)
+                SettingsRow(showsDivider: false) {
+                    Label(
+                        "生物识别凭据已失效（可能因指纹变更）。重新启用将生成新凭据；在此之前 Touch ID 解锁不可用，请使用主密码解锁。",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                }
             }
-        } header: {
-            Text("安全")
-        } footer: {
-            Text("Touch ID 只是解锁快捷方式：主密码仍是唯一解锁凭据，遗失后无法找回。")
         }
     }
 
@@ -122,6 +143,10 @@ struct TouchIDSettingsSection: View {
     /// 按态渲染的操作按钮（docs/08 §7.5 / §9 T04）。
     @ViewBuilder
     private var statusActions: some View {
+        // 行内动作按钮：命中区按 D-20.7 硬下限 28 扩（`frame(minHeight:)` +
+        // `contentShape`），**不改视觉尺寸**——borderless 按钮的墨迹仍是原字号，
+        // 只把可点矩形撑到 28。取 `SettingsMetrics.minimumHitTarget` 而非裸数字
+        // （判据 INV-SET-5：几何常量单源）。
         switch model.touchIDStatus {
         case .disabled, .stale:
             Button(model.touchIDStatus == .disabled
@@ -130,37 +155,52 @@ struct TouchIDSettingsSection: View {
                 showPasswordPrompt = true
             }
             .disabled(model.isBusy || showPasswordPrompt)
+            .frame(minHeight: SettingsMetrics.minimumHitTarget)
+            .contentShape(Rectangle())
         case .enabled:
             Button("关闭 Touch ID 解锁", role: .destructive) {
                 showDisableConfirm = true
             }
             .disabled(model.isBusy)
+            .frame(minHeight: SettingsMetrics.minimumHitTarget)
+            .contentShape(Rectangle())
         }
     }
 
     // MARK: - 主密码确认行（D-6）
 
+    /// 内联主密码确认行（v2.13.1：由裸 VStack 改为 `SettingsRow` 的两行行，行高
+    /// 下限 44；原 `.padding(.vertical, 4)` 由行的 `rowContentInset` 承担，不再
+    /// 自带垂直留白——否则大字号下会与卡片圆角挤在一起）。
     private var passwordPromptRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("出于安全考虑，主密码不会被保存，请重新输入一次以确认身份。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            HStack {
-                SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-                    .onSubmit(confirmEnable)
-                if isEnabling {
-                    ProgressView().controlSize(.small)
+        SettingsRow(
+            minHeight: SettingsMetrics.rowHeightTwoLine,
+            showsDivider: model.touchIDStatus == .stale
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("出于安全考虑，主密码不会被保存，请重新输入一次以确认身份。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    SecureField("主密码", text: $password, prompt: Text("请输入主密码"))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 220)
+                        .onSubmit(confirmEnable)
+                    if isEnabling {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                    Button("取消", role: .cancel) { cancelPrompt() }
+                        .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
+                    Button(confirmTitle) { confirmEnable() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(password.isEmpty || isEnabling)
+                        .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                        .contentShape(Rectangle())
                 }
-                Spacer()
-                Button("取消", role: .cancel) { cancelPrompt() }
-                Button(confirmTitle) { confirmEnable() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(password.isEmpty || isEnabling)
             }
         }
-        .padding(.vertical, 4)
     }
 
     /// 返回 LocalizedStringKey：调用方是 Button(...)，String 重载不查表（F6）。

@@ -58,6 +58,9 @@ struct DropzoneAuthStatusView: View {
             }
             Button(setButtonLabel) { onSet() }
                 .buttonStyle(.borderedProminent)
+                // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
         }
     }
 
@@ -84,6 +87,9 @@ struct DropzoneAuthStatusView: View {
                 Button(secondaryLabel) { onSecondary?() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                    .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                    .contentShape(Rectangle())
             }
         }
     }
@@ -102,6 +108,9 @@ struct DropzoneAuthStatusView: View {
                 .truncationMode(.middle)
             Button("重新授权…") { onSet() }
                 .buttonStyle(.borderedProminent)
+                // 命中区 ≥28pt（设计 25 §2.2 / D-20.7）：只扩点击区，不改视觉尺寸。
+                .frame(minHeight: SettingsMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
         }
     }
 }

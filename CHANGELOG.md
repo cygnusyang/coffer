@@ -12,6 +12,20 @@ release 中有体现）。
 
 ---
 
+## v2.13.1 — 2026-10-24
+
+### 新增/变化
+- **设置页紧凑化**：`Form.grouped` → `ScrollView` + 自绘卡片（`SettingsStyle.swift`）。实测依据：`.listRowInsets` / `.defaultMinRowHeight` / `.contentMargins(.vertical)` 在 macOS 26 的 grouped Form 上**全部无效**，`.listSectionSpacing` 直接 unavailable，唯一有效的 `.controlSize(.small)` 只能把行高 44→40 —— 用户抱怨的三项（左右留白、行高、节距）在系统 Form 下不可调。
+  - 目标值（实测现状 → 现在）：卡片左右外边距 20→**12**、行 inset 10→**8**、行高 37.5/44/53→**32/36/44**、卡间距 10→**8**、页顶底 20→**12**、窗宽 480→**460**；典型节高 98pt→**71pt（−28%）**。
+  - 交互语义零变化：控件数量/顺序/绑定/动作逐节清点一致；行内按钮用 `.contentShape` + `minHeight: 28` 扩命中区，**视觉尺寸不变**；卡片标题改挂容器 accessibilityLabel（页头 Text 隐藏），VoiceOver 仍可读到节名。
+  - 已知取舍：放弃系统 Form 的行为集（行 hover / key-view proxy / 系统节距），无可等价 API——用户已确认接受。
+
+### 修复/纪律
+- **BUG-36 核销**：设置页内容固定 460pt 但窗口沿用旧 900pt 存档 → 卡片居中、两侧大片空白（比改造前更差）。修复：settings Window 加 `defaultSize(460, 680)` + `windowResizability(.contentSize)`；真机复测窗口收敛为 460。
+- 判据文档随实现校正 3 处：`TC-SET-52` 改读 AXGroup title（自绘卡片下无节标题 StaticText）、`.lineLimit(1)` 由「零命中」降为「不新增」、`GATE-SET-5` 明确常量不算裸数字。
+
+---
+
 ## v2.13.0 — 2026-10-24
 
 ### 新增/变化

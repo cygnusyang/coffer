@@ -21,6 +21,20 @@ It also ships a local **MCP server** so AI coding tools (Claude Code, CodeBuddy,
 - **No lock-in** — import 1PUX / CSV / opvault, export 1PUX-compatible / CSV, encrypted backup with a recovery path.
 - **Open source** — AGPL-3.0; every version's design docs and acceptance criteria live in `docs/`.
 
+## Screenshots
+
+![Coffer main window: sidebar navigation, item list, detail pane](docs/assets/screenshots/favorites-en.png)
+
+![Short demo: switching items and inspecting details](docs/assets/screenshots/demo.gif)
+
+Settings (the UI ships in 简体中文 and English; switch under Settings → Language):
+
+| 简体中文 | English |
+| --- | --- |
+| ![Settings in Simplified Chinese](docs/assets/screenshots/settings-zh.png) | ![Settings in English](docs/assets/screenshots/settings-en.png) |
+
+> All items in the screenshots are demo data (Demo · GitHub / Demo · Bank / Demo · Wi-Fi) — no real credentials.
+
 ## Download
 
 Grab the latest build from [Releases](https://github.com/cygnusyang/coffer/releases/latest):

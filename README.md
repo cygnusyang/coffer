@@ -11,6 +11,20 @@
 
 - 仓库：<https://github.com/cygnusyang/coffer> · 许可证：AGPL-3.0
 
+## 截图
+
+![Coffer 主界面：左侧导航、中间条目列表、右侧条目详情](docs/assets/screenshots/favorites-zh.png)
+
+![操作演示：切换条目、查看详情](docs/assets/screenshots/demo.gif)
+
+设置页（界面支持简体中文与 English，语言入口在「设置 → 语言」）：
+
+| 简体中文 | English |
+| --- | --- |
+| ![设置页·简体中文](docs/assets/screenshots/settings-zh.png) | ![设置页·English](docs/assets/screenshots/settings-en.png) |
+
+> 截图中的数据均为演示条目（Demo · GitHub / Demo · Bank / Demo · Wi-Fi），不含任何真实凭据。
+
 ## 下载
 
 安装包见 [Releases](https://github.com/cygnusyang/coffer/releases/latest)：`Coffer-vX.Y.Z.dmg`（新装）、`Coffer-vX.Y.Z.zip`（OTA 自动更新使用，勿手工解压覆盖）。

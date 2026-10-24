@@ -6,6 +6,7 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
 [![Latest release](https://img.shields.io/github/v/release/cygnusyang/coffer)](https://github.com/cygnusyang/coffer/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/cygnusyang/coffer/total)](https://github.com/cygnusyang/coffer/releases)
+[![CI](https://github.com/cygnusyang/coffer/actions/workflows/rust.yml/badge.svg)](https://github.com/cygnusyang/coffer/actions/workflows/rust.yml)
 
 **English** · [中文](README.md)
 
@@ -132,7 +133,7 @@ cd core && cargo test --workspace --no-fail-fast
 
 ## Documentation
 
-Design docs, acceptance criteria and decision records are in `docs/` (Chinese), indexed by [docs/README.md](docs/README.md). macOS specifics: [macos/README.md](macos/README.md).
+Design docs, acceptance criteria and decision records live in `docs/` (written in Chinese) — start with the **[English documentation index](docs/README.en.md)**, which maps the corpus and lists the five documents worth reading first. macOS specifics: [macos/README.md](macos/README.md).
 
 ## License
 

@@ -4,6 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
 [![Latest release](https://img.shields.io/github/v/release/cygnusyang/coffer)](https://github.com/cygnusyang/coffer/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/cygnusyang/coffer/total)](https://github.com/cygnusyang/coffer/releases)
+[![CI](https://github.com/cygnusyang/coffer/actions/workflows/rust.yml/badge.svg)](https://github.com/cygnusyang/coffer/actions/workflows/rust.yml)
 
 **中文** · [English](README.en.md)
 

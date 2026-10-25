@@ -34,6 +34,19 @@ step() { printf '\n==> %s\n' "$1"; }
 COFFER_BIN="/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer"
 [[ -x "${COFFER_BIN}" ]] || die "未找到 Coffer CLI：${COFFER_BIN}（先把 App 装到 /Applications）"
 
+# CLI 必填 COFFER_VAULT_DIR（README「解锁凭据」）：未给则从容器目录自动探测，仅在恰好一个库时自动选。
+if [[ -z "${COFFER_VAULT_DIR:-}" ]]; then
+  CANDIDATES=("$HOME"/Library/Containers/top.cygnusyang.coffer/Data/Documents/Coffer/*/)
+  if [[ ${#CANDIDATES[@]} -eq 1 && -d "${CANDIDATES[0]}" ]]; then
+    COFFER_VAULT_DIR="${CANDIDATES[0]%/}"
+    export COFFER_VAULT_DIR
+    printf '库目录（自动探测）：%s\n' "${COFFER_VAULT_DIR}"
+  else
+    die "无法自动确定密码库目录（候选 ${#CANDIDATES[@]} 个）。请显式设置 COFFER_VAULT_DIR 后重跑。"
+  fi
+fi
+[[ -d "${COFFER_VAULT_DIR}" ]] || die "COFFER_VAULT_DIR 不存在：${COFFER_VAULT_DIR}"
+
 put() {  # put <NAME>  值经 stdin 传入
   local name="$1"
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -41,16 +54,29 @@ put() {  # put <NAME>  值经 stdin 传入
     printf 'DRY  would write %s → 容器 %s\n' "${name}" "${SCOPE}"
     return 0
   fi
-  if "${COFFER_BIN}" set-env --scope "${SCOPE}" "${name}" >/dev/null 2>&1; then
+  local err pw
+  if err="$("${COFFER_BIN}" set-env --scope "${SCOPE}" "${name}" 2>&1 >/dev/null)"; then
+    printf 'OK   %s 已写入容器 %s\n' "${name}" "${SCOPE}"
+    return 0
+  fi
+  if [[ -z "${COFFER_VAULT_PASSWORD:-}" ]]; then
+    printf 'CLI 报错：%s\n' "${err}" >&2
+    printf '若未启用「MCP 解锁托管」，可输入库主密码兜底（仅本次进程环境，不落盘）：\n' >&2
+    read -r -s -p '主密码：' pw; echo >&2
+    export COFFER_VAULT_PASSWORD="${pw}"
+    unset pw
+  fi
+  if err="$("${COFFER_BIN}" set-env --scope "${SCOPE}" "${name}" 2>&1 >/dev/null)"; then
     printf 'OK   %s 已写入容器 %s\n' "${name}" "${SCOPE}"
   else
-    printf 'FAIL %s 写入失败（是否已解锁？托管是否启用？）\n' "${name}" >&2
+    printf 'FAIL %s 写入失败：%s\n' "${name}" "${err}" >&2
     return 1
   fi
 }
 
 step "1/4 APPLE_PROVISIONING_PROFILE_BASE64（自动）"
-PROFILE="$(ls "${ROOT_DIR}"/macos/build/*.provisionprofile 2>/dev/null | head -1)"
+PROFILE="$(ls "${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile" 2>/dev/null | head -1)"
+[[ -z "${PROFILE}" ]] && PROFILE="$(ls "${ROOT_DIR}"/macos/build/*.provisionprofile 2>/dev/null | head -1)"
 [[ -n "${PROFILE}" ]] || die "未找到 provisioning profile：先跑 ./tools/make_provisioning_profile.sh"
 printf '来源：%s（到期时间见 plutil 或 make 脚本输出）\n' "${PROFILE}"
 base64 -i "${PROFILE}" | put APPLE_PROVISIONING_PROFILE_BASE64 || die "写入失败"

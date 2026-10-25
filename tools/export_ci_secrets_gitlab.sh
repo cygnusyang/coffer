@@ -1,6 +1,6 @@
 #!/bin/bash
 # export_ci_secrets_gitlab.sh —— 导出本机签名证书与 provisioning profile，
-# 写入 GitLab CI/CD variables（Pro trunk，coffer-pro），供 .gitlab-ci.yml
+# 写入 GitLab CI/CD variables（内网 GitLab 主线 coffer），供 .gitlab-ci.yml
 # release job（tag v*）自动构建签名使用。
 #
 # 用法:
@@ -21,12 +21,12 @@
 #   APPLE_CERT_P12_BASE64 / APPLE_CERT_PASSWORD / APPLE_PROVISIONING_PROFILE_BASE64
 #
 # 每次 profile 过期（7 天）只需重跑本脚本 --push 刷新 profile 变量。
-# 默认目标仓 cygnusyang/coffer-pro，可用 GITLAB_PROJECT 覆盖（如 cygnusyang/coffer）。
+# 默认目标仓 cygnusyang/coffer（内网 GitLab），可用 GITLAB_PROJECT 覆盖。
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PROJECT="${GITLAB_PROJECT:-cygnusyang/coffer-pro}"
+PROJECT="${GITLAB_PROJECT:-cygnusyang/coffer}"
 OUT=/tmp/coffer-ci-secrets
 mkdir -p "$OUT"
 

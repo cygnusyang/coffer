@@ -21,6 +21,7 @@ release 中有体现）。
 
 - **删除「多库规划」表述**：`FEATURES.md` 的「多库 | 规划 | 后续版本」行事实错误——多库 UI / 跨库复制早在 **v0.4.0 作为免费功能交付**（FR-1.2 / FR-2.10，`docs/02-研发计划与决策/01-开发计划.md` §6），该行改为 `✅ v0.4.0 已交付`。`docs/03-功能设计/20-v2.10.0-Pro商业化路线-设计.md` 两处「多库为 Pro 规划项」随之修正，并在文首补去 Pro 化作废注记。全文已无「多库规划 / 后续版本」类表述。
   - 行为未变，故不升版本号。
+- **内网 GitLab 源码仓更名：coffer-pro → coffer**。Pro 版本已不存在（去 Pro 化 OS-1/OS-3），仓名随之收敛。同域下旧的免费版快照仓（2026-10-11，描述仍写「Pro 版另仓」）已删除，其提交仍在本地仓对象库中可回溯。`tools/export_ci_secrets_gitlab.sh` 默认目标仓改为 `cygnusyang/coffer`（`GITLAB_PROJECT` 仍可覆盖），`.gitlab-ci.yml` 的 OTA 双仓说明与 Release 描述文案同步去 Pro 字样。
 
 ---
 

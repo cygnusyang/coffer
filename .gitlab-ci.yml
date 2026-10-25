@@ -19,7 +19,7 @@
 # 注意：Pro 构建的 OTA host 白名单须加入 gitlab.internal.invalid（docs/35 §6.2 +
 # tools/check_ota_whitelist.sh + ManifestVerifier 源码常量，迁移轮代码改动）。
 #
-# OTA 双仓布局（BUG-25，2026-10-14）：coffer-pro（95）为私有项目，GitLab 对
+# OTA 双仓布局（BUG-25，2026-10-14）：源码仓 coffer（原名 coffer-pro）为私有项目，GitLab 对
 # 未鉴权请求掩蔽 404——App 沙盒无 token，拉 95 的清单必然 404 且被 BUG-23 的
 # fail-closed 语义掩蔽成「已是最新版本」。裁定：新建公开产物仓 coffer-ota
 # （project 97，无源码），CI 发版时把 zip + update-manifest.json 加传 97 并在
@@ -218,7 +218,7 @@ release:
         "tag_name": "${TAG}",
         "ref": "main",
         "name": "${TAG}",
-        "description": "Coffer OTA 更新产物（由 coffer-pro CI 自动发布；安装包请从 Coffer 应用内 OTA 或官方渠道获取）",
+        "description": "Coffer OTA 更新产物（由 Coffer CI 自动发布；安装包请从 Coffer 应用内 OTA 或官方渠道获取）",
         "assets": {
           "links": [
             {"name": "Coffer-${TAG}.zip (OTA)", "url": "${OTA_PKG_URL}/Coffer-${TAG}.zip", "direct_asset_path": "/downloads/Coffer-${TAG}.zip"},

@@ -25,7 +25,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SCOPE="coffer-release"
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+ONLY=""
+for arg in "$@"; do
+  case "${arg}" in
+    --dry-run) DRY_RUN=1 ;;
+    --only=*)  ONLY="${arg#--only=}" ;;
+    *) printf '未知参数：%s\n' "${arg}" >&2; exit 2 ;;
+  esac
+done
+
+# --only 过滤：未指定时全跑；指定时只跑列出的变量名（逗号分隔）
+want() {
+  [[ -z "${ONLY}" ]] && return 0
+  case ",${ONLY}," in *",$1,"*) return 0 ;; esac
+  return 1
+}
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$1"; }
@@ -74,6 +88,7 @@ put() {  # put <NAME>  值经 stdin 传入
   fi
 }
 
+if want APPLE_PROVISIONING_PROFILE_BASE64; then
 step "1/4 APPLE_PROVISIONING_PROFILE_BASE64（自动）"
 PROFILE="$(ls "${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile" 2>/dev/null | head -1)"
 [[ -z "${PROFILE}" ]] && PROFILE="$(ls "${ROOT_DIR}"/macos/build/*.provisionprofile 2>/dev/null | head -1)"
@@ -86,7 +101,9 @@ else
   printf '到期：读取失败，请自行确认 profile 有效期\n'
 fi
 base64 -i "${PROFILE}" | put APPLE_PROVISIONING_PROFILE_BASE64 || die "写入失败"
+fi
 
+if want APPLE_CERT_P12_BASE64; then
 step "2/4 APPLE_CERT_P12_BASE64（交互）"
 if [[ "${DRY_RUN}" == "1" ]]; then
   printf 'DRY  需要你提供 p12 路径（可用 ./tools/export_ci_secrets.sh 导出）\n'
@@ -95,7 +112,9 @@ else
   [[ -f "${P12_PATH}" ]] || die "p12 不存在：${P12_PATH}"
   base64 -i "${P12_PATH}" | put APPLE_CERT_P12_BASE64 || die "写入失败"
 fi
+fi
 
+if want APPLE_CERT_PASSWORD; then
 step "3/4 APPLE_CERT_PASSWORD（交互，隐藏输入）"
 if [[ "${DRY_RUN}" == "1" ]]; then
   printf 'DRY  需要隐藏输入 p12 导出密码\n'
@@ -104,7 +123,9 @@ else
   printf '%s' "${CERT_PW}" | put APPLE_CERT_PASSWORD || die "写入失败"
   unset CERT_PW
 fi
+fi
 
+if want UPDATE_SIGNING_KEY_BASE64; then
 step "4/4 UPDATE_SIGNING_KEY_BASE64（交互，隐藏输入）"
 printf '提示：该值只存在于 GitHub Secrets；若已丢失，换新密钥会使旧版本无法验签新清单。\n'
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -113,6 +134,7 @@ else
   read -r -s -p 'OTA 签名私钥（base64）：' OTA_KEY; echo
   printf '%s' "${OTA_KEY}" | put UPDATE_SIGNING_KEY_BASE64 || die "写入失败"
   unset OTA_KEY
+fi
 fi
 
 step "完成"

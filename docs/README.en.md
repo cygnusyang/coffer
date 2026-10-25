@@ -13,7 +13,6 @@ The complete design corpus lives under `docs/` and is written in **Chinese**; th
 | `03-功能设计/` | Per-version feature designs (one document per version) |
 | `04-测试与验收/` | Acceptance criteria and test plans per version |
 | `05-技术研究/` | Spikes: KDF calibration, OPVault layout, passkeys, licensing research |
-| `06-交接记录/` | Handover notes for unfinished work |
 | `01-KNOWN-ISSUES.md` | Defect register (Chinese; mirrored to GitHub Issues when shipped-affecting) |
 | `00-WORK-ITEMS.md` | Internal work-item board |
 | `DESIGN.md` | UI/UX standard: components, spacing, terminology |

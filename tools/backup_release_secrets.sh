@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # backup_release_secrets.sh —— 把发布所需的 4 个 CI secret 备份进 Coffer 库（环境容器）。
 #
-# 背景（运营门槛 T3-3.5）：bus factor = 1 的最大风险不是代码，是**发布材料只在一个人手上**。
+# 背景（运营门槛 T3-3.5，门槛表在内部运营分支，不随本仓库发布）：bus factor = 1 的最大风险不是代码，是**发布材料只在一个人手上**。
 # 本脚本把「重建发布」所需的材料收进 Coffer 的环境容器 `coffer-release`：本地加密、不上云。
 #
 # 纪律（R2）：值只经 stdin 传入 CLI，**不落 argv / 不落 stdout / 不落日志**；脚本只回显变量名。

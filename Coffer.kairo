@@ -5,7 +5,7 @@
     "direction" : "forward",
     "id" : "37DA250E-F22E-46BD-BC47-42F3868C569E",
     "title" : "Coffer",
-    "updatedAt" : "2026-10-25T03:19:31Z"
+    "updatedAt" : "2026-10-25T03:42:26Z"
   },
   "resources" : [
 
@@ -214,26 +214,6 @@
         "ops"
       ],
       "title" : "Issue triage 约定成文（标签含义 + 响应预期）"
-    },
-    {
-      "assignments" : [
-
-      ],
-      "dependencies" : [
-
-      ],
-      "effortHours" : 1,
-      "id" : "DA983692-E7E9-4A82-8FB6-86F9989D298B",
-      "kind" : "task",
-      "notes" : "",
-      "priority" : "low",
-      "progress" : 0,
-      "schedulingPolicy" : "asap",
-      "status" : "pending",
-      "tags" : [
-        "ops"
-      ],
-      "title" : "发布节奏成文（双周\/月度）并在 README 标注"
     },
     {
       "assignments" : [

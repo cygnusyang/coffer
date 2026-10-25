@@ -2,12 +2,14 @@
 # tools/check_docs_facts.sh —— 文档事实核查（三队协议 §3.2 / 文档影响清单的自动化兜底）。
 #
 # 检查项：
-#   ① README「子命令一览」与 core/cf-mcp/src/cli.rs 头注子命令集合一致
+#   ① README.zh.md「子命令一览」与 core/cf-mcp/src/cli.rs 头注子命令集合一致（表格或标题漂移记 FAIL）
 #   ② Info.plist 版本与 CHANGELOG 最新版本段一致（开发期漂移记 WARN）
 #   ③ docs 导航与协作适配中的相对链接可达
 #   ④ Coffer.entitlements 仅含 OTA 最小网络豁免 network.client，且含 keychain-access-groups
 #   ⑤ OTA host 白名单（复用 check_ota_whitelist.sh）
 #   ⑥ README 中的 App 内 CLI 路径与构建脚本产物路径一致（记 WARN）
+#   ⑦ 中英双版 README 成对且各就其位：README.md 不得混入中文（语言切换行与 UI 语言名除外）、
+#      两版语言切换互指正确、下载量表格 marker 齐全（缺 marker 会让 download-stats CI 直接失败）
 #
 # 边界：本脚本只做静态事实核查，不证明运行时行为。运行时零网络与 OTA 通道由
 # run_gate.sh / run_ota_probe.sh 与真机判据证明。
@@ -46,8 +48,13 @@ check_subcommands() {
     # 只取头注「## 子命令」小节，避免把 provider 列表误当子命令（coffer/op）。
     src_names="$(awk '/^\/\/! ## 子命令/{f=1;next} f&&/^\/\/! ## /{exit} f' "$src" \
         | sed -nE 's/^\/\/! - `([a-z0-9-]+)`.*/\1/p' | sort -u)"
-    if [ -z "$readme_names" ] || [ -z "$src_names" ]; then
-        warn "① 跳过：未能从 README 或 CLI 源码提取子命令集合"
+    if [ -z "$src_names" ]; then
+        warn "① 跳过：未能从 CLI 源码头注提取子命令集合"
+        return
+    fi
+    if [ -z "$readme_names" ]; then
+        # 文件在、源码在、却抽不到表 —— 标题或表格式漂移，属于门禁失明，不能只记 WARN。
+        fail "① 未能从 $readme 提取「子命令一览」（标题或表格格式漂移，门禁已失明）"
         return
     fi
     local missing_in_readme missing_in_src
@@ -170,6 +177,59 @@ check_cli_path() {
         else
             warn "⑥ README 写了 Contents/Helpers/coffer.app，但构建脚本未见同名产物路径"
         fi
+    else
+        warn "⑥ README 未出现 App 内 CLI 路径（Contents/Helpers/coffer.app），本项无法核查"
+    fi
+}
+
+# ---------- ⑦ 中英双版 README ----------
+check_bilingual() {
+    local en="README.md" zh="README.zh.md" ok=0
+    if [ ! -f "$en" ] || [ ! -f "$zh" ]; then
+        fail "⑦ 中英双版 README 缺失：$en 与 $zh 必须成对存在"
+        return
+    fi
+
+    # 英文版是 GitHub 默认展示页，不应出现中文；语言切换链接与「简体中文」UI 语言名除外。
+    local leaked=""
+    if ! command -v python3 >/dev/null 2>&1; then
+        ok=1
+        warn "⑦ 跳过中文残留检测：环境无 python3（不能把「没检查」当通过）"
+    else
+    leaked="$(python3 - "$en" <<'PY'
+import re, sys
+allow = ("README.zh.md", "简体中文")
+for no, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
+    if re.search(r"[\u4e00-\u9fff]", line) and not any(a in line for a in allow):
+        print(f"  L{no}: {line.strip()[:80]}")
+PY
+)"
+    fi
+    if [ -n "$leaked" ]; then
+        ok=1
+        fail "⑦ $en 混入中文（默认展示页应全英文）："
+        echo "$leaked" | tee -a "$LOG"
+    fi
+
+    if ! grep -q '(README.zh.md)' "$en"; then
+        ok=1
+        fail "⑦ $en 缺少指向中文版的切换链接 (README.zh.md)"
+    fi
+    if ! grep -q '(README.md)' "$zh"; then
+        ok=1
+        fail "⑦ $zh 缺少指回英文版的切换链接 (README.md)"
+    fi
+
+    local f
+    for f in "$en" "$zh"; do
+        if ! grep -q 'downloads:start' "$f" || ! grep -q 'downloads:end -->' "$f"; then
+            ok=1
+            fail "⑦ $f 缺少下载量表格 marker（download-stats CI 会直接失败）"
+        fi
+    done
+
+    if [ "$ok" -eq 0 ]; then
+        pass "⑦ 中英双版就位：默认英文无中文残留、切换链接互指、下载 marker 齐全"
     fi
 }
 
@@ -179,6 +239,7 @@ check_links
 check_entitlements
 check_ota
 check_cli_path
+check_bilingual
 
 echo "----------------------------------------"
 echo "DOCS_FACTS: ${PASSED} PASS / ${WARNED} WARN / ${FAILED} FAIL"

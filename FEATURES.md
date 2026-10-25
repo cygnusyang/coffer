@@ -33,7 +33,7 @@
 | `coffer set-env` environment-container write surface (CLI + in-app container editing: tag lock, NAME validation, recognition badge) | ✅ | docs/36 |
 | Self-hosted OTA updates | ✅ | GitHub releases channel |
 | Agent credential domain (full version) | Planned | Later version |
-| Multiple vaults | Planned | Later version |
+| Multiple vaults / cross-vault copy | ✅ | Delivered in v0.4.0 (FR-1.2 / FR-2.10) — not a gated or planned item |
 | Passkey full version (tiered) | Degraded | Degraded read surface only |
 
 ## 3. Build switches

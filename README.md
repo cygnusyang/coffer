@@ -133,7 +133,7 @@ cd core && cargo test --workspace --no-fail-fast
 
 ## Documentation
 
-Design docs, acceptance criteria and decision records live in `docs/` (written in Chinese) — start with the **[English documentation index](docs/README.en.md)**, which maps the corpus and lists the five documents worth reading first. macOS specifics: [macos/README.md](macos/README.md).
+Design docs, acceptance criteria and decision records live in `docs/` (written in Chinese) — start with the **[documentation index](docs/README.md)**, which maps the corpus and lists the five documents worth reading first. macOS specifics: [macos/README.md](macos/README.md).
 
 ## License
 

@@ -1,54 +1,56 @@
-# 行为准则
+# Code of conduct
 
-> 本准则的精神参考 Contributor Covenant v2.1，针对本项目的实际情况做了精简。
+> The spirit of this code follows Contributor Covenant v2.1, trimmed to fit this project.
 
-## 我们的承诺
+**English** · [中文](CODE_OF_CONDUCT.zh.md)
 
-为了营造开放、友善的参与环境，我们承诺：无论年龄、体型、可见或不可见的残障、族裔、性别认同与表达、经验水平、教育程度、社会经济状况、国籍、外貌、种族、宗教或性取向如何，参与本项目的每个人都不会受到骚扰。
+## Our pledge
+
+To keep participation open and welcoming, we pledge that everyone taking part in this project is free from harassment, regardless of age, body size, visible or invisible disability, ethnicity, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion or sexual orientation.
 
 ---
 
-## 期望的行为
+## Expected behaviour
 
-| 行为 | 说明 |
+| Behaviour | What it means |
 | --- | --- |
-| **用技术论据说服人** | 不同意某个方案时，指出具体问题（性能、安全、可维护性），而不是评价提出者 |
-| **就事论事** | 批评代码、设计、决策，不批评人。"这个设计有缺陷"和"你不行"是两回事 |
-| **承认不知道** | 比假装懂更值得尊重 |
-| **接受纠正** | 被指出错误时，修正它，而不是辩解 |
-| **对安全问题格外谨慎** | 本项目涉及用户最敏感的数据，安全相关的讨论请保持严肃 |
+| **Win arguments with technical reasoning** | When you disagree with an approach, name the concrete problem (performance, security, maintainability) instead of judging the person who proposed it |
+| **Attack the work, not the worker** | Critique code, design and decisions. "This design is flawed" and "you are incompetent" are different statements |
+| **Admit not knowing** | More respectable than pretending to know |
+| **Accept correction** | When you are shown to be wrong, fix it instead of defending it |
+| **Be especially careful with security** | This project handles the most sensitive data users own; keep security discussion serious |
 
 ---
 
-## 不可接受的行为
+## Unacceptable behaviour
 
-- 性化言语或图像，以及任何形式的性关注
-- 挑衅、侮辱 / 贬损性评论、人身攻击或政治攻击
-- 公开或私下的骚扰
-- 未经明确许可发布他人的私人信息（如住址、邮箱）
-- **在本项目的语境下尤其不可接受的**：诱导他人泄露真实密码、凭据或密码库样本；以"测试"为名收集他人敏感数据
-- 其他在专业场合明显不当的行为
-
----
-
-## 执行
-
-维护者有权删除、编辑或拒绝不符合本准则的评论、提交、代码与 issue，并在必要时临时或永久禁止任何贡献者。
-
-### 报告
-
-不当行为可通过 [`SECURITY.md`](SECURITY.md) 中列出的私密渠道报告。所有投诉都会被审阅和调查，并作出必要且适当的回应。维护者有义务对报告者身份保密。
-
-> ⚠️ **注意**：`SECURITY.md` 的渠道主要用于报告**软件安全漏洞**。报告**行为准则问题**时，请在消息中明确注明，以免被误当作漏洞处理流程。
+- Sexualised language or imagery, and sexual attention of any kind
+- Trolling, insulting or derogatory comments, personal or political attacks
+- Public or private harassment
+- Publishing someone else's private information (home address, email) without explicit permission
+- **Especially unacceptable in this project's context**: inducing others to reveal real passwords, credentials or vault samples; collecting other people's sensitive data under the pretext of "testing"
+- Any other conduct that would clearly be inappropriate in a professional setting
 
 ---
 
-## 适用范围
+## Enforcement
 
-本准则适用于所有项目空间（仓库、issue、PR、discussion），也适用于个人在公共场合**代表本项目**时的行为。
+Maintainers may remove, edit or reject comments, commits, code and issues that do not comply, and may temporarily or permanently ban any contributor when necessary.
+
+### Reporting
+
+Misconduct can be reported through the private channels listed in [SECURITY.md](SECURITY.md). Every complaint is reviewed and investigated, and answered as necessary and appropriate. Maintainers will keep the reporter's identity confidential.
+
+> ⚠️ **Note**: the SECURITY.md channels are primarily for **software vulnerabilities**. When reporting a **code-of-conduct issue**, say so explicitly in your message so it is not routed through the vulnerability process.
 
 ---
 
-## 归属
+## Scope
 
-本准则参考 [Contributor Covenant](https://www.contributor-covenant.org/) v2.1 编写，遵循其 CC BY-SA 4.0 授权精神，并按本项目情况做了删改。
+This code applies in all project spaces (repository, issues, PRs, discussions) and when an individual represents the project in public.
+
+---
+
+## Attribution
+
+This code is based on [Contributor Covenant](https://www.contributor-covenant.org/) v2.1, follows the spirit of its CC BY-SA 4.0 licence, and has been adapted to this project.

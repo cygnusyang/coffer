@@ -1,137 +1,136 @@
-# 安全策略
+# Security policy
 
-Coffer 是一款本地密码管理器。**安全缺陷在这个品类里不是普通 bug** —— 它可能导致用户的全部凭据泄露，且后果不可逆。因此我们的处理流程比一般项目更严肃。
+Coffer is a local password manager. **A security defect in this product category is not an ordinary bug** — it can expose every credential a user owns, irreversibly. Our process is therefore more serious than usual.
 
----
-
-## 报告安全漏洞
-
-### ⚠️ 请勿通过公开渠道报告
-
-**不要在 GitHub Issues、Discussions、PR 评论、社交媒体或任何公开场合披露安全漏洞。**
-
-公开披露会让所有用户在你修复之前暴露于风险之中。
-
-### 报告渠道
-
-| 渠道 | 说明 |
-| --- | --- |
-| GitHub Security Advisory | **首选**。仓库的 Security 标签页 → "Report a vulnerability"，内容私密可见 |
-| 维护者邮箱 | 备选渠道，见仓库 Security 页面公示的地址 |
-
-> 若两个渠道都不可用，请开一个**不含任何技术细节**的 issue，仅说明"我有一个安全问题需要私下报告"，维护者会与你建立私密联系。
-
-### 报告时请包含
-
-| 项 | 说明 |
-| --- | --- |
-| 影响版本 | 或 commit hash |
-| 漏洞类型 | 参见下方"范围"一节的分类 |
-| 复现步骤 | 尽量最小化，能稳定复现即可 |
-| 影响评估 | 攻击者能做什么、需要什么前提条件 |
-| 概念验证 | 可选，但会显著加快处理 |
-| 是否已公开 | 若已向他人披露，请务必说明 |
+**English** · [中文](SECURITY.zh.md)
 
 ---
 
-## 响应时限
+## Reporting a vulnerability
 
-| 阶段 | 目标时限 |
+### ⚠️ Never report through a public channel
+
+**Do not disclose security defects in GitHub Issues, Discussions, PR comments, social media or anywhere else public.**
+
+Public disclosure puts every user at risk before a fix exists.
+
+### Channels
+
+| Channel | Notes |
 | --- | --- |
-| 确认收到 | 3 个工作日内 |
-| 初步评估（确认是否为漏洞、定级） | 7 个工作日内 |
-| 修复或缓解方案 | 视严重程度而定，会在评估后告知预计时间 |
-| 公开披露 | 修复发布后，与报告者协商时间 |
+| GitHub Security Advisory | **Preferred.** The repository's Security tab → "Report a vulnerability"; the report stays private |
+| Maintainer email | Fallback; the address is published on the repository's Security page |
 
-> **本项目当前处于早期开发阶段**，尚未发布任何可用版本，维护者可能无法保证上述时限。若情况紧急，请在报告中注明。
+> If neither works, open an issue **with no technical detail** saying only that you have a security matter to report privately; a maintainer will establish a private channel with you.
+
+### What to include
+
+| Item | Notes |
+| --- | --- |
+| Affected version | Or a commit hash |
+| Vulnerability class | See the scope tables below |
+| Reproduction steps | As minimal as possible, as long as it reproduces reliably |
+| Impact assessment | What an attacker gains, and what preconditions are needed |
+| Proof of concept | Optional, but it speeds things up considerably |
+| Already disclosed? | If you told anyone else, say so |
 
 ---
 
-## 范围：什么算安全问题
+## Response targets
 
-### 在我们的范围内
-
-| 类别 | 具体例子 |
+| Stage | Target |
 | --- | --- |
-| **加密实现缺陷** | Argon2id 参数与调用、HKDF 子密钥派生、AEAD 的 AAD 构造、nonce 生成策略 |
-| **密钥管理缺陷** | 信封加密的封装/解封装、verifier 设计、生物识别密钥封装、内存清零不彻底 |
-| **容器格式缺陷** | 版本识别绕过、完整性校验可被规避、迁移路径导致数据损坏 |
-| **导入器缺陷** | 畸形 1PUX / CSV / opvault 导致崩溃、内存耗尽、越界读写 |
-| **权限绕过** | 未解锁状态下读取数据、跨库越权访问 |
-| **信息泄露** | 敏感数据写入日志、崩溃报告、系统备份 |
-| **零网络承诺被绕过** | 任何形式的网络通信能力（这是本项目的核心承诺，见下） |
-| **平台集成缺陷** | Android Keystore / macOS Keychain 配置错误导致密钥保护失效 |
+| Acknowledgement | Within 3 business days |
+| Initial assessment (is it a vulnerability, how severe) | Within 7 business days |
+| Fix or mitigation | Depends on severity; an estimate follows the assessment |
+| Public disclosure | After the fix ships, at a time agreed with the reporter |
 
-### 不在范围内
-
-| 类别 | 说明 |
-| --- | --- |
-| **需物理接触 + root/越狱的攻击** | 有 root 权限的攻击者能 dump 进程内存，这类威胁已在威胁模型中承认为残余风险（见 `docs/01-需求与架构/04-系统设计.md` §4.2） |
-| **设备级全盘加密未启用** | 属用户环境配置，非本软件缺陷 |
-| **主密码强度不足导致的爆破** | 属用户选择；但若我们**允许**了过弱的密码而未经提示，那算我们的问题 |
-| **已知的能力缺口** | 见下方"已知缺口"一节 |
-| **第三方依赖自身的漏洞** | 请报告给上游；若影响本项目，我们会跟进 |
+> **The project is in early development**; no usable release has shipped yet, so maintainers may not always meet these targets. Say so in the report if the matter is urgent.
 
 ---
 
-## 已知的能力缺口（不是漏洞）
+## Scope: what counts as a security issue
 
-以下限制是**设计决定的必然结果**，已在设计文档中明确记录，并会在产品文档与 UI 中向用户明示。它们不是可修复的缺陷：
+### In scope
 
-| 缺口 | 原因 | 记录位置 |
+| Class | Examples |
+| --- | --- |
+| **Cryptographic implementation** | Argon2id parameters and usage, HKDF subkey derivation, AEAD AAD construction, nonce strategy |
+| **Key management** | Envelope wrap/unwrap, verifier design, biometric key wrapping, incomplete memory zeroisation |
+| **Container format** | Version detection bypass, integrity check evasion, migration paths that corrupt data |
+| **Importers** | Malformed 1PUX / CSV / opvault causing a crash, memory exhaustion, out-of-bounds access |
+| **Authorisation bypass** | Reading data while locked, cross-vault access |
+| **Information disclosure** | Sensitive data in logs, crash reports or system backups |
+| **Bypassing the no-network promise** | Any network capability at all (the project's central promise — see below) |
+| **Platform integration** | Misconfigured Android Keystore / macOS Keychain weakening key protection |
+
+### Out of scope
+
+| Class | Notes |
+| --- | --- |
+| **Attacks requiring physical access + root/jailbreak** | A root attacker can dump process memory; accepted as residual risk in the threat model (`docs/01-需求与架构/04-系统设计.md` §4.2) |
+| **Full-disk encryption disabled** | A user environment setting, not a defect in this software |
+| **Brute force against a weak master password** | A user choice — but if we **accept** a weak password without warning, that is our defect |
+| **Known capability gaps** | See below |
+| **Vulnerabilities in third-party dependencies** | Report them upstream; we will follow up if they affect us |
+
+---
+
+## Known capability gaps (not vulnerabilities)
+
+The following are **direct consequences of deliberate design decisions**. They are recorded in the design docs and surfaced to users in the product and UI. They are not fixable defects:
+
+| Gap | Cause | Recorded in |
 | --- | --- | --- |
-| 无法检测"密码已泄露" | 需查询在线泄露库，与零网络根本冲突 | `docs/01-需求与架构/01-需求分析.md` FR-6.5 |
-| 主密码遗失 = 数据永久丢失 | 无服务端、无后门、无恢复机制 | 同上 §4.2 场景 3 |
-| 无法完全防御"整库回滚到旧版本" | 无服务端提供时间戳权威 | `docs/01-需求与架构/02-概要设计.md` §8.2 |
-| 不承诺"删除后可防取证恢复" | 闪存在物理层面做不到 | `docs/01-需求与架构/04-系统设计.md` §3.4 |
-| 元数据部分可见 | 条目数量、字段数、分类、时间戳可被读取 | `docs/01-需求与架构/03-详细设计.md` §3.5 |
-| 无自动更新 → 安全补丁滞后 | 不联网的必然结果 | `docs/01-需求与架构/01-需求分析.md` R-03 |
-| Passkey 私钥可随库文件导出 | 为支持跨端搬运的必然取舍 | `docs/01-需求与架构/01-需求分析.md` FR-10 说明 |
-| macOS 无系统级填充能力 | 平台没有对应框架 | `docs/01-需求与架构/01-需求分析.md` FR-4.6 |
+| Cannot detect "already breached" passwords | Requires querying an online breach corpus, which contradicts no-network | `docs/01-需求与架构/01-需求分析.md` FR-6.5 |
+| Losing the master password loses the data | No server, no backdoor, no recovery in the original design (Touch ID unlock and an offline recovery code are opt-in mitigations, FR-17) | Same doc §4.2, scenario 3 |
+| No full defence against rolling the whole vault back to an old version | No server to supply an authoritative timestamp | `docs/01-需求与架构/02-概要设计.md` §8.2 |
+| No promise of forensic-erasure after deletion | Physically impossible on flash storage | `docs/01-需求与架构/04-系统设计.md` §3.4 |
+| Metadata partially visible | Item count, field count, category and timestamps are readable | `docs/01-需求与架构/03-详细设计.md` §3.5 |
+| Delayed security patches in air-gapped mode | A consequence of not networking by default (self-hosted OTA is opt-in and allowlisted) | `docs/01-需求与架构/01-需求分析.md` R-03 |
+| Passkey private keys can be exported with the vault file | The necessary trade-off for cross-device portability | `docs/01-需求与架构/01-需求分析.md` FR-10 |
+| No system-wide autofill on macOS | The platform has no equivalent framework | `docs/01-需求与架构/01-需求分析.md` FR-4.6 |
 
-若你认为上述某一条的**实际影响比文档描述的更严重**，那仍然是值得报告的问题——请报告，我们可能低估了它。
+If you believe the **real impact of one of these is worse than documented**, that is still worth reporting — we may be underestimating it.
 
 ---
 
-## 关于"零网络"承诺的特别说明
+## A note on the no-network promise
 
-本项目最核心的安全承诺是：**App 没有联网能力，而不只是不联网。**
+The project's central security claim is: **the app has no networking capability, not merely that it does not use one.**
 
-任何以下情况都**属于安全漏洞**，请优先报告：
+All of the following **are security vulnerabilities**; please report them first:
 
-- 代码中出现任何形式的网络调用
-- 依赖树中引入网络相关 crate
-- 构建产物中出现 `INTERNET` 权限或 network entitlement
-- 系统级备份（Android 云备份 / iCloud / Time Machine）获取了本应被排除的数据
-- 密钥材料可通过平台同步机制（如 iCloud 钥匙串）跨设备传播
+- Any form of network call in the code
+- A network crate appearing in the dependency tree
+- An `INTERNET` permission or network entitlement in a build artefact
+- System-level backup (Android cloud backup / iCloud / Time Machine) capturing data that should be excluded
+- Key material propagating across devices through a platform sync mechanism (e.g. iCloud Keychain)
 
-### 验证方法（任何人都可以做）
+### How to verify (anyone can do this)
 
-```bash
-# Android：反编译检查权限
-aapt dump permissions Coffer.apk
-
-# macOS：检查 entitlements
+`bash
+# macOS: check entitlements
 codesign -d --entitlements - /Applications/Coffer.app
 
-# 核心库：检查依赖树
+# Core library: check the dependency tree
 cd core && cargo tree --prefix none \
   | grep -E '^(reqwest|hyper|ureq|isahc|surf|curl|tokio-rustls|native-tls)' \
-  && echo "存在网络依赖" || echo "OK"
-```
+  && echo "network dependency present" || echo "OK"
+`
 
-**这个承诺的价值在于可验证性。** 如果验证结果与承诺不符，那就是最严重级别的问题。
-
----
-
-## 安全审计
-
-本项目计划在 v1.0.0 发布前完成**两阶段第三方安全审计**，审计报告将公开。范围、时机与供应商选择见 `docs/01-需求与架构/04-系统设计.md` §12.5。
-
-若你是安全研究者并希望参与审计或众审，欢迎通过上述渠道联系。
+**The value of this promise lies in being verifiable.** If verification contradicts the promise, that is the most severe class of issue there is.
 
 ---
 
-## 致谢
+## Security audit
 
-负责任地报告安全问题的研究者将在修复发布后被列入致谢名单（除非你要求匿名）。
+A **two-stage third-party security audit** is planned before v1.0.0; the reports will be published. Scope, timing and vendor selection: `docs/01-需求与架构/04-系统设计.md` §12.5.
+
+If you are a security researcher who would like to take part in the audit or in crowd review, contact us through the channels above.
+
+---
+
+## Acknowledgements
+
+Researchers who report issues responsibly are credited once the fix ships (unless you ask to stay anonymous).

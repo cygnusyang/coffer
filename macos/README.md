@@ -1,209 +1,180 @@
-# macos —— macOS 端
+# macos — the macOS app
 
-**状态：v0.1 纵切已交付（T05 完成）——建库 / 解锁 / 条目 CRUD / 搜索 / 复制 / 自动锁定 / CSV 导入全流程可用**
+**English** · [中文](README.zh.md)
 
-## 一条命令构建
+**Status: v0.1 vertical slice delivered (T05 complete)** — create a vault / unlock / item CRUD / search / copy / auto-lock / CSV import all work end to end.
 
-```bash
-./tools/build_macos_app.sh          # 产物 → macos/build/Coffer.app
-open macos/build/Coffer.app         # 启动
-```
+## One-command build
 
-- 工程组织：**swiftc + Info.plist 直出 .app bundle**（本机无 xcodegen；
-  手写 pbxproj 维护成本高，理由见脚本头注释）。无 Xcode 工程依赖，
-  装有 Xcode CLT 即可复现。
-- 构建前置：Rust 静态库 + Swift 绑定已入库（`CoreBindings/`）；如改了 Rust
-  FFI 接口，先跑 `tools/build_swift_bindings.sh`（或给构建脚本加
-  `--rebuild-bindings`）。
-- 零网络承诺核查（FR-14.5）：`codesign -d --entitlements - macos/build/Coffer.app`
-  —— 输出除 `app-sandbox`、`files.user-selected.read-write` 外，还含 `device.camera`
-  （FR-5.3 TOTP QR 扫描，T09 裁定 A）与 `keychain-access-groups`（escrow 取密），
-  真实清单见 `Coffer/Coffer.entitlements`；核心断言仍是**无任何** `com.apple.security.network.*`。
+`bash
+./tools/build_macos_app.sh          # output → macos/build/Coffer.app
+open macos/build/Coffer.app         # launch
+`
 
-## 发版流程（tag → CI 自动构建签名 + 触发 Release，v2.4.1+）
+- Project layout: **swiftc + Info.plist straight into an .app bundle** (no xcodegen on the build machine; a hand-maintained pbxproj costs too much — see the script header). No Xcode project dependency; Xcode CLT is enough to reproduce.
+- Prerequisite: the Rust static library and the Swift bindings are committed (`CoreBindings/`). If you changed the Rust FFI surface, run `tools/build_swift_bindings.sh` first (or pass `--rebuild-bindings` to the build script).
+- Verifying the no-network promise (FR-14.5): `codesign -d --entitlements - macos/build/Coffer.app` — besides `app-sandbox` and `files.user-selected.read-write`, the output carries `device.camera` (FR-5.3 TOTP QR scanning, decision T09-A) and `keychain-access-groups` (escrow). The real list is `Coffer/Coffer.entitlements`; the core assertion remains **no** `com.apple.security.network.*` entry of any kind.
 
-每个新 tag（`v*`）触发 `.github/workflows/release.yml`：ubuntu 可靠门禁
-+ clippy → macos-latest 从 GitHub Secrets 注入签名证书与 provisioning profile，
-`./tools/build_macos_app.sh --rebuild-bindings` 构建签名产物 → 打包
-`Coffer-<tag>.zip`（OTA 更新载体，docs/03-功能设计/11-v2.7.0-OTA升级-设计.md §6.1 契约，App 只认 zip 覆盖）
-+ `./tools/make_dmg.sh` 打包 `Coffer-<tag>.dmg`（人类手动安装包，拖拽安装）
-→ 自动创建 GitHub Release，Release body 取 **`CHANGELOG.md` 当前版本段**
-（发版前须在 CHANGELOG.md 登记该版本段落，缺失则流水线 fail）。
+## Release flow (tag → CI builds, signs and creates the Release, v2.4.1+)
 
-**首次前置（一次性）**——把本机签名材料导出为三个 Secrets：
+Every new tag (`v*`) triggers `.github/workflows/release.yml`: ubuntu reliability gate + clippy → macos-latest injects the signing certificate and provisioning profile from GitHub Secrets, runs `./tools/build_macos_app.sh --rebuild-bindings` to build the signed product → packages `Coffer-<tag>.zip` (the OTA payload; contract in `docs/03-功能设计/11-v2.7.0-OTA升级-设计.md` §6.1 — the app only accepts a zip overwrite) plus `./tools/make_dmg.sh` to package `Coffer-<tag>.dmg` (the human install, drag to Applications) → creates the GitHub Release automatically, with the body taken from **the current version section of `CHANGELOG.md`** (register the section before tagging, or the pipeline fails).
 
-```bash
-./tools/export_ci_secrets.sh --push   # 导出证书+私钥 p12 / profile 为 base64 并 gh secret set
-```
+**One-time prerequisite** — export the local signing material into three secrets:
 
-| Secret | 内容 |
+`bash
+./tools/export_ci_secrets.sh --push   # exports cert+key p12 / profile as base64 and runs gh secret set
+`
+
+| Secret | Contents |
 | --- | --- |
-| `APPLE_CERT_P12_BASE64` | Apple Development 证书 + 私钥 p12 的 base64 |
-| `APPLE_CERT_PASSWORD` | 上述 p12 的导出密码 |
-| `APPLE_PROVISIONING_PROFILE_BASE64` | `macos/build/app.coffer.Coffer.provisionprofile` 的 base64 |
+| `APPLE_CERT_P12_BASE64` | base64 of the Apple Development certificate + private key p12 |
+| `APPLE_CERT_PASSWORD` | the export password for that p12 |
+| `APPLE_PROVISIONING_PROFILE_BASE64` | base64 of `macos/build/app.coffer.Coffer.provisionprofile` |
 
-**每次发版步骤**：
+**Per-release steps**:
 
-1. bump 版本：改 `Coffer/Info.plist` 的 `CFBundleShortVersionString`（v2.4.1 起直拷入 bundle，须与 tag 一致，见 `coffer-v241-settings-done-button` 纪律）；
-2. 在 **`CHANGELOG.md`** 登记当前版本段落（`## vX.Y.Z` 标题 + 新增/修复，缺失则流水线 fail）；
-3. 本地过一遍 `./tools/run_gate.sh`（全绿才打 tag）；
-4. 若 profile 临近 7 天有效期，重跑 `make_provisioning_profile.sh` + `export_ci_secrets.sh --push` 刷新（免费账号 profile 7 天有效，过期流水线会红）；
-5. `git tag vX.Y.Z && git push origin vX.Y.Z`；
-6. 到 GitHub Actions 看流水线 → Releases 页收 `Coffer-<tag>.dmg`（手动安装）与 `Coffer-<tag>.zip`（OTA）。
+1. Bump the version: edit `CFBundleShortVersionString` in `Coffer/Info.plist` (copied into the bundle since v2.4.1 and must match the tag — the `coffer-v241-settings-done-button` discipline);
+2. Register the current version section in **`CHANGELOG.md`** (`## vX.Y.Z` heading + additions/fixes; the pipeline fails without it);
+3. Run `./tools/run_gate.sh` locally (all green before tagging);
+4. If the profile is close to its 7-day expiry, rerun `make_provisioning_profile.sh` + `export_ci_secrets.sh --push` (free-account profiles last 7 days; an expired one turns the pipeline red);
+5. `git tag vX.Y.Z && git push origin vX.Y.Z`;
+6. Watch GitHub Actions → collect `Coffer-<tag>.dmg` (manual install) and `Coffer-<tag>.zip` (OTA) from the Releases page.
 
-产物为 App Sandbox + `keychain-access-groups` entitlements、profile 内嵌的
-签名 `.app`（zip 包）——与本地 `build_macos_app.sh` 方案 A 签名线同源，
-**不回退 ad-hoc**（BUG-2 纪律）。零网络承诺核查同「一条命令构建」节。
+The artefact is a signed `.app` (in a zip) with App Sandbox + `keychain-access-groups` entitlements and an embedded profile — the same signing line as `build_macos_app.sh` option A locally, **never falling back to ad-hoc** (BUG-2 discipline). No-network verification is as described above.
 
-## coffer CLI（MCP 解锁托管，v2.2.0）
+## The coffer CLI (MCP unlock escrow, v2.2.0)
 
-`coffer`（`coffer mcp` MCP 服务器，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md）**随 App bundle 分发，不独立安装**：
+`coffer` (the `coffer mcp` MCP server, `docs/03-功能设计/06-v2.0.0-MCP网关-设计.md`) **ships inside the app bundle and is not installed separately**:
 
-- **路径**：`macos/build/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer`
-  （装配为**嵌套 bundle** `coffer.app`，构建脚本 `tools/build_macos_app.sh` step 3.5 自动完成）。
-- **必须从 App 内路径运行**：把该二进制拷出到任何位置再运行 → **SIGKILL（exit 137）**。
-  原因一句话：AMFI 按可执行文件最近的 `.app` bundle 查找 provisioning profile 来授权
-  `keychain-access-groups` entitlement；拷出后没有 bundle/profile 覆盖，进程 spawn 即被
-  内核 SIGKILL（D-6 spike 与 G5 装配真机实证）。这是**用户可见纪律**，不是 bug。
-- 为什么是嵌套 bundle 而非裸 `Contents/MacOS/coffer`（G5 装配实证）：
-  ① `Contents/MacOS/Coffer`（App 主可执行文件）与 `Contents/MacOS/coffer` 在 macOS 默认
-  case-insensitive APFS 上是同一文件名，无法共存；② 裸 Mach-O（非主可执行文件）即使同
-  bundle 内嵌 profile，AMFI 也只对最近 `.app` 的**主代码**应用 profile——带
-  `keychain-access-groups` 的裸 CLI spawn 即 SIGKILL；嵌套 `.app` bundle 自带
-  `embedded.provisionprofile` 才获得覆盖。
-- **注册命令示例**（Claude Code，docs/03-功能设计/06-v2.0.0-MCP网关-设计.md §5.4 同构）：
+- **Path**: `macos/build/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer` (assembled as a **nested bundle** `coffer.app` by step 3.5 of `tools/build_macos_app.sh`).
+- **It must run from inside the app bundle**: copy the binary anywhere else and run it → **SIGKILL (exit 137)**. One sentence of reason: AMFI looks up the provisioning profile from the nearest `.app` bundle containing the executable in order to authorise the `keychain-access-groups` entitlement; with no bundle/profile covering the copy, the kernel SIGKILLs the process at spawn (proved on device by the D-6 spike and the G5 assembly). This is **user-visible discipline, not a bug**.
+- Why a nested bundle rather than a bare `Contents/MacOS/coffer` (proved by the G5 assembly): ① `Contents/MacOS/Coffer` (the app's main executable) and `Contents/MacOS/coffer` are the same filename on macOS's default case-insensitive APFS, so they cannot coexist; ② for a bare Mach-O (not a main executable), AMFI applies the profile only to the **main code** of the nearest `.app`, even if a profile is embedded in the same bundle — a bare CLI carrying `keychain-access-groups` is SIGKILLed at spawn. Only a nested `.app` bundle with its own `embedded.provisionprofile` gets coverage.
+- **Registration example** (Claude Code; same shape as `docs/03-功能设计/06-v2.0.0-MCP网关-设计.md` §5.4):
 
-  ```bash
+  `bash
   claude mcp add coffer -- "/Applications/Coffer.app/Contents/Helpers/coffer.app/Contents/MacOS/coffer" mcp --provider op --vault <vault>
-  ```
+  `
 
-  注意 `mcp` 子命令**必须显式给出**（CLI 不识别裸 `--help`；缺子命令打印 usage 并以 1 退出）。
+  Note that the `mcp` subcommand **must be given explicitly** (the CLI does not understand a bare `--help`; a missing subcommand prints usage and exits 1).
 
-## 浏览器扩展 host（v2.3.0 G-E）—— 已废弃
+## Browser-extension host (v2.3.0 G-E) — retired
 
-> **废弃注记（2026-10-09）**：浏览器扩展**整体废弃**（用户裁定，扩展连商城上架都不要），App 侧集成已移除。本节 `browser-agent` / `browser-broker` / shim 装配说明作废留档；嵌套 bundle coffer 二进制仍随 App 分发（coffer CLI，见上节），`browser-*` 子命令不再使用。设计文档已归档 `docs/archive/01-v2.3.0设计-浏览器扩展.md`。
+> **Retirement note (2026-10-09)**: the browser extension is **retired entirely** (owner's decision — it is not even going to a store), and the app-side integration has been removed. The `browser-agent` / `browser-broker` / shim assembly notes in this section are void and kept for the record; the nested coffer bundle still ships with the app (see the CLI section above), but the `browser-*` subcommands are no longer used. The design document is archived at `docs/archive/01-v2.3.0设计-浏览器扩展.md`.
 
-## 当前已有内容
+## What exists today
 
-- `Coffer/` —— SwiftUI 应用（App 壳 / 建库 / 解锁 / 条目列表·详情·编辑 /
-  回收站 / CSV 导入 / Clipboard·AutoLockMonitor 平台层）。
-- `Coffer/CoreBindings/` —— UniFFI 生成的 Swift 绑定（**由
-  `tools/build_swift_bindings.sh` 生成，勿手改**）。
-- `Coffer/SmokeTest/main.swift` —— swiftc 冒烟样例（链接静态库验证
-  Rust ↔ Swift 全链路），编译命令见 `tools/build_swift_bindings.sh` 尾部注释。
-- v0.1 明确不做（推后清单见 `docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md` §1.2）：Touch ID、
-  菜单栏常驻、全局快捷键、Passkey、1PUX 导入。
-- **Touch ID 现状补充**：代码已完成（`docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md` T01–T04），
-  但被 **BUG-2（Keychain -34018，ad-hoc 签名无代码签名身份）** 阻塞，
-  **真机上尚不可用**；解锁流程的真机端到端验收（08-T05）待 cygnus 执行。
-  详见 `docs/01-KNOWN-ISSUES.md` BUG-2。
+- `Coffer/` — the SwiftUI app (shell / vault creation / unlock / item list, detail and edit / trash / CSV import / Clipboard and AutoLockMonitor platform layer).
+- `Coffer/CoreBindings/` — UniFFI-generated Swift bindings (**generated by `tools/build_swift_bindings.sh`, do not edit by hand**).
+- `Coffer/SmokeTest/main.swift` — swiftc smoke sample (links the static library and exercises the whole Rust ↔ Swift path); the compile command is at the end of `tools/build_swift_bindings.sh`.
+- Deliberately out of scope for v0.1 (see `docs/03-功能设计/01-v0.1.0-macOS纵切-设计.md` §1.2): Touch ID, menu-bar residency, global hotkey, Passkey, 1PUX import.
+- **Touch ID status addendum**: the code is complete (`docs/03-功能设计/02-v0.2.0-TouchID解锁-设计.md` T01–T04) but was blocked by **BUG-2 (Keychain -34018, ad-hoc signing with no code-signing identity)** and was **not usable on device**; the on-device end-to-end acceptance (08-T05) was pending. See `docs/01-KNOWN-ISSUES.md` BUG-2.
 
 ---
 
-## 规划结构
+## Planned layout
 
-```
+`
 macos/
 ├── Coffer.xcodeproj
-├── Coffer/                SwiftUI 应用
+├── Coffer/                SwiftUI app
 │   ├── Views/
-│   └── Platform/              平台适配（Keychain / Touch ID / 剪贴板）
-├── CoreBindings/              UniFFI 生成的 Swift 绑定
+│   └── Platform/              platform adapters (Keychain / Touch ID / clipboard)
+├── CoreBindings/              UniFFI-generated Swift bindings
 └── Frameworks/                libcf_ffi.a + modulemap
-```
+`
 
-详见 `docs/01-需求与架构/02-概要设计.md` §2.2。
+See `docs/01-需求与架构/02-概要设计.md` §2.2.
 
 ---
 
-## 开工前必须确认的几件事
+## Things to confirm before starting
 
-### 1. Entitlements（安全承诺的技术基础）
+### 1. Entitlements (the technical basis of the security promise)
 
-```xml
+`xml
 <!-- Coffer.entitlements -->
 <key>com.apple.security.app-sandbox</key>                    <true/>
 <key>com.apple.security.files.user-selected.read-write</key> <true/>
 <key>com.apple.security.device.biometric</key>               <true/>
 
-<!-- 明确不包含： -->
+<!-- deliberately absent: -->
 <!-- com.apple.security.network.client -->
 <!-- com.apple.security.network.server -->
-```
+`
 
-**不授予 network entitlement 是 macOS 侧"零网络"的技术保证。** Hardened Runtime 下不给该权限，App 无法发起网络连接（系统层面拒绝）。
+**Not granting the network entitlement is what makes "no network" true on macOS.** Under Hardened Runtime the app cannot open a connection without it — the system refuses.
 
-验收时必须确认：`codesign -d --entitlements - Coffer.app`
+Verify at acceptance time with: `codesign -d --entitlements - Coffer.app`
 
-### 2. Keychain 的 `ThisDeviceOnly`（隐蔽的数据外流通道）
+### 2. Keychain `ThisDeviceOnly` (a quiet data-egress channel)
 
-```swift
+`swift
 SecAccessControlCreateWithFlags(
     nil,
-    kSecAttrAccessibleWhenUnlockedThisDeviceOnly,   // ← 关键
+    kSecAttrAccessibleWhenUnlockedThisDeviceOnly,   // ← the important part
     .biometryCurrentSet,
     &error
 )
-```
+`
 
-> ⚠️ **iCloud 钥匙串同步是一个隐蔽的数据外流通道。**
+> ⚠️ **iCloud Keychain sync is a quiet data-egress channel.**
 >
-> 若不用 `ThisDeviceOnly`，生物识别密钥会**随 iCloud 同步到其他设备**——"零网络"承诺会被系统级通道静默绕过。
+> Without `ThisDeviceOnly`, the biometric key **syncs to other devices via iCloud** — the "no network" promise is silently bypassed by a system-level channel.
 >
-> 必须区分两类东西：**密钥材料**绝对禁止跨设备；**数据**（库文件，密文）允许被 Time Machine 备份。混为一谈会犯两种相反的错，见 `docs/01-需求与架构/03-详细设计.md` §10.4。
+> Keep two things apart: **key material** must never cross devices; **data** (the vault file, in ciphertext) may be backed up by Time Machine. Confusing them produces two opposite mistakes — see `docs/01-需求与架构/03-详细设计.md` §10.4.
 
-### 3. 自动填充方案（已定：剪贴板）
+### 3. Autofill approach (decided: clipboard)
 
-macOS **没有** Android 那样的系统级 Autofill 框架，第三方 App 无法在其他 App 的输入框中直接注入文本。
+macOS has **no** system-level Autofill framework like Android's; a third-party app cannot inject text into another app's field.
 
-已定采用**剪贴板方案**：写入剪贴板 + 提示粘贴 + 定时清除。**不采用**辅助功能（Accessibility）模拟键盘方案——权限过重，与最小权限原则冲突。
+The decided approach is the **clipboard**: write to the clipboard, prompt the user to paste, clear on a timer. The Accessibility keyboard-simulation route is **not** used — the permission is too heavy and conflicts with least privilege.
 
-实现细节（含 `changeCount` 检查，防止误清用户后来复制的内容）见 `docs/01-需求与架构/03-详细设计.md` §10.3。
+Implementation details (including the `changeCount` check that avoids clearing something the user copied later) are in `docs/01-需求与架构/03-详细设计.md` §10.3.
 
-> 该体验差距需在用户文档中明确说明，避免用户误判为 bug。
+> This UX gap must be stated in the user documentation so it is not mistaken for a bug.
 
-### 4. 系统版本与架构
+### 4. OS version and architecture
 
-| 项 | 要求 |
+| Item | Requirement |
 | --- | --- |
-| 最低系统 | **macOS 14（Sonoma）** —— 该版本同时是 Apple 开放第三方 Passkey 存储的起点 |
-| 架构 | **仅 arm64 原生**，不做 Intel 版本，不做 universal binary |
-| 分发 | **appstore 沙盒单渠道**（2026-10-09 起，双渠道 developer-id 已取消） |
+| Minimum OS | **macOS 14 (Sonoma)** — the release where Apple opened third-party Passkey storage |
+| Architecture | **arm64 native only**; no Intel build, no universal binary |
+| Distribution | **App Store sandbox, single channel** (since 2026-10-09; the dual developer-id channel was cancelled) |
 
 ---
 
-## 构建链路
+## Build chain
 
-```
+`
 core/ (Rust)
   └─ cargo build --release --target aarch64-apple-darwin
        └─ libcf_ffi.a (staticlib)
-            ├─ UniFFI 生成 Swift 绑定
-            └─ 链接进 Xcode 工程
+            ├─ UniFFI generates the Swift bindings
+            └─ linked into the Xcode project
                  └─ codesign --options runtime → notarytool submit → stapler staple
-```
+`
 
-详见 `docs/01-需求与架构/04-系统设计.md` §5.3。
-
----
-
-## Passkey 边界声明（降级形态，v2.6.0）
-
-macOS 端 Passkey 为**降级形态**（FR-10.1 导入 / 10.2 查看 / 10.5 删除 / 10.6 保留密码；创建与使用不在本版），三条诚实边界如下：
-
-1. **创建/使用能力 absent（TCB-4）**：本版**无凭据提供者扩展**——系统设置里不会出现 Coffer 提供者，网站/App 无法选择 Coffer 创建或使用 Passkey。这不是「有菜单但禁用」，是能力不存在。用户文档明示。
-2. **iCloud 不同步是特性**（lead 裁定沿用）：Passkey 私钥存 Coffer 自有加密库，**不经 iCloud Keychain**（第三方提供者路径下同步从设计上不存在）；跨设备 = 库文件搬运（加密备份/恢复）。用户文档主动声明。
-3. **数据源边界**：桌面端 1PUX **无 Passkey**——1Password 桌面端导出的 1PUX 不含 Passkey（官方明确只有 iOS/Android 能导出）。已用 1Password 桌面版的用户首建数据需 iOS/Android 导出或改用 Bitwarden JSON，或网站重新注册（ADP 后）。这条无法通过技术绕过，用户文档明示。
-
-> 完整版（凭据提供者扩展 + 创建/断言）随 ADP 购买后重启——机制设计见 `docs/01-需求与架构/02-概要设计.md` §4.6，要点摘录见 `docs/03-功能设计/05-v0.5.0-Passkey降级-实现方案.md` §9（休眠）。
+See `docs/01-需求与架构/04-系统设计.md` §5.3.
 
 ---
 
-## 相关文档
+## Passkey boundary statement (degraded form, v2.6.0)
 
-| 内容 | 位置 |
+Passkey support on macOS is **degraded** (FR-10.1 import / 10.2 view / 10.5 delete / 10.6 keep the password; creation and use are out of scope). Three honest boundaries:
+
+1. **Creation and use are absent (TCB-4)**: this build has **no credential provider extension** — Coffer never appears as a provider in System Settings, and no website or app can choose Coffer to create or use a Passkey. It is not "a menu item that is disabled"; the capability does not exist. Stated in the user documentation.
+2. **Not syncing through iCloud is a feature** (lead decision, unchanged): Passkey private keys live in Coffer's own encrypted vault and **never go through iCloud Keychain** (under a third-party provider, syncing does not exist by design). Moving across devices means moving the vault file (encrypted backup/restore). Stated in the user documentation.
+3. **Data-source boundary**: **1PUX from the desktop app has no Passkeys** — 1Password's desktop export does not include them (only the iOS/Android apps can export them). Users coming from 1Password desktop must export from iOS/Android, switch to Bitwarden JSON, or re-register on the websites (post-ADP). There is no technical way around this. Stated in the user documentation.
+
+> The full version (credential provider extension + creation/assertion) restarts after the ADP purchase — mechanism in `docs/01-需求与架构/02-概要设计.md` §4.6, key points in `docs/03-功能设计/05-v0.5.0-Passkey降级-实现方案.md` §9 (dormant).
+
+---
+
+## Related documents
+
+| Topic | Location |
 | --- | --- |
-| macOS 实现要点 | `docs/01-需求与架构/03-详细设计.md` §10 |
-| Passkey 机制 | `docs/01-需求与架构/02-概要设计.md` §4.6 |
-| 构建与发布管线 | `docs/01-需求与架构/04-系统设计.md` §5.3 |
-| 阶段划分 | `docs/01-需求与架构/04-系统设计.md` §10.1 |
+| macOS implementation notes | `docs/01-需求与架构/03-详细设计.md` §10 |
+| Passkey mechanism | `docs/01-需求与架构/02-概要设计.md` §4.6 |
+| Build and release pipeline | `docs/01-需求与架构/04-系统设计.md` §5.3 |
+| Phase breakdown | `docs/01-需求与架构/04-系统设计.md` §10.1 |

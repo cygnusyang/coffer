@@ -12,6 +12,16 @@ release 中有体现）。
 
 ---
 
+## [Unreleased]
+
+### 修复/纪律
+- **公共文档英文化（国际化运营口径）**：GitHub 默认展示的对外文档此前只有 README 是英文，其余仍是中文——国际用户从 Issue / 安全报告 / 贡献指南三个入口进来全部撞中文。本次把 `CONTRIBUTING` / `SECURITY` / `CODE_OF_CONDUCT` / `CLA` / `FEATURES` / `docs/README` / `macos/README` / `android/README` 八份改为英文默认，中文版另存同名 `*.zh.md`，两版顶部互相链接；`.github` 的 Issue / PR 模板改为纯英文（允许任何语言作答）。`docs/README.en.md` 撤销，英文索引即 `docs/README.md`。
+  - 门禁从「README 单对」扩为「九对公共文档 + 四份模板」：英文页混入中文即 FAIL（行内代码、链接目标、路径式链接文字、UI 语言名「简体中文」放行），切换链接必须互指，成对文件必须同时存在。`tools/check_docs_facts.sh` ⑦，本次 16 PASS / 0 FAIL。
+  - 事实修正（顺带，均以 README / 现状为准）：「无自动更新 → 安全补丁滞后」改为「自托管 OTA（opt-in + 白名单）」，与 v2.7.0 已交付事实对齐；主密码遗失条目补 FR-17 恢复通道，删除「无恢复机制」绝对化表述；零网络验证示例去掉 Android `aapt` 段（Android 端未开工）。
+  - 行为未变，故不升版本号。
+
+---
+
 ## v2.13.3 — 2026-10-25
 
 ### 修复/纪律

@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 安全漏洞 / Security vulnerability
+  - name: Security vulnerability
     url: https://github.com/cygnusyang/coffer/blob/main/SECURITY.md
-    about: 请勿公开提交安全缺陷，按 SECURITY.md 的渠道私下报告。
-  - name: 使用文档 / Documentation
+    about: Do not file security defects publicly — report privately through the channels in SECURITY.md.
+  - name: Documentation
     url: https://github.com/cygnusyang/coffer/blob/main/README.md
-    about: 安装、MCP 注册、CLI 用法与退出码。
+    about: Install, MCP registration, CLI usage and exit codes.

@@ -1,35 +1,35 @@
-## 变更摘要
+## Summary
 
-<!-- 一句话说明改了什么、为什么。 -->
+<!-- One or two sentences: what changed and why. -->
 
-## 关联
+## References
 
-- 任务板：`docs/00-WORK-ITEMS.md` → ID：
-- 缺陷登记：`docs/01-KNOWN-ISSUES.md` → ID：
-- 设计交接单（如涉及 UI）：
-- 判据 ID：
+- Work item: `docs/00-WORK-ITEMS.md` → ID:
+- Defect register: `docs/01-KNOWN-ISSUES.md` → ID:
+- Design hand-off (UI changes only):
+- Acceptance criteria ID:
 
-## 文档影响清单（必填，无影响写「无」）
+## Documentation impact (required — write "none" if nothing is affected)
 
 - [ ] README
 - [ ] CHANGELOG
-- [ ] 需求 / 验收判据（docs/01、docs/04）
-- [ ] 帮助中心
-- [ ] API / CLI 文档
-- [ ] 无
+- [ ] Requirements / acceptance criteria (docs/01, docs/04)
+- [ ] In-app help centre
+- [ ] API / CLI docs
+- [ ] None
 
-## 门禁证据
+## Gate evidence
 
-| 门禁 | 命令 | 日志路径 | 退出码 | 摘要 |
+| Gate | Command | Log path | Exit code | Summary |
 | --- | --- | --- | --- | --- |
-| 代码 | `tools/run_gate.sh` | | | |
-| UI（如涉及） | `tools/run_ui_gate.sh` | | | |
-| 文档事实 | `tools/check_docs_facts.sh` | | | |
+| Code | `tools/run_gate.sh` | | | |
+| UI (if applicable) | `tools/run_ui_gate.sh` | | | |
+| Documentation facts | `tools/check_docs_facts.sh` | | | |
 
-## 检查清单
+## Checklist
 
-- [ ] 测试覆盖变更与负路径；测试名引用判据 ID
-- [ ] 未提交密码、令牌、私钥或实样数据
-- [ ] 未使用 `git add -A` / `git add .`
-- [ ] 文档影响清单已勾选
-- [ ] 任务板行已回填关闭证据
+- [ ] Tests cover the change and the negative path; test names cite acceptance-criteria IDs
+- [ ] No passwords, tokens, private keys or real data samples committed
+- [ ] `git add -A` / `git add .` not used
+- [ ] Documentation impact list ticked
+- [ ] Closing evidence written back to the work-item board

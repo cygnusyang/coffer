@@ -1,97 +1,100 @@
-# android —— Android 端
+# android — the Android app
 
-**状态：未开始**（计划 **M5** 阶段）
+**English** · [中文](README.zh.md)
 
-本目录将来放置 Android 客户端工程。当前为空，**没有任何可构建的内容**。
+**Status: not started** (planned for milestone **M5**).
+
+This directory will hold the Android client. It is empty today and **contains nothing buildable**.
 
 ---
 
-## 规划结构
+## Planned layout
 
-```
+`
 android/
-├── app/                      主应用（Kotlin + Jetpack Compose）
-├── autofill/                 AutofillService 模块
-├── passkey/                  CredentialProviderService（API 34+）
-└── core-bindings/            UniFFI 生成的 Kotlin 绑定 + .so
-```
+├── app/                      main app (Kotlin + Jetpack Compose)
+├── autofill/                 AutofillService module
+├── passkey/                  CredentialProviderService (API 34+)
+└── core-bindings/            UniFFI-generated Kotlin bindings + .so
+`
 
-详见 `docs/01-需求与架构/02-概要设计.md` §2.2。
+See `docs/01-需求与架构/02-概要设计.md` §2.2.
 
 ---
 
-## 开工前必须确认的几件事
+## Things to confirm before starting
 
-这些是 Android 端特有的、**做错就会造成安全事故或数据损失**的点。开工时逐条核对：
+These are Android-specific points where **getting it wrong causes a security incident or data loss**.
+Check them off one by one when work starts:
 
-### 1. 权限声明（安全承诺的技术基础）
+### 1. Permission declarations (the technical basis of the security promise)
 
-```xml
+`xml
 <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-<!-- 明确不声明：INTERNET、ACCESS_NETWORK_STATE、ACCESS_WIFI_STATE -->
-```
+<!-- deliberately absent: INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE -->
+`
 
-**`INTERNET` 权限的缺失是"零网络"的技术保证。** Android 的权限模型在此处是硬约束：没有该权限，任何 socket 创建都会抛 `SecurityException`，无绕过方式。这是需求 NFR-SEC-07 在 Android 侧的落地。
+**The absence of the `INTERNET` permission is what makes "no network" true.** Android's permission model is a hard constraint here: without it, any socket creation throws `SecurityException`, with no way around it. That is how requirement NFR-SEC-07 lands on Android.
 
-验收时必须反编译确认：`aapt dump permissions app-release.apk`
+Verify at acceptance time by decompiling: `aapt dump permissions app-release.apk`
 
-### 2. 备份策略（ADR-13）
+### 2. Backup policy (ADR-13)
 
-```xml
+`xml
 <application android:allowBackup="true"
              android:fullBackupContent="@xml/backup_rules"
              android:dataExtractionRules="@xml/data_extraction_rules">
-```
+`
 
-| 数据类型 | 位置 | 是否备份 |
+| Data | Location | Backed up |
 | --- | --- | --- |
-| 库文件 | `files/vaults/` | ✅ 允许（内容是密文，换机可恢复） |
-| 日志 | `files/logs/` | ❌ 排除 |
-| 导出文件 | `files/exports/` | ❌ 排除 |
+| Vault files | `files/vaults/` | ✅ Allowed (ciphertext; restores onto a new device) |
+| Logs | `files/logs/` | ❌ Excluded |
+| Exports | `files/exports/` | ❌ Excluded |
 
-> ⚠️ **一个必须纠正的常见误解**：`android:allowBackup` 是**开发者在 manifest 中声明的属性，用户无法在系统设置里针对单个 App 关闭它**。用户在系统设置里能关的是**整机备份**（影响所有 App）。因此 App 内必须如实告知用户，见 `docs/01-需求与架构/03-详细设计.md` §9.1。
+> ⚠️ **A common misunderstanding worth correcting**: `android:allowBackup` is a **manifest attribute declared by the developer; a user cannot turn it off for a single app in system settings**. What the user can turn off is **device-wide backup** (affecting every app). The app must therefore tell users the truth in-product — see `docs/01-需求与架构/03-详细设计.md` §9.1.
 
-### 3. 生物识别密钥（绝对不能可备份）
+### 3. Biometric keys (must never be backed up)
 
-```kotlin
+`kotlin
 KeyGenParameterSpec.Builder(alias, ...)
     .setUserAuthenticationRequired(true)
-    .setInvalidatedByBiometricEnrollment(true)   // ← 生物特征变更即失效
-```
+    .setInvalidatedByBiometricEnrollment(true)   // ← invalidated when biometrics change
+`
 
-Android Keystore 的密钥**天然不可导出**，这是好事——它保证了密钥材料不会被系统备份带走。**不要试图把密钥导出或"备份"它。**
+Android Keystore keys are **inherently non-exportable**, which is good: it guarantees key material cannot be carried off by a system backup. **Do not try to export or "back up" the key.**
 
-### 4. 最低版本与降级
+### 4. Minimum versions and degradation
 
-| 功能 | 最低 API | 低版本行为 |
+| Capability | Minimum API | Behaviour on older versions |
 | --- | --- | --- |
-| Autofill | 26（Android 8.0） | 无此功能，提供"复制密码"路径 |
-| Passkey | **34（Android 14）** | 隐藏相关 UI 并说明原因；密码与 Autofill 不受影响 |
+| Autofill | 26 (Android 8.0) | Feature absent; offer a "copy password" path |
+| Passkey | **34 (Android 14)** | Hide the related UI and explain why; passwords and Autofill are unaffected |
 
 ---
 
-## 交叉编译
+## Cross-compilation
 
-Rust 核心需编译为 Android 目标：
+The Rust core has to be built for Android targets:
 
-```bash
+`bash
 rustup target add aarch64-linux-android armv7-linux-androideabi
-```
+`
 
-构建链路（含 `cargo-ndk`、UniFFI 绑定生成、Gradle 集成）见 `docs/01-需求与架构/04-系统设计.md` §5.2。
+The build chain (including `cargo-ndk`, UniFFI binding generation and Gradle integration) is described in `docs/01-需求与架构/04-系统设计.md` §5.2.
 
-> NDK 版本需与 Rust target 兼容，**具体版本在 M0 阶段锁定并记录**——不要凭印象选版本。
+> The NDK version must be compatible with the Rust target; **lock and record the specific version during M0** — do not pick one from memory.
 
 ---
 
-## 相关文档
+## Related documents
 
-| 内容 | 位置 |
+| Topic | Location |
 | --- | --- |
-| Android 实现要点 | `docs/01-需求与架构/03-详细设计.md` §9 |
-| 自动填充机制 | `docs/01-需求与架构/02-概要设计.md` §4.5 |
-| Passkey 机制 | `docs/01-需求与架构/02-概要设计.md` §4.6 |
-| 阶段划分 | `docs/01-需求与架构/04-系统设计.md` §10.1 |
+| Android implementation notes | `docs/01-需求与架构/03-详细设计.md` §9 |
+| Autofill mechanism | `docs/01-需求与架构/02-概要设计.md` §4.5 |
+| Passkey mechanism | `docs/01-需求与架构/02-概要设计.md` §4.6 |
+| Phase breakdown | `docs/01-需求与架构/04-系统设计.md` §10.1 |

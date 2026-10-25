@@ -1,55 +1,56 @@
 name: Bug report
-description: 报告一个可复现的缺陷 / Report a reproducible defect
+description: Report a reproducible defect
 title: "[bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        提交前请先搜一下已有 Issue，避免重复。
-        安全相关缺陷（可导致密钥泄露 / 绕过门禁）请勿公开提交，改用 [SECURITY.md](../blob/main/SECURITY.md) 的私下渠道。
+        Please search existing issues first to avoid duplicates.
+        Security defects (anything that could leak a key or bypass a gate) must not be filed publicly —
+        use the private channels in [SECURITY.md](../blob/main/SECURITY.md).
   - type: input
     id: version
     attributes:
-      label: 版本 / Version
-      description: 关于页显示的版本号（含编译时间），或 commit hash
-      placeholder: "v2.12.1 (2026-10-24 12:00)"
+      label: Version
+      description: The version string shown in the About panel (including build time), or a commit hash
+      placeholder: "v2.13.3 (2026-10-24 12:00)"
     validations:
       required: true
   - type: input
     id: env
     attributes:
-      label: 环境 / Environment
-      placeholder: "macOS 27.0.1 (26A434), Apple Silicon, 从 dmg 安装 / 源码构建"
+      label: Environment
+      placeholder: "macOS 27.0.1 (26A434), Apple Silicon, installed from dmg / built from source"
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: 复现步骤 / Steps
+      label: Steps to reproduce
       placeholder: |
-        1. 打开设置 → MCP / Agent 协作
-        2. 打开 CodeBuddy 开关
+        1. Open Settings → MCP / Agent collaboration
+        2. Turn on the CodeBuddy switch
         3. ...
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: 预期 / Expected
+      label: Expected
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: 实际 / Actual
-      description: 附错误文案原文、日志路径（如 /tmp/coffer-mcp-register.log）、截图
+      label: Actual
+      description: Include the exact error text, log paths (e.g. /tmp/coffer-mcp-register.log) and screenshots
     validations:
       required: true
   - type: textarea
     id: extra
     attributes:
-      label: 补充 / Additional context
-      description: 是否可稳定复现、影响面（哪些功能不可用）
+      label: Additional context
+      description: Does it reproduce reliably? What is affected (which capabilities stop working)?
     validations:
       required: false

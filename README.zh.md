@@ -196,7 +196,7 @@ cd core && cargo test --workspace --no-fail-fast
 
 ## 文档
 
-完整分类与文件索引见 [文档导航](docs/README.md)。常用入口：[需求与架构](docs/01-需求与架构/)、[研发计划与决策](docs/02-研发计划与决策/)、[功能设计](docs/03-功能设计/)、[测试与验收](docs/04-测试与验收/)；macOS 侧说明见 [macos/README.md](macos/README.md)。
+完整分类与文件索引见 [文档导航](docs/README.zh.md)。常用入口：[需求与架构](docs/01-需求与架构/)、[研发计划与决策](docs/02-研发计划与决策/)、[功能设计](docs/03-功能设计/)、[测试与验收](docs/04-测试与验收/)；macOS 侧说明见 [macos/README.zh.md](macos/README.zh.md)。
 
 ## 许可证
 

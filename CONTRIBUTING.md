@@ -1,142 +1,144 @@
-# 贡献指南
+# Contributing to Coffer
 
-感谢你有兴趣参与 Coffer。这是一个**处理用户最敏感数据**的项目，因此对贡献的要求比一般项目更严一些。
+Thanks for your interest in Coffer. This project **handles the most sensitive data a user owns**, so the bar for contributions is higher than usual.
 
----
-
-## ⚠️ 第一条：贡献前必须同意 CLA
-
-提交任何 Pull Request 之前，请先阅读并同意 **[`CLA.md`](CLA.md)**。
-
-### 为什么必须这么做
-
-Coffer 社区发行版以 AGPL-3.0 许可证开源。但如果没有 CLA，**项目会永久失去变更许可证的能力** —— 因为每个贡献者对自己写的代码自动拥有版权，变更项目整体许可证需要所有版权人的同意。一旦合并了十个人的 PR，想改证就要找这十个人逐一同意。
-
-这份 CLA 解决该问题，同时保证：
-
-- 你**保留**自己贡献的版权（是**许可授予**，不是版权转移）
-- 你仍可把自己的贡献用于任何其他目的，包括商业用途
-- 授予项目的许可是**非独占**的
-- 附带**专利许可**，且含防御性终止条款
-
-### 签署方式
-
-首次提交 PR 时，CLA 助手机器人会留言，按指示回复即可。**只需签署一次**，此后所有 PR 自动覆盖。
-
-**如果不接受 CLA 中的再许可条款**，请不要提交贡献。你仍然可以自由使用本项目（AGPL-3.0 赋予你全部使用权利），也可以 fork 后自行维护。我们尊重这个选择。
-
-> **常见误解澄清**：DCO（`Signed-off-by`）**不能替代 CLA**。DCO 是一份"证明"而非合同，它只证明你有权按**项目当前的许可证**提交代码，**不授予再许可权**，也不含专利授权。本项目采用 CLA 而非 DCO，理由详见 `docs/01-需求与架构/04-系统设计.md` §12.3。
+**English** · [中文](CONTRIBUTING.zh.md)
 
 ---
 
-## 开发环境
+## ⚠️ Rule one: agree to the CLA before contributing
 
-| 要求 | 说明 |
+Read and accept the [CLA](CLA.md) before opening any pull request.
+
+### Why this is required
+
+The community edition of Coffer is licensed under AGPL-3.0. Without a CLA, **the project permanently loses the ability to change its licence** — every contributor automatically holds copyright on their own code, and relicensing the project as a whole needs the consent of every copyright holder. After ten PRs are merged, relicensing would mean tracking down ten people one by one.
+
+The CLA solves that while guaranteeing:
+
+- You **keep** the copyright on your contribution — it is a **licence grant**, not a copyright assignment
+- You may still use your contribution for anything else, including commercial work
+- The licence granted to the project is **non-exclusive**
+- It carries a **patent grant** with a defensive termination clause
+
+### How to sign
+
+On your first PR a CLA assistant bot comments; reply as instructed. **You sign once**; every later PR is covered automatically.
+
+**If you do not accept the relicensing clause**, please do not contribute. You are still free to use the project — AGPL-3.0 grants you every right it offers — and to fork and maintain your own copy. We respect that choice.
+
+> **Common misunderstanding**: a DCO (`Signed-off-by`) is **not** a substitute for a CLA. A DCO is an assertion, not a contract: it only states that you may submit code under the **project's current licence**. It grants **no relicensing right** and carries no patent grant. Why this project uses a CLA rather than a DCO: `docs/01-需求与架构/04-系统设计.md` §12.3.
+
+---
+
+## Development environment
+
+| Requirement | Notes |
 | --- | --- |
-| Rust | **>= 1.85**（由 `getrandom` 0.4.3 的 MSRV 决定） |
-| 工具链 | stable channel（见 `core/rust-toolchain.toml`） |
-| Python | 3.10+（仅用于 `tools/` 下的辅助脚本，非构建依赖） |
+| Rust | **>= 1.85** (set by the MSRV of `getrandom` 0.4.3) |
+| Toolchain | stable channel (see `core/rust-toolchain.toml`) |
+| Python | 3.10+ (only for helper scripts under `tools/`, not a build dependency) |
 
-```bash
+`bash
 git clone <repo-url>
 cd coffer/core
 cargo build
 cargo test
-```
+`
 
 ---
 
-## 代码规范
+## Code standards
 
-### 通用
+### General
 
-| 规则 | 说明 |
+| Rule | Notes |
 | --- | --- |
-| `cargo fmt` | 提交前必须执行 |
-| `cargo clippy` | 不得有 warning |
-| **禁止 `unsafe`** | 所有 crate 已在 lib.rs 顶部声明 `#![forbid(unsafe_code)]` |
-| **禁止 `unwrap()` / `expect()`** | 生产路径上一次都不行，已在 lib.rs 声明为 deny。测试代码例外 |
-| 文档注释 | 所有 `pub` 项需有 `///`，crate 需有 `//!` |
+| `cargo fmt` | Must be run before committing |
+| `cargo clippy` | No warnings allowed |
+| **No `unsafe`** | Every crate declares `#![forbid(unsafe_code)]` at the top of `lib.rs` |
+| **No `unwrap()` / `expect()`** | Not once on a production path — declared as deny in `lib.rs`. Test code is exempt |
+| Doc comments | Every `pub` item needs `///`, every crate needs `//!` |
 
-### 加密与安全相关代码（额外要求）
+### Crypto and security-sensitive code (extra requirements)
 
-这部分是本项目的风险集中区，审查会更严格：
+This is where the project's risk is concentrated, and review is correspondingly stricter:
 
-| 要求 | 理由 |
+| Requirement | Rationale |
 | --- | --- |
-| **不得自造密码学原语** | 只用成熟库的高层 API。手工拼装 AEAD 构造是本项目明确禁止的行为 |
-| **密钥类型必须实现 `Zeroize` + `ZeroizeOnDrop`** | 密钥不得残留在内存 |
-| **错误信息不得泄露可用于降低攻击成本的信息** | 例如解锁失败不区分"密码错"与"文件损坏" |
-| **敏感数据不得进入日志** | 用 `LogSafe` trait 在编译期阻止，而不是靠代码审查 |
-| **不得引入任何网络依赖** | 包括 `reqwest`、`hyper`、`ureq` 等。CI 会自动检查依赖树 |
+| **Never roll your own crypto primitives** | Use the high-level API of a mature library. Hand-assembling AEAD constructions is explicitly forbidden here |
+| **Key types must implement `Zeroize` + `ZeroizeOnDrop`** | Key material must not linger in memory |
+| **Error messages must not leak information that lowers attack cost** | e.g. an unlock failure must not distinguish "wrong password" from "corrupt file" |
+| **Sensitive data must never reach a log** | Enforced at compile time by the `LogSafe` trait, not by review |
+| **No network dependency of any kind** | Including `reqwest`, `hyper`, `ureq`, … CI checks the dependency tree automatically |
 
-### 依赖管理
+### Dependency management
 
-新增依赖前请确认：
+Before adding a dependency, confirm:
 
-1. 它不在 `docs/01-需求与架构/04-系统设计.md` §11.1 的**禁止清单**中（网络、遥测相关一律禁止）
-2. 其许可证与 AGPL-3.0 兼容（MIT / Apache-2.0 / BSD 等宽松许可证与 GPL / LGPL / AGPL copyleft 许可证均可；**禁止与 AGPL-3.0 不兼容的许可证**，如无再许可条款限制分发的许可证）
-3. 它被加入 `core/Cargo.toml` 的 `[workspace.dependencies]`，并由各 crate 通过 `{ workspace = true }` 引用，而不是在各 crate 里散写版本号
+1. It is not on the **deny list** in `docs/01-需求与架构/04-系统设计.md` §11.1 (anything network- or telemetry-related is forbidden)
+2. Its licence is AGPL-3.0-compatible (permissive MIT / Apache-2.0 / BSD and copyleft GPL / LGPL / AGPL all qualify; **licences incompatible with AGPL-3.0 are forbidden**)
+3. It is added to `[workspace.dependencies]` in `core/Cargo.toml` and consumed by each crate via `{ workspace = true }`, rather than pinning versions inside individual crates
 
 ---
 
-## 提交规范
+## Commit conventions
 
-Commit message 用**祈使句**，说明"做了什么"而非"改了哪些文件"：
+Write commit messages in the **imperative mood**, describing *what the change does* rather than which files it touches:
 
-```
-✓  修复导入 1PUX 时附件路径未做相对化处理
-✓  为 cf-totp 补齐 RFC 6238 Appendix B 的 18 条测试向量
+`
+✓  Make 1PUX attachment paths relative on import
+✓  Add the 18 RFC 6238 Appendix B test vectors to cf-totp
 ✗  update
 ✗  fix bug
-✗  修改了 importer.rs
-```
+✗  changed importer.rs
+`
 
-涉及设计变更的提交，请在 message 中引用对应文档章节（如 `docs/01-需求与架构/03-详细设计.md §6.3`）。
+If a commit changes a design, cite the relevant document section in the message (e.g. `docs/01-需求与架构/03-详细设计.md §6.3`).
 
 ---
 
-## 测试要求
+## Testing requirements
 
-| 场景 | 要求 |
+| Scenario | Requirement |
 | --- | --- |
-| 一般功能 | 新增逻辑需有对应单元测试 |
-| 密码学 | 必须通过标准测试向量（详见 `docs/01-需求与架构/04-系统设计.md` §8.2） |
-| 导入器 | 必须补充针对畸形输入的测试 |
-| Bug 修复 | 先写出能复现该 bug 的测试，再修复 |
+| Ordinary functionality | New logic needs unit tests |
+| Cryptography | Must pass the standard test vectors (`docs/01-需求与架构/04-系统设计.md` §8.2) |
+| Importers | Must add tests for malformed input |
+| Bug fix | Write the failing test that reproduces the bug first, then fix it |
 
-### 测试数据的一条硬规则
+### One hard rule about test data
 
-**不得提交任何真实数据样本。**
+**Never commit a real data sample.**
 
-- 需要测试数据时，用 `python3 tools/make_test_sample.py` 生成合成样本
-- 若因校准需要接触真实样本，**必须在本机离线使用，不提交到仓库**，校准完成后删除
-- 只把推导出的**映射表**（不含具体值）入库，并在映射表中记录校准所用样本的 SHA-256 指纹
+- Need test data? Generate a synthetic sample with `python3 tools/make_test_sample.py`
+- If calibration requires a real sample, **use it offline on your own machine and never commit it**; delete it once calibration is done
+- Commit only the derived **mapping table** (no concrete values), recording the SHA-256 fingerprint of the sample used
 
-理由：这个仓库是公开的，而密码库样本一旦泄露无法撤回。
-
----
-
-## 安全漏洞
-
-**请勿开公开 issue。** 按 [`SECURITY.md`](SECURITY.md) 的流程私下报告。
+Why: this repository is public, and a leaked vault sample cannot be un-leaked.
 
 ---
 
-## 文档与代码同步
+## Security vulnerabilities
 
-本项目有一条不可妥协的要求：**涉及加密格式的变更，必须同时更新文档。**
+**Do not open a public issue.** Report privately following [SECURITY.md](SECURITY.md).
 
-| 变更类型 | 需同步更新 |
+---
+
+## Keeping docs in sync with code
+
+One non-negotiable rule here: **any change to the crypto format must update the docs in the same change.**
+
+| Change type | Docs to update |
 | --- | --- |
-| 功能范围 | `docs/01-需求与架构/01-需求分析.md` → `02` → `03` → `04`（连锁） |
-| 架构或技术选型 | `docs/01-需求与架构/02-概要设计.md` → `03` |
-| 加密参数或格式 | `docs/01-需求与架构/03-详细设计.md` §1~§3 → `docs/01-需求与架构/04-系统设计.md` §6 |
+| Feature scope | `docs/01-需求与架构/01-需求分析.md` → `02` → `03` → `04` (in that order) |
+| Architecture or technology choice | `docs/01-需求与架构/02-概要设计.md` → `03` |
+| Crypto parameters or format | `docs/01-需求与架构/03-详细设计.md` §1–§3 → `docs/01-需求与架构/04-系统设计.md` §6 |
 
-只改代码不改文档，是这类项目最常见的隐患来源（见 `docs/01-需求与架构/04-系统设计.md` §15.2）。审查者会据此打回 PR。
+Code without docs is the most common source of hidden debt in a project like this (`docs/01-需求与架构/04-系统设计.md` §15.2). Reviewers will send the PR back.
 
 ---
 
-## 行为准则
+## Code of conduct
 
-参与本项目即表示同意遵守 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)。
+By participating you agree to follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

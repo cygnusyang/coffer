@@ -78,7 +78,13 @@ step "1/4 APPLE_PROVISIONING_PROFILE_BASE64（自动）"
 PROFILE="$(ls "${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile" 2>/dev/null | head -1)"
 [[ -z "${PROFILE}" ]] && PROFILE="$(ls "${ROOT_DIR}"/macos/build/*.provisionprofile 2>/dev/null | head -1)"
 [[ -n "${PROFILE}" ]] || die "未找到 provisioning profile：先跑 ./tools/make_provisioning_profile.sh"
-printf '来源：%s（到期时间见 plutil 或 make 脚本输出）\n' "${PROFILE}"
+printf '来源：%s\n' "${PROFILE}"
+PROFILE_EXP="$(/usr/bin/security cms -D -i "${PROFILE}" 2>/dev/null | plutil -extract ExpirationDate raw - 2>/dev/null)"
+if [[ -n "${PROFILE_EXP}" ]]; then
+  printf '到期：%s（免费账号 7 天，过期 CI 会红）\n' "${PROFILE_EXP}"
+else
+  printf '到期：读取失败，请自行确认 profile 有效期\n'
+fi
 base64 -i "${PROFILE}" | put APPLE_PROVISIONING_PROFILE_BASE64 || die "写入失败"
 
 step "2/4 APPLE_CERT_P12_BASE64（交互）"

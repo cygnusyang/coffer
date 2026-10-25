@@ -5,7 +5,8 @@
 # traffic API 仅 14 天且需 owner token，故不做）。
 #
 # 触发：每周一 03:17 UTC 定时 + 手动 workflow_dispatch + 每次 Release 发布后。
-# 行为：跑 tools/update_download_stats.py 就地刷新 README 表格；无变化不提交。
+# 行为：跑 tools/update_download_stats.py 就地刷新 README.md（英文）/ README.zh.md（中文）
+# 两张表格；无变化不提交。
 #
 # 注意：GITHUB_TOKEN 提交不会触发其他 workflow（GitHub 设计如此），本工作流也
 # 不需要被自己触发；下载计数由 GitHub 维护，与本仓提交无关。
@@ -36,16 +37,18 @@ jobs:
       - name: 生成下载量表
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 tools/update_download_stats.py --file README.md
+        run: |
+          python3 tools/update_download_stats.py --file README.md
+          python3 tools/update_download_stats.py --file README.zh.md
 
       - name: 提交表格变化
         run: |
-          if git diff --quiet -- README.md; then
+          if git diff --quiet -- README.md README.zh.md; then
             echo "下载量无变化，跳过提交"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
+          git add README.md README.zh.md
           git commit -m "chore(docs): 刷新 README 下载量统计（自动）"
           git push

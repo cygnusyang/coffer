@@ -1,6 +1,6 @@
 # Coffer — documentation index (English)
 
-The complete design corpus lives under `docs/` and is written in **Chinese**; this page is a map so English readers can navigate it. Start with the [English README](../README.en.md) for product-level material.
+The complete design corpus lives under `docs/` and is written in **Chinese**; this page is a map so English readers can navigate it. Start with the [English README](../README.md) for product-level material.
 
 > Why Chinese? Coffer is a single-maintainer project; the docs double as the engineering log (design decisions, acceptance criteria, post-mortems). Translating all ~60 documents would cost more than it returns — this index plus the English README is the deliberate compromise. Issues and PRs in English are welcome.
 

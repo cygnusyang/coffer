@@ -34,7 +34,8 @@ cd "$ROOT_DIR" || { echo "FAIL 无法进入仓库根：$ROOT_DIR" >&2; exit 1; }
 
 # ---------- ① README 子命令 vs CLI 源码 ----------
 check_subcommands() {
-    local readme="README.md" src="core/cf-mcp/src/cli.rs"
+    # 子命令一览表维护在中文版 README.zh.md（英文版只列常用命令，无全量表）。
+    local readme="README.zh.md" src="core/cf-mcp/src/cli.rs"
     if [ ! -f "$readme" ] || [ ! -f "$src" ]; then
         warn "① 跳过：缺少 $readme 或 $src"
         return
@@ -101,7 +102,7 @@ broken_links() {
 }
 
 check_links() {
-    local files=("docs/README.md" "docs/00-协作适配.md" "README.md")
+    local files=("docs/README.md" "docs/00-协作适配.md" "README.md" "README.zh.md")
     local f broken total=0
     for f in "${files[@]}"; do
         [ -f "$f" ] || continue

@@ -205,3 +205,5 @@ cd core && cargo test --workspace --no-fail-fast
 > 修订注记：本文按 [docs/00-文档风格指南.md](docs/00-文档风格指南.md) 于 2026-10-16 重构（仅风格转换：术语统一「MCP 服务器」、删冗余、修订注记；命令、版本、退出码、废弃注记等事实不变）。
 > 修订注记（2026-10-17）：「首次启动与建库」主密码表述事实修正——补 Touch ID 解锁 / 离线恢复码重设路径（FR-17，均 opt-in），删除「唯一解锁凭据 / 遗失不可恢复」绝对化表述（与 v2.5.0 已实现恢复通道矛盾；doc-reviewer NOTE-3 核销）。
 > 修订注记（2026-10-18）：Claude Code 插件自独立仓 coffer-claude 收编入主仓 `plugins/claude-code/`（根级 `.claude-plugin/marketplace.json` 提供市场清单，许可随主仓 AGPL-3.0）；「与 AI 工具协同（MCP）」节新增插件安装为推荐路径，原手动 `claude mcp add` 注册降级为不用插件时的兜底。同日独立仓 coffer-claude 标记废弃（README 顶部注记指向本仓），插件唯一安装入口 = 本仓市场。
+
+- [PRIVACY.md](PRIVACY.md) · [TRIAGE.md](TRIAGE.md)

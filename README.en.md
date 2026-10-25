@@ -138,3 +138,5 @@ Design docs, acceptance criteria and decision records live in `docs/` (written i
 ## License
 
 [AGPL-3.0](LICENSE). Copyright (c) 2026 Coffer contributors.
+
+- [PRIVACY.md](PRIVACY.md) · [TRIAGE.md](TRIAGE.md)

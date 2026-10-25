@@ -38,9 +38,9 @@
 
 ## 3. Build switches
 
+The `pro` Cargo feature and the `COFFER_PRO` Swift macro were removed by the de-Pro decision (OS-3); nothing in the tree references them today. Only the OS-1 build-isolation switches remain:
+
 | Switch | Location | Notes |
 |---|---|---|
-| Cargo feature `pro` | `core/cf-mcp/Cargo.toml` | Removed (de-Pro OS-3) |
-| Swift macro `COFFER_PRO` | `tools/build_macos_app.sh` | Removed (de-Pro OS-3) |
 | Cargo feature `official-license` | `core/cf-ffi/Cargo.toml` | Retained (OS-1 build isolation) |
 | Swift macro `OFFICIAL_LICENSE` | `tools/build_macos_app.sh` | Retained (OS-1 build isolation) |

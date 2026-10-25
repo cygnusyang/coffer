@@ -37,9 +37,9 @@
 
 ## 三、编译开关
 
+`pro` Cargo feature 与 `COFFER_PRO` Swift 宏已随去 Pro 化（OS-3）删除，当前树内无任何引用；只剩 OS-1 的构建隔离开关：
+
 | 开关 | 位置 | 说明 |
 |---|---|---|
-| Cargo feature `pro` | `core/cf-mcp/Cargo.toml` | 已删除（去 Pro 化 OS-3） |
-| Swift 宏 `COFFER_PRO` | `tools/build_macos_app.sh` | 已删除（去 Pro 化 OS-3） |
 | Cargo feature `official-license` | `core/cf-ffi/Cargo.toml` | 保留（OS-1 构建隔离能力） |
 | Swift 宏 `OFFICIAL_LICENSE` | `tools/build_macos_app.sh` | 保留（OS-1 构建隔离能力） |

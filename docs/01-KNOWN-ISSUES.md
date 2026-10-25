@@ -1332,7 +1332,7 @@ Swift `Data`/`String` 为 COW 值类型——零化一个副本不触及共享�
 **分级**：S4（测试断言与契约漂移，非生产缺陷）/ P2 / 来源版本 v2.8.x（GitLab 端点切换批 287c37d）/ 发现版本 v2.9.0
 **状态**：✅ 已核销（lead 提交 aa56842，2026-10-12）
 **核销记录**：lead 提交 **aa56842**（`macos/Tests/UpdateTests/main.swift`）：TC-HOST-01 断言改 **5 host**（4 GitHub + `gitlab.internal.invalid`）；TC-HOST-02 修正首刀误断为正确形态——带端口 URL 经 `isAllowedURL` 放行 + 裸 host 带端口字符串（`gitlab.internal.invalid`）fail-closed 拒绝，两条正反断言。复跑 `tools/run_update_tests.sh` → **EXIT=0 / 177 检查 / 0 FAIL**（与 dev-tester 先前 177/0/2 ALL GREEN 一致）。**BUG-20 正式核销 ✅**。
-**证据**：2026-10-12 实测 `tools/run_update_tests.sh` → 173 passed / 1 failed / 2 skipped，唯一 FAILED = TC-HOST-01（日志 /tmp/v290_update_tests.log）；`macos/Coffer/Updater/OTAEndpointPolicy.swift:16-22` allowedHosts 现为 5 host（含 `gitlab.internal.invalid`，287c37d 增列，Pro trunk），`macos/Tests/UpdateTests/main.swift:697-700` 当时断言恰 4 GitHub host（**已随 aa56842 更新**：现 :700-714 断言 5 host + TC-HOST-02 两条正反）
+**证据**：2026-10-12 实测 `tools/run_update_tests.sh` → 173 passed / 1 failed / 2 skipped，唯一 FAILED = TC-HOST-01（日志 /tmp/v290_update_tests.log）；`macos/Coffer/Updater/OTAEndpointPolicy.swift:16-22` allowedHosts 现为 5 host（含 `gitlab.internal.invalid`，287c37d 增列，内网源码仓），`macos/Tests/UpdateTests/main.swift:697-700` 当时断言恰 4 GitHub host（**已随 aa56842 更新**：现 :700-714 断言 5 host + TC-HOST-02 两条正反）
 
 ### 现象（预期/实际 分行写）
 
@@ -1503,10 +1503,10 @@ Developer ID 产物在位跑 `tools/run_update_tests.sh` 三项 PASS；删产物
 
 ### 现象（预期/实际 分行写）
 - **预期**：App 沙盒匿名拉更新清单成功（App 无 token 设计，清单须匿名可达）
-- **实际**：coffer-pro（私有仓）对未鉴权请求掩蔽 404 → App 侧 `fetchManifest` 抛 404 → 首版 BUG-23 把它当网络失败呈现「已是最新版本」（通道断裂被掩蔽）
+- **实际**：内网源码仓（私有）对未鉴权请求掩蔽 404 → App 侧 `fetchManifest` 抛 404 → 首版 BUG-23 把它当网络失败呈现「已是最新版本」（通道断裂被掩蔽）
 
 ### 根因（已实证）
-coffer-pro 为私有 GitLab 仓（project 95）；GitLab 对未鉴权请求返回 404（掩蔽存在性），App 沙盒无 token → 匿名拉 `projects/95/.../update-manifest.json` 必 404。白名单 host 校验不受影响（host 合法、404 是响应状态）。
+内网源码仓为私有 GitLab 仓（project 95）；GitLab 对未鉴权请求返回 404（掩蔽存在性），App 沙盒无 token → 匿名拉 `projects/95/.../update-manifest.json` 必 404。白名单 host 校验不受影响（host 合法、404 是响应状态）。
 
 ### 修复路径
 1. 新建公开产物仓 coffer-ota（cygnusyang/coffer-ota，public，已验证匿名 200）

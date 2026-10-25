@@ -88,7 +88,7 @@ final class UpdaterManager: ObservableObject {
     @Published private(set) var state: UpdaterState = .idle
 
     /// 固定清单 URL（契约 6.1，恒一 URL，不依赖版本枚举）。
-    /// 公开产物仓（2026-10-14）：原 coffer-pro（project 95）私有 → GitLab 对未鉴权
+    /// 公开产物仓（2026-10-14）：原内网源码仓（project 95）私有 → GitLab 对未鉴权
     /// 请求掩蔽 404 → App 沙盒无 token 拉清单必 404，OTA 通道自迁 GitLab 起即断
     /// （BUG-25）；开源迁移轮（2026-10-17，OS-2/OS-5）切 GitHub 主仓 Releases：
     /// manifest 随 release.yml 上传至 github.com/cygnusyang/coffer 的 Release 资产，

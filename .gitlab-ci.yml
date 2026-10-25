@@ -1,6 +1,6 @@
 # .gitlab-ci.yml —— GitLab CI 迁移版（对齐 .github/workflows/release.yml + rust.yml 语义）。
 #
-# 迁移背景（2026-10-11 拆仓）：Pro trunk（本仓）迁自托管 GitLab
+# 迁移背景（2026-10-11 拆仓）：本仓（内网 GitLab 主线）迁自托管 GitLab
 # gitlab.internal.invalid；免费版另仓（GitHub + GitLab 镜像）。
 #
 # Runner：macOS shell executor（tag: macos）——GitHub 时代 ubuntu test job 与
@@ -19,7 +19,7 @@
 # 注意：Pro 构建的 OTA host 白名单须加入 gitlab.internal.invalid（docs/35 §6.2 +
 # tools/check_ota_whitelist.sh + ManifestVerifier 源码常量，迁移轮代码改动）。
 #
-# OTA 双仓布局（BUG-25，2026-10-14）：源码仓 coffer（原名 coffer-pro）为私有项目，GitLab 对
+# OTA 双仓布局（BUG-25，2026-10-14）：源码仓 coffer 为私有项目，GitLab 对
 # 未鉴权请求掩蔽 404——App 沙盒无 token，拉 95 的清单必然 404 且被 BUG-23 的
 # fail-closed 语义掩蔽成「已是最新版本」。裁定：新建公开产物仓 coffer-ota
 # （project 97，无源码），CI 发版时把 zip + update-manifest.json 加传 97 并在

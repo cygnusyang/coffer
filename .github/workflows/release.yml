@@ -48,9 +48,10 @@ jobs:
           echo "PATH=$HOME/.cargo/bin:$PATH" >> "$GITHUB_ENV"
       - name: 可靠门禁
         working-directory: core
-        run: cargo test --workspace --no-fail-fast -- \
-          --skip 极端kdf参数建库记录与解锁往返 \
-          --skip 千条搜索基线
+        run: |
+          cargo test --workspace --no-fail-fast -- \
+            --skip 极端kdf参数建库记录与解锁往返 \
+            --skip 千条搜索基线
 
   # clippy（-D warnings）+ 构建 + 签名 + 打包 + 触发 release。
   # 需 macos runner：clippy 的 dead_code 分析须在 macOS 目标上做（与本地

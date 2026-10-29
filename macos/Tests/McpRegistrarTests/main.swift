@@ -701,6 +701,21 @@ check(dedupPATH.split(separator: ":").filter { $0 == "/usr/bin" }.count == 1,
 check(SpawnEnvironment.commandPATH(current: nil, prepending: []).hasPrefix("/opt/homebrew/bin:/usr/local/bin:/usr/bin"),
       "SPAWN：无现有 PATH 时回落系统默认集")
 
+// ---- CLI candidates：GUI 环境也能发现 ChatGPT 内嵌的 Codex ----
+let codexCandidates = CLIPathCandidates.paths(named: "codex", homeDirectory: "/Users/me")
+check(Array(codexCandidates.prefix(4)) == ["/Users/me/.local/bin/codex", "/usr/local/bin/codex", "/opt/homebrew/bin/codex", "/usr/bin/codex"],
+      "CLI：现有命令行安装路径优先级不变")
+check(codexCandidates.suffix(2) == ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "/Users/me/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"],
+      "CLI：补系统和用户 Applications 的已核验 ChatGPT 内嵌 Codex 路径")
+check(CLIPathCandidates.paths(named: "claude", homeDirectory: "/Users/me").count == 4,
+      "CLI：其他工具不搜索 ChatGPT 内嵌路径")
+check(CLIPathCandidates.firstExecutable(in: codexCandidates, isExecutable: { _ in false }) == nil,
+      "CLI：候选不存在或不可执行不计为安装")
+check(CLIPathCandidates.firstExecutable(in: codexCandidates, isExecutable: { $0.contains("ChatGPT.app") }) == codexCandidates[4],
+      "CLI：GUI PATH 缺少 Codex 时可命中 App 内嵌 CLI")
+check(CLIPathCandidates.firstExecutable(in: codexCandidates, isExecutable: { _ in true }) == codexCandidates[0],
+      "CLI：多个可执行候选仍优先原有用户安装")
+
 // ---- 摘要 ----
 print("----------------------------------------")
 print("McpRegistrarTests: \(passed) passed, \(failed) failed")

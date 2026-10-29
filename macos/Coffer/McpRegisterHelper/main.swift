@@ -66,9 +66,6 @@ private let probeResolveTimeout: TimeInterval = 2
 /// 轮询间隔（秒）。
 private let pollInterval: TimeInterval = 0.2
 
-/// 常见系统安装目录（CLI 解析候选；无 shell 依赖、快、零拼接）。
-private let cliSystemCandidateDirectories = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"]
-
 // MARK: - 真实主目录（BUG-30：getpwuid，**不**读 HOME env——open 传播沙盒 App 的
 // HOME=容器 Data，读它会算到错误的双层容器目录）
 
@@ -233,16 +230,17 @@ func isSafeCLIName(_ name: String) -> Bool {
     }
 }
 
-/// 解析目标 CLI 绝对路径。顺序：家目录固定候选 → 常见系统候选 → login shell
+/// 解析目标 CLI 绝对路径。顺序：家目录固定候选 → 常见系统候选 → ChatGPT App 候选 → login shell
 /// command -v <name>（PATH 兜底，命令为固定字面量）。全部落空 → nil。
 func resolveCLIPath(named name: String, shellTimeout: TimeInterval = resolveCLITimeout) -> String? {
     guard isSafeCLIName(name) else {
         log("CLI 名不合法（拒绝拼装兜底命令）: \(name)")
         return nil
     }
-    var candidates = [realUserHomeDirectory() + "/.local/bin/" + name]
-    candidates.append(contentsOf: cliSystemCandidateDirectories.map { $0 + "/" + name })
-    for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+    let candidates = CLIPathCandidates.paths(named: name, homeDirectory: realUserHomeDirectory())
+    if let candidate = CLIPathCandidates.firstExecutable(in: candidates, isExecutable: {
+        FileManager.default.isExecutableFile(atPath: $0)
+    }) {
         log("\(name) 命中固定候选: \(candidate)")
         return candidate
     }

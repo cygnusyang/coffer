@@ -116,7 +116,7 @@ if [ -f "$PROFILE" ]; then
             EXP_ISO="$(plutil -extract ExpirationDate raw "$TMP_PLIST" 2>/dev/null || true)"
             EXP_EPOCH=""
             if [ -n "$EXP_ISO" ]; then
-                EXP_EPOCH="$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$EXP_ISO" '+%s' 2>/dev/null || true)"
+                EXP_EPOCH="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$EXP_ISO" '+%s' 2>/dev/null || true)"
             fi
             [ -n "$EXP_EPOCH" ] || EXP_EPOCH="$(LC_ALL=C date -j -f '%a %b %d %H:%M:%S %Z %Y' "$EXP" '+%s' 2>/dev/null || true)"
             [ -n "$EXP_ISO" ] && EXP="$EXP_ISO"

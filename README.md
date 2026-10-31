@@ -14,6 +14,8 @@ Coffer stores passwords, keys and credentials **only on your device** — no clo
 
 It also ships a local **MCP server** so AI coding tools (Claude Code, CodeBuddy, Codex, …) can pull secrets on demand — without the secret values ever entering the model context.
 
+> **Repository note** — this GitHub repository is the public mirror. Day-to-day development happens in our internal GitLab instance; release assets and the OTA update endpoint are served from this mirror.
+
 ## Why Coffer
 
 - **Verifiable "no cloud"** — not a promise in marketing copy: dependency graph + entitlements + OTA-only allowlist are all inspectable and asserted by tests.

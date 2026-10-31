@@ -10,7 +10,7 @@
 
 **数据不出本机的密码管理器**：密码、密钥、凭据只存本地，不上传云端（仅软件更新 OTA 联网；可审计验证，NFR-SEC-07）。另提供本机 MCP 服务器，供 Claude Code、Codex 等本地大模型工具按需取密——数据同样不出本机。
 
-- 仓库：<https://github.com/cygnusyang/coffer> · 许可证：AGPL-3.0
+- 仓库：<https://github.com/cygnusyang/coffer>（公开镜像；源码主仓在内部 GitLab，Release 资产与 OTA 更新端点均在此镜像仓）· 许可证：AGPL-3.0
 
 ## 截图
 

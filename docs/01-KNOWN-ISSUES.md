@@ -1859,6 +1859,15 @@ COFFER_VAULT_DIR=<库目录> /Applications/Coffer.app/Contents/Helpers/coffer.ap
 EXIT=124   # timeout 3s：常驻等待 stdin，符合预期
 ```
 
+**补跑核销（2026-10-31，v2.13.5 产物）**：
+
+- **TC-B33-07 复验通过**：无 `$COFFER_VAULT_PASSWORD` 启动 `coffer mcp --provider coffer`，stderr 输出 `vault unlocked via MCP keychain escrow (source="keychain-escrow")`；喂 JSON-RPC `initialize` + `tools/list` 得到正常应答（4 个工具：`list_secret_names` / `list_secrets` / `run_with_secret` / `get_secret_metadata`），退出码 0，无「未启用 MCP 解锁托管 / MCP 托管读取失败」。
+- **TC-B33-08 由「未覆盖」转 ✅**：此前未覆盖的唯一阻碍是「本机 0 valid codesigning identities」，无法签署「写旧组」的一次性工具；签名身份恢复后可签。做法：用与 CLI 同 profile、同双组 entitlements 的一次性嵌套 bundle 工具，把真实条目的 32B 载荷写入旧组、删除主组条目（构造「只有旧组有条目」），跑完立即还原。
+  - 观测：主组 `NOTFOUND` / 旧组命中期间，`coffer mcp` 仍 `source="keychain-escrow"` 解锁成功、退出码 0、无「请从 App 重新启用托管」提示（`grep -c` = 0）。
+  - 还原核验：主组条目字节与还原前逐字节一致、旧组 `NOTFOUND`、`coffer mcp` 复跑仍走 escrow。
+  - 结论：profile 的 `keychain-access-groups = A6DS985SJJ.*` 通配确实覆盖旧组，兜底分支在真实 entitlement 下可用；BUG-33 的双组读取面至此**双向实证**（新组主路径 + 旧组兜底）。
+  - 用例与判据见 `docs/04-测试与验收/20-v2.11.1-BUG-33-回归用例.md` §4/§5（r0.4）。
+
 修复前同命令恒 exit 1「未启用 MCP 解锁托管」；修复后正常解锁并进入 stdio 服务，**根因与修复均获真机闭环**。安装产物校验：`CFBundleShortVersionString=2.11.1`；签名 `Apple Development: ruohuyang@163.com (MW3B42X78L)` / team `A6DS985SJJ`；`codesign --verify --strict` 通过；helper entitlements 双组；去签名计数新组 1 / 旧组 1。旧版 2.10.3 完整备份于 `/tmp/Coffer-2.10.3-backup.app`。
 
 **构建环境备注（可复现性）**：Xcode 账号登录曾报 `-1200 NSURLErrorSecureConnectionFailed`（代理链路上 Apple 域名 TLS 失败）。在 Wi-Fi 服务的代理例外中加入 `*.apple.com` / `apple.com`（直连）后，`xcodebuild -allowProvisioningUpdates` 自动签发出 Apple Development 证书并生成新 profile，构建恢复。

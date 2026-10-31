@@ -34,6 +34,7 @@ release 中有体现）。
 - **Developer ID 分发 + 公证流水线**：此前分发只有「Apple Development 签名 + 自托管 OTA」一条路，用户从 GitHub 下载 DMG/zip 后 Gatekeeper 一律拦（需右键打开）。本版把对外分发补齐：`DISTRIBUTION=developer-id ./tools/build_macos_app.sh` 产出 Developer ID 签名（Hardened Runtime + 安全时间戳），`./tools/notarize_app.sh` 走 notarytool 公证并装订票据，双击即可打开。
   - **关键实证（推翻了此前的假设）**：`keychain-access-groups` 是受限 entitlement，**Developer ID 同样必须有 provisioning profile 授权**——只签证书不嵌 profile 时，进程在 spawn 门被 AMFI 拒绝（`open` 报 launchd error 163），与开发证书同款拦截。Apple 会为带该能力的 App ID 签发 **Mac Team Direct** profile（本项目实测 `A6DS985SJJ.*`、有效期至 2044 年），`tools/make_provisioning_profile.sh --developer-id` 通过 `xcodebuild archive` + `-exportArchive method=developer-id` 自动签发并提取，无需门户手工操作。
   - 签名/公证判据：`codesign -dv` = `Developer ID Application` + `flags=runtime`；`spctl -a -vv` 通过；断网可验（票据已 staple 到 .app 与 DMG）。
+  - **实测证据（2026-10-31）**：`.app` 公证 `Accepted`（id `7d3894c1-4634-4347-8f66-286fbd80e9ad`）、DMG 公证 `Accepted`（id `9b5cf895-3aa8-4880-aca7-6e399db58382`）；两者 `stapler validate` 均通过，`spctl -a` 均返回 `accepted / source=Notarized Developer ID`；安装后进程正常启动，内嵌 CLI 仍可 `keychain-escrow` 免密解锁。
   - 分发渠道口径变更：2026-10-09「App Store 沙盒单渠道」的表述不再成立（本版恢复 Developer ID 通道；App Store 上架仍是另一条未走的路，见后续工作项）。
 - `tools/build_macos_app.sh` 新增 `DISTRIBUTION` 开关（`development` 默认 / `developer-id`），两种形态共用同一 profile 门禁与嵌入顺序；嵌套 CLI、OTA helper、MCP helper、内嵌 dylib 全部随形态签发。
 

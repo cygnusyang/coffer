@@ -31,10 +31,18 @@ step() { printf '\n==> %s\n' "$1"; }
 
 # ---- 0 前置校验：必须真是 Developer ID + Hardened Runtime ----
 step "0/5 前置校验（Developer ID 签名 + Hardened Runtime）"
-AUTHORITY="$(codesign -dv --verbose=2 "${APP_DIR}" 2>&1 | awk -F'Authority=' '/Authority=Developer ID Application/{print $2; exit}')"
-[[ -n "${AUTHORITY}" ]] || die "产物不是 Developer ID 签名（当前：$(codesign -dv "${APP_DIR}" 2>&1 | grep Authority | head -1)）。公证只接受 Developer ID。"
-codesign -dv --verbose=4 "${APP_DIR}" 2>&1 | grep -q 'flags=.*runtime' \
-  || die "缺少 Hardened Runtime（--options runtime），公证会被拒。请用 DISTRIBUTION=developer-id 构建。"
+# 注意：这里全部用「先取变量再字符串匹配」，不要用 `cmd | grep -q` / `awk … exit`——
+# 读端提前退出会让 codesign 收到 SIGPIPE，set -o pipefail 下整条命令失败（实测 exit 141）。
+CS_INFO="$(codesign -dv --verbose=4 "${APP_DIR}" 2>&1 || true)"
+case "${CS_INFO}" in
+  *"Authority=Developer ID Application"*) ;;
+  *) die "产物不是 Developer ID 签名。公证只接受 Developer ID，当前签名：$(printf '%s\n' "${CS_INFO}" | sed -n 's/^Authority=//p' | head -1)" ;;
+esac
+case "${CS_INFO}" in
+  *"(runtime)"*) ;;
+  *) die "缺少 Hardened Runtime（--options runtime），公证会被拒。请用 DISTRIBUTION=developer-id 构建。" ;;
+esac
+AUTHORITY="$(printf '%s\n' "${CS_INFO}" | awk -F'Authority=' '/^Authority=/{if(!v) v=$2} END{print v}')"
 codesign --verify --deep --strict "${APP_DIR}" || die "签名校验失败。"
 printf '签名身份: %s\n' "${AUTHORITY}"
 

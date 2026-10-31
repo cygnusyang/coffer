@@ -22,6 +22,20 @@ open macos/build/Coffer.app         # 启动
   （FR-5.3 TOTP QR 扫描，T09 裁定 A）与 `keychain-access-groups`（escrow 取密），
   真实清单见 `Coffer/Coffer.entitlements`；核心断言仍是**无任何** `com.apple.security.network.*`。
 
+## Developer ID 公证构建（v2.14.0）
+
+对外分发（App Store 之外）走第二种签名形态 —— Developer ID + Hardened Runtime + **Mac Team Direct** provisioning profile。注意 `keychain-access-groups` 属受限 entitlement，**Developer ID 没有 profile 一样会在 spawn 门被拦**（`open` 报 launchd error 163），所以 profile 不是可选项：
+
+```bash
+./tools/make_provisioning_profile.sh --developer-id   # 一次性 / 换证书后重跑（有效期约 18 年）
+DISTRIBUTION=developer-id ./tools/build_macos_app.sh  # → macos/build/Coffer.app（Developer ID + runtime + 时间戳）
+xcrun notarytool store-credentials coffer-notary \    # 一次性凭据
+  --apple-id <APPLE_ID> --team-id A6DS985SJJ --password <APP_SPECIFIC_PASSWORD>
+./tools/notarize_app.sh                               # 公证 .app → 装订 → DMG → 公证 → 装订 → spctl 复核
+```
+
+`notarize_app.sh` 会先拒绝非 Developer ID / 未开 Hardened Runtime 的产物，失败时打印 Apple 的拒绝日志，最后跑一遍 Gatekeeper 复核。默认 `development` 形态不变，本地构建与 OTA 渠道继续用它。
+
 ## 发版流程（tag → CI 自动构建签名 + 触发 Release，v2.4.1+）
 
 每个新 tag（`v*`）触发 `.github/workflows/release.yml`：ubuntu 可靠门禁
@@ -170,7 +184,7 @@ macOS **没有** Android 那样的系统级 Autofill 框架，第三方 App 无�
 | --- | --- |
 | 最低系统 | **macOS 14（Sonoma）** —— 该版本同时是 Apple 开放第三方 Passkey 存储的起点 |
 | 架构 | **仅 arm64 原生**，不做 Intel 版本，不做 universal binary |
-| 分发 | **appstore 沙盒单渠道**（2026-10-09 起，双渠道 developer-id 已取消） |
+| 分发 | **Developer ID + 公证**（2026-10-31 起，取代 2026-10-09 的 App Store 单渠道口径）：`DISTRIBUTION=developer-id ./tools/build_macos_app.sh` 后跑 `./tools/notarize_app.sh`，见上节「Developer ID 公证构建」 |
 
 ---
 

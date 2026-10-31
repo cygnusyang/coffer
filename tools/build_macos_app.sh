@@ -46,6 +46,20 @@ step() { printf '\n==> %s\n' "$1"; }
 
 REBUILD_BINDINGS=0
 VERBOSE=0
+
+# 分发形态（v2.14.0）：
+#   development —— Apple Development 证书 + Mac Team Development profile，
+#                    本机运行/自托管 OTA 用（默认，行为与历史一致）。
+#   developer-id —— Developer ID Application 证书 + Hardened Runtime + 安全时间戳，
+#                    对外分发并用 tools/notarize_app.sh 公证；**不嵌 provisioning
+#                    profile**（Developer ID 不走 profile 授权，keychain-access-groups
+#                    由签名与 Team ID 直接约束）。
+DISTRIBUTION="${DISTRIBUTION:-development}"
+case "${DISTRIBUTION}" in
+  development) IDENTITY_MATCH="Apple Development" ;;
+  developer-id) IDENTITY_MATCH="Developer ID Application" ;;
+  *) printf 'ERROR: 未知 DISTRIBUTION=%s（可选 development / developer-id）\n' "${DISTRIBUTION}" >&2; exit 1 ;;
+esac
 # App 恒为沙盒单渠道（Coffer.entitlements：App Sandbox + camera + user-selected + keychain-access-groups）
 
 while [[ $# -gt 0 ]]; do
@@ -226,17 +240,36 @@ step "3.5/4 构建并装配 coffer CLI（escrow，D-6 嵌套 bundle）"
 # 会报 ambiguous（当日实证：两张同名人有效证书），改按 SHA-1 hash 签名（无歧义，
 # 免费仓同文适用）。
 IDENTITY_HASH=$(security find-identity -v -p codesigning \
-  | awk '/Apple Development/{print $2; exit}')
+  | awk -v pat="${IDENTITY_MATCH}" 'index($0, pat){print $2; exit}')
 IDENTITY_NAME=$(security find-identity -v -p codesigning \
-  | awk -F'"' '/Apple Development/{print $2; exit}')
-[[ -n "${IDENTITY_HASH}" ]] || die "未找到 codesigning 身份（方案 A 要求 Apple Development 证书，BUG-2）：请在 Xcode → Settings → Accounts 登录 Apple ID 并生成证书后重试。不回退 ad-hoc。"
-printf '签名身份: %s (%s)\n' "${IDENTITY_NAME}" "${IDENTITY_HASH}"
+  | awk -F'"' -v pat="${IDENTITY_MATCH}" 'index($0, pat){print $2; exit}')
+[[ -n "${IDENTITY_HASH}" ]] || die "未找到 ${IDENTITY_MATCH} 签名身份（DISTRIBUTION=${DISTRIBUTION}）：请在 Xcode → Settings → Accounts → Manage Certificates 生成后重试。不回退 ad-hoc。"
+printf '签名身份: %s (%s)　分发形态: %s\n' "${IDENTITY_NAME}" "${IDENTITY_HASH}" "${DISTRIBUTION}"
 
-# keychain-access-groups 是受限 entitlement，必须嵌入 provisioning profile
-# 授权，否则进程 spawn 即被 SIGKILL（BUG-2 方案 A.2）。App 与 coffer 共用同一 profile。
-PROFILE="${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile"
+# Developer ID 需 Hardened Runtime + 安全时间戳（公证硬性要求）；
+# Apple Development 保持历史行为（runtime/timestamp 会让本地调试多一层约束）。
+CODESIGN_FLAGS=()
+if [[ "${DISTRIBUTION}" == "developer-id" ]]; then
+  CODESIGN_FLAGS+=(--options runtime --timestamp)
+fi
+
+# keychain-access-groups 是受限 entitlement，**两种分发形态都必须由 profile 授权**：
+#   development  → Mac Team Development profile（make_provisioning_profile.sh）
+#   developer-id → Mac Team Direct profile（make_provisioning_profile.sh --developer-id）
+# 实测（2026-10-31）：Developer ID 签名但不带 profile 时，带该 entitlement 的进程在
+# spawn 门即被 AMFI 拒绝（open 报 launchd error 163），与开发证书同款拦截——
+# 「Developer ID 不需要 profile」是错的，Apple 会为 keychain-access-groups 签发
+# Mac Team Direct profile（本项目实测授权 A6DS985SJJ.*，有效期 18 年）。App 与 coffer 共用同一 profile。
+if [[ "${DISTRIBUTION}" == "developer-id" ]]; then
+  PROFILE="${ROOT_DIR}/macos/build/top.cygnusyang.coffer.developerid.provisionprofile"
+else
+  PROFILE="${ROOT_DIR}/macos/build/top.cygnusyang.coffer.provisionprofile"
+fi
 if [[ ! -f "${PROFILE}" ]]; then
-  die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
+  if [[ "${DISTRIBUTION}" == "developer-id" ]]; then
+    die "缺少 Developer ID profile（${PROFILE}）：先跑 ./tools/make_provisioning_profile.sh --developer-id。"
+  fi
+  die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（开发 profile 7 天有效，过期需重跑刷新）。"
 fi
 # BUG-27（2026-10-14）：免费账号 profile 7 天有效，此前仅校验「文件存在」，
 # 过期 profile 静默进签名（CI 变量陈旧即中招，真机 helper fail-closed 拒绝才
@@ -278,7 +311,7 @@ cp "${PROFILE}" "${CLI_APP_DIR}/Contents/embedded.provisionprofile"
 
 # 嵌套 bundle 先于外层 App 签名：codesign 对外层 bundle 签名时对已签名的嵌套 .app
 # 保留其独立签名与 entitlements（实证）；若后签会被外层签名覆盖成 App sandbox 版。
-codesign --force --sign "${IDENTITY_HASH}" \
+codesign --force --sign "${IDENTITY_HASH}" ${CODESIGN_FLAGS[@]+"${CODESIGN_FLAGS[@]}"} \
   --entitlements "${SRC_DIR}/Coffer-cli.entitlements" \
   "${CLI_APP_DIR}" || die "coffer CLI（嵌套 bundle）codesign 失败。"
 
@@ -354,7 +387,7 @@ printf 'APPL????' > "${HELPER_APP_DIR}/Contents/PkgInfo"
 
 # 不带 --entitlements、不嵌 profile（Spike-0 裁定无受限 entitlement 即 AMFI 放行）；
 # 不加 --options runtime（对齐 App 与 coffer CLI 现有签名约定）。
-codesign --force --sign "${IDENTITY_HASH}" "${HELPER_APP_DIR}" || die "OTA install helper（嵌套 bundle）codesign 失败。"
+codesign --force --sign "${IDENTITY_HASH}" ${CODESIGN_FLAGS[@]+"${CODESIGN_FLAGS[@]}"} "${HELPER_APP_DIR}" || die "OTA install helper（嵌套 bundle）codesign 失败。"
 
 # ---- 3.7/4 MCP 注册 helper 构建 + 装配 + 签名（v2.11.0，lead 裁定）----
 # MCP 一键注册 helper（lead 裁定，spike 双/三重 block 实证）：嵌入式**非沙盒**
@@ -414,21 +447,21 @@ PLIST_EOF
 printf 'APPL????' > "${MCP_HELPER_APP_DIR}/Contents/PkgInfo"
 
 # 不带 --entitlements、不嵌 profile（无受限 entitlement 即 AMFI 放行，Spike-0 同款）。
-codesign --force --sign "${IDENTITY_HASH}" "${MCP_HELPER_APP_DIR}" || die "MCP 注册 helper（嵌套 bundle）codesign 失败。"
+codesign --force --sign "${IDENTITY_HASH}" ${CODESIGN_FLAGS[@]+"${CODESIGN_FLAGS[@]}"} "${MCP_HELPER_APP_DIR}" || die "MCP 注册 helper（嵌套 bundle）codesign 失败。"
 
 # ---- 4/4 签名（Apple Development 证书 + App Sandbox entitlements + profile）----
 step "4/4 codesign（Apple Development 证书 + entitlements + provisioning profile）"
 # 签名身份与 profile 已在 3.5 发现/校验（coffer CLI 与 App 同一身份、同一 profile）。
 [[ -n "${IDENTITY_HASH:-}" ]] || die "未找到 codesigning 身份（方案 A 要求 Apple Development 证书，BUG-2）：请在 Xcode → Settings → Accounts 登录 Apple ID 并生成证书后重试。不回退 ad-hoc。"
 printf '签名身份: 名字=%s hash=%s\n' "${IDENTITY_NAME}" "${IDENTITY_HASH}"
-[[ -f "${PROFILE:-}" ]] || die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
+[[ -f "${PROFILE:-}" ]] || die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成。"
 cp "${PROFILE}" "${APP_DIR}/Contents/embedded.provisionprofile"
 
 # 内嵌 dylib 先签（外层 App 签名会封存嵌套代码，后签即破坏签名）。
-codesign --force --sign "${IDENTITY_HASH}" "${FRAMEWORKS_DIR}/libcf_ffi.dylib" \
+codesign --force --sign "${IDENTITY_HASH}" ${CODESIGN_FLAGS[@]+"${CODESIGN_FLAGS[@]}"} "${FRAMEWORKS_DIR}/libcf_ffi.dylib" \
   || die "内嵌 libcf_ffi.dylib 签名失败。"
 
-codesign --force --sign "${IDENTITY_HASH}" \
+codesign --force --sign "${IDENTITY_HASH}" ${CODESIGN_FLAGS[@]+"${CODESIGN_FLAGS[@]}"} \
   --entitlements "${ENTITLEMENTS_FILE}" \
   "${APP_DIR}" || die "codesign 失败。"
 
@@ -444,5 +477,5 @@ echo "  coffer CLI: ${CLI_APP_DIR}/Contents/MacOS/coffer"
 echo "  install helper: ${HELPER_APP_DIR}（OTA 替换，docs/35 §6.4）"
 echo "  MCP 注册 helper: ${MCP_HELPER_APP_DIR}（设置页开关一键注册，v2.11.0）"
 echo "  （必须从 App 内路径运行，拷出即 SIGKILL；注册命令示例见 macos/README.md）"
-echo "  分发渠道: appstore（沙盒单渠道）"
+echo "  分发形态: ${DISTRIBUTION}（$([[ "${DISTRIBUTION}" == "developer-id" ]] && echo "对外分发，跑 ./tools/notarize_app.sh 公证" || echo "本机/开发用，不公证")）"
 echo "  核查签名与零网络权限: codesign -dv --entitlements - ${APP_DIR}"

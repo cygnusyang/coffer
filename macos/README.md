@@ -15,6 +15,20 @@ open macos/build/Coffer.app         # launch
 - Prerequisite: the Rust static library and the Swift bindings are committed (`CoreBindings/`). If you changed the Rust FFI surface, run `tools/build_swift_bindings.sh` first (or pass `--rebuild-bindings` to the build script).
 - Verifying the no-network promise (FR-14.5): `codesign -d --entitlements - macos/build/Coffer.app` — besides `app-sandbox` and `files.user-selected.read-write`, the output carries `device.camera` (FR-5.3 TOTP QR scanning, decision T09-A) and `keychain-access-groups` (escrow). The real list is `Coffer/Coffer.entitlements`; the core assertion remains **no** `com.apple.security.network.*` entry of any kind.
 
+## Notarized Developer ID build (v2.14.0)
+
+Public distribution outside the App Store uses a second signing shape — Developer ID + Hardened Runtime + a **Mac Team Direct** provisioning profile (the `keychain-access-groups` entitlement is restricted and is rejected at spawn without a profile, for Developer ID exactly as for development certificates):
+
+```bash
+./tools/make_provisioning_profile.sh --developer-id   # one-off / after certificate changes (valid ~18 years)
+DISTRIBUTION=developer-id ./tools/build_macos_app.sh  # → macos/build/Coffer.app (Developer ID, runtime, timestamp)
+xcrun notarytool store-credentials coffer-notary \    # one-off credential setup
+  --apple-id <APPLE_ID> --team-id A6DS985SJJ --password <APP_SPECIFIC_PASSWORD>
+./tools/notarize_app.sh                               # notarize .app → staple → DMG → notarize → staple → spctl
+```
+
+`./tools/notarize_app.sh` refuses to run on a non-Developer-ID or non-hardened product, prints Apple's rejection log on failure, and finishes with a Gatekeeper check (`spctl -a -vv`). The default `development` shape is unchanged and still what local builds and the OTA channel use.
+
 ## Release flow (tag → CI builds, signs and creates the Release, v2.4.1+)
 
 Every new tag (`v*`) triggers `.github/workflows/release.yml`: ubuntu reliability gate + clippy → macos-latest injects the signing certificate and provisioning profile from GitHub Secrets, runs `./tools/build_macos_app.sh --rebuild-bindings` to build the signed product → packages `Coffer-<tag>.zip` (the OTA payload; contract in `docs/03-功能设计/11-v2.7.0-OTA升级-设计.md` §6.1 — the app only accepts a zip overwrite) plus `./tools/make_dmg.sh` to package `Coffer-<tag>.dmg` (the human install, drag to Applications) → creates the GitHub Release automatically, with the body taken from **the current version section of `CHANGELOG.md`** (register the section before tagging, or the pipeline fails).
@@ -139,7 +153,7 @@ Implementation details (including the `changeCount` check that avoids clearing s
 | --- | --- |
 | Minimum OS | **macOS 14 (Sonoma)** — the release where Apple opened third-party Passkey storage |
 | Architecture | **arm64 native only**; no Intel build, no universal binary |
-| Distribution | **App Store sandbox, single channel** (since 2026-10-09; the dual developer-id channel was cancelled) |
+| Distribution | **Developer ID + notarization** (since 2026-10-31, superseding the 2026-10-09 App-Store-only decision): `DISTRIBUTION=developer-id ./tools/build_macos_app.sh` then `./tools/notarize_app.sh` — see *Notarized Developer ID build* above |
 
 ---
 

@@ -131,6 +131,20 @@ fi
 
 printf '编译 %d 个 Swift 源文件%s\n' "${#SOURCES[@]}" "$([[ "${OFFICIAL_LICENSE}" == "1" ]] && echo '（官方模式）' || echo '（公开模式）')"
 
+# Rust 核心的链接形态（v2.13.5）：cargo 同时产出 libcf_ffi.a 与 libcf_ffi.dylib，
+# 但 release profile 开 lto=true 后 .a 的成员没有符号表（nm 实测 0 行），静态链接
+# 必失败；而直接 -L release -lcf_ffi 会选中 .dylib 并写入 dev 树的绝对 install_name
+# （otool -L 指向 core/target/release/deps/libcf_ffi.dylib）→ 产物不自包含，
+# core/target 一清理 App 即启动失败。
+# 处置：把 dylib 复制进 Contents/Frameworks 并把 install_name 改成 @rpath，
+# 链接时只认这份副本（rpath = @executable_path/../Frameworks），产物自包含。
+FRAMEWORKS_DIR="${APP_DIR}/Contents/Frameworks"
+mkdir -p "${FRAMEWORKS_DIR}"
+cp "${CORE_TARGET}/release/deps/libcf_ffi.dylib" "${FRAMEWORKS_DIR}/libcf_ffi.dylib" \
+  || die "拷贝 libcf_ffi.dylib 失败（先跑 cargo build --release -p cf-ffi）。"
+install_name_tool -id "@rpath/libcf_ffi.dylib" "${FRAMEWORKS_DIR}/libcf_ffi.dylib" \
+  || die "改写 libcf_ffi.dylib install_name 失败。"
+
 # bash 3.2 + set -u 下空数组 "${arr[@]}" 展开报 unbound variable（macOS 自带 /bin/bash），
 # 故下方用 ${arr[@]+"${arr[@]}"} 守卫：数组非空才展开（bash 3.2 兼容写法）。
 swiftc -O \
@@ -141,8 +155,9 @@ swiftc -O \
   ${CLANG_INCLUDES[@]+"${CLANG_INCLUDES[@]}"} \
   ${COMPILE_DEFS[@]+"${COMPILE_DEFS[@]}"} \
   "${SOURCES[@]}" \
-  -L "${CORE_TARGET}/release" \
+  -L "${FRAMEWORKS_DIR}" \
   -lcf_ffi \
+  -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "${APP_DIR}/Contents/MacOS/Coffer" \
   || die "swiftc 编译失败。"
 
@@ -408,6 +423,10 @@ step "4/4 codesign（Apple Development 证书 + entitlements + provisioning prof
 printf '签名身份: 名字=%s hash=%s\n' "${IDENTITY_NAME}" "${IDENTITY_HASH}"
 [[ -f "${PROFILE:-}" ]] || die "缺少 provisioning profile（${PROFILE}）：请先运行 ./tools/make_provisioning_profile.sh 生成（免费账号 profile 7 天有效，过期需重跑刷新）。"
 cp "${PROFILE}" "${APP_DIR}/Contents/embedded.provisionprofile"
+
+# 内嵌 dylib 先签（外层 App 签名会封存嵌套代码，后签即破坏签名）。
+codesign --force --sign "${IDENTITY_HASH}" "${FRAMEWORKS_DIR}/libcf_ffi.dylib" \
+  || die "内嵌 libcf_ffi.dylib 签名失败。"
 
 codesign --force --sign "${IDENTITY_HASH}" \
   --entitlements "${ENTITLEMENTS_FILE}" \

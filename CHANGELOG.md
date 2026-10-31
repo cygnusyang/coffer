@@ -28,6 +28,16 @@ release 中有体现）。
 
 ---
 
+## v2.13.5 — 2026-10-31
+
+### 修复/纪律
+- **构建产物不自包含（App 依赖 dev 树 dylib）**：`tools/build_macos_app.sh` 用 `-L <core>/release -lcf_ffi` 链接 Rust 核心，而 release 目录同时存在 `libcf_ffi.a` 与 `libcf_ffi.dylib`，链接器选中 `.dylib` 并把 dev 树绝对 install_name（`core/target/release/deps/libcf_ffi.dylib`）写进 Mach-O——`cargo clean`、换机或 CI 新检出后 App 直接启动失败（dyld 找不到库）。想改静态也不行：release profile 的 `lto = true` 让 `.a` 成员没有符号表（`nm` 实测 0 行），链接必报 undefined symbols。
+  - 处置：dylib 复制进 `Contents/Frameworks`、`install_name_tool -id @rpath`、链接加 `-Xlinker -rpath -Xlinker @executable_path/../Frameworks`，并在外层 App 签名前先签内嵌 dylib（先签外层会破坏封存）。
+  - 验证：`otool -L <App>/Contents/MacOS/Coffer` 只剩 `@rpath/libcf_ffi.dylib` 与系统库、零 `/Users/` 路径；把 `core/target/release/deps/libcf_ffi.dylib` 移走后 `open /Applications/Coffer.app` 仍正常启动；`codesign --verify --deep --strict` 通过。影响面：仅构建脚本与产物布局，运行时行为不变。
+- **核心产物陈旧**：同轮 `--rebuild-bindings` 刷新了 core 产物——原 `libcf_ffi.a/.dylib` 是 2026-10-16 的构建，缺 BUG-33（托管解锁按新 access group 读取）与 BUG-18/19（UDS 就绪判据、BrokenPipe fail-closed）修复；现产物的 Rust 核心与 Swift 绑定同源重建。
+
+---
+
 ## v2.13.4 — 2026-10-29
 
 ### 修复/纪律
